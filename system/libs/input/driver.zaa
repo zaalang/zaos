@@ -1,0 +1,271 @@
+//
+// driver
+//
+
+import input;
+import input.keymap : Key, keymap;
+import os.zaos.time;
+import os.zaos.fcntl;
+import std.vector;
+import std.circular_buffer;
+import std.string : String;
+
+using input::errc;
+
+pub struct device
+{
+  int fd;
+  std::string path;
+
+  config config;
+
+  pub device(String &&path)
+    : path(&&path)
+  {
+  }
+
+  pub ~device() = default;
+}
+
+pub union config
+{
+  pub keymap(keymap),
+
+  config() = default;
+  fn =(config mut &, config &&) -> config mut & = default;
+  ~config() = default;
+}
+
+pub union event
+{
+  pub device_added(device*),
+  pub device_removed(device*),
+  pub keyboard_key(key_event),
+
+  pub event(event&&) = default;
+  pub fn =(event mut &, event &&) -> event mut & = default;
+  pub ~event() = default;
+}
+
+pub enum key_state
+{
+  pressed,
+  released,
+}
+
+pub struct key_event
+{
+  pub u64 time;
+  pub Key key;
+  pub key_state state;
+  pub char sym;
+
+  key_event(u64 time, Key key, key_state state, char sym = 0)
+    : time(time), key(key), state(state), sym(sym)
+  {
+  }
+
+  key_event(key_event&) = default;
+  ~key_event() = default;
+}
+
+pub struct driver
+{
+  i32 fd;
+
+  std::vector<device mut *> devices;
+
+  std::circular_buffer<event> events;
+
+  u8[256] key_state;
+
+  pub driver() = default;
+  pub ~driver() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn pop_event(driver mut &driver) -> event
+{
+  return driver.events.take_front();
+}
+
+fn post_event(driver mut &driver, event &&event) -> void
+{
+  if (driver.events.len == driver.events.capacity)
+    driver.events.reserve(driver.events.len + 1);
+
+  driver.events.push_back(&&event);
+}
+
+fn add_device(driver mut &driver, String &&path) -> device mut *
+{
+  var device = std::allocator::new<device>(&&path);
+
+  device.fd = os::open(&mut thread_ring, os::string(device.path.data, device.path.len), 0, 0);
+
+  if (device.fd >= 0)
+  {
+    var evt = os::pollevt();
+    evt.id = device.fd;
+    evt.type = os::POLLFD;
+    evt.mask = os::POLLIN;
+    evt.user_data = cast(device);
+
+    os::epoll_ctl(&mut thread_ring, driver.fd, os::EPOLL_CTL_ADD, &evt, 0);
+  }
+
+  driver.devices.push_back(device);
+
+  driver.post_event(event::device_added(device));
+
+  return device;
+}
+
+pub fn initialise(driver mut &driver) -> i32
+{
+  driver.fd = os::epoll_create(&mut thread_ring, 0);
+
+  if (driver.fd < 0)
+    return driver.fd;
+
+  driver.events.reserve(8);
+
+  return 0;
+}
+
+pub fn add_device(driver mut &driver, String &&path, keymap &keymap) -> device *
+{
+  var device = driver.add_device(&&path);
+
+  device.config = config::keymap(keymap);
+
+  return device;
+}
+
+pub fn dispatch(driver mut &driver) -> i32
+{
+  struct input_event
+  {
+    u64 time;
+    u16 type;
+    u16 code;
+    i32 value;
+
+    ~input_event() = default;
+  }
+
+  var evts = [ os::pollevt(); 32 ];
+
+  var tp = os::timespec(void);
+  if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
+    return result;
+
+  var count = os::epoll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, tp);
+
+  if (count < 0)
+    return count;
+
+  var input = input_event(void);
+
+  for(var i = 0; i < cast(count); ++i)
+  {
+    var device = cast<device mut *>(evts[i].user_data);
+
+    while (os::read(&mut thread_ring, device.fd, &input, sizeof(input)) == sizeof(input))
+    {
+      switch (input.type)
+      {
+        case 0: // syn
+          ;
+
+        case 1: // key
+
+          switch (input.value)
+          {
+            case 0: // released
+
+              switch (device.config)
+              {
+                case keymap[keymap]:
+
+                  var key = keymap.keys[cast(input.code)];
+
+                  if (driver.key_state[cast(key)] == 0)
+                    continue;
+
+                  driver.key_state[cast(key)] -= 1;
+
+                  if (driver.key_state[cast(key)] == 0)
+                    driver.post_event(event::keyboard_key(input.time, key, key_state::released));
+              }
+
+            case 1: // pressed
+
+              switch (device.config)
+              {
+                case keymap[keymap]:
+
+                  var key = keymap.keys[cast(input.code)];
+
+                  var sym = 0;
+                  var map = 0;
+
+                  if (driver.key_state[cast(Key::LeftShift)] != 0 || driver.key_state[cast(Key::RightShift)] != 0)
+                    map = 1;
+
+                  if (driver.key_state[cast(Key::LeftControl)] != 0 || driver.key_state[cast(Key::RightControl)] != 0)
+                    map = 2;
+
+                  if (cast(key) < keymap.syms.len)
+                    sym = keymap.syms[cast(key)][map];
+
+                  driver.key_state[cast(key)] += 1;
+
+                  if (driver.key_state[cast(key)] == 1)
+                    driver.post_event(event::keyboard_key(input.time, key, key_state::pressed, sym));
+              }
+          }
+
+        case 4: // msc
+          ;
+
+        else:
+          std::print("unknown ", input);
+      }
+    }
+  }
+
+  return 0;
+}
+
+pub fn get_fd(driver mut &driver) -> i32
+{
+  return driver.fd;
+}
+
+pub fn has_events(driver mut &driver) -> bool
+{
+  return !driver.events.empty;
+}
+
+pub fn get_event(driver mut &driver) -> event
+{
+  return driver.pop_event();
+}
+
+pub fn wait(driver mut &driver, u64 timeout = ~0) -> int
+{
+  if (driver.events.len == 0)
+  {
+    var tp = os::timespec(void);
+    if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
+      return result;
+
+    var pollset = [ os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0) ];
+
+    return os::select(&mut thread_ring, pollset.data, pollset.len, tp + timeout);
+  }
+
+  return 0;
+}

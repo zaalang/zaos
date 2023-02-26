@@ -1,0 +1,94 @@
+//
+// guid partition table
+//
+
+import std.fmt;
+import std.scan;
+
+pub struct guid
+{
+  u32 data1;
+  u16 data2;
+  u16 data3;
+  u8[8] data4;
+
+  pub guid(u32 data1, u16 data2, u16 data3, u8[8] data4)
+    : data1(data1), data2(data2), data3(data3), data4(data4)
+  {
+  }
+
+  pub fn ==(guid &lhs, guid &rhs) -> bool
+  {
+    return lhs.data1 == rhs.data1 && lhs.data2 == rhs.data2 && lhs.data3 == rhs.data3 && lhs.data4 == rhs.data4;
+  }
+
+  pub guid() = default;
+  pub guid(guid&) = default;
+  pub fn =(guid mut &, guid &) -> guid mut & = default;
+  pub ~guid() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, guid &guid) throws -> void
+{
+  ctx.written += std::format_to(os, "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", guid.data1, guid.data2, guid.data3, guid.data4[0], guid.data4[1], guid.data4[2], guid.data4[3], guid.data4[4], guid.data4[5], guid.data4[6], guid.data4[7]);
+}
+
+pub fn scan(std::string_view is, std::scan_context mut &ctx, guid mut &guid) -> void
+{
+  if (std::sscanf(is, "{:8x}-{:4x}-{:4x}-{:2x}{:2x}-{:2x}{:2x}{:2x}{:2x}{:2x}{:2x}", &mut guid.data1, &mut guid.data2, &mut guid.data3, &mut guid.data4[0], &mut guid.data4[1], &mut guid.data4[2], &mut guid.data4[3], &mut guid.data4[4], &mut guid.data4[5], &mut guid.data4[6], &mut guid.data4[7]).count != 11)
+    ctx.error = std::errc::format_error;
+
+  if (ctx.error == cast(0))
+    ctx.cursor += 32;
+}
+
+pub struct header
+{
+  pub u8[8] signature;
+  pub u32 revision;
+  pub u32 header_size;
+  pub u32 header_crc32;
+  pub u32 reserved0;
+
+  pub u64 absolute_block;
+  pub u64 alternate_block;
+  pub u64 first_usable_block;
+  pub u64 last_usable_block;
+  pub guid disk_guid;
+  pub u64 entries_block;
+  pub u32 entry_count;
+  pub u32 entry_size;
+  pub u32 entries_crc32;
+}
+
+pub struct entry
+{
+  pub guid type;
+  pub guid guid;
+  pub u64 start_block;
+  pub u64 end_block;
+  pub u64 attributes;
+  pub u16[36] name;
+}
+
+pub enum type
+{
+  pub const empty = guid(0x00000000, 0x0000, 0x0000, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  pub const efi_system = guid(0xc12a7328, 0xf81f, 0x11d2, [0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b]);
+  pub const linux_filesystem = guid(0x0fc63daf, 0x8483, 0x4772, [0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4]);
+}
+
+pub fn crc32(void *data, usize len) -> u32
+{
+  var crc = ~0;
+
+  for(var ch = cast<u8*>(data), var end = ch + len; ch != end; ++ch)
+  {
+    crc ^= cast<u32>(*ch);
+
+    for(var i = 0; i < 8; ++i)
+      crc = (crc >> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+
+  return ~crc;
+}

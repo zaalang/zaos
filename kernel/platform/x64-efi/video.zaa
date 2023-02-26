@@ -1,0 +1,24 @@
+//
+// efi video
+//
+
+import bootinfo : BootInfo;
+import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+
+pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
+{
+  var gop = null<efi::EFI_GRAPHICS_OUTPUT_PROTOCOL*>;
+  var guid = efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+
+  if (SystemTable.BootServices.LocateProtocol(&guid, null, cast(&gop)) != 0)
+    efi::panic(SystemTable, "bad_gop_protocol");
+
+  if (gop.Mode.Info.PixelFormat != efi::EFI_GRAPHICS_PIXEL_FORMAT::PixelBlueGreenRedReserved8BitPerColor)
+    efi::panic(SystemTable, "invalid_gop_mode");
+
+  bootinfo.fb_base_address = gop.Mode.FrameBufferBase;
+  bootinfo.fb_width = cast(gop.Mode.Info.HorizontalResolution);
+  bootinfo.fb_height = cast(gop.Mode.Info.VerticalResolution);
+  bootinfo.fb_pitch = cast(gop.Mode.Info.PixelsPerScanLine * 4);
+  bootinfo.fb_depth = 32;
+}

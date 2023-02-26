@@ -1,0 +1,89 @@
+//
+// rc
+//
+
+
+pub struct Rc<T> : pub T mut *
+{
+  pub Rc() = default;
+
+  pub Rc(T mut *inner)
+    : super(inner)
+  {
+    this.ref();
+  }
+
+  pub Rc(Rc &&other)
+    : super(cast<T mut *>(other.super))
+  {
+    #if (__is_rvalue<typeof(other)>)
+      other.super = null;
+    #else
+      this.ref();
+  }
+
+  pub fn =(Rc mut &lhs, Rc &&rhs) -> Rc mut &
+  {
+    if (lhs.super != rhs.super)
+    {
+      lhs.unref();
+
+      lhs.super = cast<T mut *>(rhs.super);
+
+      #if (__is_rvalue<typeof(rhs)>)
+        rhs.super = null;
+      #else
+        lhs.ref();
+    }
+
+    return &lhs;
+  }
+
+  pub fn =(Rc mut &lhs, T mut *rhs) -> Rc mut &
+  {
+    if (lhs.super != rhs)
+    {
+      lhs.unref();
+
+      lhs.super = rhs;
+
+      lhs.ref();
+    }
+
+    return &lhs;
+  }
+
+  pub ~Rc()
+  {
+    this.unref();
+  }
+
+  pub fn bool(this &) -> bool
+  {
+    return this.super != null;
+  }
+
+  pub fn ==(Rc &lhs, Rc &rhs) -> bool
+  {
+    return lhs.super == rhs.super;
+  }
+
+  pub fn ==(Rc &lhs, T *rhs) -> bool
+  {
+    return lhs.super == rhs;
+  }
+
+  fn ref(this mut &) -> void
+  {
+    if (this.super)
+      this.super.ref();
+  }
+
+  fn unref(this mut &) -> void
+  {
+    if (this.super)
+      this.super.unref();
+  }
+
+  pub Rc(#Rc&) = default;
+}

@@ -1,0 +1,195 @@
+//
+// mutex
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import scheduler;
+import thread as _ : thread;
+import waitqueue as _ : wait_queue;
+
+pub struct mutex
+{
+  const waiting = 1 << 31;
+
+  pub fn owner(this&) -> thread::id
+  {
+    return cast<thread::id>(std::atomic_load(&this.holder) & ~waiting);
+  }
+
+  pub fn lock(this mut &) -> void
+  {
+    if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
+      return;
+
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    std::atomic_or(&this.holder, waiting);
+
+    if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
+      return;
+
+    this.waiters.wait(&mut this.spinlock);
+  }
+
+  pub fn try_lock(this mut &) -> bool
+  {
+    return std::atomic_cmpxchg_strong(&this.holder, 0, cast(thread::current.id));
+  }
+
+  pub fn try_lock_until(this mut &, u64 timeout) -> bool
+  {
+    if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
+      return true;
+
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    std::atomic_or(&this.holder, waiting);
+
+    if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
+      return true;
+
+    if (!this.waiters.wait_until(this.spinlock, timeout))
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  pub fn unlock(this mut &) -> void
+  {
+    if (std::atomic_cmpxchg_strong(&this.holder, cast(thread::current.id), 0))
+      return;
+
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    if (!this.waiters.empty)
+    {
+      std::atomic_store(&this.holder, cast(this.waiters.head.id) | waiting);
+
+      this.waiters.notify_one();
+    }
+    else
+    {
+      std::atomic_store(&this.holder, 0);
+    }
+  }
+
+  pub mutex() = default;
+  pub mutex(#mutex&) = default;
+  pub ~mutex() = default;
+
+  u32 holder;
+  std::spin_lock spinlock;
+  wait_queue waiters;
+}
+
+pub struct shared_mutex
+{
+  const max_readers = 1 << 30;
+
+  pub fn owner(this&) -> thread::id
+  {
+    return this.writelock.owner();
+  }
+
+  pub fn lock(this mut &) -> void
+  {
+    this.writelock.lock();
+
+    var pending = std::atomic_sub(&this.pending, max_readers);
+
+    if (pending != 0 && std::atomic_add(&this.departing, pending) + pending != 0)
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+      this.writewaiters.wait(&mut this.spinlock);
+    }
+  }
+
+  pub fn unlock(this mut &) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    this.arriving -= std::atomic_add(&this.pending, max_readers) + max_readers;
+
+    this.readwaiters.notify_all();
+
+    this.writelock.unlock();
+  }
+
+  pub fn lock_shared(this mut &) -> void
+  {
+    if (std::atomic_add(&this.pending, 1) < 0)
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+      if (++this.arriving > 0)
+        this.readwaiters.wait(&mut this.spinlock);
+    }
+  }
+
+  pub fn unlock_shared(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.pending, 1) < 0)
+    {
+      if (std::atomic_sub(&this.departing, 1) == 1)
+      {
+        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+        this.writewaiters.notify_one();
+      }
+    }
+  }
+
+  pub fn lock_upgrade(this mut &) -> void
+  {
+    this.writelock.lock();
+
+    std::atomic_add(&this.departing, std::atomic_sub(&this.pending, max_readers));
+  }
+
+  pub fn unlock_upgrade_and_lock(this mut &) -> void
+  {
+    if (std::atomic_load(&this.departing) != 0)
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+      this.writewaiters.wait(&mut this.spinlock);
+    }
+  }
+
+  pub fn unlock_upgrade_and_lock_shared(this mut &) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    this.arriving -= std::atomic_add(&this.pending, max_readers + 1) + max_readers;
+
+    this.readwaiters.notify_all();
+
+    this.writelock.unlock();
+  }
+
+  pub fn unlock_upgrade(this mut &) -> void
+  {
+    this.unlock();
+  }
+
+  pub fn unlock_and_lock_upgrade(this mut &) -> void
+  {
+  }
+
+  pub shared_mutex() = default;
+  pub shared_mutex(#shared_mutex&) = default;
+  pub ~shared_mutex() = default;
+
+  i32 pending;
+  i32 arriving;
+  i32 departing;
+  std::spin_lock spinlock;
+  wait_queue readwaiters;
+  wait_queue writewaiters;
+  mutex writelock;
+}

@@ -1,0 +1,70 @@
+//
+// history
+//
+
+import std.string : String;
+
+pub vtable history
+{
+  pub struct item
+  {
+    pub int id;
+    pub std::string buffer;
+
+    pub item() = default;
+    pub item(item&&) = default;
+    pub fn =(item mut &, item &&) -> item mut & = default;
+    pub ~item() = default;
+  }
+
+  pub fn load(history mut &, int id, item mut &item) throws(std::error) -> bool;
+  pub fn save(history mut &, item mut &item) throws(std::error) -> void;
+  pub fn accept(history mut &, item mut &item) throws(std::error) -> void;
+}
+
+pub struct default_history : pub history
+{
+  std::vector<history::item> items;
+
+  fn load(history mut &this, int id, history::item mut &item) throws -> bool
+  {
+    var mut &this = cast<default_history mut &>(this);
+
+    if (id < 1 || cast(id) > this.items.len)
+      return false;
+
+    item = this.items[cast(id) - 1];
+
+    return true;
+  }
+
+  fn save(history mut &this, history::item mut &item) throws -> void
+  {
+    var mut &this = cast<default_history mut &>(this);
+
+    if (item.id == 0)
+    {
+      item.id = cast(this.items.len) + 1;
+
+      this.items.resize(this.items.len + 1);
+    }
+
+    this.items[cast<usize>(item.id) - 1] = item;
+  }
+
+  fn accept(history mut &this, history::item mut &item) throws -> void
+  {
+    var mut &this = cast<default_history mut &>(this);
+
+    if (item.id != 0)
+      item.id = cast(this.items.len);
+
+    save(&mut this, &mut item);
+  }
+
+  pub default_history()
+  {
+  }
+
+  pub ~default_history() = default;
+}

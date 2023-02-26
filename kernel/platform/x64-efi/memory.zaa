@@ -1,0 +1,356 @@
+//
+// efi memory
+//
+
+import std.atomic;
+import bootinfo : BootInfo;
+import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+import cpu;
+
+struct thread_data
+{
+  thread_data *self;
+  void *stacktop;
+  uintptr[3] pad;
+  uintptr canary;
+  u8[16] reserved;
+}
+
+pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
+{
+  //
+  // Memory Map
+  //
+
+  var memory = 0;
+  const memorylen = 8*4096;
+  if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, (memorylen + 4095) / 4096, &memory) != 0)
+    efi::panic(SystemTable, "bad_memmap_alloc");
+
+  var MemoryMapSize = memorylen;
+  var MemoryMap = cast<efi::EFI_MEMORY_DESCRIPTOR mut *>(memory);
+  var MapKey = usize();
+  var DescriptorSize = usize();
+  var DescriptorVersion = u32();
+
+  if (SystemTable.BootServices.GetMemoryMap(&MemoryMapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion) != 0)
+    efi::panic(SystemTable, "bad_memory_map");
+
+  var max_usable_memory = 0;
+  var max_physical_pages = 0;
+
+  for(var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
+  {
+    var entry = cast<efi::EFI_MEMORY_DESCRIPTOR*>(cast<uintptr>(MemoryMap) + i * DescriptorSize);
+
+    switch (entry.Type)
+    {
+      case efi::EFI_MEMORY_TYPE::EfiLoaderCode:
+      case efi::EFI_MEMORY_TYPE::EfiLoaderData:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesData:
+      case efi::EFI_MEMORY_TYPE::EfiConventionalMemory:
+
+        if (entry.Attribute & 0x8 != 0)
+        {
+          var beg = entry.PhysicalStart;
+          var end = entry.PhysicalStart + entry.NumberOfPages * 4096;
+
+          if (!bootinfo.insert_usable_memory(beg, end))
+            efi::panic(SystemTable, "fail_usable_memory");
+
+          if (max_usable_memory < end)
+            max_usable_memory = end;
+         }
+
+      case efi::EFI_MEMORY_TYPE::EfiACPIReclaimMemory:
+      case efi::EFI_MEMORY_TYPE::EfiACPIMemoryNVS:
+        ;
+
+      else:
+        ;
+    }
+
+    if (var page = entry.PhysicalStart/4096 + entry.NumberOfPages; max_physical_pages < page)
+      max_physical_pages = page;
+  }
+
+  max_physical_pages = (max_physical_pages + 0x3ffff) / 0x40000; // 1Gb pages
+
+  if (max_physical_pages == 0 || max_physical_pages > 512)
+    efi::panic(SystemTable, "bad_physical_pages");
+
+  if (max_physical_pages < 4)
+    max_physical_pages = 4; // ensure apic in mapping
+
+  //
+  // GDT
+  //
+
+  bootinfo.gdt = 0xffffffff; // max address
+
+  if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateMaxAddress, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &bootinfo.gdt) != 0)
+    efi::panic(SystemTable, "bad_gdt_alloc");
+
+  var gdt = cast<u64[5] mut *>(bootinfo.gdt);
+
+  gdt[0] = 0;
+  gdt[1] = 0xaf9a000000ffff; // 0x08 kernel_code_segment
+  gdt[2] = 0xaf92000000ffff; // 0x10 kernel_data_segment
+  gdt[3] = 0xaf92000000ffff; // 0x18 user_data_segment
+  gdt[4] = 0xaf9a000000ffff; // 0x20 user_code_segment
+
+  //
+  // Page Map
+  //
+
+  bootinfo.pml4 = 0xffffffff; // max address
+
+  if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateMaxAddress, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &bootinfo.pml4) != 0)
+    efi::panic(SystemTable, "bad_pml4_alloc");
+
+  var pml4 = cast<uintptr[512] mut *>(bootinfo.pml4);
+
+  for(var i = 0; i < 512; ++i)
+    pml4[i] = 0;
+
+  {
+    // physical memory to 0xffffff0000000000 - 0xffffff8000000000 (max 512 Gb)
+
+    if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pml4[510]) != 0)
+      efi::panic(SystemTable, "bad_pdp_alloc");
+
+    var pdp = cast<uintptr[512] mut *>(pml4[510]);
+
+    for(var i = 0; i < max_physical_pages; ++i)
+      pdp[i] = i*0x40000000 | 0x183; // present, readwrite, global, large
+
+    for(var i = max_physical_pages; i < 512; ++i)
+      pdp[i] = 0;
+
+    pml4[510] |= 0x7; // present, readwrite, user    
+  }
+
+  {
+    // kernel mapped to 0xffffffff80000000 - 0xffffffffc0000000 (max 1 Gb)
+
+    bootinfo.kernel_base = 0xffffffff80000000;
+
+    if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pml4[511]) != 0)
+      efi::panic(SystemTable, "bad_pdp_alloc");
+
+    var pdp = cast<uintptr[512] mut *>(pml4[511]);
+
+    for(var i = 0; i < 512; ++i)
+      pdp[i] = 0;
+
+    if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[510]) != 0)
+      efi::panic(SystemTable, "bad_pd_alloc");
+
+    var pd = cast<uintptr[512] mut *>(pdp[510]);
+
+    for(var i = 0; i < 512; ++i)
+      pd[i] = 0;
+
+    var addr = 0;
+
+    //
+    // kernel text
+
+    var kernel_base = extern(_BASE);
+    var kernel_data = extern(_data) - kernel_base;
+    var kernel_size = extern(BASE_) - kernel_base;
+
+    for(var j = 0; j < 512 && addr < kernel_size; ++j)
+    {
+      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pd[j]) != 0)
+        efi::panic(SystemTable, "bad_pt_alloc");
+
+      var pt = cast<uintptr[512] mut *>(pd[j]);
+
+      for(var i = 0; i < 512; ++i)
+        pt[i] = 0;
+
+      for(var i = (addr / 4096) % 512; i < 512 && addr < kernel_data; ++i)
+      {
+        pt[i] = kernel_base + addr | 0x101; // present, readonly, global
+
+        addr += 4096;
+      }
+
+      for(var i = (addr / 4096) % 512; i < 512 && addr < kernel_size; ++i)
+      {
+        pt[i] = kernel_base + addr | (1 << 63) | 0x103; // present, readwrite, noexecute, global
+
+        addr += 4096;
+      }
+
+      pd[j] |= 0x7; // present, readwrite, user
+    }
+
+    addr = std::align_up(addr, 0x200000);
+
+    //
+    // kernel stack(s)
+
+    var tls_base = extern(_tls);
+    var tls_size = extern(tls_) - tls_base;
+
+    let stack_pages = (tls_size + 4095) / 4096 + 2;
+
+    std::assert(sizeof<thread_data> & 63 == 0);
+
+    for(var cpu = 0; cpu < bootinfo.cpu_count; ++cpu)
+    {
+      var j = (addr / 4096) / 512;
+
+      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pd[j]) != 0)
+        efi::panic(SystemTable, "bad_pt_alloc");
+
+      var pt = cast<uintptr[512] mut *>(pd[j]);
+
+      for(var i = 0; i < 512; ++i)
+        pt[i] = 0;
+
+      var stack = 0;
+      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, stack_pages, &stack) != 0)
+        efi::panic(SystemTable, "bad_stack_alloc");
+
+      for(var i = 512 - stack_pages; i < 512; ++i)
+      {
+        pt[i] = stack | (1 << 63) | 0x103; // present, readwrite, noexecute, global
+
+        stack += 4096;
+      }
+
+      pd[j] |= 0x7; // present, readwrite, user
+
+      var tcb = cast<thread_data mut *>(stack - sizeof<thread_data>);
+      var tls = cast<void mut *>(stack - sizeof<thread_data> - tls_size);
+
+      tcb.self = cast(bootinfo.kernel_base + addr + 0x200000 - sizeof<thread_data>);
+      tcb.stacktop = cast(bootinfo.kernel_base + addr + 0x200000 - sizeof<thread_data> - tls_size);
+      tcb.canary = 0xdeadbeef;
+
+      std::memset(tls, 0, tls_size);
+
+      bootinfo.threads[cpu] = bootinfo.kernel_base + addr + 0x200000 - sizeof<thread_data>;
+
+      addr += 0x200000;
+    }
+
+    pdp[510] |= 0x7; // present, readwrite, user
+
+    pml4[511] |= 0x7; // present, readwrite, user
+  }
+
+  {
+    // heap mapped to 0xffffc80000000000 to 0xffffe80000000000 (max 32 Tb)
+
+    let heap_pages = 64; // 512Gb pages
+
+    bootinfo.heap_base = 0xffffc80000000000;
+    bootinfo.heap_limit = bootinfo.heap_base + heap_pages * 0x8000000000;
+
+    var heap = 0;
+    if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, heap_pages, &heap) != 0)
+      efi::panic(SystemTable, "bad_heap_alloc");
+
+    for(var k = 400; k < 400 + heap_pages; ++k)
+    {
+      pml4[k] = heap;
+
+      var pdp = cast<uintptr[512] mut *>(pml4[k]);
+
+      for(var i = 0; i < 512; ++i)
+        pdp[i] = 0;
+
+      pml4[k] |= 0x7; // present, readwrite, user
+
+      heap += 4096;
+    }
+
+    //
+    // initial hunk
+
+    var pdp = cast<uintptr[512] mut *>(pml4[400] & ~0xfff);
+
+    let hunk_pages = 0x81 + (max_usable_memory + 0xffffff) / 0x1000000 * 64;
+
+    var hunk = 0;
+    if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, hunk_pages, &hunk) != 0)
+      efi::panic(SystemTable, "bad_hunk_alloc");
+
+    bootinfo.hunk_base = hunk;
+
+    var hunk_end = hunk + hunk_pages * 4096;
+
+    for(var k = 0; k < 512 && hunk < hunk_end; ++k)
+    {
+      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[k]) != 0)
+        efi::panic(SystemTable, "bad_pd_alloc");
+
+      var pd = cast<uintptr[512] mut *>(pdp[k]);
+
+      for(var i = 0; i < 512; ++i)
+        pd[i] = 0;
+
+      for(var j = 0; j < 512 && hunk < hunk_end; ++j)
+      {
+        if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pd[j]) != 0)
+          efi::panic(SystemTable, "bad_pt_alloc");
+
+        var pt = cast<uintptr[512] mut *>(pd[j]);
+
+        for(var i = 0; i < 512; ++i)
+          pt[i] = 0;
+
+        for(var i = 0; i < 512 && hunk < hunk_end; ++i)
+        {
+          pt[i] = hunk | (1 << 63) | 0x103; // present, readwrite, noexecute, global
+
+          hunk += 4096;
+          bootinfo.hunk_size += 4096;
+        }
+
+        pd[j] |= 0x7; // present, readwrite, user
+      }
+
+      pdp[k] |= 0x7; // present, readwrite, user
+    }
+  }
+
+  {
+    // temporary identity map until boot is finalised
+
+    pml4[0] = pml4[510];
+  }
+}
+
+pub fn cement(BootInfo &bootinfo, int cpu) -> void
+{
+  if (cpu != 0)
+    return;
+
+  var pml4 = cast<uintptr[512] mut *>(bootinfo.pml4);
+
+  {
+    // physical memory
+
+    var pdp = cast<uintptr[512] mut *>(pml4[510] & ~0xfff);
+
+    for(var i = 0; i < 512; ++i)
+    {
+      if (pdp[i] & 0x81 == 1)
+        pdp[i] |= (1 << 63); // noexecute
+    }
+  }
+
+  {
+    // remove temporary identity mapping
+
+    pml4[0] = 0;
+  }
+
+  cpu::flush_global_tlb();
+}

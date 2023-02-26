@@ -1,0 +1,55 @@
+//
+// sched syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import cpu;
+import result as _ : result;
+import thread as _ : thread;
+import process as _ : process;
+
+enum flags
+{
+  const nohang = 0x1;
+  const nowait = 0x2;
+}
+
+extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
+{
+  var thread = thread::find(id);
+
+  if (!thread)
+    return vm::result::no_such_process;
+
+  if (thread.state == thread::state::invalid)
+    return vm::result::no_such_process;
+
+  if (thread.id == thread.process.id && thread.process.parent != process::current)
+    return vm::result::no_such_process;
+
+  if (thread.id != thread.process.id && thread.process != process::current)
+    return vm::result::no_such_process;
+
+  if (flags & flags::nohang == 0)
+  {
+    thread.rval.wait();
+  }
+
+  if (thread.rval.ready)
+  {
+    var rval = thread.rval.result;
+
+    if (var result = vm::write_process_memory(rvalbuf, &rval, sizeof<i32>); !result)
+      return result;
+
+    if (flags & flags::nowait == 0)
+    {
+      thread.detach();
+    }
+
+    return id;
+  }
+
+  return 0;
+}

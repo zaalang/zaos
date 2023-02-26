@@ -1,0 +1,99 @@
+//
+// cp
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var src = std::string();
+  var dst = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    if (src == "")
+      src = arg;
+
+    else if (dst == "")
+      dst = arg;
+  }
+
+  if (src.empty || dst.empty)
+  {
+    terminal.write("usage: cp <src> <dst>\n");
+    return -22;
+  }
+
+  var fin = open(&mut thread_ring, os::string(src.data, src.len), O_RDONLY, 0);
+
+  if (fin < 0)
+    return fin;
+
+  var fout = open(&mut thread_ring, os::string(dst.data, dst.len), O_RDWR | O_CREAT | O_TRUNC, 0o640);
+
+  if (fout < 0)
+  {
+    close(&mut thread_ring, fin);
+
+    return fout;
+  }
+
+  for(;;)
+  {
+    var buf = typename u8[4096](void);
+
+    var srcres = read(&mut thread_ring, fin, buf.data, buf.len);
+
+    if (srcres <= 0)
+    {
+      if (srcres < 0)
+        terminal.write(std::format("cp: error on read src - {}\n", std::errc(cast(-srcres))));
+
+      break;
+    }
+
+    for(var data = buf.data, var len = cast<usize>(srcres); len != 0; )
+    {
+      var dstres = write(&mut thread_ring, fout, data, len);
+
+      if (dstres < 0)
+      {
+        if (dstres == EAGAIN)
+        {
+          var pollset = [ os::pollevt(fout, os::POLLFD, os::POLLOUT, 0) ];
+
+          os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+
+          continue;
+        }
+
+        terminal.write(std::format("cp: error on write src - {}\n", std::errc(cast(-dstres))));
+
+        close(&mut thread_ring, fin);
+        close(&mut thread_ring, fout);
+
+        return dstres;
+      }
+
+      terminal.write(std::format("write {} bytes\n", dstres));
+
+      data += cast(dstres);
+      len -= cast(dstres);
+    }
+  }
+
+  close(&mut thread_ring, fin);
+  close(&mut thread_ring, fout);
+
+  return 0;
+}

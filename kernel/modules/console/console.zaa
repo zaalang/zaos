@@ -1,0 +1,104 @@
+//
+// console
+//
+
+import std.stdio;
+import io;
+import dev;
+import chr.chrdev;
+import vm : physrange;
+import vfs;
+import support.rc : Rc;
+
+enum op
+{
+}
+
+pub struct console : pub chr::chrdev
+{
+  pub console()
+    : super(chr::device_operations())
+  {
+    std::print("console inited");
+  }
+
+  pub ~console() = default;
+}
+
+pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
+{
+  var &this = cast<console&>(dev);
+
+  switch(query)
+  {
+    case device_name:
+      result = "console";
+  }
+
+  return ok;
+}
+
+pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+{
+  return ok;
+}
+
+pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  buffer.foreach_region_in(offset, length, fn (var &region) {
+    dmesg(cast(region.addr.ptr), region.size);
+  });
+
+  return cast(length);
+}
+
+pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+{
+  return not_supported;
+}
+
+extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
+
+extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
+{
+  var result = std::fd_result();
+
+  for(var i = 0; i < n; ++i)
+  {
+    result.length += dmesg((iovs + i).data, (iovs + i).len);
+  }
+
+  return result;
+}
+
+pub fn dmesg(u8 *data, usize len) -> usize
+{
+  var iovs = std::ciovec(void);
+  iovs.data = data;
+  iovs.len = len;
+  dbgln(1, &iovs, 1);
+
+  return len;
+}
+
+pub fn initialise() -> void
+{
+  var dev = chr::chrdev::create<console>();
+
+  dev::register(dev);
+}

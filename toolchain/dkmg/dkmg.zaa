@@ -1,0 +1,893 @@
+//
+// dkmg
+//
+
+import std.stdio;
+import std.string;
+import std.sys.fd;
+import std.env;
+import yaml;
+import mmap;
+import gpt.image;
+import fat.image;
+import ext2.image;
+
+const BLOCK_SIZE = 512;
+
+struct fs
+{
+  union image
+  {
+    fat(fat::image),
+    ext(ext2::image),
+
+    ~image() = default;
+  }
+
+  image image;
+
+  fs(mmap::mutable_file mut &mm, gpt::entry *partition)
+    : image(void)
+  {
+    var data = mm.data + cast(partition.start_block * BLOCK_SIZE);
+    var size = cast<usize>((partition.end_block - partition.start_block + 1) * BLOCK_SIZE);
+
+    if (partition.type == gpt::type::efi_system)
+      new<image>(&image)(image::fat(data, size));
+
+    if (partition.type == gpt::type::linux_filesystem)
+      new<image>(&image)(image::ext(data, size));
+
+    switch (image)
+    {
+      case fat[fs]:
+        if (var result = fs.verify_fat_header(); !result)
+          std::panic("invalid fat header : ", result);
+
+      case ext[fs]:
+        if (var result = fs.verify_ext2_header(); !result)
+          std::panic("invalid ext2 header : ", result);
+
+      else:
+        std::panic("invalid file system");
+    }
+  }
+
+  ~fs() = default;
+}
+
+fn mkfs(std::fd &fd, gpt::entry *partition) throws -> void
+{
+  var mm = mmap::mutable_file::map(fd);
+
+  var data = mm.data + cast(partition.start_block * BLOCK_SIZE);
+  var size = cast<usize>((partition.end_block - partition.start_block + 1) * BLOCK_SIZE);
+
+  if (partition.type == gpt::type::efi_system)
+  {
+    var header = cast<fat::fat32_header mut *>(data);
+
+    header.header.jmp = [235, 88, 144];
+    header.header.oem_name = [100, 107, 109, 103, 46, 102, 97, 116];
+    header.header.bytes_per_sector = 512;
+    header.header.sectors_per_cluster = 1;
+    header.header.reserved_sectors = 32;
+    header.header.number_of_fats = 2;
+    header.header.root_entry_count = 0;
+    header.header.total_sectors_short = 0;
+    header.header.media_descriptor = 248;
+    header.header.fat_sectors_short = 0;
+    header.header.sectors_per_track = 32; // 63; // 32
+    header.header.number_of_heads = 8; // 32;   // 8
+    header.header.hidden_sectors = 4;
+    header.header.total_sectors_long = cast<u32>(size / 512 - 1);
+    header.fat_sectors_long = cast<u32>(std::ceil_div((size / 512 + 2) * 4, 512));
+    header.fat_sectors_long = cast<u32>(std::ceil_div((size / 512 + 2 - 2*cast(header.fat_sectors_long)) * 4, 512));
+    header.root_entry_cluster = 2;
+    header.fsinfo_sector = 1;
+    header.boot_sector = 6;
+    header.drive_number = 128;
+    header.boot_signature = 41;
+    header.volume_id = 453573854;
+    header.volume_label = [78, 79, 32, 78, 65, 77, 69, 32, 32, 32, 32];
+    header.fstype = [70, 65, 84, 51, 50, 32, 32, 32];
+
+    var fsinfo = cast<fat::fat32_fsinfo mut *>(data + 512);
+
+    fsinfo.lead_signature = 0x41615252;
+    fsinfo.struc_signature = 0x61417272;
+    fsinfo.free_cluster_count = 0xffffffff;
+    fsinfo.next_free_cluster = 0xffffffff;
+    fsinfo.tail_signature = 0xaa550000;
+
+    // bootsector
+    *cast<u8[2] mut *>(data + 510) = [ 0x55, 0xaa ];
+
+    // fat
+    *cast<u8[12] mut *>(data + 0x4000) = [ 0xf8, 0xff, 0xff, 0x0f, 0xff, 0xff, 0xff, 0x0f, 0xf8, 0xff, 0xff, 0x0f ];
+  }
+
+  if (partition.type == gpt::type::linux_filesystem)
+  {
+    var superblock = cast<ext2::ext2_super_block mut *>(data + ext2::EXT2_SUPER_BLOCK_OFFSET);
+
+    superblock.s_inodes = cast(std::align_up(size / 16384, 8192));
+    superblock.s_blocks = cast(size / 4096);
+    superblock.s_reserved_blocks = superblock.s_blocks / 20;
+    superblock.s_free_blocks = superblock.s_blocks;
+    superblock.s_free_inodes = superblock.s_inodes;
+    superblock.s_first_data_block = 0;
+    superblock.s_block_shift = 2;
+    superblock.s_fragment_shift = 2;
+    superblock.s_blocks_per_group = 32768;
+    superblock.s_fragments_per_group = 32768;
+    superblock.s_inodes_per_group = 8192;
+    superblock.s_max_mount_count = 65535;
+    superblock.s_magic = 0xef53;
+    superblock.s_state = 1;
+    superblock.s_error_handling = 1;
+    superblock.s_revision_level = 1;
+    superblock.s_first_inode = 11;
+    superblock.s_inode_size = 256;
+    superblock.s_block_group = 0;
+    superblock.s_compatible_features = cast(0x0010);
+    superblock.s_incompatible_features = cast(0x0002);
+    superblock.s_readonly_features = cast(0x0003);
+    superblock.s_reserved_gdt_blocks = 0;
+    superblock.s_reserved_gdt_blocks = 31;
+
+    for(var group = 0, var remaining = superblock.s_blocks; remaining != 0; ++group)
+    {
+      var groupdesc = cast<ext2::ext2_group_descriptor mut *>(data + cast(superblock.s_first_data_block + 1)*4096 + cast(group*32));
+
+      var used = 33;
+
+      groupdesc.bg_block_bitmap = used + group * superblock.s_blocks_per_group + 0; // 1 block
+      groupdesc.bg_inode_bitmap = used + group * superblock.s_blocks_per_group + 1; // 1 block
+      groupdesc.bg_inode_table = used + group * superblock.s_blocks_per_group + 2; // 512 blocks
+
+      used += 514;
+
+      groupdesc.bg_free_blocks = cast(std::min(remaining, superblock.s_blocks_per_group));
+
+      var bitmap = cast<u8 mut *>(data + cast<usize>(groupdesc.bg_block_bitmap) * 4096);
+
+      for(var i = 0; i < cast<usize>(used); ++i)
+        *(bitmap + (i >> 3)) |= (1 << (i & 0x7));
+
+      for(var i = cast<usize>(groupdesc.bg_free_blocks); i < cast(superblock.s_blocks_per_group); ++i)
+        *(bitmap + (i >> 3)) |= (1 << (i & 0x7));
+
+      ext2::consume_free_blocks(superblock, groupdesc, cast(used));
+
+      groupdesc.bg_free_inodes = cast(superblock.s_inodes_per_group);
+
+      remaining = std::max(remaining, superblock.s_blocks_per_group) - superblock.s_blocks_per_group;
+    }
+
+    if (var rootdesc = cast<ext2::ext2_group_descriptor mut *>(data + cast(superblock.s_first_data_block + 1)*4096))
+    {
+      var blockbitmap = cast<u8 mut *>(data + cast<usize>(rootdesc.bg_block_bitmap) * 4096);
+      var inodebitmap = cast<u8 mut *>(data + cast<usize>(rootdesc.bg_inode_bitmap) * 4096);
+      var rootinode = cast<ext2::ext2_inode mut *>(data + cast<usize>(rootdesc.bg_inode_table) * 4096 + 256);
+      var rootblock = cast<u8 mut *>(data + 547 * 4096);
+
+      rootinode.i_mode = 0o40755;
+      rootinode.i_links = 2;
+      rootinode.i_blocks = 8;
+      rootinode.i_size = 4096;
+      rootinode.i_contents[0] = 547;
+
+      *cast<u8[12] mut *>(rootblock + 00) = [ 0x02, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x01, 0x02, 0x2e, 0x00, 0x00, 0x00 ];
+      *cast<u8[12] mut *>(rootblock + 12) = [ 0x02, 0x00, 0x00, 0x00, 0xf4, 0x0f, 0x02, 0x02, 0x2e, 0x2e, 0x00, 0x00 ];
+
+      *(inodebitmap + 0) |= 0xff;
+      *(inodebitmap + 1) |= 0x03;
+      *(blockbitmap + (547 >> 3)) |= (1 << (547 & 0x7));
+
+      ext2::consume_free_inodes(superblock, rootdesc, 10);
+      ext2::consume_free_blocks(superblock, rootdesc, 1);
+      ext2::consume_used_directories(superblock, rootdesc, 1);
+    }
+  }
+}
+
+struct filestat
+{
+  u16 mode;
+  u32 uid;
+  u32 gid;
+  u64 size;
+  u64 atime;
+  u64 mtime;
+  u64 ctime;
+
+  filestat() = default;
+  filestat(filestat&) = default;
+  fn =(filestat mut &, filestat &) -> filestat mut & = default;
+  ~filestat() = default;
+}
+
+fn stat(fs mut &fs, std::string &path) throws -> filestat
+{
+  var result = filestat();
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (!fs.open(fd, std::string_view(part), &mut fd))
+          return result;
+      }
+
+      result.mode = fd.mode;
+      result.atime = cast<u64>(fd.atime) * 1000000000;
+      result.mtime = cast<u64>(fd.mtime) * 1000000000;
+      result.ctime = cast<u64>(fd.ctime) * 1000000000;
+      result.size = cast(fd.filesize);
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (!fs.open(fd, std::string_view(part), &mut fd))
+          return result;
+      }
+
+      result.mode = fd.mode;
+      result.uid = fd.uid;
+      result.gid = fd.gid;
+      result.atime = cast<u64>(fd.atime) * 1000000000;
+      result.mtime = cast<u64>(fd.mtime) * 1000000000;
+      result.ctime = cast<u64>(fd.ctime) * 1000000000;
+      result.size = fd.filesize;
+  }
+
+  return result;
+}
+
+fn mkdir(fs mut &fs, std::string &dest) throws -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.mkdir(fd, name, 0, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.mkdir(fd, name, 0, 0, 0o755, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn copy(fs mut &fs, std::file mut &src, std::string &dest) throws -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+  var stat = src.stat;
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.open(fd, name, &mut fd); !result)
+      {
+        if (var result = fs.create(fd, name, 0, &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.expand(&mut fd, stat.size); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      var buf = [0; 4096];
+      for(var position = 0; position < stat.size; )
+      {
+        var bytes = src.read(buf.data, buf.len);
+
+        if (var result = fs.write(&mut fd, buf.data, bytes); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+
+        position += cast(bytes);
+      }
+
+      if (var result = fs.truncate(&mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      if (var result = fs.utime(&mut fd, cast<u32>(stat.mtime / 1000000000)); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.open(fd, name, &mut fd); !result)
+      {
+        if (var result = fs.create(fd, name, 0, 0, 0o644, &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.expand(&mut fd, stat.size); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      var buf = [0; 4096];
+      for(var position = 0; position < stat.size; )
+      {
+        var bytes = src.read(buf.data, buf.len);
+
+        if (var result = fs.write(&mut fd, buf.data, bytes); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+
+        position += cast(bytes);
+      }
+
+      if (var result = fs.truncate(&mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      if (var result = fs.utime(&mut fd, cast<u32>(stat.mtime / 1000000000)); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn chown(fs mut &fs, std::string &dest, u32 owner) throws -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      throw std::system_error(std::errc::not_supported);
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.open(fd, name, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      if (var result = fs.chown(&mut fd, owner); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn chgrp(fs mut &fs, std::string &dest, u32 group) throws -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      throw std::system_error(std::errc::not_supported);
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.open(fd, name, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      if (var result = fs.chgrp(&mut fd, group); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn chmod(fs mut &fs, std::string &dest, u16 mode) throws -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      throw std::system_error(std::errc::not_supported);
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for(var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.open(fd, name, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+      if (var result = fs.chmod(&mut fd, mode); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn parse_size(std::string_view str) -> u64
+{
+  var size = u64(0);
+
+  if (var result = std::sscan(str, &mut size); !result.error)
+  {
+    var suffix = std::string_view(str.data + result.len, str.end).trim;
+
+    if (suffix == "M" || suffix == "Mb" || suffix == "MB" || suffix == "MiB")
+      size *= 1024*1024;
+
+    if (suffix == "G" || suffix == "Gb" || suffix == "GB" || suffix == "GiB")
+      size *= 1024*1024*1024;
+  }
+
+  return size;
+}
+
+fn md(yaml::node &cfg, fs mut &fs) throws -> void
+{
+  try
+  {
+    if (!cfg["dest"])
+      std::panic("md action missing dest");
+
+    if (!cfg["dest"].as_str.starts_with('/'))
+      std::panic("md action non absolute dest");
+
+    var info = fs.stat(cfg["dest"].as_str);
+
+    if (info.mode != 0 && info.mode & 0xf000 != 0x4000)
+      throw std::system_error(std::errc::already_exists);
+
+    if (info.mode == 0)
+    {
+      fs.mkdir(cfg["dest"].as_str);
+
+      info = fs.stat(cfg["dest"].as_str);
+    }
+
+    if (cfg["owner"])
+    {
+      if (!cfg["owner"].is_integer)
+        std::panic("md action non integer owner");
+
+      if (info.uid != cfg["owner"].as<u32>())
+        fs.chown(cfg["dest"].as_str, cfg["owner"].as<u32>());
+    }
+
+    if (cfg["group"])
+    {
+      if (!cfg["group"].is_integer)
+        std::panic("md action non integer owner");
+
+      if (info.gid != cfg["group"].as<u32>())
+        fs.chgrp(cfg["dest"].as_str, cfg["group"].as<u32>());
+    }
+
+    if (cfg["mode"])
+    {
+      if (!cfg["mode"].is_integer)
+        std::panic("md action non integer owner");
+
+      var mode = cfg["mode"].as<u16>();
+
+      mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
+
+      if (info.mode & 0xfff != mode)
+        fs.chmod(cfg["dest"].as_str, mode);
+    }
+  }
+  catch(std::error e)
+  {
+    std::print("md ", cfg["dest"].as_str, " - ", e);
+  }
+}
+
+fn cp(yaml::node &cfg, fs mut &fs) throws -> void
+{
+  try
+  {
+    if (!cfg["src"])
+      std::panic("cp action missing src");
+
+    var fin = std::file::open(cfg["src"].as_str);
+
+    if (!cfg["dest"])
+      std::panic("cp action missing dest");
+
+    if (!cfg["dest"].as_str.starts_with('/'))
+      std::panic("cp action non absolute dest");
+
+    var info = fs.stat(cfg["dest"].as_str);
+
+    if (info.mode != 0 && info.mode & 0xf000 != 0x8000)
+      throw std::system_error(std::errc::already_exists);
+
+    if (info.mode == 0 || std::absdiff(info.mtime, fin.stat.mtime) > 2000000000)
+    {
+      fs.copy(&mut fin, cfg["dest"].as_str);
+
+      info = fs.stat(cfg["dest"].as_str);
+    }
+
+    if (cfg["owner"])
+    {
+      if (!cfg["owner"].is_integer)
+        std::panic("md action non integer owner");
+
+      if (info.uid != cfg["owner"].as<u32>())
+        fs.chown(cfg["dest"].as_str, cfg["owner"].as<u32>());
+    }
+
+    if (cfg["group"])
+    {
+      if (!cfg["group"].is_integer)
+        std::panic("md action non integer owner");
+
+      if (info.gid != cfg["group"].as<u32>())
+        fs.chgrp(cfg["dest"].as_str, cfg["group"].as<u32>());
+    }
+
+    if (cfg["mode"])
+    {
+      if (!cfg["mode"].is_integer)
+        std::panic("md action non integer owner");
+
+      var mode = cfg["mode"].as<u16>();
+
+      mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
+
+      if (info.mode & 0xfff != mode)
+        fs.chmod(cfg["dest"].as_str, mode);
+
+    }
+  }
+  catch(std::error e)
+  {
+    std::print("cp ", cfg["src"].as_str, " ", cfg["dest"].as_str, " - ", e);
+  }
+}
+
+fn actions(yaml::node &cfg, fs mut &fs) throws -> void
+{
+  for(var &entry : cfg.as_vec)
+  {
+    if (!entry.is_map)
+      std::panic("expected action object");
+
+    for(var &entry : entry.as_map)
+    {
+      if (entry.key == "md")
+        md(entry.value, &mut fs);
+
+      if (entry.key == "cp")
+        cp(entry.value, &mut fs);
+    }
+  }
+}
+
+fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
+{
+  var name = std::string_view("");
+  var type = std::string_view("");
+  var size = 32*1024*1024;
+  var uuid = gpt::guid();
+
+  for(var &entry : cfg.as_map)
+  {
+    if (entry.key == "name")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected name string");
+
+      name = entry.value.as<std::string_view>();
+    }
+
+    else if (entry.key == "type")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected type string");
+
+      type = entry.value.as<std::string_view>();
+    }
+
+    else if (entry.key == "size")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected size string");
+
+      size = parse_size(entry.value.as<std::string_view>());
+    }
+
+    else if (entry.key == "uuid")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected uuid string");
+
+      if (std::sscan(entry.value.as<std::string_view>(), &mut uuid).error)
+        std::panic("invalid uuid string - ", entry.value.as<std::string_view>());
+    }
+
+    else if (entry.key == "actions")
+    {
+      if (!entry.value.is_array)
+        std::panic("expected actions array");
+    }
+
+    else
+    {
+      std::panic("unknown config entry - ", entry.key);
+    }
+  }
+
+  var guid = gpt::type::empty;
+
+  if (type == "efi" || type == "EFI")
+    guid = gpt::type::efi_system;
+
+  if (type == "ext2" || type == "EXT2")
+    guid = gpt::type::linux_filesystem;
+
+  if (guid == gpt::type::empty)
+    std::panic("missing partition type");
+
+  var mm = mmap::mutable_file::map(fd);
+  var gpt = gpt::image(mm.data, mm.len, BLOCK_SIZE);
+
+  if (var result = gpt.verify_gpt_header(); !result)
+    std::panic("invalid gpt header : ", result);
+
+  if (index >= cast(gpt.header.entry_count))
+    std::panic("too many partitions");
+
+  var entry = gpt.entries[index];
+
+  if (entry.type == gpt::type::empty)
+  {
+    var header = gpt.header;
+
+    var start_block = header.last_usable_block;
+    var end_block = start_block + std::ceil_div(size, BLOCK_SIZE);
+
+    var buf = [0; 4096];
+
+    for(var offset = start_block*BLOCK_SIZE; offset < end_block*BLOCK_SIZE; offset += cast(buf.len))
+      fd.write_at(offset, buf.data, buf.len);
+
+    if (var result = gpt.expand(end_block + 1); !result)
+      std::panic("expand - ", result);
+
+    if (var result = gpt.modify(entry, guid, uuid, start_block, end_block, 0, entry.name); !result)
+      std::panic("modify - ", result);
+
+    var alternate_header = cast<gpt::header mut *>(buf.data);
+    alternate_header.signature = header.signature;
+    alternate_header.revision = header.revision;
+    alternate_header.header_size = header.header_size;
+    alternate_header.absolute_block = header.alternate_block;
+    alternate_header.alternate_block = header.absolute_block;
+    alternate_header.first_usable_block = header.first_usable_block;
+    alternate_header.last_usable_block = header.last_usable_block;
+    alternate_header.disk_guid = header.disk_guid;
+    alternate_header.entries_block = header.entries_block;
+    alternate_header.entry_count = header.entry_count;
+    alternate_header.entry_size = header.entry_size;
+    alternate_header.entries_crc32 = header.entries_crc32;
+    alternate_header.header_crc32 = gpt::crc32(alternate_header, 92);
+
+    fd.write_at(header.alternate_block*BLOCK_SIZE, buf.data, BLOCK_SIZE);
+
+    mkfs(fd, entry);
+  }
+
+  if (entry.type != guid)
+    std::panic(name, ": existing partition wrong type");
+
+  if (entry.guid != uuid)
+    std::panic(name, ": existing partition wrong uuid");
+
+  if ((entry.end_block - entry.start_block + 1) * BLOCK_SIZE < size)
+    std::panic(name, ": existing partition too small");
+
+  var fs = fs(&mut mmap::mutable_file::map(fd), entry);
+
+  for(var &entry : cfg.as_map)
+  {
+    if (entry.key == "actions")
+    {
+      actions(entry.value, &mut fs);
+    }
+  }
+}
+
+fn partitions(std::string_view name, gpt::guid &uuid, yaml::node &cfg, std::string_view dst) throws -> void
+{
+  var fd = std::fd::open(dst, std::fd::oflags::create, std::fd::rights::read | std::fd::rights::write);
+
+  if (fd.stat.size == 0)
+  {
+    var bootsect = [0; 4096];
+    var header = cast<gpt::header mut *>(bootsect.data + BLOCK_SIZE);
+
+    header.signature = [ 69, 70, 73, 32, 80, 65, 82, 84 ];
+    header.revision = 65536;
+    header.header_size = 92;
+    header.absolute_block = 1;
+    header.alternate_block = 7;
+    header.first_usable_block = 4;
+    header.last_usable_block = 4;
+    header.disk_guid = uuid;
+    header.entries_block = 2;
+    header.entry_count = 8;
+    header.entry_size = 128;
+    header.entries_crc32 = 0xefb5af2e;
+    header.header_crc32 = gpt::crc32(header, 92);
+
+    // mbr
+    *cast<u8[16] mut *>(&bootsect[446]) = [ 0x00, 0x00, 0x02, 0x00, 0xee, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff];
+    *cast<u8[2] mut *>(&bootsect[510]) = [ 0x55, 0xaa ];
+
+    fd.write(bootsect.data, bootsect.len);
+  }
+
+  for(var index = 0, var &entry : cfg.as_vec;; ++index)
+  {
+    if (!entry.is_map)
+      std::panic("expected partition object");
+
+    partition(index, entry, fd);
+  }
+}
+
+fn image(yaml::node &cfg, std::string_view dst) throws -> void
+{
+  var name = std::string_view("image");
+  var uuid = gpt::guid();
+
+  for(var &entry : cfg.as_map)
+  {
+    if (entry.key == "name")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected name string");
+
+      name = entry.value.as<std::string_view>();
+    }
+
+    else if (entry.key == "uuid")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected uuid string");
+
+      if (std::sscan(entry.value.as<std::string_view>(), &mut uuid).error)
+        std::panic("invalid uuid string - ", entry.value.as<std::string_view>());
+    }
+
+    else if (entry.key == "partitions")
+    {
+      if (!entry.value.is_array)
+        std::panic("expected partitions array");
+    }
+
+    else
+    {
+      std::panic("unknown config entry - ", entry.key);
+    }
+  }
+
+  for(var &entry : cfg.as_map)
+  {
+    if (entry.key == "partitions")
+    {
+      partitions(name, uuid, entry.value, dst);
+    }
+  }
+}
+
+fn build(yaml::node &cfg, std::string_view dst) throws -> void
+{
+  if (!cfg.is_map)
+    std::panic("expected image document");
+
+  for(var &entry : cfg.as_map)
+  {
+    if (entry.key == "image")
+    {
+      if (!entry.value.is_map)
+        std::panic("expected image object");
+
+      image(entry.value, dst);
+    }
+
+    else
+    {
+      std::panic("unknown config entry - ", entry.key);
+    }
+  }
+}
+
+fn main()
+{
+  var cfg = std::string_view("build.yaml");
+  var dst = std::string_view();
+
+  for(var i = 0, var j = 0; i < std::env::args.len; ++i)
+  {
+    if (std::env::args[i].starts_with("-"))
+    {
+      if (std::env::args[i] == "-c")
+        cfg = std::env::args[++i];
+
+      continue;
+    }
+
+    if (j == 1)
+    {
+      dst = std::env::args[i];
+    }
+
+    ++j;
+  }
+
+  if (dst.empty)
+  {
+    std::print("usage:");
+    std::print("  dkmg -c build.yaml image.img");
+    std::exit(1);
+  }
+
+  try
+  {
+    var yaml = yaml::load_from_file(cfg);
+
+    if (yaml.error)
+      std::panic("config error: ", yaml.error, " @ ", yaml.mark);
+
+    for(var &doc : yaml.docs)
+    {
+      build(doc, dst);
+    }
+  }
+  catch(std::error e)
+  {
+    std::panic("error - ", e, "(", e.value, ")");
+  }
+}

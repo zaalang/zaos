@@ -1,0 +1,489 @@
+//
+// ioring
+//
+
+import std.stdlib;
+import vm : virtaddr, virtrange;
+import io;
+import cpu;
+import vfs;
+import vm.result;
+import vfs.result;
+import slab : slab_allocator;
+import mutex as _ : mutex;
+import process as _ : process;
+import waitqueue as _ : wait_queue;
+
+import ioring.open;
+import ioring.dup;
+import ioring.stat;
+import ioring.read;
+import ioring.write;
+import ioring.ioctl;
+import ioring.select;
+import ioring.mkdir;
+import ioring.rename;
+import ioring.link;
+import ioring.symlink;
+import ioring.unlink;
+import ioring.epoll;
+import ioring.workman;
+
+pub enum ioring_ops
+{
+  pub const open = 0x01;
+  pub const stat = 0x02;
+  pub const read = 0x03;
+  pub const write = 0x04;
+  pub const ioctl = 0x05;
+  pub const close = 0x06;
+  pub const select = 0x07;
+  pub const dup = 0x08;
+  pub const dup2 = 0x09;
+  pub const mkdir = 0x0a;
+  pub const rename = 0x0b;
+  pub const link = 0x0c;
+  pub const symlink = 0x0d;
+  pub const unlink = 0x0e;
+  pub const epoll_create = 0x10;
+  pub const epoll_ctl = 0x11;
+  pub const epoll_wait = 0x12;
+}
+
+pub enum ioring_flags
+{
+  const fin = 0x1;
+}
+
+pub struct ioring_header
+{
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+  u32 sq_offset;
+
+  u32 cq_head;
+  u32 cq_tail;
+  u32 cq_mask;
+  u32 cq_offset;
+
+  u8[32] reserved;
+}
+
+pub struct ioring_sqe
+{
+  pub u8 op;
+  pub u8 flags;
+  pub u16 reserved1;
+  pub u32 reserved2;
+  pub uintptr[6] args;
+  pub uintptr user_data;
+
+  pub ioring_sqe() = default;
+  pub ioring_sqe(ioring_sqe&) = default;
+  pub ~ioring_sqe() = default;
+}
+
+pub struct ioring_cqe
+{
+  pub u32 flags;
+  pub i32 result;
+  pub uintptr user_data;
+
+  pub ioring_cqe() = default;
+  pub ioring_cqe(ioring_cqe&) = default;
+  pub ~ioring_cqe() = default;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+  interrupted = -4,
+  would_block = -11,
+  device_busy = -16,
+  invalid_argument = -22,
+  not_supported = -95,
+  overflow = -139,
+
+  should_block = -7001,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+
+  pub fn result(vm::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(vfs::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn =(this mut &, var rhs) -> result mut &
+  {
+    cast<i32 mut &>(this) = cast(rhs);
+
+    return &this;
+  }
+}
+
+pub struct ioring_ctx
+{
+  pub result status;
+  pub std::vector<ioring_sqe> entries;
+  pub std::vector<io::response> blockers;
+  pub u64 wake_time;
+
+  pub uintptr[8] state;
+
+  pub ioring_ctx() = default;
+  pub ioring_ctx(ioring_ctx &) = default;
+  pub fn =(ioring_ctx mut &, ioring_ctx &) -> ioring_ctx mut & = default;
+  pub ~ioring_ctx() = default;
+}
+
+pub struct io_ring : pub vfs::node
+{
+  pub mutex lock;
+  wait_queue waiters;
+
+  usize sq_base;
+  usize sq_mask;
+  usize cq_base;
+  usize cq_mask;
+
+  vm::iovec region;
+
+  process mut *process;
+
+  pub std::vector<ioring_ctx> pending;
+
+  pub io_ring mut *next;
+
+  u8[16] reserved;
+
+  fn allocator()
+  {
+    static allocator = #slab_allocator<io_ring>();
+
+    return &allocator;
+  }
+
+  fn create(process mut *process) -> io_ring mut *
+  {
+    var ring = allocator.allocate();
+
+    ring.process = process;
+
+    ring.pending.clear();
+    ring.pending.resize(1);
+
+    return ring;
+  }
+
+  pub io_ring() = default;
+  pub ~io_ring() = default;
+}
+
+pub fn dump(io_ring &this) -> void
+{
+  std::print("[io ring]");
+
+  for(var &ctx : this.pending)
+  {
+    std::print("  ", ctx.status, " ", ctx.entries.len);
+  }
+}
+
+pub fn create_ioring(process mut *process) -> vfs::node_ptr
+{
+  var ring = io_ring::create(process);
+
+  return vfs::node::new(ring, vfs::node::type::ring, &vfs::node_operations());
+}
+
+pub fn setup_ioring(vfs::node_ptr &ring, virtrange buffer) -> result
+{
+  var mut &this = cast<io_ring mut &>(*ring);
+
+  if (buffer.addr & 63 != 0)
+    return invalid_argument;
+
+  if (var result = vm::lock(this.process, buffer, vm::protection::readwrite, &mut this.region); !result)
+    return cast(result);
+
+  var factor = std::floor_log2((buffer.size - sizeof<ioring_header>) * 2/3 / sizeof<ioring_sqe>);
+
+  this.sq_mask = (1 << factor) - 1;
+  this.sq_base = sizeof<ioring_header>;
+  this.cq_mask = (2 << factor) - 1;
+  this.cq_base = sizeof<ioring_header> + (1 << factor)*sizeof<ioring_sqe>;
+
+  var header = cast<ioring_header mut *>(this.region.host[0].addr.ptr);
+
+  header.sq_head = 0;
+  header.sq_tail = 0;
+  header.sq_mask = cast(this.sq_mask);
+  header.sq_offset = cast(this.sq_base);
+
+  header.cq_head = 0;
+  header.cq_tail = 0;
+  header.cq_mask = cast(this.cq_mask);
+  header.cq_offset = cast(this.cq_base);
+
+  return ok;
+}
+
+pub fn execute(io_ring mut &this, ioring_ctx mut &ctx, ioring_sqe &sqe) -> result
+{
+  if (ctx.status)
+  {
+    switch (sqe.op)
+    {
+      case ioring_ops::open:
+        ctx.status = sys_open(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]), cast(sqe.args[4] & 0xffffffff));
+
+      case ioring_ops::stat:
+        ctx.status = sys_stat(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::read:
+        ctx.status = sys_read(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::write:
+        ctx.status = sys_write(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::ioctl:
+        ctx.status = sys_ioctl(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0xffffffff), virtaddr(sqe.args[2]), cast(sqe.args[3]));
+
+      case ioring_ops::close:
+        ctx.status = sys_close(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff));
+
+      case ioring_ops::select:
+        ctx.status = sys_select(this.process, &mut ctx, virtaddr(sqe.args[0]), cast(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::dup:
+        ctx.status = sys_dup(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff));
+
+      case ioring_ops::dup2:
+        ctx.status = sys_dup2(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff));
+
+      case ioring_ops::mkdir:
+        ctx.status = sys_mkdir(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]), cast(sqe.args[4] & 0xffffffff));
+
+      case ioring_ops::rename:
+        ctx.status = sys_rename(this.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+
+      case ioring_ops::link:
+        ctx.status = sys_link(this.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+
+      case ioring_ops::symlink:
+        ctx.status = sys_symlink(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+
+      case ioring_ops::unlink:
+        ctx.status = sys_unlink(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+
+      case ioring_ops::epoll_create:
+        ctx.status = sys_epoll_create(this.process, &mut ctx, cast(sqe.args[3]));
+
+      case ioring_ops::epoll_ctl:
+        ctx.status = sys_epoll_ctl(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff), virtaddr(sqe.args[2]), cast(sqe.args[3]));
+
+      case ioring_ops::epoll_wait:
+        ctx.status = sys_epoll_wait(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+
+      else:
+        ctx.status = result::not_supported;
+    }
+  }
+
+  if (ctx.status == result::should_block)
+    return should_block;
+
+  ctx.wake_time = 0;
+  ctx.blockers.clear();
+  std::memset(&ctx.state, 0, sizeof(ctx.state));
+
+  if (var result = this.retire(sqe, ctx.status); !result)
+    return should_block;
+
+  if (sqe.flags & ioring_flags::fin == ioring_flags::fin)
+    ctx.status = result::ok;
+
+  return ok;
+}
+
+pub fn enqueue(io_ring mut &this, ioring_sqe &sqe) -> void
+{
+  this.pending.back.entries.push_back(sqe);
+
+  if (this.pending.len == 1 && this.pending.back.entries.len == 1)
+    workman.enqueue(&this);
+
+  if (sqe.flags & ioring_flags::fin == ioring_flags::fin)
+    this.pending.push_back();
+}
+
+pub fn retire(io_ring mut &this, ioring_sqe &sqe, result status) -> result
+{
+  var header = cast<ioring_header mut *>(this.region.host[0].addr.ptr);
+
+  var tail = header.cq_tail;
+  var index = cast<usize>(tail) & this.cq_mask;
+  var next = std::add_with_carry(tail, 1).0;
+
+  if (next == std::volatile_load(&header.cq_head))
+    return overflow;
+
+  var cqe = ioring_cqe(void);
+
+  cqe.flags = 0;
+  cqe.result = cast(status);
+  cqe.user_data = sqe.user_data;
+
+  if (var result = vm::memcpy(this.region, this.cq_base + index * sizeof<ioring_cqe>, &cqe, sizeof<ioring_cqe>); !result)
+    std::panic("bad_cqe_write");
+
+  std::atomic_store(&header.cq_tail, next);
+
+  this.waiters.notify_all();
+
+  return ok;
+}
+
+pub fn submit(vfs::node_ptr &ring, u32 max_submit) -> u32
+{
+  var mut &this = cast<io_ring mut &>(*ring);
+
+  var submitted = 0;
+  var outstanding = false;
+
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    var header = cast<ioring_header mut *>(this.region.host[0].addr.ptr);
+
+    var head = header.sq_head;
+
+    while (head != std::volatile_load(&header.sq_tail))
+    {
+      std::atomic_thread_fence(std::memory_order::acquire);
+
+      if (submitted == max_submit)
+        break;
+
+      if (this.pending.len > 16)
+        break;
+
+      if (this.pending.back.entries.len > 8)
+        break;
+
+      if (this.pending.back.status != result::should_block && this.pending.back.entries.len != 0)
+        break;
+
+      var index = cast<usize>(head) & this.sq_mask;
+
+      var sqe = ioring_sqe(void);
+      if (var result = vm::memcpy(&sqe, this.region, this.sq_base + index * sizeof<ioring_sqe>, sizeof<ioring_sqe>); !result)
+        std::panic("bad_sqe_read");
+
+      if (execute(&mut this, &mut this.pending.back, sqe) == result::should_block)
+      {
+        enqueue(&mut this, sqe);
+      }
+
+      head = std::add_with_carry(head, 1).0;
+
+      submitted += 1;
+    }
+
+    std::atomic_store(&header.sq_head, head);
+
+    outstanding = (this.pending.front.entries.len != 0);
+  }
+
+  if (outstanding)
+    workman.wake_from_stall();
+
+  return submitted;
+}
+
+pub fn wait(vfs::node_ptr &ring, u32 min_complete) -> u32
+{
+  var mut &this = cast<io_ring mut &>(*ring);
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  if (this.pending.front.status != result::should_block && this.pending.front.entries.len != 0)
+    workman.wake_from_stall();
+
+  while (true)
+  {
+    var header = cast<ioring_header mut *>(this.region.host[0].addr.ptr);
+
+    var completed = std::sub_with_borrow(header.cq_tail, header.cq_head).0;
+
+    if (completed >= min_complete)
+      return completed;
+
+    this.waiters.wait(&mut this.lock);
+  }
+}
+
+pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+{
+  return ok;
+}
+
+pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  var mut &this = cast<io_ring mut &>(*node);
+
+  stat.size = cast(this.region.length);
+
+  return ok;
+}
+
+pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn mmap(vfs::node_ptr &node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+{
+  var mut &this = cast<io_ring mut &>(*node);
+
+  if (offset != 0)
+    return invalid_argument;
+
+  if (length != this.region.length)
+    return invalid_argument;
+
+  var inset = this.region.host[0].addr & PAGE_MASK;
+
+  if (var result = vm::create_physical_region(vm::virtrange(addr, inset + length), this.region.host, prot, use); !result)
+    return cast(result);
+
+  addr += inset;
+
+  return ok;
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var ring = cast<io_ring mut *>(node);
+
+  vm::unlock(ring.region.host);
+  ring.region.host.clear();
+  ring.region.length = 0;
+  ring.next = null;
+
+  io_ring::allocator.free(ring);
+}

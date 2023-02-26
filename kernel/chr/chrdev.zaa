@@ -1,0 +1,141 @@
+//
+// chr dev
+//
+
+import std.atomic;
+import chr.result;
+import io;
+import vm;
+import vfs : fd;
+import support.rc : Rc;
+
+pub struct chrdev
+{
+  pub fn create<T>(var && ...args) -> shared_ptr<T>
+  {
+    var dev = std::allocator::new<T>(&&args...);
+
+    dev.destroy = fn(chrdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
+
+    return shared_ptr(dev);
+  }
+
+  pub chrdev(device_operations &ops)
+    : ops(&ops)
+  {
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub ~chrdev() = default;
+
+  i32 refcnt;
+  device_operations &ops;
+  void fn(chrdev mut *) *destroy;
+}
+
+pub enum query
+{
+  device_name,
+}
+
+pub vtable device_operations
+{
+  pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result;
+
+  pub fn open(chr::chrdev mut &dev, fd mut &fd, u64 flags, u32 mode) -> chr::result;
+
+  pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result;
+
+  pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result;
+
+  pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result;
+  pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result;
+
+  pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result;
+}
+
+pub struct chrdev_ptr : pub Rc<chrdev>
+{
+  pub fn query(this &, chr::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(*this, query, result);
+
+    return result;
+  }
+
+  pub fn open(this mut &, fd mut &fd, u64 flags, u32 mode) -> chr::result
+  {
+    return this.ops.open(*this, &mut fd, flags, mode);
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  {
+    return this.ops.ioctl(*this, op, buffer);
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  {
+    return this.ops.poll(*this, &mut readable, &mut writeable);
+  }
+
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return this.ops.read(*this, buffer, offset, length);
+  }
+
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return this.ops.write(*this, buffer, offset, length);
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  {
+    return this.ops.mmap(*this, range, offset, prot, use);
+  }
+
+  chrdev_ptr(chrdev mut *inner)
+    : super(inner)
+  {
+  }
+
+  pub chrdev_ptr() = default;
+  pub chrdev_ptr(chrdev_ptr &&other) = default;
+  pub fn =(chrdev_ptr mut &lhs, chrdev_ptr &&rhs) -> chrdev_ptr mut & = default;
+  pub ~chrdev_ptr() = default;
+}
+
+pub struct shared_ptr<T> : pub chrdev_ptr
+{
+  pub fn *(this &&)
+  {
+    return &cast<T&&>(*this.super);
+  }
+
+  shared_ptr(T mut *inner)
+    : super(inner)
+  {
+  }
+
+  pub shared_ptr() = default;
+  pub shared_ptr(shared_ptr &&other) = default;
+  pub fn =(shared_ptr mut &lhs, shared_ptr &&rhs) -> shared_ptr mut & = default;
+  pub ~shared_ptr() = default;
+}
+
+fn destroy(chrdev mut *dev) -> void
+{
+  if (dev.destroy)
+    dev.destroy(dev);
+}

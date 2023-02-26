@@ -1,0 +1,187 @@
+//
+// elf
+//
+
+using elf64_addr = u64;
+using elf64_off = u64;
+using elf64_half = u16;
+using elf64_word = u32;
+using elf64_sword = i32;
+using elf64_xword = u64;
+using elf64_sxword = i64;
+
+using elf64_versym = elf64_half;
+
+/** elf header **/
+
+pub enum elf64_etype : elf64_half
+{
+  NONE = 0,
+  REL = 1,
+  EXEC = 2,
+  DYN = 3,
+  CORE = 4,
+}
+
+pub struct elf64_ehdr
+{
+  pub u8[16] e_ident;
+  pub elf64_etype e_type;
+  pub elf64_half e_machine;
+  pub elf64_word e_version;
+  pub elf64_addr e_entry;
+  pub elf64_off e_phoff;
+  pub elf64_off e_shoff;
+  pub elf64_word e_flags;
+  pub elf64_half e_ehsize;
+  pub elf64_half e_phentsize;
+  pub elf64_half e_phnum;
+  pub elf64_half e_shentsize;
+  pub elf64_half e_shnum;
+  pub elf64_half e_shstrndx;
+}
+
+/** section header **/
+
+pub enum elf64_stype : elf64_word
+{
+  NULL = 0,
+  PROGBITS = 1,
+  SYMTAB = 2,
+  STRTAB = 3,
+  RELA = 4,
+  HASH = 5,
+  DYNAMIC = 6,
+  NOTE = 7,
+  NOBITS = 8,
+  REL = 9,
+  SHLIB = 10,
+  DYNSYM = 11,
+  INIT_ARRAY = 12,
+  FINI_ARRAY = 13,
+  GNU_HASH = 0x6ffffff6,
+}
+
+pub enum sflags
+{
+  pub const WRITE = 0x1;
+  pub const ALLOC = 0x2;
+  pub const EXECINSTR = 0x4;
+  pub const MERGE = 0x10;
+  pub const STRINGS = 0x20;
+  pub const TLS = 0x400;
+}
+
+pub struct elf64_shdr
+{
+  pub elf64_word sh_name;
+  pub elf64_stype sh_type;
+  pub elf64_xword sh_flags;
+  pub elf64_addr sh_addr;
+  pub elf64_off sh_offset;
+  pub elf64_xword sh_size;
+  pub elf64_word sh_link;
+  pub elf64_word sh_info;
+  pub elf64_xword sh_addralign;
+  pub elf64_xword sh_entsize;
+}
+
+/** program header **/
+
+pub enum elf64_ptype : elf64_word
+{
+  NULL = 0,
+  LOAD = 1,
+  DYNAMIC = 2,
+  INTERP = 3,
+  NOTE = 4,
+  SHLIB = 5,
+  PHDR = 6,
+  TLS = 7,
+  GNU_PROPERTY = 0x6474e553,
+  GNU_EH_FRAME = 0x6474e550,
+  GNU_STACK = 0x6474e551,
+  GNU_RELRO = 0x6474e552,
+}
+
+pub enum pflags
+{
+  pub const X = 0x1;
+  pub const W = 0x2;
+  pub const R = 0x4;
+}
+
+pub struct elf64_phdr
+{
+  pub elf64_ptype p_type;
+  pub elf64_word p_flags;
+  pub elf64_off p_offset;
+  pub elf64_addr p_vaddr;
+  pub elf64_addr p_paddr;
+  pub elf64_xword p_filesz;
+  pub elf64_xword p_memsz;
+  pub elf64_xword p_align;
+}
+
+/* dynamic entry */
+
+pub enum elf64_dyntag : elf64_sxword
+{
+  NULL = 0,
+  NEEDED = 1,
+  PLTRELSZ = 2,
+  PLTGOT = 3,
+  HASH = 4,
+  STRTAB = 5,
+  SYMTAB = 6,
+  RELA = 7,
+  RELASZ = 8,
+  RELAENT = 9,
+  STRSZ = 10,
+  SYMENT = 11,
+  INIT = 12,
+  FINI = 13,
+  SONAME = 14,
+  RPATH = 15,
+  SYMBOLIC = 16,
+  REL = 17,
+  RELSZ = 18,
+  RELENT = 19,
+  PLTREL = 20,
+  DEBUG = 21,
+  TEXTREL = 22,
+  JMPREL = 23,
+  GNU_HASH = 0x6ffffef5,
+}
+
+pub struct elf64_dyn
+{
+  pub elf64_dyntag d_tag;
+  pub elf64_xword d_val;
+}
+
+pub enum elf64_reltype
+{
+  pub const R_X86_64_NONE = 0;
+  pub const R_X86_64_JUMP_SLOT = 7;
+  pub const R_X86_64_RELATIVE = 8;
+}
+
+pub struct elf64_rela
+{
+  pub elf64_addr r_offset;
+  pub elf64_xword r_info;
+  pub elf64_sxword r_addend;
+}
+
+/* symbol entry */
+
+pub struct elf64_sym
+{
+  pub elf64_word st_name;
+  pub u8 st_info;
+  pub u8 st_other;
+  pub elf64_half st_shndx;
+  pub elf64_addr st_value;
+  pub elf64_xword st_size;
+}

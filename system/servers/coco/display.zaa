@@ -1,0 +1,179 @@
+//
+// display
+//
+
+import std.stdio;
+import os.zaos.mman;
+import os.zaos.fcntl;
+
+enum fbio
+{
+  const screeninfo = 0x80034600;
+}
+
+struct screeninfo
+{
+  u64 caps;
+  usize width;
+  usize height;
+  usize depth;
+  usize pitch;
+
+  screeninfo() = default;
+  screeninfo(screeninfo&) = default;
+  ~screeninfo() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct display
+{
+  screeninfo si;
+  std::mutable_span<u8> fb;
+
+  pub fn width(this&) { return cast<int>(this.si.width); }
+  pub fn height(this&) { return cast<int>(this.si.height); }
+
+  display() = default;
+  pub ~display() = default;
+}
+
+pub struct bitmap
+{
+  pub int width;
+  pub int height;
+  pub int format;
+  pub usize stride;
+  pub u8 *bits;
+
+  pub bitmap() = default;
+  pub bitmap(bitmap&) = default;
+  pub fn =(bitmap mut &, bitmap &) -> bitmap mut & = default;
+  pub ~bitmap() = default;
+}
+
+pub fn create() -> display
+{
+  return display();
+}
+
+pub fn initialise(display mut &display) -> i32
+{
+  using os;
+
+  var fd = open(&mut thread_ring, 4, os::string("/dev/fb0"), O_RDWR, 0);
+
+  if (fd < 0)
+    return fd;
+
+  if (var result = ioctl(&mut thread_ring, fd, fbio::screeninfo, &display.si, sizeof<screeninfo>); result < 0)
+    return result;
+
+  var mmvec = os::mmvec();
+  mmvec.offset = 0;
+  mmvec.length = display.si.pitch*display.si.height;
+  mmvec.flags = os::mmap::shared;
+  mmvec.prot = os::prot::readwrite;
+
+  var addr = null<void mut *>();
+  if (var result = mmap(fd, &mmvec, 1, &addr, 0); result < 0)
+    return result;
+
+  display.fb = std::mutable_span(cast<u8 mut *>(addr), mmvec.length);
+
+  std::memset(display.fb.data, 0, display.fb.len);
+
+  close(&mut thread_ring, fd);
+
+  return 0;
+}
+
+pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> i32
+{
+  if (x1 <= x0 || y1 <= y0)
+    return -22;
+
+  var x0 = cast<usize>(std::max(x0, 0));
+  var y0 = cast<usize>(std::max(y0, 0));
+
+  if (x0 >= display.si.width || x1 < 0)
+    return 0;
+
+  if (y0 >= display.si.height || y1 < 0)
+    return 0;
+
+  var x1 = std::min(cast<usize>(x1), display.si.width);
+  var y1 = std::min(cast<usize>(y1), display.si.height);
+
+  var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
+
+  for(var j = y0; j < y1; ++j)
+  {
+    var dst = dstrow + x0;
+
+    for(var i = x0; i < x1; ++i)
+      *dst++ = color;
+
+    dstrow += display.si.pitch/4;
+  }
+
+  return 0;
+}
+
+pub fn blit(display mut &display, int x, int y, bitmap &bitmap, u32 fgcolor, u32 bgcolor) -> i32
+{
+  if (!bitmap.bits)
+    return -22;
+
+  if (bitmap.width <= 0 || bitmap.height <= 0)
+    return -22;
+
+  var x0 = cast<usize>(std::max(x, 0));
+  var y0 = cast<usize>(std::max(y, 0));
+
+  if (x0 >= display.si.width || x + bitmap.width < 0)
+    return 0;
+
+  if (y0 >= display.si.height || y + bitmap.height < 0)
+    return 0;
+
+  var i0 = cast<usize>(std::max(x, 0) - x);
+  var j0 = cast<usize>(std::max(y, 0) - y);
+
+  var x1 = std::min(cast<usize>(x + bitmap.width), display.si.width);
+  var y1 = std::min(cast<usize>(y + bitmap.height), display.si.height);
+
+  var srcrow = bitmap.bits + j0 * bitmap.stride;
+  var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
+
+  for(var j = y0; j < y1; ++j)
+  {
+    var src = srcrow + (i0 >> 3);
+    var dst = dstrow + x0;
+
+    for(var i = x0; i < x1; )
+    {
+      var value = *src++ << ((i - x0 + i0) & 7);
+
+      for(var k = (i - x0 + i0) & 7; k <= (i - x0 + i0 + 8) & 7; ++k)
+      {
+        *dst++ = cast(value & 0x80 != 0) * fgcolor + cast(value & 0x80 == 0) * bgcolor;
+
+        if (++i == x1)
+          break;
+
+        value <<= 1;
+      }
+    }
+
+    srcrow += bitmap.stride;
+    dstrow += display.si.pitch/4;
+  }
+
+  return 0;
+}
+
+pub fn destroy(display mut &display)
+{
+  os::munmap(video.fb.data, video.fb.len);
+}

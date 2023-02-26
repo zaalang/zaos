@@ -1,0 +1,145 @@
+//
+// vm region
+//
+
+import std.stdio;
+import vm.page : virtaddr, virtrange, protection;
+import vfs.node;
+import cpu;
+import thread as _ : thread;
+
+pub enum usage
+{
+  shared = 0x1,
+  private = 0x2,
+  foreign = 0x4, // non vm memory
+
+  pub const fn ~(usage lhs) -> usage { return cast<usage>(~cast<isize>(lhs)); }
+  pub const fn &(usage lhs, usage rhs) -> usage { return cast<usage>(cast<isize>(lhs) & cast<isize>(rhs)); }
+  pub const fn |(usage lhs, usage rhs) -> usage { return cast<usage>(cast<isize>(lhs) | cast<isize>(rhs)); }
+}
+
+pub struct region
+{
+  pub virtrange range;
+  pub protection protection;
+  pub usage usage;
+
+  pub u64 offset;
+  pub vfs::node_ptr backing;
+
+  pub fn is_private(this&) -> bool { return this.usage & usage::private == usage::private; }
+  pub fn is_foreign(this&) -> bool { return this.usage & usage::foreign == usage::foreign; }
+
+  pub fn is_readable(this&) -> bool { return this.protection != protection::none; }
+  pub fn is_writeable(this&) -> bool { return this.protection == protection::readwrite; }
+  pub fn is_executable(this&) -> bool { return this.protection == protection::executable; }
+
+  pub fn contains(this&, virtaddr address) -> bool
+  {
+    return this.range.contains(address);
+  }
+
+  pub fn contains(this&, virtrange range) -> bool
+  {
+    return this.range.contains(range);
+  }
+
+  u32 lock;
+  thread mut *holder;
+
+  pub region mut *parent;
+  pub region mut *left;
+  pub region mut *right;
+  pub int height;
+
+  u8[24] reserved;
+
+  pub region() = default;
+  pub ~region() = default;
+}
+
+pub fn try_lock(region mut &this) -> bool
+{
+  if (std::atomic_load(&this.holder) != cpu::current_thread)
+  {
+    if (!std::atomic_cmpxchg_strong(&this.holder, null, cpu::current_thread))
+      return false;
+  }
+
+  this.lock += 1;
+
+  return true;
+}
+
+pub fn unlock(region mut &this) -> void
+{
+  this.lock -= 1;
+
+  if (this.lock == 0)
+    std::atomic_store(&this.holder, null, std::memory_order::release);
+}
+
+pub fn next(region &&region)
+{
+  var x = &region;
+
+  if (x.right)
+  {
+    x = x.right;
+
+    while (x.left)
+      x = x.left;
+  }
+  else
+  {
+    while (x.parent && x == x.parent.right)
+      x = x.parent;
+
+    x = x.parent;
+  }
+
+  return x;
+}
+
+pub fn prev(region &&region)
+{
+  var x = &region;
+
+  if (x.left)
+  {
+    x = x.left;
+
+    while (x.right)
+      x = x.right;
+  }
+  else
+  {
+    while (x.parent && x == x.parent.left)
+      x = x.parent;
+
+    x = x.parent;
+  }
+
+  return x;
+}
+
+pub fn leftmost(region &&region)
+{
+  var x = &region;
+
+  while (x.left)
+    x = x.left;
+
+  return x;
+}
+
+pub fn rightmost(region &&region)
+{
+  var x = &region;
+
+  while (x.right)
+    x = x.right;
+
+  return x;
+}

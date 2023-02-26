@@ -1,0 +1,41 @@
+//
+// check.cpp
+//
+
+extern fn __div0_chk_fail() -> void
+{
+  crash("divide by zero\n");
+}
+
+extern fn __carry_chk_fail() -> void
+{
+  crash("overflow\n");
+}
+
+extern fn __null_chk_fail() -> void
+{
+  crash("null reference\n");
+}
+
+extern fn __stack_chk_fail() -> void
+{
+  crash("stack smashed\n");
+}
+
+extern fn __stack_chk_fail_local() -> void
+{
+  crash("stack smashed\n");
+}
+
+fn crash(typeof("") msg) -> void
+{
+//  ciovec io;
+//  io.data = (uint8_t const *)msg;
+//  io.len = len;
+//
+//  fd_writev(STDERR, &io, 1);
+//
+//  exit(1);
+
+  __asm("ud2", "");
+}

@@ -1,0 +1,11 @@
+//
+// system syscalls
+//
+
+import std.stdlib;
+import vm.page : PAGE_SIZE;
+
+extern fn sys_get_pagesize() -> usize
+{
+  return PAGE_SIZE;
+}

@@ -1,0 +1,190 @@
+//
+// pty ptm
+//
+
+import std.stdio;
+import dev;
+import chr.chrdev;
+import io;
+import vm;
+import vfs;
+import pty.ptty;
+import support.rc : Rc;
+
+enum tio
+{
+  const getptn = 0x80035430;
+  const grantpt = 0x80035431;
+  const setwinsize = 0x80035414;
+}
+
+struct grantpt
+{
+  u32 uid;
+  u32 gid;
+  u32 mode;
+
+  grantpt() = default;
+  ~grantpt() = default;
+}
+
+struct winsize
+{
+  u16 ws_row;
+  u16 ws_col;
+  u16 ws_xpixel;
+  u16 ws_ypixel;
+
+  winsize() = default;
+  ~winsize() = default;
+}
+
+pub struct ptm : pub vfs::node
+{
+  chr::shared_ptr<pty::ptty> ptty;
+
+  pub fn create(chr::shared_ptr<pty::ptty> ptty) -> vfs::node_ptr
+  {
+    var ptm = std::allocator::new<ptm>();
+
+    ptm.ptty = &move ptty;
+
+    return vfs::node::new(ptm, vfs::node::type::device, &vfs::node_device_operations());
+  }
+
+  pub ptm() = default;
+  pub ~ptm() = default;
+}
+
+pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+{
+  return ok;
+}
+
+pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+{
+  var mut &this = cast<ptm mut &>(*node);
+
+  readable = this.ptty.getsable.cb;
+  writeable = this.ptty.putsable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<ptm mut &>(*node);
+
+  var count = 0;
+  var result = chr::result::ok;
+
+  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+    if (!result)
+      return;
+
+    if (result = this.ptty.gets(cast<u8 mut *>(region.addr.ptr), region.size); result)
+    {
+      count += cast(result);
+
+      if (cast(result) != region.size)
+        result = chr::result::would_block;
+    }
+  });
+
+  if (count == 0)
+    return result;
+
+  return cast(count);
+}
+
+pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<ptm mut &>(*node);
+
+  var count = 0;
+  var result = chr::result::ok;
+
+  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+    if (!result)
+      return;
+
+    if (result = this.ptty.puts(cast<u8*>(region.addr.ptr), region.size); result)
+    {
+      count += cast(result);
+
+      if (cast(result) != region.size)
+        result = chr::result::would_block;
+    }
+  });
+
+  if (count == 0)
+    return result;
+
+  return cast(count);
+}
+
+pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result
+{
+  var mut &this = cast<ptm mut &>(*node);
+
+  switch (op)
+  {
+    case tio::getptn:
+      return chr::ioctl(this.ptty, op, buffer);
+
+    case tio::grantpt:
+      if (buffer.length != sizeof<grantpt>)
+        return invalid_argument;
+
+      var grantpt = grantpt();
+
+      if (var result = vm::memcpy(&grantpt, buffer, 0, sizeof<grantpt>); !result)
+        return cast(result);
+
+      var devname = std::format("/dev/pts/{}", this.ptty.getptn());
+
+      //if (var result = vfs::chmod(vfs::root, devname, grantpt.uid, grantpt.gid, grantpt.mode); !result)
+      //  return result;
+
+      return ok;
+
+    case tio::setwinsize:
+      if (buffer.length != sizeof<winsize>)
+        return invalid_argument;
+
+      var winsize = winsize();
+
+      if (var result = vm::memcpy(&winsize, buffer, 0, sizeof<winsize>); !result)
+        return cast(result);
+
+      this.ptty.setwinsize(winsize.ws_row, winsize.ws_col, winsize.ws_xpixel, winsize.ws_ypixel);
+
+      return ok;
+  }
+
+  return not_supported;
+}
+
+pub fn mmap(vfs::node_ptr &node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+{
+  return not_supported;
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var ptm = cast<ptm mut *>(node);
+
+  dev::remove(ptm.ptty);
+
+  std::allocator::delete(ptm);
+}

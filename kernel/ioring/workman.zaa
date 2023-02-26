@@ -1,0 +1,252 @@
+//
+// ioring worker
+//
+
+import std.stdlib;
+import std.algorithm;
+import ioring : ioring_header, ioring_sqe, ioring_cqe, io_ring, result;
+import cpu;
+import scheduler;
+import platform;
+import thread as _ : thread;
+import process as _ : process;
+
+struct ring_queue
+{
+  std::spin_lock lock;
+
+  io_ring mut *head;
+  io_ring mut * mut *last;
+
+  fn take(this mut &) -> (io_ring mut *, io_ring mut * mut *)
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    var result = std::tuple(this.head, this.last);
+
+    this.head = null;
+    this.last = &this.head;
+
+    return result;
+  }
+
+  fn append(this mut &, io_ring mut *ring) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    *this.last = ring;
+    this.last = &ring.next;
+  }
+
+  fn append(this mut &, (io_ring mut *, io_ring mut * mut *) mut &entries) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    *this.last = entries.0;
+    this.last = entries.1;
+  }
+
+  ring_queue() = default;
+  ring_queue(#ring_queue&) = default;
+  ~ring_queue() = default;
+}
+
+pub fn dump(ring_queue &this) -> void
+{
+  std::print("[ring queue]");
+
+  for(var rq = this.head; rq; rq = rq.next)
+  {
+    std::print("  ", rq.type, " ", rq.position, " ", rq.length);
+  }
+}
+
+struct worker
+{
+  std::spin_lock lock;
+
+  thread mut *kworkd;
+
+  worker() = default;
+  worker(#worker&) = default;
+  ~worker() = default;
+}
+
+struct work_manager
+{
+  ring_queue rings;
+
+  worker[1] workers;
+
+  work_manager() = default;
+  work_manager(#work_manager&) = default;
+  ~work_manager() = default;
+}
+
+pub fn workman() -> work_manager mut &
+{
+  static instance = #work_manager();
+
+  return &instance;
+}
+
+pub fn enqueue(work_manager mut &workman, io_ring mut *ring) -> void
+{
+  workman.rings.append(ring);
+}
+
+pub fn wake_from_stall(work_manager mut &workman) -> void
+{
+  var mut &worker = workman.workers[cast<usize>(cpu::current) % workman.workers.len];
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut worker.lock);
+
+  scheduler::unblock(worker.kworkd);
+}
+
+pub fn trigger(work_manager mut &workman) -> void
+{
+  std::assert(platform::interrupts_disabled);
+
+  for(var mut &worker : workman.workers)
+  {
+    var guard = std::lock_guard(&mut worker.lock);
+
+    scheduler::unblock(worker.kworkd);
+  }
+}
+
+fn kworkd(worker mut *worker) -> void
+{
+  platform::disable_interrupts();
+
+  worker.lock.lock();
+
+  while (true)
+  {
+    scheduler::prepare_to_block();
+
+    worker.lock.unlock();
+
+    platform::enable_interrupts();
+
+    var now = cpu::system_time;
+
+    var entries = workman.rings.take();
+
+    for(var entry = &entries.0; *entry; )
+    {
+      var ring = *entry;
+
+      if (ring.lock.try_lock)
+      {
+        for(var mut &ctx : ring.pending)
+        {
+          var j = ctx.entries.begin;
+
+          if (j == ctx.entries.end)
+            continue;
+
+          if (ctx.status != result::should_block)
+          {
+            if (var result = ring.retire(*j, ctx.status); !result)
+              continue;
+
+            ++j;
+          }
+
+          if (ctx.status == result::should_block)
+          {
+            if (ctx.wake_time != 0 && ctx.wake_time <= now)
+              ctx.blockers.clear();
+
+            if (!ctx.blockers.empty && std::all_of(ctx.blockers, fn(var &k) { return !k.ready; }))
+              continue;
+
+            ctx.wake_time = 0;
+            ctx.blockers.clear();
+
+            ctx.status = result::ok;
+          }
+
+          while (j != ctx.entries.end)
+          {
+            if (ring.execute(&mut ctx, *j) == result::should_block)
+              break;
+
+            ++j;
+          }
+
+          ctx.entries.erase(ctx.entries.begin, j);
+        }
+
+        ring.pending.erase(std::remove_if(ring.pending.begin, ring.pending.end - 1, fn (var &k) {
+          return k.entries.empty;
+        }), ring.pending.end - 1);
+
+        if (ring.pending.len == 1 && ring.pending.back.entries.empty)
+        {
+          *entry = entry.next;
+
+          if (!*entry)
+            entries.1 = entry;
+        }
+        else
+        {
+          entry = &entry.next;
+        }
+
+        ring.lock.unlock();
+      }
+      else
+      {
+        entry = &entry.next;
+      }
+    }
+
+    var timeout = ~0;
+
+    if (entries.0)
+    {
+      for(var entry = &entries.0; *entry; entry = &entry.next)
+      {
+        var ring = *entry;
+
+        if (ring.lock.try_lock)
+        {
+          for(var mut &ctx : ring.pending)
+          {
+            if (ctx.wake_time != 0)
+              timeout = std::min(timeout, ctx.wake_time);
+          }
+
+          ring.lock.unlock();
+        }
+        else
+        {
+          timeout = std::min(timeout, cpu::system_time + 1_000);
+        }
+      }
+
+      workman.rings.append(&mut entries);
+    }
+
+    platform::disable_interrupts();
+
+    worker.lock.lock();
+
+    scheduler::block_until(&mut worker.lock, timeout);
+  }
+}
+
+pub fn initialise() -> void
+{
+  workman.rings.last = &workman.rings.head;
+
+  for(var mut &worker : workman.workers)
+  {
+    worker.kworkd = thread::create(process::current, &cast<void fn(worker mut *)>(kworkd), &worker);
+  }
+
+  scheduler::enqueue(workman.workers[0].kworkd);
+}

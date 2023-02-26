@@ -1,0 +1,53 @@
+//
+// start
+//
+
+import std.stdio;
+import os.zaos.sched;
+import terminal;
+import chrono;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var user = std::format("USER={}", env.username);
+  var cwd = std::format("CWD={}", env.working_directory);
+
+  var argv = std::vector<os::arg>();
+  var envp = std::vector<os::arg>();
+  var attrs = std::vector<os::attr>();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    argv.push_back(os::arg(arg.data, arg.len));
+  }
+
+  envp.push_back(os::arg(user.data, user.len));
+  envp.push_back(os::arg(cwd.data, cwd.len));
+
+  attrs.push_back(os::attr(attr::stdin, terminal.pty.slave));
+  attrs.push_back(os::attr(attr::stdout, terminal.pty.slave));
+  attrs.push_back(os::attr(attr::stderr, terminal.pty.slave));
+  attrs.push_back(os::attr(attr::stdroot, STDROOT_FILENO));
+  attrs.push_back(os::attr(attr::stdcwd, STDCWD_FILENO));
+
+  var pid = process_create(argv.data, argv.len, envp.data, envp.len, attrs.data, attrs.len, 0);
+
+  if (pid < 0)
+    return pid;
+
+  while (true)
+  {
+    terminal.pump(chrono::milliseconds(125));
+
+    var rval = 0;
+    if (wait(pid, &rval, WNOHANG) > 0)
+      break;
+  }
+
+  return 0;
+}

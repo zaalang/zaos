@@ -1,0 +1,554 @@
+//
+// process
+//
+
+import std.stdio;
+import std.string : String;
+import std.range : Range;
+import std.flat_hash_map;
+import vm : PAGE_SIZE, PAGE_MASK;
+import vm.space;
+import vfs.stat;
+import vfs.fd;
+import blk;
+import heap;
+import scheduler;
+import ioring;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import slab : slab_allocator;
+import support.rc : Rc;
+import elf.image;
+import elf.auxvec;
+import platform;
+import vdso;
+
+pub struct process
+{
+  pub using id = i32;
+  pub using fd = i32;
+
+  pub enum state : int
+  {
+    invalid,
+    starting,
+    running,
+    zombie,
+    dead,
+  }
+
+  pub id id;
+  pub state state;
+
+  pub mutex lock;
+  pub std::string name;
+  pub Rc<process> parent;
+  pub process mut *children;
+  pub process mut *sibling;
+
+  pub vm::address_space userspace;
+  pub platform::page_table pagetable;
+
+  thread mut *threads;
+  pub usize threadcount;
+
+  std::vector<vfs::fd> fds;
+
+  vm::virtaddr sp;
+  std::vector<vm::virtrange> argv;
+  std::vector<vm::virtrange> envp;
+  std::vector<elf::auxval> auxv;
+  vm::virtrange ioring;
+
+  vm::virtaddr heaptop;
+
+  u8[40] reserved;
+
+  pub fn current() -> process mut *
+  {
+    return thread::current.process;
+  }
+
+  pub fn name(this&) -> std::string &
+  {
+    return &this.name;
+  }
+
+  pub fn envp(this&) -> std::vector<vm::virtrange> &
+  {
+    return &this.envp;
+  }
+
+  pub fn argv(this&) -> std::vector<vm::virtrange> &
+  {
+    return &this.argv;
+  }
+
+  pub fn auxv(this&) -> std::vector<elf::auxval> &
+  {
+    return &this.auxv;
+  }
+
+  pub fn find(process::id id) -> Rc<process>
+  {
+    var guard = std::lock_guard(&mut procman.lock);
+
+    var j = procman.processes.find(id);
+
+    if (j == procman.processes.end)
+      return null;
+
+    return procman.processes[j].value;
+  }
+
+  pub fn enumerate(var &&callback) -> void
+  {
+    var guard = std::lock_guard(&mut procman.lock);
+
+    for(var mut &(id, process) : procman.processes)
+    {
+      callback(process);
+    }
+  }
+
+  fn allocator()
+  {
+    static allocator = #slab_allocator<process>();
+
+    return &allocator;
+  }
+
+  fn create(String &&name) -> process mut *
+  {
+    var process = allocator.allocate();
+
+    process.name = &&name;
+    process.fds.resize(16);
+
+    return process;
+  }
+
+  pub fn add_thread(this mut &, thread mut *thread) -> void
+  {
+    this.lock.lock();
+
+    thread.sibling = this.threads;
+    thread.process = &this;
+    this.threads = thread;
+
+    this.lock.unlock();
+  }
+
+  pub fn remove_thread(this mut &, thread mut *thread) -> void
+  {
+    this.lock.lock();
+
+    var curr = &this.threads;
+
+    while (*curr != thread)
+      curr = &curr.sibling;
+
+    *curr = thread.sibling;
+
+    this.lock.unlock();
+
+    thread.sibling = null;
+    thread.process = null;
+  }
+
+  pub fn enumerate_threads(this mut &, var &&callback) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for(var thread = this.threads; thread; thread = thread.sibling)
+    {
+      callback(thread);
+    }
+  }
+
+  pub fn fd(this mut &, fd fd) -> vfs::fd
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    if (fd < 0 || cast(fd) >= this.fds.len)
+      return vfs::fd();
+
+    return this.fds[cast<usize>(fd)];
+  }
+
+  pub fn new_fd(this mut &, vfs::fd fd) -> fd
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    var slot = this.fds.len;
+
+    for(var i = 8; i < this.fds.len; ++i)
+    {
+      if (!this.fds[i])
+      {
+        slot = i;
+        break;
+      }
+    }
+
+    if (slot == this.fds.len)
+      this.fds.push_back();
+
+    this.fds[slot] = &move fd;
+
+    return cast<i32>(slot);
+  }
+
+  pub fn new_fd(this mut &, fd fd, vfs::fd newfd) -> fd
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    this.fds[cast<usize>(fd)] = &move newfd;
+
+    return fd;
+  }
+
+  pub fn free_fd(this mut &, fd fd) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    this.fds[cast<usize>(fd)] = vfs::fd();
+  }
+
+  pub fn sbrk(this mut &, usize size) -> vm::virtaddr
+  {
+    var base = this.heaptop;
+    this.heaptop.super = std::align_up(this.heaptop.super + size, 65536);
+    return base;
+  }
+
+  pub fn exit(i32 rval) -> void
+  {
+    var process = current();
+
+    process.state = state::zombie;
+
+    thread::exit(rval);
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub process() = default;
+  pub ~process() = default;
+}
+
+struct process_manager
+{
+  mutex lock;
+
+  process mut *colonel;
+
+  std::flat_hash_map<process::id, process mut *> processes;
+
+  fn register(process_manager mut &procman, process mut *process) -> void
+  {
+    var guard = std::lock_guard(&mut procman.lock);
+
+    procman.processes.insert(process.id, process);
+  }
+
+  fn unregister(process_manager mut &procman, process mut *process) -> void
+  {
+    var guard = std::lock_guard(&mut procman.lock);
+
+    procman.processes.erase(process.id);
+  }
+
+  process_manager() = default;
+  process_manager(#process_manager&) = default;
+  ~process_manager() = default;
+}
+
+fn procman()
+{
+  static instance = #process_manager();
+
+  return &instance;
+}
+
+pub fn colonel()
+{
+  return &procman.colonel;
+}
+
+pub fn create_kernel_process(void fn(void mut *) *entry, void mut *parameter) -> process mut *
+{
+  std::print("create kernel process");
+
+  var process = process::create("kernel");
+  var kernelmain = create_zero_task(process, entry, parameter);
+
+  process.threads = kernelmain;
+  process.state = process::state::running;
+  process.pagetable = platform::pagetable;
+  procman.processes.insert(process.id, process);
+
+  std::atomic_store(&colonel, process);
+
+  scheduler::enqueue(kernelmain);
+
+  return process;
+}
+
+fn process_main(void *args) -> void
+{
+  thread::exit(execute(process::current, thread::current, args));
+}
+
+pub fn create_process(process mut *parent, String &&name) -> process mut *
+{
+  var process = process::create(&&name);
+  var mainthread = thread::create(process, &cast<void fn(void mut *)>(process_main), null);
+
+  process.id = mainthread.id;
+
+  process.pagetable.new(fn() -> platform::physaddr_t {
+    var allocation = vm::allocate_physical_pages(PAGE_SIZE);
+    std::assert(!allocation.empty);
+    return allocation.addr;
+  });
+
+  mainthread.userstack = vm::virtrange(vm::virtaddr(platform::USER_STACK_BASE), platform::USER_STACK_SIZE);
+
+  vm::create_anonymous_region(&mut process.userspace, mainthread.userstack, vm::protection::readwrite, vm::usage::private);
+
+  process.sp = mainthread.userstack.addr + mainthread.userstack.size;
+
+  process.heaptop = vm::virtaddr(0x100000);
+
+  {
+    var guard = std::lock_guard(&mut parent.lock, &mut process.lock);
+
+    process.parent = parent;
+    process.sibling = parent.children;
+    parent.children = process;
+  }
+
+  process.state = process::state::starting;
+
+  procman.register(process);
+
+  return process;
+}
+
+pub fn process_push_cmdline(process mut *process, Range<std::string_view> &cmdline) -> i32
+{
+  for(var &arg : cmdline)
+  {
+    process.sp -= arg.len + 1;
+
+    if (var result = vm::write_process_memory(process, process.sp, arg.data, arg.len); result != vm::result::ok)
+      return cast(result);
+
+    process.argv.push_back(vm::virtrange(process.sp, arg.len));
+  }
+
+  return 0;
+}
+
+pub fn process_push_environ(process mut *process, Range<std::string_view> &environ) -> i32
+{
+  for(var &arg : environ)
+  {
+    process.sp -= arg.len + 1;
+
+    if (var result = vm::write_process_memory(process, process.sp, arg.data, arg.len); result != vm::result::ok)
+      return cast(result);
+
+    process.envp.push_back(vm::virtrange(process.sp, arg.len));
+  }
+
+  return 0;
+}
+
+pub fn process_push_ioring(process mut *process, usize size) -> i32
+{
+  process.sp &= ~63;
+  process.sp -= size;
+  process.ioring = vm::virtrange(process.sp, size);
+
+  var ring = ioring::create_ioring(process);
+
+  if (var result = ioring::setup_ioring(ring, process.ioring); !result)
+    return cast(result);
+
+  process.new_fd(6, vfs::file_descriptor::create(ring));
+
+  return 0;
+}
+
+pub fn process_start(process mut *process, thread::priority priority) -> process::id
+{
+  std::print("[process:", process.id, "] started");
+
+  for(var thread = process.threads; thread; thread = thread.sibling)
+    scheduler::enqueue(thread, priority);
+
+  return process.id;
+}
+
+fn destroy(process mut *process) -> void
+{
+  std::assert(!process.threads);
+  std::assert(!process.children);
+
+  {
+    var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
+
+    var curr = &process.parent.children;
+
+    while (*curr != process)
+      curr = &curr.sibling;
+
+    *curr = process.sibling;
+  }
+
+  process.parent = null;
+  process.sibling = null;
+
+  procman.unregister(process);
+
+  process::allocator.free(process);
+}
+
+fn execute(process mut *process, thread mut *thread, void *args) -> i32
+{
+  // loader
+
+  var loader = vfs::lookup(vfs::root, "/zaos/lib/loader");
+
+  if (!loader)
+    return cast(vfs::result::not_found);
+
+  // TODO: lock the file
+  // TODO: recover leaked mmap in case of errors... or not, a bad loader is unrecoverable
+
+  var stat = vfs::stat();
+  if (var result = vfs::stat(loader, &mut stat, vfs::stats::size); !result)
+    return cast(result);
+
+  if (stat.size < sizeof<elf::elf64_ehdr>)
+    return cast(elf::result::format_error);
+
+  var elf = heap::mmap(loader, 0, cast(stat.size));
+  var image = elf::image(elf.addr.ptr, cast(stat.size));
+
+  if (var result = image.verify_elf_header(); !result)
+    return cast(result);
+
+  if (image.ehdr.e_type != elf::elf64_etype::DYN)
+    return cast(elf::result::format_error);
+
+  var base = process.sbrk(cast(stat.size));
+
+  process.auxv.push_back(elf::auxval(elf::auxval::type::BASE, base));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::PHDR, base + cast(image.ehdr.e_phoff)));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::PHENT, cast(image.ehdr.e_phentsize)));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::PHNUM, cast(image.ehdr.e_phnum)));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::RINGHDR, process.ioring.addr));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::RINGFD, 6));
+  process.auxv.push_back(elf::auxval(elf::auxval::type::ROOTFD, 4));
+
+  for(var &header : image.program_headers)
+  {
+    switch (header.phdr.p_type)
+    {
+      case elf::elf64_ptype::LOAD:
+        var addr = base + cast<uintptr>(header.phdr.p_vaddr & ~PAGE_MASK);
+        var size = cast<usize>(header.phdr.p_vaddr & PAGE_MASK + header.phdr.p_filesz);
+        var offset = cast<u64>(header.phdr.p_offset & ~PAGE_MASK);
+
+        var prot = vm::protection::readonly;
+
+        if (header.phdr.p_flags & elf::pflags::W != 0)
+          prot = vm::protection::readwrite;
+
+        if (header.phdr.p_flags & elf::pflags::X != 0)
+          prot = vm::protection::executable;
+
+        if (header.phdr.p_filesz != header.phdr.p_memsz)
+          return cast(elf::result::format_error); // no bss support
+
+        vm::create_backed_region(vm::virtrange(addr, size), loader, offset, prot, vm::usage::private);
+    }
+  }
+
+  var entry = base + cast<uintptr>(image.ehdr.e_entry);
+
+  heap::munmap(elf);
+
+  process.sp &= ~15;
+  process.sp -= 8;
+
+  // vdso
+
+  var vdso_ehdr = vdso::create_process_mapping(process);
+
+  process.auxv.push_back(elf::auxval(elf::auxval::type::SYSINFO, vdso_ehdr));
+
+  // auxv
+
+  var auxc = process.auxv.len;
+  process.sp -= (process.auxv.len + 1) * sizeof<elf::auxval>;
+  vm::write_process_memory(process.sp, process.auxv.data, auxc * sizeof<elf::auxval>);
+
+  // envp
+
+  var envc = process.envp.len;
+  process.sp -= (process.envp.len + 1) * sizeof<vm::virtrange>;
+  vm::write_process_memory(process.sp, process.envp.data, envc * sizeof<vm::virtrange>);
+
+  // argv
+
+  var argc = process.argv.len;
+  process.sp -= (process.argv.len + 1) * sizeof<vm::virtrange>;
+  vm::write_process_memory(process.sp, process.argv.data, argc * sizeof<vm::virtrange>);
+
+  // argc
+
+  process.sp -= sizeof<usize>;
+  vm::write_process_memory(process.sp, &argc, sizeof<usize>);
+
+  // start
+
+  //vm::dump(process.userspace);
+
+  process.state = process::state::running;
+
+  thread::transition(entry, process.sp);
+}
+
+pub fn teardown(process mut *process) -> void
+{
+  process.fds.clear();
+
+  process.argv.clear();
+  process.envp.clear();
+  process.auxv.clear();
+
+  process.userspace.each(|region| {
+    vm::munmap(process, region.range);
+  });
+
+  process.pagetable.dispose(fn(platform::physaddr_t phys) {
+    vm::release_physical_pages(vm::physrange(phys, PAGE_SIZE));
+  });
+
+  process.state = process::state::dead;
+}

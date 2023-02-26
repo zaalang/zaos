@@ -1,0 +1,338 @@
+//
+// breakout
+//
+
+import std.stdio;
+import termios;
+import chrono;
+
+struct ball
+{
+  float x;
+  float y;
+  float dx;
+  float dy;
+
+  ball() = default;
+  ~ball() = default;
+}
+
+struct paddle
+{
+  float x;
+  float y;
+  float dx;
+  usize width;
+
+  paddle() = default;
+  ~paddle() = default;
+}
+
+struct brick
+{
+  usize x;
+  usize y;
+  usize width;
+  char density;
+
+  brick(usize x, usize y, usize width, char density)
+    : x(x), y(y), width(width), density(density)
+  {
+  }
+
+  brick(brick&) = default;
+  ~brick() = default;
+}
+
+struct board
+{
+  usize width;
+  usize height;
+  std::string tiles;
+
+  ball ball;
+  paddle paddle;
+  std::vector<brick> bricks;
+
+  bool playing = false;
+
+  board() = default;
+  ~board() = default;
+}
+
+fn initialise(board mut &board, int width, int height) -> i32
+{
+  board.width = cast<usize>(width);
+  board.height = cast<usize>(height);
+
+  board.tiles = std::string::with_size(board.width * board.height);
+
+  for(var i = 0, var j = 0; i < board.width; ++i)
+    board.tiles[j*board.width + i] = cast('#');
+
+  for(var i = 0, var j = 0; j < board.height; ++j)
+    board.tiles[j*board.width + i] = cast('#');
+
+  for(var i = board.width - 1, var j = 0; j < board.height; ++j)
+    board.tiles[j*board.width + i] = cast('#');
+
+  for(var i = 0, var j = 0; i < board.width; ++i)
+    board.tiles[j*board.width + i] = cast('#');
+
+  for(var y = 2; y < 24; y += 3)
+  {
+    var w = 11;
+    var n = (y < 12) ? (y - 1) : (24 - y);
+
+    if (board.width < n * w)
+      n = board.width / w;
+
+    var x = (board.width - (n * w)) / 2 + 1;
+
+    for(var i = 0; i < n; ++i)
+    {
+      board.bricks.push_back(brick(x + i * w, y, w - 2, '1' + cast(y % 2)));
+    }
+  }
+
+  for(var &brick : board.bricks)
+  {
+    for(var i = brick.x, var j = brick.y; i < brick.x + brick.width; ++i)
+      board.tiles[j*board.width + i] = cast(brick.density);
+  }
+
+  board.ball.x = cast<float>(width / 2);
+  board.ball.y = cast<float>(height / 2 + 6);
+
+  board.tiles[cast<usize>(board.ball.y)*board.width + cast<usize>(board.ball.x)] = cast('O');
+
+  board.paddle.width = 24;
+  board.paddle.x = cast<float>(width / 2) - cast<float>(board.paddle.width / 2);
+  board.paddle.y = cast<float>(height - 2);
+
+  for(var i = cast<usize>(board.paddle.x), var j = cast<usize>(board.paddle.y); i < cast<usize>(board.paddle.x) + board.paddle.width; ++i)
+    board.tiles[j*board.width + i] = cast('=');
+
+  return 0;
+}
+
+fn begin(board mut &board) -> void
+{
+  board.ball.x = cast<float>(board.width / 2);
+  board.ball.y = cast<float>(board.height / 2 + 6);
+
+  board.ball.dx = cast<float>(chrono::system_clock::now.time_since_epoch.count % 100) * 0.16 - 8.0;
+  board.ball.dy = -16.0;
+
+  board.playing = true;
+}
+
+fn update(board mut &board, float dt) -> void
+{
+  var paddle_i = cast<usize>(board.paddle.x);
+  var paddle_j = cast<usize>(board.paddle.y);
+
+  board.paddle.x += board.paddle.dx * dt;
+
+  if (board.paddle.x < 1.0)
+    board.paddle.x = 1.0;
+
+  if (board.paddle.x > cast(board.width - board.paddle.width - 1))
+    board.paddle.x = cast(board.width - board.paddle.width - 1);
+
+  if (cast(board.paddle.x) != paddle_i)
+  {
+    for(var k = 0; k < board.paddle.width; ++k)
+      board.tiles[paddle_j*board.width + paddle_i + k] = cast(' ');
+
+    paddle_i = cast<usize>(board.paddle.x);
+
+    for(var k = 0; k < board.paddle.width; ++k)
+      board.tiles[paddle_j*board.width + paddle_i + k] = cast('=');
+  }
+
+  var ball_i = cast<usize>(board.ball.x + 0.5);
+  var ball_j = cast<usize>(board.ball.y + 0.5);
+
+  board.ball.x += board.ball.dx * dt;
+  board.ball.y += board.ball.dy * dt;
+
+  if (board.ball.x < 1.0)
+  {
+    board.ball.x = 1.0 + (1.0 - board.ball.x);
+    board.ball.dx *= -1.0;
+  }
+
+  if (board.ball.x > cast(board.width - 2))
+  {
+    board.ball.x = cast(board.width - 2) + (cast(board.width - 2) - board.ball.x);
+    board.ball.dx *= -1.0;
+  }
+
+  if (board.ball.y < 1.0)
+  {
+    board.ball.y = 1.0 + (1.0 - board.ball.y);
+    board.ball.dy *= -1.0;
+  }
+
+  if (board.ball.y > cast(board.height - 1))
+  {
+    board.ball.y = cast(board.height - 1);
+    board.ball.dx = 0.0;
+    board.ball.dy = 0.0;
+
+    board.playing = false;
+  }
+
+  board.tiles[ball_j*board.width + ball_i] = cast(' ');
+
+  ball_i = cast<usize>(board.ball.x + 0.5);
+  ball_j = cast<usize>(board.ball.y + 0.5);
+
+  for(var mut &brick : board.bricks)
+  {
+    if (brick.density == '0')
+      continue;
+
+    if (ball_j == brick.y && ball_i >= brick.x && ball_i < brick.x + brick.width)
+    {
+      brick.density -= 1;
+      board.ball.y = cast(brick.y) - board.ball.dy/std::abs(board.ball.dy);
+      board.ball.dy *= -1.0;
+
+      for(var i = brick.x, var j = brick.y; i < brick.x + brick.width; ++i)
+        board.tiles[j*board.width + i] = cast(brick.density);
+
+      ball_j = cast<usize>(board.ball.y + 0.5);
+    }
+  }
+
+  if (ball_j == paddle_j && ball_i >= paddle_i && ball_i < paddle_i + board.paddle.width)
+  {
+    board.ball.y = cast(paddle_j) - 1.0;
+    board.ball.dx += 0.5 * (board.ball.x - cast<float>(paddle_i + board.paddle.width / 2));
+    board.ball.dy *= -1.0;
+
+    ball_j = cast<usize>(board.ball.y + 0.5);
+  }
+
+  board.tiles[ball_j*board.width + ball_i] = cast('O');
+}
+
+fn render(board &board) -> i32
+{
+  std::puts("\x1b[H");
+  std::puts("\x1b[37;40m");
+
+  for(var j = 0; j < board.height; ++j)
+  {
+    var row = j * board.width;
+
+    for(var i = 0; i < board.width; ++i)
+    {
+      switch (board.tiles[row + i])
+      {
+        case '#':
+          std::putc('#');
+
+        case '1':
+          std::puts("\x1b[46m \x1b[40m");
+
+        case '2':
+          std::puts("\x1b[45m \x1b[40m");
+
+        case 'O':
+          std::puts("\x1b[32mO\x1b[37m");
+
+        case '=':
+          std::puts("\x1b[42m \x1b[40m");
+
+        else:
+          std::putc(' ');
+      }
+    }
+  }
+
+  std::puts("\x1b[0m");
+
+  std::stdout.flush();
+
+  return 0;
+}
+
+fn getch() -> char
+{
+  var ch = 0;
+  var bytes = std::stdin.read(&ch, 1);
+
+  if (bytes < 0)
+    std::panic("stdin error - ", bytes);
+
+  return cast(ch);
+}
+
+fn play(board mut &board) -> i32
+{
+  let hz = 60;
+  var dt = chrono::nanoseconds(chrono::seconds(1)) / hz;
+
+  var tick = chrono::system_clock::now();
+
+  std::print("\x1b[?25l");
+
+  while (true)
+  {
+    switch (getch())
+    {
+      case 'a':
+        board.paddle.dx = -25.0;
+
+      case 'd':
+        board.paddle.dx = +25.0;
+
+      case ' ':
+        if (!board.playing)
+          begin(&mut board);
+
+      case 'q':
+        break;
+    }
+
+    while (chrono::system_clock::now() > tick)
+    {
+      update(&mut board, 1.0 / cast<float>(hz));
+
+      tick += dt;
+    }
+
+    render(&mut board);
+  }
+
+  std::print("\x1b[?25h");
+
+  return 0;
+}
+
+fn main() -> int
+{
+  var width = 0;
+  var height = 0;
+
+  if (termios::get_window_size(&mut width, &mut height) != 0)
+    std::panic("unable to retreive termios size");
+
+  var oldstate = termios::termios(void);
+  if (termios::enable_raw_mode(&mut oldstate) != 0)
+    std::panic("unable to enter raw mode");
+
+  var board = board();
+
+  if (initialise(&mut board, width, height) != 0)
+    std::panic("unable to initialise game board");
+
+  play(&mut board);
+
+  termios::restore_cooked_mode(&mut oldstate);
+
+  return 0;
+}

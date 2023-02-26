@@ -1,0 +1,36 @@
+//
+// mkdir
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn mkdir(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var path = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  if (path.empty)
+  {
+    terminal.write("usage: mkdir <path>\n");
+    return -22;
+  }
+
+  if (var result = mkdir(&mut thread_ring, os::string(path.data, path.len), 0, 0o640); result < 0)
+    return result;
+
+  return 0;
+}

@@ -1,0 +1,17 @@
+//
+// pty
+//
+
+import std.stdlib;
+import dev;
+import chr.chrdev;
+import pty.ptm;
+import pty.ptmx;
+import pty.ptty;
+
+pub fn initialise() -> void
+{
+  var dev = chr::chrdev::create<ptmx>();
+
+  dev::register(dev);
+}

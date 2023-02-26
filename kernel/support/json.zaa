@@ -1,0 +1,134 @@
+//
+// json
+//
+
+import std.string : String;
+
+pub fn json_escape_inplace(std::string mut &str, u8 *beg, u8 *end) -> void
+{
+  var idx = beg - str.data;
+
+  for(var i = 0, var cnt = end - beg; i < cnt; ++i)
+  {
+    switch (str[idx])
+    {
+      case '\b':
+        str[idx] = cast<u8>('b');
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\f':
+        str[idx] = cast<u8>('f');
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\n':
+        str[idx] = cast<u8>('n');
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\r':
+        str[idx] = cast<u8>('r');
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\t':
+        str[idx] = cast<u8>('t');
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\"':
+        str.insert(idx++, cast<u8>('\\'));
+
+      case '\\':
+        str.insert(idx++, cast<u8>('\\'));
+
+      case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+        str[idx] += cast<u8>('0');
+        idx += str.insert(idx, "\\u000").1;
+
+      case 11: case 14: case 15:
+        str[idx] += cast<u8>('a' - 10);
+        idx += str.insert(idx, "\\u000").1;
+
+      case 16: case 17: case 18: case 19: case 20: case 21: case 22: case 23: case 24: case 25:
+        str[idx] += cast<u8>('0' - 16);
+        idx += str.insert(idx, "\\u001").1;
+
+      case 26: case 27: case 28: case 29: case 30: case 31:
+        str[idx] += cast<u8>('a' - 26);
+        idx += str.insert(idx, "\\u001").1;
+    }
+
+    idx += 1;
+  }
+}
+
+pub struct json_stream
+{
+  int depth = 0;
+  pub std::string mut &str;
+
+  pub fn begin(this mut &, char mark)
+  {
+    this.str += cast<u8>(mark);
+
+    this.depth += 1;
+  }
+
+  pub fn begin(this mut &, String &key, char mark)
+  {
+    this.append(key);
+    this.str.back = cast<u8>(':');
+    this.str += cast<u8>(mark);
+
+    this.depth += 1;
+  }
+
+  pub fn append(this mut &, String &value)
+  {
+    this.str += cast<u8>('"');
+    this.str.append(value);
+    json_escape_inplace(&mut this.str, this.str.end - value.len, this.str.end);
+    this.str += cast<u8>('"');
+
+    if (this.depth != 0)
+      this.str += cast<u8>(',');
+  }
+
+  pub fn append<T>(this mut &, T value)
+  {
+    this.str.append(value);
+
+    if (this.depth != 0)
+      this.str += cast<u8>(',');
+  }
+
+  pub fn append<T>(this mut &, String &key, T &value)
+  {
+    this.append(key);
+    this.str.back = cast<u8>(':');
+    this.append(value);
+  }
+
+  pub fn append_from_capacity(this mut &, usize size)
+  {
+    this.str.append_from_capacity(size);
+    json_escape_inplace(&mut this.str, this.str.end - size, this.str.end);
+
+    if (this.depth != 0)
+      this.str += cast<u8>(',');
+  }
+
+  pub fn end(this mut &, char mark)
+  {
+    this.depth -= 1;
+    this.str.strip_suffix!(",");
+    this.str += cast<u8>(mark);
+
+    if (this.depth != 0)
+      this.str += cast<u8>(',');
+  }
+
+  pub json_stream(std::string mut &buffer)
+    : str(&buffer)
+  {
+  }
+
+  pub ~json_stream() = default;
+}

@@ -1,0 +1,81 @@
+//
+// pty ptmx
+//
+
+import std.stdio;
+import dev;
+import chr.chrdev;
+import io;
+import vm;
+import vfs;
+import pty.ptm;
+import support.rc : Rc;
+
+pub struct ptmx : pub chr::chrdev
+{
+  pub ptmx()
+    : super(chr::device_operations())
+  {
+    std::print("ptmx inited");
+  }
+
+  pub ~ptmx() = default;
+}
+
+pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
+{
+  var &this = cast<ptmx&>(dev);
+
+  switch(query)
+  {
+    case device_name:
+      result = "pts/ptmx";
+  }
+
+  return ok;
+}
+
+pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+{
+  if (flags & 0x3 != 0)
+  {
+    static n = 1;
+
+    var ptty = chr::chrdev::create<pty::ptty>(n++);
+    var ptm = pty::ptm::create(ptty);
+
+    fd = vfs::file_descriptor::create(ptm);
+
+    if (var result = ptm.node_operations.open(ptm, &mut fd, flags, mode); !result)
+      return cast(result);
+
+    dev::register(ptty);
+  }
+
+  return ok;
+}
+
+pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  return not_supported;
+}
+
+pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+{
+  return not_supported;
+}

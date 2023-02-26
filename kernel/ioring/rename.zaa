@@ -1,0 +1,71 @@
+//
+// rename
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, virtaddr oldpathbuf, usize oldpathlen, i32 newdirfd, virtaddr newpathbuf, usize newpathlen, u64 flags) -> result
+{
+  if (oldpathbuf == 0 || oldpathlen == 0)
+    return invalid_argument;
+
+  if (oldpathlen > 4096)
+    return vfs::result::name_too_long;
+
+  var oldpath = std::string<N:256>::with_size(oldpathlen);
+
+  if (var result = vm::read_process_memory(process, oldpathbuf, oldpath.data, oldpath.len); !result)
+    return result;
+
+  var olddir = process.fd(olddirfd);
+
+  if (!olddir)
+    return vfs::result::bad_descriptor;
+
+  if (olddir.node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var oldbase = olddir.node;
+  var oldnode = vfs::lookup(&mut oldbase, oldpath);
+
+  if (!oldnode)
+    return vfs::result::not_found;
+
+  if (newpathbuf == 0 || newpathlen == 0)
+    return invalid_argument;
+
+  if (newpathlen > 4096)
+    return vfs::result::name_too_long;
+
+  var newpath = std::string<N:256>::with_size(newpathlen);
+
+  if (var result = vm::read_process_memory(process, newpathbuf, newpath.data, newpath.len); !result)
+    return result;
+
+  var newdir = process.fd(newdirfd);
+
+  if (!newdir)
+    return vfs::result::bad_descriptor;
+
+  if (newdir.node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var newbase = newdir.node;
+  var newnode = vfs::lookup(&mut newbase, newpath);
+
+  if (!newbase)
+    return vfs::result::invalid_argument;
+
+  if (vfs::device_id(oldbase) != vfs::device_id(newbase))
+    return vfs::result::cross_device_link;
+
+  if (var result = vfs::rename(oldbase, vfs::basename(oldpath), newbase, vfs::basename(newpath)); !result)
+    return result;
+
+  return ok;
+}

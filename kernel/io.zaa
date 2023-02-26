@@ -1,0 +1,292 @@
+//
+// io
+//
+
+import std.stdio;
+import acpi;
+import sys;
+import cpu;
+import platform;
+import scheduler;
+import ioring : ioring_epoll;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import slab : slab_allocator;
+import waitqueue as _ : wait_queue;
+import support.rc : Rc;
+
+struct handler
+{
+  void fn(void mut *) *entry;
+  void mut *parameter;
+
+  handler mut *next;
+
+  handler() = default;
+  ~handler() = default;
+}
+
+struct vector
+{
+  std::spin_lock lock;
+
+  handler mut *head;
+
+  vector() = default;
+  vector(#vector&) = default;
+  ~vector() = default;
+}
+
+struct interrupt_manager
+{
+  mutex lock;
+
+  vector[256] vectors;
+
+  interrupt_manager() = default;
+  interrupt_manager(#interrupt_manager&) = default;
+  ~interrupt_manager() = default;
+}
+
+fn intman()
+{
+  static instance = #interrupt_manager();
+
+  return &instance;
+}
+
+pub fn allocate_vectors(usize count) -> (u8, u8)
+{
+  var guard = std::lock_guard(&mut intman.lock);
+
+  return platform::allocate_io_vectors(count);
+}
+
+pub fn install_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -> void
+{
+  var handler = std::allocator::new<handler>();
+
+  handler.entry = entry;
+  handler.parameter = parameter;
+
+  var mut &vector = intman.vectors[cast(irq)];
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
+
+  handler.next = vector.head;
+  vector.head = handler;
+
+  if (!vector.head.next)
+  {
+    platform::enable_io_vector(irq);
+  }
+}
+
+pub fn remove_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -> void
+{
+  var mut &vector = intman.vectors[cast(irq)];
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
+
+  var prev = null<handler mut *>;
+  for(var handler = vector.head; handler; handler = handler.next)
+  {
+    if (handler.entry == entry && handler.parameter == parameter)
+    {
+      if (prev)
+        prev = handler.next;
+      else
+        vector.head = handler.next;
+
+      std::allocator::delete(handler);
+
+      break;
+    }
+
+    prev = handler;
+  }
+
+  if (!vector.head)
+  {
+    platform::disable_io_vector(irq);
+  }
+}
+
+extern fn io_dispatch(u8 irq) -> void
+{
+  var mut &vector = intman.vectors[cast(irq)];
+
+  var guard = std::lock_guard(&mut vector.lock);
+
+  for(var handler = vector.head; handler; handler = handler.next)
+  {
+    handler.entry(handler.parameter);
+  }
+}
+
+pub struct iocb
+{
+  i32 result;
+  i32 outstanding;
+
+  std::spin_lock lock;
+  wait_queue waiters;
+  std::vector<ioring_epoll mut *> pollsets;
+
+  u8[0] reserved;
+
+  fn allocator()
+  {
+    static allocator = #slab_allocator<iocb>();
+
+    return &allocator;
+  }
+
+  pub fn create() -> iocb mut *
+  {
+    return allocator.allocate();
+  }
+
+  pub fn result(this&) -> i32
+  {
+    return std::volatile_load(&this.result);
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub iocb() = default;
+  pub ~iocb() = default;
+}
+
+fn destroy(iocb mut *cb) -> void
+{
+  iocb::allocator.free(cb);
+}
+
+pub struct response
+{
+  pub fn bool(this&) -> bool
+  {
+    return this.result >= 0 && this.outstanding == 0;
+  }
+
+  pub fn ready(this&) -> bool
+  {
+    return this.outstanding <= 0;
+  }
+
+  pub fn result(this&) -> i32
+  {
+    return (*this.cb).result;
+  }
+
+  pub fn outstanding(this&) -> i32
+  {
+    return (*this.cb).outstanding;
+  }
+
+  pub Rc<iocb> cb;
+
+  pub response(Rc<iocb> mut &cb)
+    : cb(cb)
+  {
+  }
+
+  pub response(var result = i32(0))
+    : cb(Rc<iocb>(iocb::create()))
+  {
+    (*cb).result = cast(result);
+    (*cb).outstanding = 0;
+  }
+
+  pub response(response &&other) = default;
+  pub fn =(response mut &lhs, response &&rhs) -> response mut & = default;
+  pub ~response() = default;
+}
+
+pub fn wait(response mut &rq) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*rq.cb).lock);
+
+  if (rq.outstanding <= 0)
+    return;
+
+  (*rq.cb).waiters.wait(&mut (*rq.cb).lock);
+}
+
+pub fn wait_until(response mut &rq, u64 timeout) -> bool
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*rq.cb).lock);
+
+  if (rq.outstanding <= 0)
+    return true;
+
+  return (*rq.cb).waiters.wait_until((*rq.cb).lock, timeout);
+}
+
+pub fn add_notify(Rc<iocb> mut &cb, ioring_epoll mut *pollset) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+
+  (*cb).pollsets.push_back(pollset);
+}
+
+pub fn remove_notify(Rc<iocb> mut &cb, ioring_epoll *pollset) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+
+  (*cb).pollsets.erase(pollset);
+}
+
+pub fn initiate(Rc<iocb> mut &cb, usize count) -> void
+{
+  std::atomic_add(&(*cb).outstanding, cast(count));
+}
+
+pub fn complete(Rc<iocb> mut &cb, var result) -> void
+{
+  while (true)
+  {
+    var current = std::volatile_load(&(*cb).result);
+
+    if (current < 0)
+      break;
+
+    if (std::atomic_cmpxchg_weak(&(*cb).result, current, result < cast(0) ? cast(result) : current + cast(result)))
+      break;
+  }
+
+  if (std::atomic_sub(&(*cb).outstanding, 1) == 1)
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+
+    for(var mut &pollset : (*cb).pollsets)
+      ioring::trigger(pollset);
+
+    ioring::workman.trigger();
+
+    (*cb).waiters.notify_all();
+  }
+}
+
+pub fn cancel(Rc<iocb> mut &cb, var result = i32(-125)) -> void
+{
+  std::atomic_store(&(*cb).result, cast(result));
+}
+
+pub fn reset(Rc<iocb> mut &cb, var result = i32(0)) -> void
+{
+  std::atomic_store(&(*cb).result, cast(result));
+  std::atomic_store(&(*cb).outstanding, 0);
+}

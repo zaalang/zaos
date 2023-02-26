@@ -1,0 +1,368 @@
+//
+// vfs
+//
+
+import std.stdio;
+import std.vector;
+import std.string : String;
+import io;
+import sys;
+import vfs.fs;
+import vfs.node;
+import blk.cache;
+import mutex as _ : mutex;
+import rootfs;
+import devfs;
+import sysfs;
+
+struct virtual_file_system
+{
+  mutex lock;
+
+  node_ptr root;
+  std::vector<mount> mounts;
+
+  virtual_file_system() = default;
+  virtual_file_system(#virtual_file_system&) = default;
+  ~virtual_file_system() = default;
+}
+
+fn vfs() -> virtual_file_system mut &
+{
+  static instance = #virtual_file_system();
+
+  return &instance;
+}
+
+pub struct mount
+{
+  node_ptr root;
+  file_system mut *fs;
+
+  mount() = default;
+  pub mount(mount&&) = default;
+  pub ~mount() = default;
+}
+
+pub fn initialise() -> void
+{
+  mount(vfs.root, rootfs::create());
+
+  mkdir(vfs.root, "dev", 0, 0, 0o755);
+  mount(lookup(vfs.root, "dev"), devfs::create());
+
+  mkdir(vfs.root, "mnt", 0, 0, 0o755);
+
+  mkdir(vfs.root, "sys", 0, 0, 0o755);
+  mount(lookup(vfs.root, "sys"), sysfs::create());
+}
+
+pub fn root() -> vfs::node_ptr &
+{
+  return &vfs.root;
+}
+
+pub fn dirname(String &path) -> std::string_view
+{
+  var len = path.len;
+
+  while (len != 0 && path[len - 1] == cast<u8>('/'))
+    len -= 1;
+
+  var last_slash = std::memrchr(path.data, cast<u8>('/'), len);
+
+  if (last_slash == len)
+    return ".";
+
+  while (last_slash != 0 && path[last_slash - 1] == cast<u8>('/'))
+    last_slash -= 1;
+
+  if (last_slash == 0)
+    return "/";
+
+  return path[0 .. last_slash];
+}
+
+pub fn basename(String &path) -> std::string_view
+{
+  var len = path.len;
+
+  while (len != 0 && path[len - 1] == cast<u8>('/'))
+    len -= 1;
+
+  var last_slash = std::memrchr(path.data, cast<u8>('/'), len);
+
+  if (path.len == 0)
+    return ".";
+
+  if (len == 0)
+    return "/";
+
+  if (last_slash == len)
+    return path[0 .. len];
+
+  return path[last_slash + 1 .. len];
+}
+
+pub fn node_id(vfs::node_ptr &node) -> vfs::ino_t
+{
+  var stat = vfs::stat();
+  vfs::stat(node, &mut stat, vfs::stats::inode);
+
+  return stat.inode;
+}
+
+pub fn device_id(vfs::node_ptr &node) -> vfs::dev_t
+{
+  var stat = vfs::stat();
+  vfs::stat(node, &mut stat, vfs::stats::device);
+
+  return stat.device;
+}
+
+fn lookup(virtual_file_system mut &vfs, vfs::node_ptr mut &base, std::string_view path) -> vfs::node_ptr
+{
+  var ch = path.begin;
+  var end = path.end;
+
+  if (!base)
+    return vfs::node_ptr();
+
+  var dentry = base;
+
+  while (ch != end && *(end - 1) == cast('/'))
+    --end;
+
+  while (ch != end)
+  {
+    var beg = ch;
+
+    while (*beg == cast('/'))
+      ++beg;
+
+    ch = beg + std::memchr(beg, cast('/'), end - beg);
+
+    base = node_ptr();
+
+    if (!dentry.is_directory)
+      return node_ptr();
+
+    if (dentry.covers && std::string_view(beg, ch) == "..")
+      dentry = dentry.covers;
+
+    var node = dentry.directory_operations.lookup(dentry, std::string_view(beg, ch));
+
+    if (!node)
+    {
+      if (ch == end)
+        base = &move dentry;
+
+      return node_ptr();
+    }
+
+    if (ch != end)
+    {
+      if (var result = vfs::resolve(&mut dentry, &mut node); !result)
+        return node_ptr();
+    }
+
+    if (node.covered)
+      node = node.covered;
+
+    base = &move dentry;
+    dentry = &move node;
+  }
+
+  return dentry;
+}
+
+pub fn lookup(vfs::node_ptr mut &base, String &path) -> vfs::node_ptr
+{
+  return vfs.lookup(&mut base, std::string_view(path.data, path.len));
+}
+
+pub fn lookup(vfs::node_ptr &base, String &path) -> vfs::node_ptr
+{
+  var dentry = base;
+
+  return vfs.lookup(&mut dentry, std::string_view(path.data, path.len));
+}
+
+fn resolve(virtual_file_system mut &vfs, vfs::node_ptr mut &base, vfs::node_ptr mut &node) -> vfs::result
+{
+  var depth = 0;
+  var buffer = std::string();
+
+  while (node.is_symlink)
+  {
+    if (++depth == 8)
+      return too_many_links;
+
+    if (var result = node.symlink_operations.readlink(node, &mut buffer); !result)
+      return result;
+
+    if (buffer.starts_with("/"))
+      base = vfs::root();
+
+    if (node = vfs.lookup(&mut base, std::string_view(buffer.data, buffer.len)); !node)
+      return not_found;
+  }
+
+  return ok;
+}
+
+pub fn resolve(vfs::node_ptr mut &base, vfs::node_ptr mut &node) -> vfs::result
+{
+  return vfs.resolve(&mut base, &mut node);
+}
+
+pub fn mount(vfs::node_ptr path, file_system mut *fs) -> vfs::result
+{
+  var mount = mount();
+
+  if (var result = fs.ops.mount(fs, mount.root); !result)
+    return result;
+
+  mount.fs = fs;
+  mount.root.covers = path;
+
+  var guard = std::lock_guard(&mut vfs.lock);
+
+  if (!vfs.root)
+  {
+    if (path != vfs.root)
+      return invalid_argument;
+
+    vfs.root = mount.root;
+  }
+  else
+  {
+    if (!path)
+      return invalid_argument;
+
+    if (!path.is_directory)
+      return invalid_argument;
+
+    if (path.covered)
+      return device_busy;
+
+    path.covered = mount.root;
+  }
+
+  vfs.mounts.push_back(mount);
+
+  return ok;
+}
+
+pub fn create(vfs::node_ptr &path, String &name, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  return path.directory_operations.create(path, std::string_view(name.data, name.len), result, uid, gid, mode);
+}
+
+pub fn create(vfs::node_ptr &path, String &name, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  var node = node_ptr();
+
+  return path.directory_operations.create(path, std::string_view(name.data, name.len), node, uid, gid, mode);
+}
+
+pub fn mkdir(vfs::node_ptr &path, String &name, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), result, uid, gid, mode);
+}
+
+pub fn mkdir(vfs::node_ptr &path, String &name, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  var node = node_ptr();
+
+  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), node, uid, gid, mode);
+}
+
+pub fn symlink(vfs::node_ptr &path, String &name, String &target, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  return path.directory_operations.symlink(path, std::string_view(name.data, name.len), std::string_view(target.data, target.len), result, uid, gid, mode);
+}
+
+pub fn symlink(vfs::node_ptr &path, String &name, String &target, u32 uid, u32 gid, u32 mode) -> vfs::result
+{
+  var node = node_ptr();
+
+  return path.directory_operations.symlink(path, std::string_view(name.data, name.len), std::string_view(target.data, target.len), node, uid, gid, mode);
+}
+
+pub fn rename(vfs::node_ptr &oldpath, String &oldname, vfs::node_ptr &newpath, String &newname) -> vfs::result
+{
+  return oldpath.directory_operations.rename(oldpath, std::string_view(oldname.data, oldname.len), newpath, std::string_view(newname.data, newname.len));
+}
+
+pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+{
+  return node.node_operations.open(node, &mut fd, flags, mode);
+}
+
+pub fn stat(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  return node.node_operations.getattr(node, stat, mask);
+}
+
+pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return node.node_operations.setattr(node, stat, mask);
+}
+
+pub fn read(vfs::node_ptr &node, u64 position, void mut *buffer, usize length) -> vfs::result
+{
+  var count = 0;
+
+  while (length != 0)
+  {
+    var block = blk::fetch(node, position);
+
+    if (block.wait(); !block)
+      return cast(block.result);
+
+    var data = block.ptr(position);
+    var bytes = std::min(block.base + block.size - data, length);
+
+    std::memcpy(buffer, data, bytes);
+
+    length -= bytes;
+    position += cast(bytes);
+    buffer = cast<void mut *>(cast<uintptr>(buffer) + bytes);
+    count += bytes;
+  }
+
+  return cast(count);
+}
+
+pub fn write(vfs::node_ptr &node, u64 position, void *buffer, usize length) -> vfs::result
+{
+  var count = 0;
+
+  while (length != 0)
+  {
+    var block = blk::fetch(node, position);
+
+    if (block.wait(); !block)
+      return cast(block.result);
+
+    var data = block.ptr(position);
+    var bytes = std::min(block.base + block.size - data, length);
+
+    std::memcpy(data, buffer, bytes);
+
+    block.commit(data, bytes);
+
+    length -= bytes;
+    position += cast(bytes);
+    buffer = cast<void mut *>(cast<uintptr>(buffer) + bytes);
+    count += bytes;
+  }
+
+  return cast(count);
+}
+
+pub fn unlink(vfs::node_ptr &path, String &name) -> vfs::result
+{
+  return path.directory_operations.unlink(path, std::string_view(name.data, name.len));
+}

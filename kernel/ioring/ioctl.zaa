@@ -1,0 +1,55 @@
+//
+// ioctl
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+enum mode
+{
+  const read = 0x01;
+  const write = 0x02;
+  const suid = 0x80;
+}
+
+pub fn sys_ioctl(process mut *process, ioring_ctx mut &ctx, i32 fd, u32 op, virtaddr buffer, usize buflen) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (op & 0x80000000 == 0)
+    return invalid_argument;
+
+  var mode = (op & 0x00ff0000) >> 16;
+
+  if (mode & 0x3 != 0x3)
+    return invalid_argument;
+
+  var iovec = vm::iovec();
+
+  if (!vm::is_user_address(buffer))
+    return invalid_argument;
+
+  if (var result = vm::lock(process, vm::virtrange(buffer, buflen), vm::protection::readwrite, &mut iovec); !result)
+    return result;
+
+  switch (var &node = file.node; node.type)
+  {
+    case vfs::node::type::volume:
+      return node.volume_operations.ioctl(node, op, iovec);
+
+    case vfs::node::type::device:
+      return node.device_operations.ioctl(node, op, iovec);
+
+    else:
+      return vfs::result::bad_descriptor;
+  }
+
+  return 0;
+}

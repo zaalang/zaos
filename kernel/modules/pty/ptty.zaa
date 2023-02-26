@@ -1,0 +1,638 @@
+//
+// pty ptty
+//
+
+import std.stdio;
+import std.atomic;
+import std.circular_buffer;
+import io;
+import dev;
+import chr.chrdev;
+import vm : physrange;
+import vfs;
+import support.rc : Rc;
+
+const IGNBRK = 0o00001;
+const BRKINT = 0o00002;
+const ISTRIP = 0o00040;
+const INLCR  = 0o00100;
+const IGNCR  = 0o00200;
+const ICRNL  = 0o00400;
+const IUTF8  = 0o40000;
+
+const OPOST  = 0o00001;
+const ONLCR  = 0o00004;
+const OCRNL  = 0o00010;
+const OFILL  = 0o00100;
+const OFDEL  = 0o00200;
+
+const CSIZE  = 0o00060;
+const   CS5  = 0o00000;
+const   CS6  = 0o00020;
+const   CS7  = 0o00040;
+const   CS8  = 0o00060;
+const CSTOPB = 0o00100;
+const CREAD  = 0o00200;
+
+const ISIG   = 0o000001;
+const ICANON = 0o000002;
+const ECHO   = 0o000010;
+const ECHOE  = 0o000020;
+const ECHOK  = 0o000040;
+const ECHONL = 0o000100;
+const NOFLSH = 0o000200;
+const IEXTEN = 0o100000;
+
+const VINTR     = 0;
+const VQUIT     = 1;
+const VERASE    = 2;
+const VKILL     = 3;
+const VEOF      = 4;
+const VTIME     = 5;
+const VMIN      = 6;
+const VSWTC     = 7;
+const VSTART    = 8;
+const VSTOP     = 9;
+const VSUSP     = 10;
+const VEOL      = 11;
+const VREPRINT  = 12;
+const VDISCARD  = 13;
+const VWERASE   = 14;
+const VLNEXT    = 15;
+const VEOL2     = 16;
+
+enum tio
+{
+  const getptn = 0x80035430;
+  const gettermios = 0x80035401;
+  const settermios = 0x80035402;
+  const getwinsize = 0x80035413;
+}
+
+struct termios
+{
+  u32 c_iflag;
+  u32 c_oflag;
+  u32 c_cflag;
+  u32 c_lflag;
+  u8 c_line;
+  u8[32] c_cc;
+  u32 __c_ispeed;
+  u32 __c_ospeed;
+
+  termios() = default;
+  termios(termios&) = default;
+  fn =(termios mut &, termios &) -> termios mut & = default;
+  ~termios() = default;
+}
+
+struct winsize
+{
+  u16 ws_row;
+  u16 ws_col;
+  u16 ws_xpixel;
+  u16 ws_ypixel;
+
+  winsize() = default;
+  winsize(winsize&) = default;
+  fn =(winsize mut &, winsize &) -> winsize mut & = default;
+  ~winsize() = default;
+}
+
+pub struct ptty : pub chr::chrdev
+{
+  int id;
+
+  termios termios;
+  winsize winsize;
+
+  std::spin_lock lock;
+  std::circular_buffer<u8, N:1024> in;
+  std::circular_buffer<u8, N:8192> out;
+
+  pub io::response getsable;
+  pub io::response putsable;
+  pub io::response readable;
+  pub io::response writeable;
+
+  usize lines;
+  usize column;
+
+  pub ptty(int id)
+    : super(chr::device_operations())
+  {
+    this.id = id;
+
+    reset_termios(&mut this.termios);
+    reset_winsize(&mut this.winsize);
+
+    io::initiate(&mut this.getsable.cb, 1);
+    io::initiate(&mut this.readable.cb, 1);
+  }
+
+  pub ~ptty() = default;
+}
+
+fn reset_termios(termios mut &tios) -> void
+{
+  tios = termios();
+
+  tios.c_iflag = (ICRNL | IUTF8);
+  tios.c_oflag = (OPOST | ONLCR);
+  tios.c_lflag = (ECHO | ICANON | IEXTEN | ECHOE | ECHOK | ECHONL);
+  tios.c_cflag = (CREAD | CS8);
+
+  tios.c_cc[VEOF] = 4;      // ^D
+  tios.c_cc[VERASE] = 0x7f; // del
+  tios.c_cc[VINTR] = 3;     // ^C
+  tios.c_cc[VKILL] = 21;    // ^U
+  tios.c_cc[VWERASE] = 23;  // ^W
+  tios.c_cc[VQUIT] = 28;    // ^\
+  tios.c_cc[VEOL] = 0;
+  tios.c_cc[VEOL2] = 0;
+  tios.c_cc[VSTART] = 17;   // ^S
+  tios.c_cc[VSTOP] = 19;    // ^Q
+  tios.c_cc[VSUSP] = 26;    // ^Z
+}
+
+fn reset_winsize(winsize mut &ws) -> void
+{
+  ws = winsize();
+
+  ws.ws_col = 80;
+  ws.ws_row = 25;
+  ws.ws_xpixel = ws.ws_col * 8;
+  ws.ws_ypixel = ws.ws_row * 16;
+}
+
+pub fn getptn(ptty &this) -> int
+{
+  return this.id;
+}
+
+pub fn setwinsize(ptty mut &this, u16 ws_row, u16 ws_col, u16 ws_xpixel, u16 ws_ypixel) -> void
+{
+  var guard = std::lock_guard(&mut this.lock);
+
+  this.winsize.ws_row = ws_row;
+  this.winsize.ws_col = ws_col;
+  this.winsize.ws_xpixel = ws_xpixel;
+  this.winsize.ws_ypixel = ws_ypixel;
+}
+
+fn settermios(ptty mut &this, termios &tios) -> chr::result
+{
+  if ((tios.c_lflag & ICANON == ICANON) && (this.termios.c_lflag & ICANON != ICANON))
+  {
+    for(var ch : this.in)
+    {
+      if (ch == this.termios.c_cc[VEOF] || ch == this.termios.c_cc[VEOL] || ch == cast('\n') || ch == cast('\r'))
+      {
+        this.lines += 1;
+        this.column = 0;
+
+        continue;
+      }
+
+      if (ch & 0xC0 != 0x80)
+        this.column += 1;
+    }
+
+    if (this.in.len != 0 && this.lines == 0)
+      io::initiate(&mut this.readable.cb, 1);
+  }
+
+  if ((tios.c_lflag & ICANON != ICANON) && (this.termios.c_lflag & ICANON == ICANON))
+  {
+    if (this.in.len != 0 && this.lines == 0)
+      io::complete(&mut this.readable.cb, 0);
+
+    this.lines = 0;
+    this.column = 0;
+  }
+
+  this.termios = tios;
+
+  return ok;
+}
+
+fn emit(ptty mut &this, u8 ch) -> chr::result
+{
+  if (this.termios.c_oflag & OPOST == OPOST)
+  {
+    switch (ch)
+    {
+      case '\n':
+
+        if (this.termios.c_oflag & ONLCR == ONLCR)
+        {
+          if (this.out.capacity - this.out.len < 2)
+            return would_block;
+
+          this.out.push_back(cast<u8>('\r'));
+
+          if (this.out.len == 1)
+            io::complete(&mut this.getsable.cb, 0);
+        }
+
+      case '\r':
+
+        if (this.termios.c_oflag & OCRNL == OCRNL)
+          ch = cast('\n');
+    }
+  }
+
+  if (this.out.full)
+    return would_block;
+
+  this.out.push_back(ch);
+
+  if (this.out.len == 1)
+    io::complete(&mut this.getsable.cb, 0);
+
+  if (this.out.len == this.out.capacity)
+    io::initiate(&mut this.writeable.cb, 1);
+
+  return ok;
+}
+
+fn putc(ptty mut &this, u8 ch) -> chr::result
+{
+  switch (ch)
+  {
+    case '\r':
+
+      if (this.termios.c_iflag & IGNCR == IGNCR)
+        return ok;
+
+      if (this.termios.c_iflag & ICRNL == ICRNL)
+        ch = cast('\n');
+
+    case '\n':
+
+      if (this.termios.c_iflag & INLCR == INLCR)
+        ch = cast('\r');
+
+    else:
+
+      if (this.termios.c_iflag & ISTRIP == ISTRIP)
+        ch &= 0x7f;
+  }
+
+  if (this.in.full)
+    return would_block;
+
+  if (this.termios.c_lflag & ECHO == ECHO)
+  {
+    var echo = true;
+
+    if (ch == this.termios.c_cc[VERASE])
+    {
+      if (this.termios.c_lflag & ECHOE == ECHOE)
+      {
+        if (this.out.capacity - this.out.len < 3)
+          return would_block;
+
+        echo = false;
+      }
+    }
+
+    if (ch == this.termios.c_cc[VKILL])
+    {
+      if (this.termios.c_lflag & ECHOK == ECHOK)
+      {
+        if (this.out.capacity - this.out.len < 3*this.column)
+          return would_block;
+
+        echo = false;
+      }
+    }
+
+    if (ch == this.termios.c_cc[VEOF])
+      echo = false;
+
+    if (echo)
+    {
+      if (ch < 32 && ch != cast('\n') && ch != cast('\r'))
+      {
+        if (this.out.capacity - this.out.len < 2)
+          return would_block;
+
+        this.emit(27);
+      }
+
+      if (var result = this.emit(ch); !result)
+        return result;
+    }
+  }
+
+  if (this.termios.c_lflag & (ECHO | ECHONL) == ECHONL)
+  {
+    if (ch == cast('\n'))
+    {
+      if (var result = this.emit(ch); !result)
+        return result;
+    }
+  }
+
+  if (this.termios.c_lflag & ICANON == ICANON)
+  {
+    if (ch == this.termios.c_cc[VERASE])
+    {
+      if (this.termios.c_lflag & ECHOE == ECHOE)
+      {
+        if (this.column != 0)
+        {
+          this.emit(0x08);
+          this.emit(0x20);
+          this.emit(0x08);
+
+          while (!this.in.empty && this.in.take_back() & 0xc0 == 0x80)
+            ;
+
+          this.column -= 1;
+        }
+      }
+
+      return ok;
+    }
+
+    if (ch == this.termios.c_cc[VKILL])
+    {
+      if (this.termios.c_lflag & ECHOK == ECHOK)
+      {
+        while (this.column != 0)
+        {
+          this.emit(0x08);
+          this.emit(0x20);
+          this.emit(0x08);
+
+          while (!this.in.empty && this.in.take_back() & 0xc0 == 0x80)
+            ;
+
+          this.column -= 1;
+        }
+      }
+
+      return ok;
+    }
+
+    if (ch == this.termios.c_cc[VEOF] || ch == this.termios.c_cc[VEOL] || ch == cast('\n') || ch == cast('\r'))
+    {
+      this.lines += 1;
+      this.column = 0;
+
+      this.in.push_back(ch);
+
+      if (this.lines == 1)
+        io::complete(&mut this.readable.cb, 0);
+
+      return ok;
+    }
+
+    if (ch & 0xc0 != 0x80)
+      this.column += 1;
+
+    this.in.push_back(ch);
+
+    return ok;
+  }
+
+  this.in.push_back(ch);
+
+  if (this.in.len == 1)
+    io::complete(&mut this.readable.cb, 0);
+
+  return ok;
+}
+
+pub fn puts(ptty mut &this, u8 *data, usize len) -> chr::result
+{
+  var guard = std::lock_guard(&mut this.lock);
+
+  var count = 0;
+
+  for(var ch = data, var end = data + len; ch != end; ++ch)
+  {
+    if (var result = this.putc(*ch); !result)
+      break;
+
+    count += 1;
+  }
+
+  return cast(count);
+}
+
+pub fn gets(ptty mut &this, u8 mut *data, usize len) -> chr::result
+{
+  var guard = std::lock_guard(&mut this.lock);
+
+  var count = 0;
+  var remaining = std::min(this.out.len, len);
+
+  for(var span : this.out.spans)
+  {
+    var bytes = std::min(remaining, span.len);
+
+    std::memcpy(data + count, span.data, bytes);
+
+    count += bytes;
+    remaining -= bytes;
+  }
+
+  if (count != 0)
+  {
+    this.out.erase(this.out.begin, count);
+
+    if (this.out.len == 0)
+      io::initiate(&mut this.getsable.cb, 1);
+
+    if (this.out.len + count == this.out.capacity)
+      io::complete(&mut this.writeable.cb, 0);
+  }
+
+  return cast(count);
+}
+
+pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
+{
+  var &this = cast<ptty&>(dev);
+
+  switch(query)
+  {
+    case device_name:
+      result = std::format("pts/{}", this.id);
+  }
+
+  return ok;
+}
+
+pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+{
+  return ok;
+}
+
+pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
+{
+  var mut &this = cast<ptty mut &>(dev);
+
+  var guard = std::lock_guard(&mut this.lock);
+
+  switch (op)
+  {
+    case tio::getptn:
+      if (buffer.length != sizeof<int>)
+        return invalid_argument;
+
+      var arg = this.getptn();
+
+      if (var result = vm::memcpy(buffer, 0, &arg, sizeof<int>); !result)
+        return cast(result);
+
+      return ok;
+
+    case tio::getwinsize:
+      if (buffer.length != sizeof<winsize>)
+        return invalid_argument;
+
+      if (var result = vm::memcpy(buffer, 0, &this.winsize, sizeof<winsize>); !result)
+        return cast(result);
+
+      return ok;
+
+    case tio::gettermios:
+      if (buffer.length != sizeof<termios>)
+        return invalid_argument;
+
+      if (var result = vm::memcpy(buffer, 0, &this.termios, sizeof<termios>); !result)
+        return cast(result);
+
+      return ok;
+
+    case tio::settermios:
+      if (buffer.length != sizeof<termios>)
+        return invalid_argument;
+
+      var termios = termios();
+
+      if (var result = vm::memcpy(&termios, buffer, 0, sizeof<termios>); !result)
+        return cast(result);
+
+      if (var result = this.settermios(termios); !result)
+        return result;
+
+      return ok;
+  }
+
+  return not_supported;
+}
+
+pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+{
+  var mut &this = cast<ptty mut &>(dev);
+
+  readable = this.readable.cb;
+  writeable = this.writeable.cb;
+
+  return ok;
+}
+
+pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  var mut &this = cast<ptty mut &>(dev);
+
+  var guard = std::lock_guard(&mut this.lock);
+
+  var count = 0;
+  var remaining = 0;
+  var eof = false;
+
+  if (this.termios.c_lflag & ICANON == ICANON)
+  {
+    if (this.lines != 0)
+    {
+      for(var ch : this.in)
+      {
+        if (remaining >= length)
+          break;
+
+        remaining += 1;
+
+        if (ch == this.termios.c_cc[VEOF] || ch == this.termios.c_cc[VEOL] || ch == cast('\n') || ch == cast('\r'))
+        {
+          if (ch == this.termios.c_cc[VEOF])
+            eof = true;
+
+          this.lines -= 1;
+
+          break;
+        }
+      }
+    }
+  }
+  else
+  {
+    remaining = std::min(this.in.len, length);
+  }
+
+  for(var span : this.in.spans)
+  {
+    var bytes = std::min(remaining, span.len);
+
+    if (var result = vm::memcpy(buffer, offset, span.data, bytes); !result)
+      return cast(result);
+
+    count += bytes;
+    offset += bytes;
+    remaining -= bytes;
+  }
+
+  if (count != 0)
+  {
+    this.in.erase(this.in.begin, count);
+
+    if (((this.termios.c_lflag & ICANON == ICANON && this.lines == 0) || this.in.len == 0))
+      io::initiate(&mut this.readable.cb, 1);
+
+    if (eof)
+      count -= 1;
+  }
+
+  if (count == 0 && !eof)
+    return would_block;
+
+  return cast(count);
+}
+
+pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+{
+  var mut &this = cast<ptty mut &>(dev);
+
+  var guard = std::lock_guard(&mut this.lock);
+
+  var count = 0;
+  var result = chr::result::ok;
+
+  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+    if (!result)
+      return;
+
+    for(var ch : std::span(cast<u8*>(region.addr.ptr), region.size))
+    {
+      if (result = this.emit(ch); !result)
+        break;
+
+      count += 1;
+    }
+  });
+
+  if (count == 0)
+    return result;
+
+  return cast(count);
+}
+
+pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+{
+  return not_supported;
+}

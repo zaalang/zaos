@@ -1,0 +1,883 @@
+//
+// fat image
+//
+
+import std.span;
+import std.string;
+import std.memory : memcpy, memset;
+import fat : fat_header, fat12_header, fat32_header, fat32_fsinfo, directory_entry;
+import chrono;
+
+pub enum result : i32
+{
+  ok = 0,
+  file_not_found = -2,
+  format_error = -8,
+  bad_descriptor = -9,
+  already_exists = -17,
+  file_too_large = -27,
+  no_space_remaining = -28,
+  readonly_file_system = -30,
+  name_too_long = -36,
+  directory_not_empty = -39,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct image
+{
+  pub image(void *data, usize len)
+    : len(len),
+      data(data)
+  {
+  }
+
+  pub image(void mut *data, usize len)
+    : len(len),
+      data(data),
+      mutdata(data)
+  {
+  }
+
+  pub fn header(this&) -> fat_header *
+  {
+    return cast<fat_header*>(this.data);
+  }
+
+  pub fn header12(this&) -> fat12_header *
+  {
+    return cast<fat12_header*>(this.data);
+  }
+
+  pub fn header32(this&) -> fat32_header *
+  {
+    return cast<fat32_header*>(this.data);
+  }
+
+  pub struct volume
+  {
+    pub u32 bits;
+    pub u32 bytes_per_sector;
+    pub u32 sectors_per_cluster;
+    pub u32 sectors_per_fat;
+    pub u32 number_of_fats;
+    pub u32 total_sectors;
+    pub u32 fsinfo_sector;
+    pub u32 fat_start_sector;
+    pub u32 data_start_sector;
+    pub u32 total_clusters;
+    pub u32 root_entry_sector;
+    pub u32 root_entry_cluster;
+    pub u8 media_descriptor;
+
+    pub volume() = default;
+    pub volume(volume&) = default;
+    pub fn =(volume mut &, volume &) -> volume mut & = default;
+    pub ~volume() = default;
+  }
+
+  pub fn volume_info(this&) -> volume
+  {
+    var vol = volume();
+
+    vol.bytes_per_sector = cast(this.header.bytes_per_sector);
+    vol.sectors_per_cluster = cast(this.header.sectors_per_cluster);
+    vol.sectors_per_fat = cast(this.header.fat_sectors_short);
+    vol.number_of_fats = cast(this.header.number_of_fats);
+    vol.media_descriptor = this.header.media_descriptor;
+    vol.total_sectors = cast(this.header.total_sectors_short);
+
+    if (vol.total_sectors == 0)
+      vol.total_sectors = this.header.total_sectors_long;
+
+    if (vol.sectors_per_fat != 0)
+    {
+      vol.bits = 12;
+      vol.fsinfo_sector = 0xffff;
+      vol.fat_start_sector = cast<u32>(this.header.reserved_sectors);
+      vol.root_entry_sector = cast<u32>(this.header.reserved_sectors) + vol.number_of_fats * vol.sectors_per_fat;
+      vol.data_start_sector = vol.root_entry_sector + cast<u32>(this.header.root_entry_count * 0x20 / this.header.bytes_per_sector);;
+      vol.total_clusters = (vol.total_sectors - vol.data_start_sector) / vol.sectors_per_cluster;
+      vol.root_entry_cluster = 1;
+
+      if (vol.total_clusters > 0xff1)
+        vol.bits = 16;
+    }
+    else
+    {
+      vol.bits = 32;
+      vol.sectors_per_fat = this.header32.fat_sectors_long;
+      vol.fsinfo_sector = cast<u32>(this.header32.fsinfo_sector);
+      vol.fat_start_sector = cast<u32>(this.header.reserved_sectors);
+      vol.data_start_sector = cast<u32>(this.header.reserved_sectors) + vol.number_of_fats * vol.sectors_per_fat;
+      vol.total_clusters = (vol.total_sectors - vol.data_start_sector) / vol.sectors_per_cluster;
+      vol.root_entry_sector = vol.data_start_sector + (this.header32.root_entry_cluster - 2) * vol.sectors_per_cluster;
+      vol.root_entry_cluster = this.header32.root_entry_cluster;
+    }
+
+    return vol;
+  }
+
+  pub fn fs_info(this&, volume &vol) -> fat32_fsinfo *
+  {
+    return cast<fat32_fsinfo*>(cast<uintptr>(this.data) + cast<usize>(vol.fsinfo_sector * vol.bytes_per_sector));
+  }
+
+  pub struct inode
+  {
+    enum type
+    {
+      directory,
+      regular_file,
+    }
+
+    type type;
+    u8 *data;
+    u32 cluster;
+    u32 cursor;
+
+    directory_entry *dentry;
+
+    u8 *base;
+    u32 bytes_per_cluster;
+
+    pub fn mode(this&) -> u16
+    {
+      switch (this.type)
+      {
+        case directory:
+          return 0x4000;
+
+        case regular_file:
+          return 0x8000;
+      }
+
+      return 0;
+    }
+
+    pub fn atime(this&) -> u32 { return timestamp(this.dentry.last_access_date, 0, 0); }
+    pub fn ctime(this&) -> u32 { return timestamp(this.dentry.creation_date, this.dentry.creation_time, this.dentry.creation_time_tenths); }
+    pub fn mtime(this&) -> u32 { return timestamp(this.dentry.write_date, this.dentry.write_time, 0); }
+
+    pub fn cursor(this&) -> u32 { return this.cursor; }
+    pub fn filesize(this&) -> u32 { return this.dentry.filesize; }
+
+    pub inode() = default;
+    pub inode(inode&) = default;
+    pub fn =(inode mut &, inode &) -> inode mut & = default;
+    pub ~inode() = default;
+  }
+
+  pub struct dentry
+  {
+    pub std::string_view name;
+
+    pub u8 attributes;
+
+    pub u16 creation_time;
+    pub u16 creation_date;
+    pub u16 access_date;
+    pub u16 write_time;
+    pub u16 write_date;
+
+    pub u32 filesize;
+
+    pub dentry() = default;
+    pub dentry(dentry&) = default;
+    pub fn =(dentry mut &, dentry &) -> dentry mut & = default;
+    pub ~dentry() = default;
+  }
+
+  pub fn root(this&) -> inode
+  {
+    var root = inode();
+
+    var vol = this.volume_info;
+
+    root.type = inode::type::directory;
+    root.cluster = vol.root_entry_cluster;
+    root.data = cast<u8*>(cast<uintptr>(this.data) + cast<usize>(vol.root_entry_sector * vol.bytes_per_sector));
+
+    root.base = cast<u8*>(cast<uintptr>(this.data) + cast<usize>(vol.data_start_sector * vol.bytes_per_sector));
+    root.bytes_per_cluster = vol.sectors_per_cluster * vol.bytes_per_sector;
+
+    return root;
+  }
+
+  pub ~image() = default;
+
+  pub usize len;
+  pub void *data;
+  pub void mut *mutdata;
+}
+
+pub fn verify_fat_header(image &this) -> result
+{
+  if (this.len < sizeof<fat_header>)
+    return result::format_error;
+
+  var hdr = this.header;
+
+  if (!(hdr.jmp[0] == 0xeb && hdr.jmp[2] == 0x90) && !(hdr.jmp[0] == 0xe9))
+    return result::format_error;
+
+  if (hdr.bytes_per_sector != 0x200 && hdr.bytes_per_sector != 0x400 && hdr.bytes_per_sector != 0x800 && hdr.bytes_per_sector != 0x1000)
+    return result::format_error;
+
+  if (hdr.sectors_per_cluster != 1 && hdr.sectors_per_cluster != 2 && hdr.sectors_per_cluster != 4 && hdr.sectors_per_cluster != 8 &&
+      hdr.sectors_per_cluster != 0x10 && hdr.sectors_per_cluster != 0x20 && hdr.sectors_per_cluster != 0x40 && hdr.sectors_per_cluster != 0x80)
+    return result::format_error;
+
+  if (hdr.media_descriptor != 0xf0 && hdr.media_descriptor < 0xf8)
+    return result::format_error;
+
+  var vol = this.volume_info;
+
+  if (this.len < cast<usize>(vol.total_sectors) * cast<usize>(vol.bytes_per_sector))
+    return result::format_error;
+
+  return result::ok;
+}
+
+fn now_time() -> u16
+{
+  var now = chrono::system_clock::now.time_since_epoch.floor<chrono::seconds>.count;
+
+  var hour = (now % 86400) / 3600;
+  var min = (now % 3600) / 60;
+  var sec = (now % 60);
+
+  return cast<u16>(hour) << 11 | cast<u16>(min) << 5 | cast<u16>(sec / 2);
+}
+
+fn now_date() -> u16
+{
+  var ymd = chrono::year_month_day(chrono::local_time(chrono::system_clock::now.time_since_epoch.floor<chrono::days>));
+
+  var year = cast<int>(ymd.year);
+  var month = cast<int>(ymd.month);
+  var day = cast<int>(ymd.day);
+
+  return cast<u16>(year - 1980) << 9 | cast<u16>(month) << 5 | cast<u16>(day);
+}
+
+fn timestamp(u16 date, u16 time, u8 tenths) -> u32
+{
+  var day = (date & 0x1f);
+  var month = (date & 0x1e0) >> 5;
+  var year = (date & 0xfe00) >> 9 + 1980;
+  var sec = (time & 0x1f) * 2;
+  var min = (time & 0x7e0) >> 5;
+  var hour = (time & 0xf800) >> 11;
+
+  var tp = chrono::year_month_day(cast<chrono::year>(year), cast<chrono::month>(month), cast<chrono::day>(day)).as_local_time + chrono::hours(hour) + chrono::minutes(min) + chrono::seconds(sec);
+
+  return cast<u32>(tp.time_since_epoch.floor<chrono::seconds>.count & 0xffffffff);
+}
+
+fn ==(directory_entry *entry, std::string_view name) -> bool
+{
+  var i = 0;
+  var j = 0;
+
+  for(; i < entry.name.len && j < name.len; ++j)
+  {
+    if (name[j] == cast('.') && entry.name[i] == cast(' '))
+    {
+      while (i < entry.name.len && entry.name[i] == cast(' '))
+        ++i;
+
+      continue;
+    }
+
+    if (std::to_lowercase(entry.name[i++]) != std::to_lowercase(name[j]))
+      return false;
+  }
+
+  while (i < entry.name.len && entry.name[i] == cast(' '))
+    ++i;
+
+  return i == entry.name.len && j == name.len;
+}
+
+fn set_name(directory_entry mut &entry, std::string_view name) -> void
+{
+  memset(entry.name.data, 0x20, entry.name.len);
+
+  for(var i = 0, var j = 0; i < entry.name.len && j < name.len; ++j)
+  {
+    if (name[j] == cast('.'))
+    {
+      i = 8;
+
+      continue;
+    }
+
+    entry.name[i++] = std::to_lowercase(name[j]);
+  }
+}
+
+fn read_fat(image::volume &vol, u8 *fat, u32 entry) -> u32
+{
+  var value = 0;
+
+  switch (vol.bits)
+  {
+    case 12:
+      var offset = cast<usize>(entry * 12) / 8;
+
+      if (entry & 1 == 0)
+        value = cast<u32>(*(fat + offset)) + cast<u32>(*(fat + offset + 1) & 0xf) << 8;
+      else
+        value = cast<u32>(*(fat + offset)) >> 4 + cast<u32>(*(fat + offset + 1)) << 4;
+
+    case 16:
+      value = cast<u32>(*cast<u16*>(fat + cast<usize>(entry * 2)));
+
+    case 32:
+      value = *cast<u32*>(fat + cast<usize>(entry * 4));
+  }
+
+  if (vol.total_clusters < value)
+    value = 0x0fffffff;
+
+  return value;
+}
+
+fn write_fat(image::volume &vol, u8 mut *fat, u32 entry, u32 value) -> void
+{
+  switch (vol.bits)
+  {
+    case 12:
+      var offset = cast<usize>(entry * 12) / 8;
+
+      *(fat + offset) = (entry & 1 == 0) ? cast<u8>(value & 0xff) : *(fat + offset) & 0xf | cast<u8>((value & 0xf) << 4);
+      *(fat + offset + 1) = (entry & 1 == 0) ? *(fat + offset + 1) & 0xf0 | cast<u8>((value & 0xf00) >> 8) : cast<u8>((value & 0xff0) >> 4);
+
+    case 16:
+      *cast<u16 mut *>(fat + cast<usize>(entry * 2)) = cast<u16>(value & 0xffff);
+
+    case 32:
+      *cast<u32 mut *>(fat + cast<usize>(entry * 4)) = value;
+  }
+}
+
+fn allocate(image mut &this, image::volume &vol, u32 prev, u32 mut &next) -> result
+{
+  var fat = cast<u8 mut *>(cast<uintptr>(this.data) + cast<usize>(vol.fat_start_sector * vol.bytes_per_sector));
+
+  var i = 2;
+
+  if (prev != 0 && prev + 1 < vol.total_clusters && read_fat(vol, fat, prev + 1) == 0)
+    i = prev + 1;
+
+  for( ; i < vol.total_clusters; ++i)
+  {
+    if (read_fat(vol, fat, i) == 0)
+    {
+      next = i;
+
+      if (prev != 0)
+        write_fat(vol, fat, prev, next);
+
+      write_fat(vol, fat, next, 0x0fffffff);
+
+      return result::ok;
+    }
+  }
+
+  return result::no_space_remaining;
+}
+
+fn deallocate(image mut &this, image::volume &vol, u32 prev, u32 mut &current) -> result
+{
+  var fat = cast<u8 mut *>(cast<uintptr>(this.data) + cast<usize>(vol.fat_start_sector * vol.bytes_per_sector));
+
+  var next = read_fat(vol, fat, current);
+
+  if (prev != 0)
+    write_fat(vol, fat, prev, next);
+
+  write_fat(vol, fat, current, 0);
+
+  current = next;
+
+  return result::ok;
+}
+
+fn advance(image &this, image::inode mut &node, u32 size) -> result
+{
+  node.cursor += size;
+  node.data += cast(size);
+
+  if (node.cluster == 1) /* fat12 root directory */
+  {
+    if (node.dentry)
+      return result::no_space_remaining;
+
+    if (node.cursor >= cast<u32>(this.header.root_entry_count) * 0x20)
+      node.cluster = 0x0fffffff;
+
+    return result::ok;
+  }
+
+  if (node.cursor & (node.bytes_per_cluster - 1) < size)
+  {
+    var vol = this.volume_info;
+    var fat = cast<u8*>(cast<uintptr>(this.data) + cast<usize>(vol.fat_start_sector * vol.bytes_per_sector));
+
+    if (node.cluster <= 1 || node.cluster >= vol.total_clusters)
+      return result::no_space_remaining;
+
+    node.cluster = read_fat(vol, fat, node.cluster);
+
+    node.data = node.base + cast<usize>(node.cluster - 2) * cast<usize>(node.bytes_per_cluster);
+  }
+
+  return result::ok;
+}
+
+pub fn open(image &this, image::inode &dir, std::string_view name, image::inode mut &fd) -> result
+{
+  if (dir.cursor != 0)
+    return result::bad_descriptor;
+
+  if (dir.type != image::inode::type::directory)
+    return result::bad_descriptor;
+
+  var node = dir;
+
+  while (node.cluster != 0x0fffffff)
+  {
+    var entry = cast<directory_entry*>(node.data);
+
+    if (entry.name[0] == 0)
+      return result::file_not_found;
+
+    if (var result = this.advance(&mut node, sizeof<directory_entry>); !result)
+      return result;
+
+    if (entry.name[0] == 0xe5)
+      continue;
+
+    if (entry.attributes & 0xf == 0xf)
+      continue;
+
+    if (entry == name)
+    {
+      fd = node;
+      fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular_file;
+      fd.cluster = entry.first_cluster;
+      fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
+      fd.dentry = entry;
+      fd.cursor = 0;
+
+      return result::ok;
+    }
+  }
+
+  return result::file_not_found;
+}
+
+pub fn read(image &this, image::inode mut &fd, std::span<u8> mut &view) -> result
+{
+  if (fd.type != image::inode::type::regular_file)
+    return result::bad_descriptor;
+
+  view.len = 0;
+  view.data = fd.data;
+
+  for(var cluster = fd.cluster; fd.cluster == cluster; cluster += 1)
+  {
+    var bytes = std::min(fd.bytes_per_cluster - (fd.cursor & (fd.bytes_per_cluster - 1)), fd.dentry.filesize - fd.cursor);
+
+    view.len += cast<usize>(bytes);
+
+    if (var result = this.advance(&mut fd, bytes); !result)
+      return result;
+  }
+
+  return cast(view.len);
+}
+
+pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) -> result
+{
+  if (dir.type != image::inode::type::directory)
+    return result::bad_descriptor;
+
+  while (dir.cluster != 0x0fffffff)
+  {
+    var entry = cast<directory_entry*>(dir.data);
+
+    if (entry.name[0] == 0)
+      return cast(0);
+
+    if (var result = this.advance(&mut dir, sizeof<directory_entry>); !result)
+      return result;
+
+    if (entry.name[0] == 0xe5)
+      continue;
+
+    if (entry.attributes & 0xf == 0xf)
+      continue;
+
+    dentry.name = std::string_view(entry.name.data, 11);
+    dentry.attributes = entry.attributes;
+    dentry.creation_time = entry.creation_time;
+    dentry.creation_date = entry.creation_date;
+    dentry.access_date = entry.last_access_date;
+    dentry.write_time = entry.write_time;
+    dentry.write_date = entry.write_date;
+    dentry.filesize = entry.filesize;
+
+    return cast(sizeof<directory_entry>);
+  }
+
+  return cast(0);
+}
+
+pub fn create(image mut &this, image::inode &dir, std::string_view name, u8 attributes, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (dir.cursor != 0)
+    return result::bad_descriptor;
+
+  if (dir.type != image::inode::type::directory)
+    return result::bad_descriptor;
+
+  var vol = this.volume_info;
+
+  var node = dir;
+
+  for(;;)
+  {
+    var prev = node.cluster;
+    var entry = cast<directory_entry mut *>(node.data);
+
+    if (var result = this.advance(&mut node, sizeof<directory_entry>); !result)
+      return result;
+
+    if (node.cluster == 0x0fffffff)
+    {
+      if (prev == 1)
+        return result::no_space_remaining;
+
+      if (var result = this.allocate(vol, prev, &mut node.cluster); !result)
+        return result;
+
+      node.data = node.base + cast<usize>(node.cluster - 2) * cast<usize>(node.bytes_per_cluster);
+
+      memset(cast<u8 mut *>(node.data), 0, cast(node.bytes_per_cluster));
+    }
+
+    if (entry.attributes & 0xf == 0xf)
+      continue;
+
+    if (entry.name[0] != 0 && entry.name[0] != 0xe5)
+      continue;
+
+    entry.set_name(name);
+    entry.attributes = attributes;
+    entry.creation_time = now_time();
+    entry.creation_date = now_date();
+    entry.last_access_date = entry.creation_date;
+    entry.write_time = entry.creation_time;
+    entry.write_date = entry.creation_date;
+    entry.filesize = 0;
+
+    entry.first_cluster = 0;
+
+    fd = node;
+    fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular_file;
+    fd.cluster = 0x0fffffff;
+    fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
+    fd.dentry = entry;
+    fd.cursor = 0;
+
+    return result::ok;
+  }
+}
+
+pub fn expand(image mut &this, image::inode mut &fd, u64 len) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (fd.type != image::inode::type::regular_file)
+    return result::bad_descriptor;
+
+  if (len < cast(fd.cursor))
+    return result::bad_descriptor;
+
+  var vol = this.volume_info;
+
+  switch (vol.bits)
+  {
+    case 12:
+      if (len > 0xff0 * cast(fd.bytes_per_cluster))
+        return result::file_too_large;
+
+    case 16:
+      if (len > 0xfff0 * cast(fd.bytes_per_cluster))
+        return result::file_too_large;
+
+    case 32:
+      if (len > 0xfffffffe)
+        return result::file_too_large;
+  }
+
+  var node = fd;
+  var entry = cast<directory_entry mut *>(node.dentry);
+
+  if (node.cluster == 0x0fffffff)
+  {
+    node.cursor = 0;
+    node.cluster = entry.first_cluster;
+
+    if (node.cluster == 0x0fffffff)
+    {
+      if (var result = this.allocate(vol, 0, &mut node.cluster); !result)
+        return result;
+
+      entry.first_cluster = node.cluster;
+
+      fd.cluster = node.cluster;
+    }
+  }
+
+  var len = cast<u32>(len);
+
+  while ((node.cursor + node.bytes_per_cluster) & -node.bytes_per_cluster < len)
+  {
+    var prev = node.cluster;
+
+    if (var result = this.advance(&mut node, node.bytes_per_cluster); !result)
+      return result;
+
+    if (node.cluster == 0x0fffffff)
+    {
+      if (var result = this.allocate(vol, prev, &mut node.cluster); !result)
+        return result;
+
+      if (fd.cluster == 0x0fffffff)
+        fd.cluster = node.cluster;
+    }
+  }
+
+  fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
+
+  entry.filesize = len;
+
+  return result::ok;
+}
+
+pub fn truncate(image mut &this, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (fd.type != image::inode::type::regular_file)
+    return result::bad_descriptor;
+
+  var vol = this.volume_info;
+
+  var node = fd;
+  var entry = cast<directory_entry mut *>(node.dentry);
+
+  if (node.cluster != 0x0fffffff)
+  {
+    var prev = node.cluster;
+
+    if (var result = this.advance(&mut node, node.bytes_per_cluster); !result)
+      return result;
+
+    while (node.cluster != 0x0fffffff)
+    {
+      if (var result = this.deallocate(vol, prev, &mut node.cluster); !result)
+        return result;
+    }
+  }
+
+  if (fd.cursor == 0)
+  {
+    node.cluster = entry.first_cluster;
+
+    if (node.cluster != 0x0fffffff)
+    {
+      if (var result = this.deallocate(vol, 0, &mut node.cluster); !result)
+        return result;
+
+      entry.first_cluster = 0;
+    }
+  }
+
+  entry.filesize = fd.cursor;
+
+  return result::ok;
+}
+
+pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (fd.type != image::inode::type::regular_file)
+    return result::bad_descriptor;
+
+  if (fd.filesize < fd.cursor + cast(len))
+    return result::no_space_remaining;
+
+  for(var i = 0; i < len; )
+  {
+    var bytes = std::min(fd.bytes_per_cluster - (fd.cursor & (fd.bytes_per_cluster - 1)), cast<u32>(len - i));
+
+    memcpy(cast<u8 mut *>(fd.data), cast<u8*>(data) + i, cast(bytes));
+
+    if (var result = this.advance(&mut fd, bytes); !result)
+      return result;
+
+    i += cast(bytes);
+  }
+
+  return cast(len);
+}
+
+pub fn unlink(image mut &this, image::inode &dir, std::string_view name) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (dir.cursor != 0)
+    return result::bad_descriptor;
+
+  if (dir.type != image::inode::type::directory)
+    return result::bad_descriptor;
+
+  var node = image::inode();
+
+  if (var result = open(this, dir, name, node); !result)
+    return result;
+
+  var entry = cast<directory_entry mut *>(node.dentry);
+  var cluster = entry.first_cluster;
+
+  if (cluster != 0x0fffffff)
+  {
+    var vol = this.volume_info;
+
+    while (cluster != 0x0fffffff)
+    {
+      if (var result = this.deallocate(vol, 0, &mut cluster); !result)
+        return result;
+    }
+  }
+
+  entry.name[0] = 0xe5;
+
+  return result::ok;
+}
+
+pub fn rename(image mut &this, image::inode &dir, std::string_view oldname, std::string_view newname) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (dir.cursor != 0)
+    return result::bad_descriptor;
+
+  if (dir.type != image::inode::type::directory)
+    return result::bad_descriptor;
+
+  var node = image::inode();
+
+  if (var result = open(this, dir, oldname, node); !result)
+    return result;
+
+  var entry = cast<directory_entry mut *>(node.dentry);
+
+  entry.set_name(newname);
+
+  return result::ok;
+}
+
+pub fn utime(image mut &this, image::inode mut &fd, u32 time) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  if (!fd.dentry)
+    return result::bad_descriptor;
+
+  var entry = cast<directory_entry mut *>(fd.dentry);
+
+  var ymd = chrono::year_month_day(chrono::local_time(chrono::seconds(time).floor<chrono::days>));
+
+  var year = cast<int>(ymd.year);
+  var month = cast<int>(ymd.month);
+  var day = cast<int>(ymd.day);
+  var hour = (time % 86400) / 3600;
+  var min = (time % 3600) / 60;
+  var sec = (time % 60);
+
+  entry.write_date = cast<u16>(year - 1980) << 9 | cast<u16>(month) << 5 | cast<u16>(day);
+  entry.write_time = cast<u16>(hour) << 11 | cast<u16>(min) << 5 | cast<u16>(sec / 2);
+
+  entry.last_access_date = entry.write_date;
+
+  return result::ok;
+}
+
+pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u8 attributes, image::inode mut &fd) -> result
+{
+  var vol = this.volume_info;
+
+  var parent = dir.dentry;
+
+  if (var result = this.create(dir, name, 0x10 | attributes, &mut fd); !result)
+    return result;
+
+  var dentry = cast<directory_entry mut *>(fd.dentry);
+
+  if (var result = this.allocate(vol, 0, &mut fd.cluster); !result)
+    return result;
+
+  fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
+
+  dentry.first_cluster = fd.cluster;
+
+  memset(cast<u8 mut *>(fd.data), 0, cast(fd.bytes_per_cluster));
+
+  var dotentry = cast<directory_entry mut *>(fd.data);
+
+  dotentry.name[0] = cast('.');
+  memset(dotentry.name.data+1, 0x20, dotentry.name.len-1);
+  dotentry.attributes = 0x10;
+  dotentry.creation_time = now_time();
+  dotentry.creation_date = now_date();
+  dotentry.last_access_date = dotentry.creation_date;
+  dotentry.write_time = dotentry.creation_time;
+  dotentry.write_date = dotentry.creation_date;
+  dotentry.first_cluster_lo = dentry.first_cluster_lo;
+  dotentry.first_cluster_hi = dentry.first_cluster_hi;
+
+  var dotdotentry = cast<directory_entry mut *>(fd.data + 0x20);
+
+  dotdotentry.name[0] = cast('.');
+  dotdotentry.name[1] = cast('.');
+  memset(dotdotentry.name.data+2, 0x20, dotdotentry.name.len-2);
+  dotdotentry.attributes = 0x10;
+  dotdotentry.creation_time = now_time();
+  dotdotentry.creation_date = now_date();
+  dotdotentry.last_access_date = dotdotentry.creation_date;
+  dotdotentry.write_time = dotdotentry.creation_time;
+  dotdotentry.write_date = dotdotentry.creation_date;
+  dotdotentry.first_cluster_lo = parent ? parent.first_cluster_lo : 0;
+  dotdotentry.first_cluster_hi = parent ? parent.first_cluster_hi : 0;
+
+  return result::ok;
+}

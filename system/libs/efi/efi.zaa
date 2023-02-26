@@ -1,0 +1,402 @@
+//
+// efi interface
+//
+
+pub using EFI_HANDLE = uintptr;
+
+pub struct EFI_SYSTEM_TABLE
+{
+  pub EFI_TABLE_HEADER hdr;
+
+  pub u16 *FirmwareVendor;
+  pub u32 FirmwareRevision;
+
+  pub EFI_HANDLE ConsoleInHandle;
+  pub SIMPLE_INPUT_INTERFACE *ConIn;
+
+  pub EFI_HANDLE ConsoleOutHandle;
+  pub SIMPLE_TEXT_OUTPUT_INTERFACE *ConOut;
+
+  pub EFI_HANDLE StandardErrorHandle;
+  pub SIMPLE_TEXT_OUTPUT_INTERFACE *StdErr;
+
+  pub EFI_RUNTIME_SERVICES *RuntimeServices;
+  pub EFI_BOOT_SERVICES *BootServices;
+
+  pub UINTN NumberOfTableEntries;
+  pub EFI_CONFIGURATION_TABLE *ConfigurationTable;
+}
+
+pub using UINTN = usize;
+
+pub struct EFI_TABLE_HEADER
+{
+  u64 Signature;
+  u32 Revision;
+  u32 HeaderSize;
+  u32 CRC32;
+  u32 Reserved;
+}
+
+pub struct EFI_RUNTIME_SERVICES
+{
+  EFI_TABLE_HEADER Hdr;
+
+  void *_GetTime;
+  void *_SetTime;
+  void *_GetWakeupTime;
+  void *_SetWakeupTime;
+
+  void *_SetVirtualAddressMap;
+  void *_ConvertPointer;
+
+  void *_GetVariable;
+  void *_GetNextVariableName;
+  void *_SetVariable;
+
+  void *_GetNextHighMonotonicCount;
+  void *_ResetSystem;
+
+  void *_UpdateCapsule;
+  void *_QueryCapsuleCapabilities;
+  void *_QueryVariableInfo;
+
+  pub fn SetVirtualAddressMap(this&, UINTN MemoryMapSize, UINTN DescriptorSize, u32 DescriptorVersion, EFI_MEMORY_DESCRIPTOR *VirtualMap) -> UINTN
+    { return _efi_call4(this._SetVirtualAddressMap, cast(MemoryMapSize), cast(DescriptorSize), cast(DescriptorVersion), cast(VirtualMap)); }
+
+}
+
+pub struct EFI_BOOT_SERVICES
+{
+  EFI_TABLE_HEADER Hdr;
+
+  void *_RaiseTPL;
+  void *_RestoreTPL;
+
+  void *_AllocatePages;
+  void *_FreePages;
+  void *_GetMemoryMap;
+  void *_AllocatePool;
+  void *_FreePool;
+
+  void *_CreateEvent;
+  void *_SetTimer;
+  void *_WaitForEvent;
+  void *_SignalEvent;
+  void *_CloseEvent;
+  void *_CheckEvent;
+
+  void *_InstallProtocolInterface;
+  void *_ReinstallProtocolInterface;
+  void *_UninstallProtocolInterface;
+  void *_HandleProtocol;
+  void *_PCHandleProtocol;
+  void *_RegisterProtocolNotify;
+  void *_LocateHandle;
+  void *_LocateDevicePath;
+  void *_InstallConfigurationTable;
+
+  void *_LoadImage;
+  void *_StartImage;
+  void *_Exit;
+  void *_UnloadImage;
+  void *_ExitBootServices;
+
+  void *_GetNextMonotonicCount;
+  void *_Stall;
+  void *_SetWatchdogTimer;
+
+  void *_ConnectController;
+  void *_DisconnectController;
+
+  void *_OpenProtocol;
+  void *_CloseProtocol;
+  void *_OpenProtocolInformation;
+
+  void *_ProtocolsPerHandle;
+  void *_LocateHandleBuffer;
+  void *_LocateProtocol;
+  void *_InstallMultipleProtocolInterfaces;
+  void *_UninstallMultipleProtocolInterfaces;
+
+  void *_CalculateCrc32;
+
+  void *_CopyMem;
+  void *_SetMem;
+  void *_CreateEventEx;
+
+  pub fn HandleProtocol(this&, EFI_HANDLE Handle, EFI_GUID *Protocol, void * mut *Interface) -> UINTN
+    { return _efi_call3(this._HandleProtocol, cast(Handle), cast(Protocol), cast(Interface)); }
+
+  pub fn LocateProtocol(this&, EFI_GUID *Protocol, void *Registration, void * mut *Interface) -> UINTN
+    { return _efi_call3(this._LocateProtocol, cast(Protocol), cast(Registration), cast(Interface)); }
+
+  pub fn AllocatePages(this&, EFI_ALLOCATE_TYPE Type, EFI_MEMORY_TYPE MemoryType, UINTN NoPages, uintptr mut *Memory) -> UINTN
+    { return _efi_call4(this._AllocatePages, cast(Type), cast(MemoryType), cast(NoPages), cast(Memory)); }
+
+  pub fn GetMemoryMap(this&, UINTN *MemoryMapSize, EFI_MEMORY_DESCRIPTOR *MemoryMap, UINTN mut *MapKey, UINTN mut *DescriptorSize, u32 mut *DescriptorVersion) -> UINTN
+    { return _efi_call5(this._GetMemoryMap, cast(MemoryMapSize), cast(MemoryMap), cast(MapKey), cast(DescriptorSize), cast(DescriptorVersion)); }
+
+  pub fn LocateHandle(this&, EFI_LOCATE_SEARCH_TYPE SearchType, EFI_GUID *Protocol, void *SearchKey, UINTN mut *BufferSize, EFI_HANDLE mut *Buffer) -> UINTN
+    { return _efi_call5(this._LocateHandle, cast(SearchType), cast(Protocol), cast(SearchKey), cast(BufferSize), cast(Buffer)); }
+
+  pub fn ExitBootServices(this&, EFI_HANDLE ImageHandle, UINTN MapKey) -> UINTN
+    { return _efi_call2(this._ExitBootServices, cast(ImageHandle), cast(MapKey)); }
+}
+
+pub enum EFI_ALLOCATE_TYPE
+{
+  AllocateAnyPages,
+  AllocateMaxAddress,
+  AllocateAddress,
+  MaxAllocateType
+}
+
+pub enum EFI_MEMORY_TYPE
+{
+  EfiReservedMemoryType,
+  EfiLoaderCode,
+  EfiLoaderData,
+  EfiBootServicesCode,
+  EfiBootServicesData,
+  EfiRuntimeServicesCode,
+  EfiRuntimeServicesData,
+  EfiConventionalMemory,
+  EfiUnusableMemory,
+  EfiACPIReclaimMemory,
+  EfiACPIMemoryNVS,
+  EfiMemoryMappedIO,
+  EfiMemoryMappedIOPortSpace,
+  EfiPalCode,
+  EfiMaxMemoryType
+}
+
+pub struct EFI_MEMORY_DESCRIPTOR
+{
+  pub u32 Type;
+  pub u32 Pad;
+  pub uintptr PhysicalStart;
+  pub uintptr VirtualStart;
+  pub usize NumberOfPages;
+  pub u64 Attribute;
+}
+
+pub enum EFI_LOCATE_SEARCH_TYPE
+{
+  AllHandles,
+  ByRegisterNotify,
+  ByProtocol
+}
+
+pub struct SIMPLE_INPUT_INTERFACE
+{
+}
+
+pub struct SIMPLE_TEXT_OUTPUT_MODE
+{
+  pub i32 MaxMode;
+  pub i32 Mode;
+  pub i32 Attribute;
+  pub i32 CursorColumn;
+  pub i32 CursorRow;
+  pub bool CursorVisible;
+}
+
+pub struct SIMPLE_TEXT_OUTPUT_INTERFACE
+{
+  void *_Reset;
+
+  void *_OutputString;
+  void *_TestString;
+
+  void *_QueryMode;
+  void *_SetMode;
+  void *_SetAttribute;
+
+  void *_ClearScreen;
+  void *_SetCursorPosition;
+  void *_EnableCursor;
+
+  pub fn ClearScreen(this&) -> void { _efi_call1(this._ClearScreen, cast(&this)); }
+  pub fn OutputString(this&, u16 *msg) -> void { _efi_call2(this._OutputString, cast(&this), cast(msg)); }
+  pub fn QueryMode(this&, i32 ModeNumber, UINTN mut *Columns, UINTN mut *Rows) -> UINTN { return _efi_call4(this._QueryMode, cast(&this), cast(ModeNumber), cast(Columns), cast(Rows)); }
+  pub fn EnableCursor(this&, bool enabled) -> UINTN { return _efi_call2(this._EnableCursor, cast(&this), cast(enabled)); }
+
+  pub SIMPLE_TEXT_OUTPUT_MODE *Mode;
+}
+
+pub struct EFI_GRAPHICS_OUTPUT_PROTOCOL
+{
+  void *_QueryMode;
+  void *_SetMode;
+  void *_Blt;
+
+  pub EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+}
+
+pub struct EFI_PIXEL_BITMASK
+{
+  pub u32 RedMask;
+  pub u32 GreenMask;
+  pub u32 BlueMask;
+  pub u32 ReservedMask;
+}
+
+pub enum EFI_GRAPHICS_PIXEL_FORMAT : u32
+{
+  PixelRedGreenBlueReserved8BitPerColor,
+  PixelBlueGreenRedReserved8BitPerColor,
+  PixelBitMask,
+  PixelBltOnly,
+  PixelFormatMax
+}
+
+pub struct EFI_GRAPHICS_OUTPUT_MODE_INFORMATION
+{
+  pub u32 Version;
+  pub u32 HorizontalResolution;
+  pub u32 VerticalResolution;
+  pub EFI_GRAPHICS_PIXEL_FORMAT PixelFormat;
+  pub EFI_PIXEL_BITMASK PixelInformation;
+  pub u32 PixelsPerScanLine;
+}
+
+pub struct EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE
+{
+  pub u32 MaxMode;
+  pub u32 Mode;
+  pub EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+  pub UINTN SizeOfInfo;
+  pub uintptr FrameBufferBase;
+  pub UINTN FrameBufferSize;
+}
+
+pub struct EFI_LOADED_IMAGE_PROTOCOL
+{
+  pub u32 Revision;
+  pub EFI_HANDLE ParentHandle;
+  pub EFI_SYSTEM_TABLE *SystemTable;
+
+  pub EFI_HANDLE DeviceHandle;
+  pub EFI_DEVICE_PATH *FilePath;
+  pub void *Reserved;
+
+  pub u32 LoadOptionsSize;
+  pub void *LoadOptions;
+
+  pub void *ImageBase;
+  pub u64 ImageSize;
+  pub EFI_MEMORY_TYPE ImageCodeType;
+  pub EFI_MEMORY_TYPE ImageDataType;
+
+  void *_Unload;
+}
+
+pub struct EFI_DEVICE_PATH
+{
+  pub u8 Type;
+  pub u8 SubType;
+  pub u8[2] Length;
+}
+
+pub struct EFI_CONFIGURATION_TABLE
+{
+  pub EFI_GUID VendorGuid;
+  pub uintptr VendorTable;
+}
+
+pub struct EFI_BLOCK_IO_MEDIA
+{
+  pub u32 MediaId;
+  pub bool RemovableMedia;
+  pub bool MediaPresent;
+
+  pub bool LogicalPartition;
+  pub bool ReadOnly;
+  pub bool WriteCaching;
+
+  pub u32 BlockSize;
+  pub u32 IoAlign;
+
+  pub u64 LastBlock;
+}
+
+pub struct EFI_BLOCK_IO_PROTOCOL
+{
+  pub u64 Revision;
+  pub EFI_BLOCK_IO_MEDIA *Media;
+
+  void *_Reset;
+  void *_ReadBlocks;
+  void *_WriteBlocks;
+  void *_FlushBlocks;
+
+  pub fn ReadBlocks(this&, u64 LBA, UINTN BufferSize, void mut *Buffer) -> UINTN
+    { return _efi_call5(this._ReadBlocks, cast(&this), cast(this.Media.MediaId), cast(LBA), cast(BufferSize), cast(Buffer)); }
+}
+
+pub struct EFI_DEVICE_PATH_TO_TEXT_PROTOCOL
+{
+  void *_ConvertDeviceNodeToText;
+  void *_ConvertDevicePathToText;
+
+  pub fn ConvertDeviceNodeToText(this&, EFI_DEVICE_PATH *DevicePath, bool DisplayOnly, bool AllowShortcuts) -> u16*
+    { return cast<u16*>(_efi_call3(this._ConvertDeviceNodeToText, cast(DevicePath), cast(DisplayOnly), cast(AllowShortcuts))); }
+
+  pub fn ConvertDevicePathToText(this&, EFI_DEVICE_PATH *DevicePath, bool DisplayOnly, bool AllowShortcuts) -> u16*
+    { return cast<u16*>(_efi_call3(this._ConvertDevicePathToText, cast(DevicePath), cast(DisplayOnly), cast(AllowShortcuts))); }
+}
+
+extern fn _efi_call0(void *) -> usize;
+extern fn _efi_call1(void *, uintptr) -> usize;
+extern fn _efi_call2(void *, uintptr, uintptr) -> usize;
+extern fn _efi_call3(void *, uintptr, uintptr, uintptr) -> usize;
+extern fn _efi_call4(void *, uintptr, uintptr, uintptr, uintptr) -> usize;
+extern fn _efi_call5(void *, uintptr, uintptr, uintptr, uintptr, uintptr) -> usize;
+
+pub struct EFI_GUID
+{
+  u32 Data1;
+  u16 Data2;
+  u16 Data3;
+  u8[8] Data4;
+
+  pub EFI_GUID(u32 Data1, u16 Data2, u16 Data3, u8[8] Data4)
+    : Data1(Data1),
+      Data2(Data2),
+      Data3(Data3),
+      Data4(Data4)
+  {
+  }
+
+  pub EFI_GUID(EFI_GUID&) = default;
+  pub ~EFI_GUID() = default;
+}
+
+pub fn ==(EFI_GUID &lhs, EFI_GUID &rhs) -> bool
+{
+  return lhs.Data1 == rhs.Data1 && lhs.Data2 == rhs.Data2 && lhs.Data3 == rhs.Data3 && lhs.Data4 == rhs.Data4;
+}
+
+pub const ACPI_20_TABLE_GUID = EFI_GUID(0x8868e871, 0xe4f1, 0x11d3, [0xbc, 0x22, 0x0, 0x80, 0xc7, 0x3c, 0x88, 0x81]);
+pub const EFI_LOADED_IMAGE_PROTOCOL_GUID = EFI_GUID(0x5B1B31A1, 0x9562, 0x11d2, [0x8E, 0x3F, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B]);
+pub const EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID = EFI_GUID(0x9042a9de, 0x23dc, 0x4a38, [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a]);
+pub const EFI_BLOCK_IO_PROTOCOL_GUID = EFI_GUID(0x964e5b21, 0x6459, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+pub const EFI_DEVICE_PATH_PROTOCOL_GUID = EFI_GUID(0x9576e91, 0x6d3f, 0x11d2, [0x8e, 0x39, 0x0, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+pub const EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID = EFI_GUID(0x8b843e20, 0x8132, 0x4852, [0x90, 0xcc, 0x55, 0x1a, 0x4e, 0x4a, 0x7f, 0x1c]);
+
+pub fn panic(EFI_SYSTEM_TABLE *SystemTable, var msg) -> void
+{
+  var buffer = [u16(0); 256];
+
+  var out = buffer.data;
+  for(var i = 0; i < msg.len; ++i)
+    *out++ = cast(*(msg.data + i));
+
+  SystemTable.ConOut.ClearScreen();
+  SystemTable.ConOut.OutputString(buffer.data);
+
+  exit(1);
+}
+
+pub extern fn exit(u32) -> void;

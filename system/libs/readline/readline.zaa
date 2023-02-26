@@ -1,0 +1,118 @@
+//
+// readline
+//
+
+import std.stdlib;
+import os.zaos.time;
+import os.zaos.fcntl;
+import readline.event : termin;
+import readline.prompt : prompt;
+import readline.history : history;
+import readline.completer : completer;
+import readline.editor : editor;
+import termios;
+
+pub union result
+{
+  pub enter(std::string),
+  pub escape,
+  pub ctrl_c,
+  pub ctrl_d,
+  pub error(std::errc),
+  pub end_of_file,
+
+  result() = default;
+  pub result(result&&) = default;
+  pub fn =(result mut &, result&&) -> result mut & = default;
+  pub ~result() = default;
+}
+
+pub struct context
+{
+  pub int stdin = 0;
+  pub int stdout = 2;
+
+  termin input;
+  editor editor;
+
+  pub context() = default;
+  pub ~context() = default;
+}
+
+pub fn create() -> context
+{
+  return context();
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn with_history(context mut &ctx, history mut *history) -> void
+{
+  ctx.editor.history = history;
+}
+
+pub fn with_completion(context mut &ctx, completer mut *completer) -> void
+{
+  ctx.editor.completer = completer;
+}
+
+pub fn read_line(context mut &ctx, prompt &prompt) -> result
+{
+  ctx.editor.clear();
+
+  var status = status::ok;
+  var termstate = termios::termios(void);
+
+  termios::enable_raw_mode(ctx.stdin, &mut termstate);
+
+  while (true)
+  {
+    if (dispatch(&mut ctx.input, ctx.stdin))
+    {
+      switch (status = process(&mut ctx.editor, ctx.input.next))
+      {
+        case accepted:
+          break;
+
+        case canceled:
+          break;
+      }
+    }
+    else
+    {
+      paint(&mut ctx.editor, ctx.stdout, prompt);
+
+      var pollfds = [ os::pollfd(ctx.stdin, os::POLLIN) ];
+
+      os::select(&mut thread_ring, pollfds.data, pollfds.len, 0);
+    }
+  }
+
+  termios::restore_cooked_mode(ctx.stdin, &mut termstate);
+
+  switch (status)
+  {
+    case accepted:
+      render(&mut ctx.editor, ctx.stdout, prompt);
+
+    case canceled[signal]:
+      flush(&mut ctx.editor, ctx.stdout, prompt);
+
+      switch(signal)
+      {
+        case ctrl_c:
+          return result::ctrl_c;
+
+        case ctrl_d:
+          return result::ctrl_d;
+
+        case error[errc]:
+          return result::error(errc);
+
+        case end_of_file:
+          return result::end_of_file;
+      }
+  }
+
+  return result::enter(&move std::launder(ctx.editor.buffer));
+}

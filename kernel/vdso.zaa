@@ -1,0 +1,96 @@
+//
+// vdso
+//
+
+import std.env;
+import std.string;
+import vm : PAGE_SIZE;
+import process as _ : process;
+import elf.image;
+import platform;
+
+struct vdso<name>
+{
+  #{
+    var buf = std::vector<u8>();
+
+    try
+    {
+      std::file::open(__bindir__ + name).read_into(&mut buf);
+    }
+    catch(std::error e)
+    {
+      std::panic("embed error '", name, "' - ", e);
+    }
+
+    var image = elf::image(buf.data, buf.len);
+
+    var loadsize = 0;
+
+    for(var &header : image.program_headers)
+    {
+      switch (header.phdr.p_type)
+      {
+        case elf::elf64_ptype::LOAD:
+          loadsize = std::max(loadsize, cast<usize>(header.phdr.p_offset + header.phdr.p_filesz));
+      }
+    }
+
+    -> { u8[$(loadsize)] image = $([ buf.data : loadsize ]); }
+
+    for(var &header : image.section_headers)
+    {
+      switch (header.shdr.sh_type)
+      {
+        case elf::elf64_stype::SYMTAB:
+
+          var strtab = image.section(cast<usize>(header.shdr.sh_link));
+
+          for(var offset = 0; offset < header.shdr.sh_size; offset += header.shdr.sh_entsize)
+          {
+            var entry = cast<elf::elf64_sym*>(image.data(header).data + cast(offset));
+
+            if (entry.st_info == 0 && entry.st_shndx != 0)
+            {
+              -> { usize $(image.get_string(strtab, entry.st_name).as_literal) = $(cast<usize>(entry.st_value)); }
+            }
+          }
+      }
+    }
+  }
+
+  vdso() = default;
+  vdso(#vdso&) = default;
+  ~vdso() = default;
+}
+
+fn self()
+{
+  static page_aligned image = #vdso<"vdso.so">();
+
+  return &image;
+}
+
+pub fn create_process_mapping(process mut *process) -> vm::virtaddr
+{
+  var data = self.image.data;
+  var size = self.image.len;
+  var addr = process.sbrk(size);
+
+  vm::create_anonymous_region(vm::virtrange(addr, size), vm::protection::executable, vm::usage::foreign);
+
+  for(var offset = 0; offset < size; offset += PAGE_SIZE)
+  {
+    var mapping = platform::pagetable.query(vm::virtaddr(data + offset));
+
+    vm::map_physical_pages(addr + offset, vm::physrange(mapping.address, PAGE_SIZE), vm::protection::executable);
+  }
+
+  return addr;
+}
+
+pub fn update_clock_base(u64 clock_base, u64 clock_scale) -> void
+{
+  std::atomic_store(cast<u64 mut *>(self.image.data + self.clock_base), clock_base);
+  std::atomic_store(cast<u64 mut *>(self.image.data + self.clock_scale), clock_scale);
+}

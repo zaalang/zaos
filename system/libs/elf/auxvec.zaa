@@ -1,0 +1,32 @@
+//
+// auxiliary vector
+//
+
+pub struct auxval
+{
+  pub enum type
+  {
+    NULL = 0,
+    IGNORE = 1,
+    PHDR = 3,      // address of program headers
+    PHENT = 4,     // size of program header
+    PHNUM = 5,     // number of program headers
+    BASE = 7,      // image base address
+    SYSINFO = 32,  // vdso base address
+    RINGHDR = 36,  // ioring base address
+    RINGFD = 37,   // ioring file descriptor
+    ROOTFD = 38,   // root file descriptor
+  }
+
+  pub type type;
+  pub uintptr value;
+
+  pub auxval(type type, uintptr value)
+    : type(type), value(value)
+  {
+  }
+
+  pub auxval(auxval&) = default;
+  pub fn =(auxval mut &, auxval &) -> auxval mut & = default;
+  pub ~auxval() = default;
+}

@@ -1,0 +1,162 @@
+//
+// gpt image
+//
+
+import std.range;
+import std.string;
+import gpt;
+
+pub enum result : i32
+{
+  ok = 0,
+  format_error = -8,
+  readonly_file_system = -30,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct image
+{
+  pub int block_shift;
+
+  pub image(void *data, usize len, usize block_size)
+    : len(len),
+      data(data)
+  {
+    this.block_shift = std::ctz(block_size);
+  }
+
+  pub image(void mut *data, usize len, usize block_size)
+    : len(len),
+      data(data),
+      mutdata(data)
+  {
+    this.block_shift = std::ctz(block_size);
+  }
+
+  pub fn header(this&) -> gpt::header *
+  {
+    return cast<gpt::header*>(cast<uintptr>(this.data) + 1 << this.block_shift);
+  }
+
+  pub struct entry_iterator
+  {
+    pub entry_iterator() = default;
+    pub entry_iterator(entry_iterator&) = default;
+    pub fn =(entry_iterator mut &this, entry_iterator &that) -> entry_iterator mut & = default;
+    pub ~entry_iterator() = default;
+
+    pub fn ++(entry_iterator mut &this) -> entry_iterator mut &
+    {
+      this.entry = cast<gpt::entry*>(cast<uintptr>(this.entry) + cast(this.header.entry_size));
+
+      return &this;
+    }
+    
+    pub fn --(entry_iterator mut &this) -> entry_iterator mut &
+    {
+      this.entry = cast<gpt::entry*>(cast<uintptr>(this.entry) - cast(this.header.entry_size));
+
+      return &this;
+    }
+
+    pub fn ==(entry_iterator &lhs, entry_iterator &rhs) -> bool
+    {
+      return lhs.entry == rhs.entry;
+    }
+
+    entry_iterator(gpt::header *header, gpt::entry *entry)
+      : header(header), entry(entry)
+    {
+    }
+
+    gpt::header *header;
+    gpt::entry *entry;
+  }
+
+  pub fn -(entry_iterator &lhs, entry_iterator &rhs) -> usize
+  {
+    return (cast<uintptr>(lhs.entry) - cast<uintptr>(lhs.entry)) / cast(lhs.header.entry_size);
+  }
+
+  pub fn +(entry_iterator &lhs, usize rhs) -> entry_iterator
+  {
+    return entry_iterator(lhs.header, cast<gpt::entry*>(cast<uintptr>(lhs.entry) + rhs * cast(lhs.header.entry_size)));
+  }
+
+  pub fn [](this&, entry_iterator iter) -> gpt::entry *
+  {
+    return iter.entry;
+  }
+
+  pub fn entries(this&)
+  {
+    var header = this.header;
+    var entries = cast<uintptr>(this.data) + cast(header.entries_block << this.block_shift);
+
+    var beg = cast<gpt::entry*>(entries);
+    var end = cast<gpt::entry*>(entries + cast(header.entry_count * header.entry_size));
+
+    return std::range_view<typeof(this)>(this, entry_iterator(header, beg), entry_iterator(header, end));
+  }
+
+  pub ~image() = default;
+
+  pub usize len;
+  pub void *data;
+  pub void mut *mutdata;
+}
+
+pub fn verify_gpt_header(image &this) -> result
+{
+  var header = this.header;
+
+  if (header.signature != std::string_view("EFI PART"))
+    return result::format_error;
+
+  return result::ok;
+}
+
+pub fn expand(image mut &this, u64 last_usable_block) -> result
+{
+  if (!this.mutdata)
+  return result::readonly_file_system;
+
+  var header = cast<gpt::header mut *>(this.header);
+
+  header.last_usable_block = last_usable_block;
+  header.alternate_block = last_usable_block + cast<u64>(std::ceil_div(header.entry_count*header.entry_size, 512)) + 1;
+
+  header.header_crc32 = 0;
+  header.header_crc32 = gpt::crc32(header, cast(header.header_size));
+
+  return result::ok;
+}
+
+pub fn modify(image mut &this, gpt::entry *entry, gpt::guid &type, gpt::guid &guid, u64 start_block, u64 end_block, u64 attributes, u16[36] &name) -> result
+{
+  if (!this.mutdata)
+    return result::readonly_file_system;
+
+  var entry = cast<gpt::entry mut *>(entry);
+
+  entry.type = type;
+  entry.guid = guid;
+  entry.start_block = start_block;
+  entry.end_block = end_block;
+  entry.attributes = attributes;
+  entry.name = name;
+
+  var header = cast<gpt::header mut *>(this.header);
+  var entries = cast<uintptr>(this.data) + cast(header.entries_block << this.block_shift);
+
+  header.entries_crc32 = gpt::crc32(cast<void*>(entries), cast(header.entry_count * header.entry_size));
+
+  header.header_crc32 = 0;
+  header.header_crc32 = gpt::crc32(header, cast(header.header_size));
+
+  return result::ok;
+}

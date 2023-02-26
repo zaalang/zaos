@@ -1,0 +1,12 @@
+//
+// syscalls
+//
+
+import syscalls.thread;
+import syscalls.process;
+import syscalls.system;
+import syscalls.mmap;
+import syscalls.ioring;
+import syscalls.time;
+import syscalls.sched;
+import syscalls.unknown;

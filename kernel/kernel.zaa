@@ -1,0 +1,105 @@
+//
+// kernel entry
+//
+
+import std.stdio;
+import std.atomic;
+import std.string;
+import cpu;
+import sys;
+import heap;
+import vm;
+import vfs;
+import scheduler;
+import io;
+import pci;
+import ahci;
+import blk;
+import ps2;
+import pty;
+import video;
+import console;
+import thread as _ : thread, spawn_undertaker;
+import process as _ : process, create_kernel_process;
+import platform : BootInfo;
+import syscalls;
+import ioring.workman;
+
+extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
+{
+  cpu::bootstrap(bootinfo, cpu);
+  sys::bootstrap(bootinfo, cpu);
+  heap::bootstrap(bootinfo, cpu);
+  vm::bootstrap(bootinfo, cpu);
+
+  platform::finalise_boot(bootinfo, cpu);
+
+  if (cpu == 0)
+  {
+    create_kernel_process(&cast<void fn(void mut *)>(kernel_main), null);
+  }
+
+  scheduler::start();
+}
+
+fn kernel_main(void*) -> void
+{
+  spawn_undertaker();
+
+  blk::initialise();
+  vfs::initialise();
+  ioring::initialise();
+  pci::initialise();
+  ahci::initialise();
+  ps2::initialise();
+  pty::initialise();
+  video::initialise();
+  console::initialise();
+
+  bootstrap_file_system();
+
+  var init = create_process(process::current, "coco");
+  process_push_cmdline(init, [ std::string_view("/zaos/srv/coco") ]);
+  init.new_fd(1, vfs::file_descriptor::create(vfs::lookup(vfs::root, "/dev/console")));
+  init.new_fd(4, vfs::file_descriptor::create(vfs::root));
+  process_push_ioring(init, 256);
+  process_start(init, thread::priority::normal);
+}
+
+fn bootstrap_file_system() -> void
+{
+  import ext2fs;
+
+  var rootdev = blk::blkdev_ptr();
+  var rootuuid = sys::cmdline("root");
+
+  blk::enumerate(|id, dev| [rootdev, rootuuid] {
+    if (var uuid = dev.query(blk::query::device_uuid); uuid == rootuuid)
+      rootdev = dev;
+  });
+
+  if (!rootdev)
+  {
+    std::print("unable to determine root file system, detected devices:");
+
+    blk::enumerate(|id, dev| {
+      if (var uuid = dev.query(blk::query::device_uuid); uuid != "")
+        std::print("  ", uuid);
+    });
+
+    std::panic("no system device");
+  }
+
+  var devpath = vfs::lookup(vfs::root, "dev");
+
+  for(var part : rootdev.query(blk::query::device_path).split("/"))
+    devpath = vfs::lookup(devpath, part);
+
+  devpath = vfs::lookup(devpath, rootuuid);
+
+  var ctx = vfs::file_system_context();
+  ctx.source = devpath;
+
+  vfs::mkdir(vfs::root, "zaos", 0, 0, 0o755);
+  vfs::mount(vfs::lookup(vfs::root, "zaos"), ext2fs::create(ctx));
+}

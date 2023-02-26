@@ -1,0 +1,62 @@
+//
+// prompt
+//
+
+import std.string : String;
+import readline.painter : painter;
+import chrono;
+
+pub vtable prompt
+{
+  pub fn paint_left(prompt&, painter mut &painter) -> void;
+  pub fn paint_right(prompt&, painter mut &painter) -> void;
+  pub fn paint_indent(prompt&, painter mut &painter) -> void;
+}
+
+pub struct default_prompt : pub prompt
+{
+  std::string str;
+
+  fn paint_left(prompt &this, painter mut &painter) -> void
+  {
+    var &this = cast<default_prompt&>(this);
+
+    painter.text(this.str);
+  }
+
+  fn paint_right(prompt &this, painter mut &painter) -> void
+  {
+    var &this = cast<default_prompt&>(this);
+
+    if (painter.y == 0 && painter.x < 6*painter.width/8 - 1)
+    {
+      var now = chrono::system_clock::now();
+      var hours = now.time_since_epoch.hours;
+      var minutes = (now.time_since_epoch - hours).minutes;
+      var seconds = (now.time_since_epoch - hours - minutes).seconds;
+
+      var buf = [0; 64];
+      var len = std::sprintf(&mut buf, "[{:02}:{:02}.{:02}]", hours.count % 24, minutes.count, seconds.count);
+
+      if (painter.x + cast(len) < painter.width)
+      {
+        painter.move_to_column(painter.width - cast(len));
+        painter.text(std::string_view(buf.data, len));
+      }
+    }
+  }
+
+  fn paint_indent(prompt &this, painter mut &painter) -> void
+  {
+    var &this = cast<default_prompt&>(this);
+
+    painter.text("::: ");
+  }
+
+  pub default_prompt(String &&str)
+    : str(&&str)
+  {
+  }
+
+  pub ~default_prompt() = default;
+}

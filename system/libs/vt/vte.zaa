@@ -1,0 +1,1049 @@
+//
+// vte
+//
+
+// ref: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+
+import std.stdlib;
+import std.bits.utf as utf;
+import std.meta;
+import vt.screen;
+import vt.result;
+
+const debug = false;
+
+enum mode : u32
+{
+  const compat = 0x0001;
+  const insert = 0x0002;
+  const nowrap = 0x0008;
+}
+
+enum flags : u32
+{
+  const space = 0x0001;
+  const exclaim = 0x0002;
+  const doublequote = 0x0004;
+  const dollar = 0x0008;
+  const percent = 0x0010;
+  const singlequote = 0x0020;
+  const hash  = 0x0040;
+  const l_paren = 0x0080;
+  const r_paren = 0x0100;
+  const star = 0x0200;
+  const plus = 0x0400;
+  const greater = 0x0800;
+  const question = 0x1000;
+}
+
+enum state : u32
+{
+  ground,
+  esc_entry,
+  esc_accept,
+  dcs_entry,
+  dcs_param,
+  dcs_accept,
+  csi_entry,
+  csi_param,
+  csi_accept,
+  osc_string,
+}
+
+pub enum color
+{
+  black,
+  red,
+  green,
+  yellow,
+  blue,
+  magenta,
+  cyan,
+  light_grey,
+  dark_grey,
+  light_red,
+  light_green,
+  light_yellow,
+  light_blue,
+  light_magenta,
+  light_cyan,
+  white,
+  foreground,
+  background,
+}
+
+pub using palette = u32[std::meta::enumerators_of($color).len];
+
+pub struct attrs
+{
+  pub const bold = 0x01;
+  pub const underline = 0x02;
+  pub const inverse = 0x04;
+  pub const blink = 0x08;
+
+  pub u32 flags;
+  pub u32 foreground_color;
+  pub u32 background_color;
+
+  pub attrs() = default;
+  pub attrs(attrs&) = default;
+  pub fn =(attrs mut &, attrs &) -> attrs mut & = default;
+  pub ~attrs() = default;
+}
+
+pub struct vte
+{
+  u32 mode;
+  state state;
+
+  u32 utfstate;
+  char codepoint;
+
+  attrs attrs;
+  palette palette;
+
+  usize argc;
+  u32[16] argv;
+  u32 flags;
+
+  attrs saved_attrs;
+  (usize, usize) saved_cursor;
+
+  pub vte() = default;
+  pub ~vte() = default;
+}
+
+#[conditional(debug)]
+fn log(var & ...args, var &loc = std::source_location(__site__)) -> void
+{
+  import std.stdio;
+
+  std::print(loc, ": ", args...);
+}
+
+fn print(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  if (vte.mode & mode::nowrap == 0)
+  {
+    var x = screen.cursor.0;
+    var y = screen.cursor.1;
+
+    if (x >= screen.columns)
+    {
+      x = 0;
+      y += 1;
+
+      if (y == screen.margins.1)
+      {
+        screen.scroll_up(1);
+
+        y = screen.margins.1 - 1;
+      }
+
+      screen.move_to(x, y);
+    }
+  }
+
+  if (vte.mode & mode::insert != 0)
+  {
+    screen.insert_characters(1);
+  }
+
+  screen.put(ch, vte.attrs);
+}
+
+fn execute(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  switch (ch)
+  {
+    case 0x00: // null
+      ;
+
+    case 0x07: // bell
+      ;
+
+    case 0x08: // bs
+      screen.backspace();
+
+    case 0x09: // tab
+      screen.tab_right(1);
+
+    case 0x0a: // linefeed
+    case 0x0b: // vertical tab
+    case 0x0c: // form feed
+      screen.move_down(1, scroll: true);
+
+    case 0x0d: // return
+      screen.move_home();
+
+    case 0x18: // cancel
+    case 0x1a:
+      vte.state = state::ground;
+
+    case 0x1b: // esc
+      scan_init(&mut screen, &mut vte);
+      vte.state = state::esc_entry;
+
+    case 0x84: // index
+      screen.move_down(1, scroll: true);
+
+    case 0x85: // next line
+      screen.move_down(1, scroll: true);
+      screen.move_home();
+
+    case 0x8d: // reverse index
+      screen.move_up(1, scroll: true);
+
+    case 0x90: // dcs
+      scan_init(&mut screen, &mut vte);
+      vte.state = state::dcs_entry;
+
+    case 0x9a: // decid
+      csi_device_attributes(&mut screen, &mut vte);
+
+    case 0x9b: // csi
+      scan_init(&mut screen, &mut vte);
+      vte.state = state::csi_entry;
+
+    case 0x9c: // st
+      vte.state = state::ground;
+
+    case 0x9d: // osc
+      scan_init(&mut screen, &mut vte);
+      vte.state = state::osc_string;
+
+    else:
+      log("unknown execute: ", cast<u32>(ch));
+  }
+}
+
+fn ignore(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+}
+
+fn scan_init(vt::screen mut &screen, vte mut &vte) -> void
+{
+  vte.argc = 0;
+  vte.argv = [0; 16];
+  vte.flags = 0;
+}
+
+fn scan_param(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  if (vte.argc < vte.argv.len)
+  {
+    switch (ch)
+    {
+      case ';':
+        vte.argc += 1;
+
+      case '0' ..= '9':
+        vte.argv[vte.argc] = vte.argv[vte.argc] * 10 + cast(ch - '0');
+    }
+  }
+}
+
+fn scan_flag(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  switch (ch)
+  {
+    case ' ':
+      vte.flags |= flags::space;
+
+    case '!':
+      vte.flags |= flags::exclaim;
+
+    case '"':
+      vte.flags |= flags::doublequote;
+
+    case '$':
+      vte.flags |= flags::dollar;
+
+    case '%':
+      vte.flags |= flags::percent;
+
+    case '\'':
+      vte.flags |= flags::singlequote;
+
+    case '#':
+      vte.flags |= flags::hash;
+
+    case '(':
+      vte.flags |= flags::l_paren;
+
+    case ')':
+      vte.flags |= flags::r_paren;
+
+    case '*':
+      vte.flags |= flags::star;
+
+    case '+':
+      vte.flags |= flags::plus;
+
+    case '>':
+      vte.flags |= flags::greater;
+
+    case '?':
+      vte.flags |= flags::question;
+
+    else:
+      log("unknown csi flag: ", cast<u32>(ch));
+  }
+}
+
+fn reset(vt::screen mut &screen, vte mut &vte) -> void
+{
+  vte.mode = 0;
+  vte.state = state::ground;
+
+  screen.move_to(0, 0);
+  screen.erase_screen();
+  screen.set_cursor_state(true);
+  vte.attrs.foreground_color = vte.palette[cast(color::foreground)];
+  vte.attrs.background_color = vte.palette[cast(color::background)];
+}
+
+fn save_cursor(vt::screen mut &screen, vte mut &vte) -> void
+{
+  vte.saved_attrs = vte.attrs;
+  vte.saved_cursor = screen.cursor;
+}
+
+fn restore_cursor(vt::screen mut &screen, vte mut &vte) -> void
+{
+  vte.attrs = vte.saved_attrs;
+  screen.move_to(vte.saved_cursor.0, vte.saved_cursor.1);
+}
+
+fn esc_dispatch(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  if (vte.flags == 0)
+  {
+    switch (ch)
+    {
+      case 'D': // index
+        screen.move_down(1, scroll: true);
+
+      case 'E': // next line
+        screen.move_down(1, scroll: true);
+        screen.move_home();
+
+      case 'M': // reverse index
+        screen.move_up(1, scroll: true);
+
+      case 'Z': // decid
+        csi_device_attributes(&mut screen, &mut vte);
+
+      case '\\': // st
+        ;
+
+      case '7': // save cursor
+        save_cursor(&mut screen, &mut vte);
+
+      case '8': // restore cursor
+        restore_cursor(&mut screen, &mut vte);
+
+      case 'c': // reset to initial state
+        reset(&mut screen, &mut vte);
+
+      else:
+        log("unknown esc dispatch: ", ch);
+    }
+  }
+
+  if (vte.flags != 0)
+  {
+    log("unknown esc flag dispatch: ", ch);
+  }
+}
+
+fn scan_dcs(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+}
+
+fn dcs_dispatch(vt::screen mut &screen, vte mut &vte) -> void
+{
+}
+
+fn csi_device_attributes(vt::screen mut &screen, vte mut &vte) -> void
+{
+  if (vte.argc == 1 && vte.argv[0] == 0)
+  {
+    screen.post("\x1b[?62c".data, 6);
+
+    return;
+  }
+
+  log("unknown device attribute request");
+}
+
+fn csi_device_status(vt::screen mut &screen, vte mut &vte) -> void
+{
+  if (vte.argc == 1 && vte.argv[0] == 5)
+  {
+    screen.post("\x1b[0n".data, 4);
+
+    return;
+  }
+
+  if (vte.argc == 1 && vte.argv[0] == 6)
+  {
+    var buf = [0; 64];
+    var len = std::sprintf(&mut buf, "\x1b[{};{}R", screen.cursor.1 + 1, screen.cursor.0 + 1);
+
+    screen.post(buf.data, len);
+
+    return;
+  }
+
+  log("unknown device status request");
+}
+
+fn csi_mode(vt::screen mut &screen, vte mut &vte, bool active) -> void
+{
+  if (vte.flags == 0)
+  {
+    for(var i = 0; i < vte.argc; ++i)
+    {
+      switch (vte.argv[i])
+      {
+        case 4: // insert mode
+          vte.mode = (vte.mode & ~mode::insert) | (cast(active) * mode::insert);
+
+        else:
+          log("unknown csi mode: ", vte.argv[i]);
+      }
+    }
+  }
+
+  if (vte.flags & flags::question != 0)
+  {
+    for(var i = 0; i < vte.argc; ++i)
+    {
+      switch (vte.argv[i])
+      {
+        case 7: // wrap mode
+          vte.mode = (vte.mode & ~mode::nowrap) | (cast(!active) * mode::nowrap);
+
+        case 25: // cursor state
+          screen.set_cursor_state(active);
+
+        else:
+          log("unknown csi dec mode: ", vte.argv[i]);
+      }
+    }
+  }
+}
+
+fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
+{
+  if (vte.argc == 0)
+    vte.argc = 1;
+
+  for(var i = 0; i < vte.argc; ++i)
+  {
+    switch (vte.argv[i])
+    {
+      case 0:
+        vte.attrs.flags = 0;
+        vte.attrs.foreground_color = vte.palette[cast(color::foreground)];
+        vte.attrs.background_color = vte.palette[cast(color::background)];
+
+      case 1:
+        vte.attrs.flags |= attrs::bold;
+
+      case 4:
+        vte.attrs.flags |= attrs::underline;
+
+      case 5:
+        vte.attrs.flags |= attrs::blink;
+
+      case 7:
+        vte.attrs.flags |= attrs::inverse;
+
+      case 22:
+        vte.attrs.flags &= ~attrs::bold;
+
+      case 24:
+        vte.attrs.flags &= ~attrs::underline;
+
+      case 25:
+        vte.attrs.flags &= ~attrs::blink;
+
+      case 27:
+        vte.attrs.flags &= ~attrs::inverse;
+
+      case 30 ..= 36:
+        vte.attrs.foreground_color = vte.palette[cast(vte.argv[i] - 30)];
+
+      case 37:
+        vte.attrs.foreground_color = vte.palette[cast(color::light_grey)];
+
+      case 39:
+        vte.attrs.foreground_color = vte.palette[cast(color::foreground)];
+
+      case 40 ..= 46:
+        vte.attrs.background_color = vte.palette[cast(vte.argv[i] - 40)];
+
+      case 47:
+        vte.attrs.background_color = vte.palette[cast(color::light_grey)];
+
+      case 49:
+        vte.attrs.background_color = vte.palette[cast(color::background)];
+
+      case 90 ..= 97:
+        vte.attrs.foreground_color = vte.palette[cast(vte.argv[i] - 82)];
+
+      case 100 ..= 107:
+        vte.attrs.background_color = vte.palette[cast(vte.argv[i] - 92)];
+
+      else:
+        log("unknown csi character attributes: ", vte.argv[i]);
+    }
+  }
+}
+
+fn csi_scroll_region(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.set_scroll_region(cast(std::max(vte.argv[0], 1) - 1), cast(std::max(vte.argv[1], 1) - 1));
+}
+
+fn csi_cursor_up(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_up(cast(std::max(vte.argv[0], 1)), scroll: false);
+}
+
+fn csi_cursor_down(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_down(cast(std::max(vte.argv[0], 1)), scroll: false);
+}
+
+fn csi_cursor_forward(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_right(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_cursor_backward(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_left(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_cursor_prevline(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_up(cast(std::max(vte.argv[0], 1)), scroll: true);
+  screen.move_home();
+}
+
+fn csi_cursor_nextline(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_down(cast(std::max(vte.argv[0], 1)), scroll: true);
+  screen.move_home();
+}
+
+fn csi_cursor_horizontal_relative(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_to(screen.cursor.0 + cast(std::max(vte.argv[0], 1) - 1), screen.cursor.1);
+}
+
+fn csi_cursor_horizontal_absolute(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_to(cast(std::max(vte.argv[0], 1) - 1), screen.cursor.1);
+}
+
+fn csi_cursor_vertical_relative(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_to(screen.cursor.0, screen.cursor.1 + cast(std::max(vte.argv[0], 1) - 1));
+}
+
+fn csi_cursor_vertical_absolute(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_to(screen.cursor.0, cast(std::max(vte.argv[0], 1) - 1));
+}
+
+fn csi_cursor_position(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.move_to(cast(std::max(vte.argv[1], 1) - 1), cast(std::max(vte.argv[0], 1) - 1));
+}
+
+fn csi_erase_in_display(vt::screen mut &screen, vte mut &vte) -> void
+{
+  switch (vte.argv[0])
+  {
+    case 0:
+      screen.erase_cursor_to_screen();
+
+    case 1:
+      screen.erase_screen_to_cursor();
+
+    case 2:
+      screen.erase_screen();
+
+    else:
+      log("unknown csi_erase_in_screen command: ", vte.argv[0]);
+  }
+}
+
+fn csi_erase_in_line(vt::screen mut &screen, vte mut &vte) -> void
+{
+  switch (vte.argv[0])
+  {
+    case 0:
+      screen.erase_cursor_to_end();
+
+    case 1:
+      screen.erase_home_to_cursor();
+
+    case 2:
+      screen.erase_home_to_end();
+
+    else:
+      log("unknown csi_erase_in_line command: ", vte.argv[0]);
+  }
+}
+
+fn csi_insert_lines(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.insert_lines(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_delete_lines(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.delete_lines(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_insert_characters(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.insert_characters(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_delete_characters(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.delete_characters(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_erase_characters(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.erase_characters(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_tab_forward(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.tab_right(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_tab_backward(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.tab_left(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_scroll_up(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.scroll_up(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_scroll_down(vt::screen mut &screen, vte mut &vte) -> void
+{
+  screen.scroll_down(cast(std::max(vte.argv[0], 1)));
+}
+
+fn csi_dispatch(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  switch (ch)
+  {
+    case 'c': // device attributes
+      csi_device_attributes(&mut screen, &mut vte);
+
+    case 'n': // device status report
+      csi_device_status(&mut screen, &mut vte);
+
+    case 'h': // set mode
+      csi_mode(&mut screen, &mut vte, active: true);
+
+    case 'l': // reset mode
+      csi_mode(&mut screen, &mut vte, active: false);
+
+    case 'm': // character attributes
+      csi_character_attributes(&mut screen, &mut vte);
+
+    case 'r': // set scroll region
+      csi_scroll_region(&mut screen, &mut vte);
+
+    case 'A': // cursor up
+      csi_cursor_up(&mut screen, &mut vte);
+
+    case 'B': // cursor down
+      csi_cursor_down(&mut screen, &mut vte);
+
+    case 'C': // cursor forward
+      csi_cursor_forward(&mut screen, &mut vte);
+
+    case 'D': // cursor backward
+      csi_cursor_backward(&mut screen, &mut vte);
+
+    case 'E': // next line
+      csi_cursor_nextline(&mut screen, &mut vte);
+
+    case 'F': // previous line
+      csi_cursor_prevline(&mut screen, &mut vte);
+
+    case 'd': // cursor vertical absolute
+      csi_cursor_vertical_absolute(&mut screen, &mut vte);
+
+    case 'e': // cursor vertical relative
+      csi_cursor_vertical_relative(&mut screen, &mut vte);
+
+    case 'G': // cursor horizontal absolute
+      csi_cursor_horizontal_absolute(&mut screen, &mut vte);
+
+    case 'a': // cursor horizontal relative
+      csi_cursor_horizontal_relative(&mut screen, &mut vte);
+
+    case 'H': // cursor position
+    case 'f': // horizontal vertical position
+      csi_cursor_position(&mut screen, &mut vte);
+
+    case 'J': // erase in display
+      csi_erase_in_display(&mut screen, &mut vte);
+
+    case 'K': // erase in line
+      csi_erase_in_line(&mut screen, &mut vte);
+
+    case 'L': // insert lines
+      csi_insert_lines(&mut screen, &mut vte);
+
+    case 'M': // delete lines
+      csi_delete_lines(&mut screen, &mut vte);
+
+    case '@': // insert characters
+      csi_insert_characters(&mut screen, &mut vte);
+
+    case 'P': // delete characters
+      csi_delete_characters(&mut screen, &mut vte);
+
+    case 'X': // erase characters
+      csi_erase_characters(&mut screen, &mut vte);
+
+    case 'Z': // tab backwards
+      csi_tab_backward(&mut screen, &mut vte);
+
+    case 'I': // tab forwards
+      csi_tab_forward(&mut screen, &mut vte);
+
+    case 'S': // scroll up
+      csi_scroll_up(&mut screen, &mut vte);
+
+    case 'T': // scroll down
+      csi_scroll_down(&mut screen, &mut vte);
+
+    else:
+      log("unknown csi dispatch: ", ch);
+  }
+}
+
+fn scan_osc(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+}
+
+fn osc_dispatch(vt::screen mut &screen, vte mut &vte) -> void
+{
+}
+
+fn scan(vt::screen mut &screen, vte mut &vte, char ch) -> void
+{
+  switch (vte.state)
+  {
+    case ground:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        else:
+          print(&mut screen, &mut vte, ch);
+      }
+
+    case esc_entry:
+
+      switch (ch)
+      {
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x00 ..= 0x1f:
+          print(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x20 ..= 0x2f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::esc_accept;
+
+        case 0x30 ..= 0x4f:
+        case 0x51 ..= 0x57:
+        case 0x59:
+        case 0x5a:
+        case 0x5c:
+        case 0x60 ..= 0x7e:
+          esc_dispatch(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x50:
+          scan_init(&mut screen, &mut vte);
+          vte.state = state::dcs_entry;
+
+        case 0x5b:
+          scan_init(&mut screen, &mut vte);
+          vte.state = state::csi_entry;
+
+        case 0x5d:
+          scan_init(&mut screen, &mut vte);
+          vte.state = state::osc_string;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case esc_accept:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::esc_accept;
+
+        case 0x30 ..= 0x7e:
+          esc_dispatch(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case dcs_entry:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+          ignore(&mut screen, &mut vte, ch);
+
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::dcs_accept;
+
+        case 0x30 ..= 0x39:
+        case 0x3b:
+          scan_param(&mut screen, &mut vte, ch);
+          vte.state = state::dcs_param;
+
+        case 0x3c ..= 0x3f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::dcs_param;
+
+        case 0x40 ..= 0x7e:
+          vte.state = state::dcs_accept;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case dcs_param:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+          ignore(&mut screen, &mut vte, ch);
+
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_param(&mut screen, &mut vte, ';');
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::dcs_accept;
+
+        case 0x30 ..= 0x39:
+        case 0x3b:
+          scan_param(&mut screen, &mut vte, ch);
+
+        case 0x40 ..= 0x7e:
+          scan_param(&mut screen, &mut vte, ';');
+          vte.state = state::dcs_accept;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case dcs_accept:
+
+      switch (ch)
+      {
+        case 0x1b:
+        case 0x9c:
+          dcs_dispatch(&mut screen, &mut vte);
+          execute(&mut screen, &mut vte, ch);
+
+        else:
+          scan_dcs(&mut screen, &mut vte, ch);
+      }
+
+    case csi_entry:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::csi_accept;
+
+        case 0x30 ..= 0x39:
+        case 0x3b:
+          scan_param(&mut screen, &mut vte, ch);
+          vte.state = state::csi_param;
+
+        case 0x3c ..= 0x3f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::csi_param;
+
+        case 0x40 ..= 0x7e:
+          csi_dispatch(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case csi_param:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_param(&mut screen, &mut vte, ';');
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::csi_accept;
+
+        case 0x30 ..= 0x39:
+        case 0x3b:
+          scan_param(&mut screen, &mut vte, ch);
+
+        case 0x40 ..= 0x7e:
+          scan_param(&mut screen, &mut vte, ';');
+          csi_dispatch(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case csi_accept:
+
+      switch (ch)
+      {
+        case 0x00 ..= 0x1f:
+        case 0x80 ..= 0x8f:
+        case 0x90 ..= 0x9f:
+          execute(&mut screen, &mut vte, ch);
+
+        case 0x20 ..= 0x2f:
+          scan_flag(&mut screen, &mut vte, ch);
+          vte.state = state::csi_accept;
+
+        case 0x40 ..= 0x7e:
+          csi_dispatch(&mut screen, &mut vte, ch);
+          vte.state = state::ground;
+
+        case 0x7f:
+          ignore(&mut screen, &mut vte, ch);
+
+        else:
+          vte.state = state::ground;
+      }
+
+    case osc_string:
+
+      switch (ch)
+      {
+        case 0x1b:
+        case 0x9c:
+          dcs_dispatch(&mut screen, &mut vte);
+          execute(&mut screen, &mut vte, ch);
+
+        else:
+          scan_osc(&mut screen, &mut vte, ch);
+      }
+
+    else:
+      std::panic("invalid state - ", vte.state);
+  }
+}
+
+pub fn get_palette(vte &vte) -> palette
+{
+  return vte.palette;
+}
+
+pub fn set_palette(vte mut &vte, palette &palette) -> void
+{
+  vte.palette = palette;
+  vte.attrs.foreground_color = palette[cast(color::foreground)];
+  vte.attrs.background_color = palette[cast(color::background)];
+}
+
+pub fn scan(vt::screen mut &screen, vte mut &vte, u8 ch) -> void
+{
+  if (vte.mode & mode::compat == 0)
+  {
+    switch (utf::decode(&mut vte.utfstate, &mut vte.codepoint, ch))
+    {
+      case utf::ACCEPT:
+        scan(&mut screen, &mut vte, vte.codepoint);
+
+      case utf::REJECT:
+        vte.utfstate = 0;
+    }
+  }
+
+  if (vte.mode & mode::compat != 0)
+  {
+    scan(&mut screen, &mut vte, cast<char>(ch));
+  }
+}

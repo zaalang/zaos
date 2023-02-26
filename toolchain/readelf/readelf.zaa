@@ -1,0 +1,135 @@
+//
+// readelf
+//
+
+import std.stdio;
+import std.env;
+import mmap;
+import elf.image;
+
+fn section_name_string(elf::image &image, elf::elf64_shdr *shdr)
+{
+  return image.get_string(image.section_string_table, shdr.sh_name);
+}
+
+fn section_flags_string(elf::image &image, elf::elf64_shdr *shdr) -> std::string
+{
+  var result = std::string();
+
+  result.append((shdr.sh_flags & elf::sflags::WRITE != 0) ? 'W' : ' ');
+  result.append((shdr.sh_flags & elf::sflags::ALLOC != 0) ? 'A' : ' ');
+  result.append((shdr.sh_flags & elf::sflags::EXECINSTR != 0) ? 'X' : ' ');
+  result.append((shdr.sh_flags & elf::sflags::MERGE != 0) ? 'M' : ' ');
+  result.append((shdr.sh_flags & elf::sflags::STRINGS != 0) ? 'S' : ' ');
+  result.append((shdr.sh_flags & elf::sflags::TLS != 0) ? 'T' : ' ');
+
+  return result;
+}
+
+fn program_flags_string(elf::image &image, elf::elf64_phdr *phdr) -> std::string
+{
+  var result = std::string();
+
+  result.append((phdr.p_flags & elf::pflags::R != 0) ? 'R' : ' ');
+  result.append((phdr.p_flags & elf::pflags::W != 0) ? 'W' : ' ');
+  result.append((phdr.p_flags & elf::pflags::X != 0) ? 'X' : ' ');
+
+  return result;
+}
+
+fn dump_elf_header(elf::image &image)
+{
+  std::print("ELF Header:");
+  std::printf("  Ident: {:02x}\n", image.ehdr.e_ident);
+  std::printf("  Version:                           {:#x}\n", image.ehdr.e_version);
+  std::printf("  Entry point address:               {:#x}\n", image.ehdr.e_entry);
+  std::printf("  Start of program headers:          {} (bytes into file)\n", image.ehdr.e_phoff);
+  std::printf("  Start of section headers:          {} (bytes into file)\n", image.ehdr.e_shoff);
+  std::printf("  Flags:                             {:#x}\n", image.ehdr.e_flags);
+  std::printf("  Size of this header:               {} (bytes)\n", image.ehdr.e_ehsize);
+  std::printf("  Size of program headers:           {} (bytes)\n", image.ehdr.e_phentsize);
+  std::printf("  Number of program headers:         {}\n", image.ehdr.e_phnum);
+  std::printf("  Size of section headers:           {} (bytes)\n", image.ehdr.e_shentsize);
+  std::printf("  Number of section headers:         {}\n", image.ehdr.e_shnum);
+  std::printf("  Section header string table index: {}\n", image.ehdr.e_shstrndx);
+  std::printf("\n");
+}
+
+fn dump_section_headers(elf::image &image)
+{
+  std::print("Section Headers:");
+  std::printf("  [Nr] Name              Type          Address           Offset    Size              EntSize           Flags  Link  Info  Align\n");
+
+  var nr = 0;
+  for(var &header : image.section_headers)
+  {
+    std::printf("  [{:>2}]", nr);
+    std::printf(" {:16.16}", section_name_string(image, header.shdr));
+    std::printf("  {:12}", header.shdr.sh_type);
+    std::printf("  {:016x}", header.shdr.sh_addr);
+    std::printf("  {:08x}", header.shdr.sh_offset);
+    std::printf("  {:016x}", header.shdr.sh_size);
+    std::printf("  {:016x}", header.shdr.sh_entsize);
+    std::printf("  {:>6}", section_flags_string(image, header.shdr));
+    std::printf("  {:>3d}", header.shdr.sh_link);
+    std::printf("  {:>4d} ", header.shdr.sh_info);
+    std::printf("  {:>4d}", header.shdr.sh_addralign);
+    std::printf("\n");
+
+    nr += 1;
+  }
+
+  std::printf("\n");
+}
+
+fn dump_program_headers(elf::image &image)
+{
+  std::print("Program Headers:");
+  std::printf("  Type          Offset              VirtAddr            PhysAddr            FileSiz             MemSiz             Flags  Align\n");
+
+  for(var &header : image.program_headers)
+  {
+    std::printf("  {:12}", header.phdr.p_type);
+    std::printf("  {:#018x}", header.phdr.p_offset);
+    std::printf("  {:#018x}", header.phdr.p_vaddr);
+    std::printf("  {:#018x}", header.phdr.p_paddr);
+    std::printf("  {:#018x}", header.phdr.p_filesz);
+    std::printf("  {:#018x}", header.phdr.p_memsz);
+    std::printf("  {:>3}", program_flags_string(image, header.phdr));
+    std::printf("  {:>6}", header.phdr.p_align);
+    std::printf("\n");
+  }
+
+  std::printf("\n");
+}
+
+fn main()
+{
+  if (std::env::args.len != 2)
+  {
+    std::print("usage: readelf filename");
+    std::exit(1);
+  }
+
+  try
+  {
+    var mm = mmap::file::open(std::env::args[1]);
+
+    var image = elf::image(mm.data, mm.size);
+
+    if (var result = image.verify_elf_header(); !result)
+    {
+      std::print("invalid header : ", result);
+      std::exit(1);
+    }
+
+    dump_elf_header(image);
+    dump_section_headers(image);
+    dump_program_headers(image);
+  }
+  catch(std::error e)
+  {
+    std::printf("error - {}({})\n", e, e.value);
+    std::exit(1);
+  }
+}

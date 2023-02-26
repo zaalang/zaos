@@ -1,0 +1,573 @@
+//
+// vm page
+//
+
+import std.stdio;
+import std.atomic;
+import std.fmt;
+import platform;
+import cpu;
+
+pub const PAGE_SIZE = platform::PAGE_SIZE;
+pub const PAGE_SHIFT = std::ctz(PAGE_SIZE);
+pub const PAGE_MASK = PAGE_SIZE - 1;
+
+pub using mflags = platform::mflags;
+pub using protection = platform::protection;
+pub using page_table = platform::page_table;
+
+pub struct physaddr : pub platform::physaddr_t
+{
+  pub physaddr(platform::physaddr_t addr)
+    : super(addr)
+  {
+  }
+
+  pub fn ptr(this&) -> void mut *
+  {
+    return cast<void mut *>(this.super + platform::PHYSICAL_BASE);
+  }
+
+  pub fn +(physaddr this, usize offset) -> physaddr
+  {
+    return physaddr(this.super + offset);
+  }
+
+  pub fn -(physaddr this, usize offset) -> physaddr
+  {
+    return physaddr(this.super - offset);
+  }
+
+  pub fn -(physaddr lhs, physaddr rhs) -> usize
+  {
+    return lhs.super - rhs.super;
+  }
+
+  pub fn &(physaddr lhs, uintptr rhs) -> physaddr
+  {
+    return physaddr(lhs.super & rhs);
+  }
+
+  pub fn ==(physaddr lhs, platform::physaddr_t rhs) -> bool
+  {
+    return lhs.super == rhs;
+  }
+
+  pub fn <=>(physaddr lhs, platform::physaddr_t rhs) -> int
+  {
+    return lhs.super <=> rhs;
+  }
+
+  pub physaddr() = default;
+  pub physaddr(physaddr&) = default;
+  pub fn =(physaddr mut &, physaddr &) -> physaddr mut & = default;
+  pub ~physaddr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physaddr &addr) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "{}", addr.ptr);
+}
+
+pub struct physrange : pub platform::physrange_t
+{
+  pub physrange(physaddr beg, physaddr end)
+    : super(beg.super, end.super)
+  {
+  }
+
+  pub physrange(platform::physrange_t range)
+    : super(range)
+  {
+  }
+
+  pub physrange(platform::physaddr_t base, usize len)
+    : super(base, base + len)
+  {
+  }
+
+  pub fn addr(this&) -> physaddr
+  {
+    return physaddr(this.super.0);
+  }
+
+  pub fn size(this&) -> usize
+  {
+    return this.super.1 - this.super.0;
+  }
+
+  pub fn begin(this&) -> physaddr
+  {
+    return physaddr(this.super.0);
+  }
+
+  pub fn end(this&) -> physaddr
+  {
+    return physaddr(this.super.1);
+  }
+
+  pub fn ==(physrange lhs, physrange rhs) -> bool
+  {
+    return lhs.super.0 == rhs.super.0 && lhs.super.1 == rhs.super.1;
+  }
+
+  pub fn <=>(physrange lhs, physrange rhs) -> int
+  {
+    return lhs.super.0 <=> rhs.super.0;
+  }
+
+  pub physrange() = default;
+  pub physrange(physrange&) = default;
+  pub fn =(physrange mut &, physrange &) -> physrange mut & = default;
+  pub ~physrange() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physrange &range) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "physrange {{ {} - {} }}", range.begin.ptr, range.end.ptr);
+}
+
+pub struct virtaddr : pub platform::virtaddr_t
+{
+  pub virtaddr(void *addr)
+    : super(cast<uintptr>(addr))
+  {
+  }
+
+  pub virtaddr(platform::virtaddr_t addr)
+    : super(addr)
+  {
+  }
+
+  pub fn ptr(this&) -> void mut *
+  {
+    return cast<void mut *>(this.super);
+  }
+
+  pub fn +(virtaddr this, usize offset) -> virtaddr
+  {
+    return virtaddr(this.super + offset);
+  }
+
+  pub fn -(virtaddr this, usize offset) -> virtaddr
+  {
+    return virtaddr(this.super - offset);
+  }
+
+  pub fn -(virtaddr lhs, virtaddr rhs) -> usize
+  {
+    return lhs.super - rhs.super;
+  }
+
+  pub fn &(virtaddr lhs, uintptr rhs) -> virtaddr
+  {
+    return virtaddr(lhs.super & rhs);
+  }
+
+  pub fn ==(virtaddr lhs, platform::virtaddr_t rhs) -> bool
+  {
+    return lhs.super == rhs;
+  }
+
+  pub fn <=>(virtaddr lhs, platform::virtaddr_t rhs) -> int
+  {
+    return lhs.super <=> rhs;
+  }
+
+  pub virtaddr() = default;
+  pub virtaddr(virtaddr&) = default;
+  pub fn =(virtaddr mut &, virtaddr &) -> virtaddr mut & = default;
+  pub ~virtaddr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtaddr &addr) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "{}", addr.ptr);
+}
+
+pub struct virtrange : pub platform::virtrange_t
+{
+  pub virtrange(virtaddr beg, virtaddr end)
+    : super(beg.super, end.super)
+  {
+  }
+
+  pub virtrange(void *base, usize len)
+    : super(cast<uintptr>(base), cast<uintptr>(base) + len)
+  {
+  }
+
+  pub virtrange(platform::virtrange_t range)
+    : super(range)
+  {
+  }
+
+  pub virtrange(platform::virtaddr_t base, usize len)
+    : super(base, base + len)
+  {
+  }
+
+  pub fn addr(this&) -> virtaddr
+  {
+    return virtaddr(this.super.0);
+  }
+
+  pub fn size(this&) -> usize
+  {
+    return this.super.1 - this.super.0;
+  }
+
+  pub fn begin(this&) -> virtaddr
+  {
+    return virtaddr(this.super.0);
+  }
+
+  pub fn end(this&) -> virtaddr
+  {
+    return virtaddr(this.super.1);
+  }
+
+  pub fn ==(virtrange lhs, virtrange rhs) -> bool
+  {
+    return lhs.super.0 == rhs.super.0 && lhs.super.1 == rhs.super.1;
+  }
+
+  pub fn <=>(virtrange lhs, virtrange rhs) -> int
+  {
+    return lhs.super.0 <=> rhs.super.0;
+  }
+
+  pub fn contains(this&, virtaddr address) -> bool
+  {
+    return this.super.0 <= address && address < this.super.1;
+  }
+
+  pub fn contains(this&, virtrange range) -> bool
+  {
+    return this.super.0 <= range.super.1 && range.super.0 < this.super.1;
+  }
+
+  pub virtrange() = default;
+  pub virtrange(virtrange&) = default;
+  pub fn =(virtrange mut &, virtrange &) -> virtrange mut & = default;
+  pub ~virtrange() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &range) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "virtrange {{ {} - {} }}", range.begin.ptr, range.end.ptr);
+}
+
+pub struct page
+{
+  pub u64 flags;
+  pub i32 refcnt;
+  u8[28] reserved;
+
+  pub fn ref(this mut &) -> void { std::atomic_add(&this.refcnt, 1); }
+  pub fn unref(this mut &) -> i32 { return std::atomic_sub(&this.refcnt, 1); }
+
+  u8 order;
+  pub page mut *nextfree;
+  pub page mut * mut *prevfree;
+
+  page() = default;
+  ~page() = default;
+}
+
+pub struct page_allocator
+{
+  std::spin_lock lock;
+
+  page mut *[27] freelist;
+  std::mutable_span<page> pages;
+
+  pub page_allocator() = default;
+  pub page_allocator(#page_allocator&) = default;
+  pub ~page_allocator() = default;
+}
+
+pub struct page_cache
+{
+  pub fn get(this mut &) -> page mut *
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock);
+
+    var page = this.head;
+
+    if (!page)
+      return null;
+
+    this.head = page.nextfree;
+
+    page.nextfree = null;
+
+    return page;
+  }
+
+  pub fn put(this mut &, page mut *page) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock);
+
+    page.nextfree = this.head;
+
+    this.head = page;
+  }
+
+  page mut *head;
+
+  pub page_cache() = default;
+  pub page_cache(#page_cache&) = default;
+  pub ~page_cache() = default;
+}
+
+pub fn bootstrap(page_allocator mut &this, page mut *base, usize count) -> void
+{
+  this.pages = std::mutable_span(base, count);
+
+  std::memset(base, 0, count * sizeof<page>);
+}
+
+fn order_for_size(usize size) -> usize
+{
+  return std::ceil_log2(std::align_up(size, PAGE_SIZE) >> PAGE_SHIFT);
+}
+
+pub fn address_for_page(page_allocator mut &this, page *page) -> physaddr
+{
+  return physaddr((page - this.pages.data) << PAGE_SHIFT);
+}
+
+pub fn page_from_address(page_allocator mut &this, platform::physaddr_t page) -> page mut *
+{
+  return &this.pages[page >> PAGE_SHIFT];
+}
+
+pub fn pages_for_range(page_allocator mut &this, physrange range) -> std::mutable_span<page>
+{
+  std::assert(range.size != 0);
+
+  return std::mutable_span(this.page_from_address(range.addr), range.size >> PAGE_SHIFT);
+}
+
+fn take(page_allocator mut &this, usize order, page mut *page) -> page mut *
+{
+  std::assert(order == cast(page.order));
+
+  *page.prevfree = page.nextfree;
+
+  if (page.nextfree)
+    page.nextfree.prevfree = page.prevfree;
+
+  page.nextfree = null;
+  page.prevfree = null;
+
+  return page;
+}
+
+fn take(page_allocator mut &this, usize order, platform::physaddr_t base) -> page mut *
+{
+  return this.take(order, &this.pages[base >> PAGE_SHIFT]);
+}
+
+fn release(page_allocator mut &this, usize order, page mut *page) -> page mut *
+{
+  std::assert(((page - this.pages.data) << PAGE_SHIFT) & ((PAGE_SIZE << order) - 1) == 0);
+
+  page.order = cast(order);
+  page.nextfree = this.freelist[order];
+  page.prevfree = &this.freelist[order];
+
+  if (this.freelist[order])
+    this.freelist[order].prevfree = &page.nextfree;
+
+  this.freelist[order] = page;
+
+  return page;
+}
+
+fn release(page_allocator mut &this, usize order, platform::physaddr_t base) -> page mut *
+{
+  return this.release(order, &this.pages[base >> PAGE_SHIFT]);
+}
+
+pub fn seed_usable_memory(page_allocator mut &this, platform::physaddr_t begin, platform::physaddr_t end) -> void
+{
+  std::assert(begin != end);
+  std::assert(begin & PAGE_MASK == 0);
+  std::assert(end & PAGE_MASK == 0);
+
+  var order = 0;
+  while (PAGE_SIZE << (order + 1) <= end - begin)
+    order += 1;
+
+  var lhs = std::align_up(begin, PAGE_SIZE << order);
+  var rhs = std::align_down(end, PAGE_SIZE << order);
+
+  if (lhs != begin)
+  {
+    rof(var i = order, var j = lhs; i == 0; --i)
+    {
+      var k = std::align_up(begin, PAGE_SIZE << i);
+
+      if (j != k)
+        this.release(i, k);
+
+      j = k;
+    }
+  }
+
+  if (lhs != rhs)
+  {
+    this.release(order, lhs);
+  }
+
+  if (rhs != end)
+  {
+    rof(var i = order, var j = rhs; i == 0; --i)
+    {
+      var k = std::align_down(end, PAGE_SIZE << i);
+
+      if (k != j)
+        this.release(i, j);
+
+      j = k;
+    }
+  }
+}
+
+pub fn inject_allocated_page(page_allocator mut &this, platform::physaddr_t addr) -> void
+{
+  std::assert(addr & PAGE_MASK == 0);
+
+  var index = addr >> PAGE_SHIFT;
+
+  for(var i = 0; index != 0; ++i)
+  {
+    if (this.pages[index].prevfree)
+      break;
+
+    index &= ~(1 << i);
+  }
+
+  var base = index << PAGE_SHIFT;
+  var order = cast<usize>(this.pages[index].order);
+
+  std::assert(base <= addr && addr < base + PAGE_SIZE << order);
+
+  this.take(order, base);
+
+  for(var i = order; i != 0; --i)
+  {
+    if (addr < base + (PAGE_SIZE/2) << i)
+      this.release(i - 1, base + (PAGE_SIZE/2) << i);
+    else
+      this.release(i - 1, base);
+
+    base = addr & ~(((PAGE_SIZE/2) << i) - 1);
+  }
+}
+
+pub struct page_allocation : pub std::mutable_span<page>
+{
+  pub physaddr addr;
+
+  pub fn size(this&) -> usize
+  {
+    return this.len * PAGE_SIZE;
+  }
+
+  pub fn range(this&) -> physrange
+  {
+    return physrange(this.addr, this.size);
+  }
+
+  pub fn bool(this&) -> bool
+  {
+    return this.len != 0;
+  }
+
+  pub page_allocation() = default;
+  pub page_allocation(page_allocation&) = default;
+  pub fn =(page_allocation mut &, page_allocation &) -> page_allocation mut & = default;
+  pub ~page_allocation() = default;
+}
+
+pub fn allocate(page_allocator mut &this, usize size) -> page_allocation
+{ 
+  var result = page_allocation();
+
+  var order = order_for_size(size);
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  for(var i = order; i < this.freelist.len; ++i)
+  {
+    if (this.freelist[i])
+    {
+      var index = this.take(i, this.freelist[i]) - this.pages.data;
+
+      for(var j = i; j > order; --j)
+      {
+        this.release(j - 1, (index << PAGE_SHIFT) + (PAGE_SIZE/2) << j);
+      }
+
+      result.addr = physaddr(index << PAGE_SHIFT);
+      result.super = this.pages[index .. index + (1 << order)];
+      return result;
+    }
+  }
+
+  return result;
+}
+
+pub fn release(page_allocator mut &this, std::mutable_span<page> &pages) -> void
+{
+  if (pages.empty)
+    return;
+
+  var index = &pages[0] - this.pages.data;
+  var order = cast<usize>(std::ctz(pages.len));
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  for(var i = order; i != this.freelist.len - 1; ++i)
+  {
+    var mut &buddy = this.pages[index ^ (1 << i)];
+
+    if (!buddy.prevfree || buddy.order != cast(order))
+      break;
+
+    this.take(i, &buddy);
+
+    order += 1;
+    index &= ~(1 << i);
+  }
+
+  this.release(order, &this.pages[index]);
+}
+
+pub fn dump_free_pages(page_allocator &this)
+{
+  var total = 0;
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  for(var i = 0; i < this.freelist.len; ++i)
+  {
+    var count = 0;
+    var capacity = 0;
+
+    for(var entry = this.freelist[i]; entry; entry = entry.nextfree)
+    {
+      count += 1;
+      capacity += PAGE_SIZE << i;
+    }
+
+    std::print("freelist ", i, ": ", count, " ", capacity);
+
+    total += capacity;
+  }
+
+  std::print("total: ", total);
+}

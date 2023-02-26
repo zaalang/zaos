@@ -1,0 +1,185 @@
+//
+// efi platform
+//
+
+import sys;
+import cpu;
+import smp;
+import exit;
+import ioapic;
+import video;
+import memory;
+import handlers;
+import bootinfo : BootInfo;
+import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+
+extern fn enter_kernel(BootInfo &) -> void;
+
+fn new_bootinfo(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> BootInfo mut *
+{
+  var memory = 0;
+  if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, (sizeof<BootInfo> + 4095) / 4096, &memory) != 0)
+    efi::panic(SystemTable, "bad_bootinfo_alloc");
+
+  return new<BootInfo>(cast<void mut *>(memory));
+}
+
+extern fn reloc(uintptr base, uintptr dynamic, uintptr offset) -> void
+{
+  const DT_RELA = 7;
+  const DT_RELASZ = 8;
+  const DT_RELAENT = 9;
+  const R_X86_64_RELATIVE = 8;
+
+  struct Elf64_Dyn
+  {
+    u64 tag;
+    uintptr value;
+  }
+
+  struct Elf64_Rela
+  {
+    uintptr offset;
+    u64 info;
+    i64 addend;
+  }
+
+  var rela = 0;
+  var relasz = 0;
+  var relaent = 0;
+
+  for(var entry = cast<Elf64_Dyn*>(dynamic); entry.tag != 0; ++entry)
+  {
+    switch(entry.tag)
+    {
+      case DT_RELA:
+        rela = base + entry.value;
+
+      case DT_RELASZ:
+        relasz = entry.value;
+
+      case DT_RELAENT:
+        relaent = entry.value;
+    }
+  }
+
+  while (relasz != 0)
+  {
+    var rel = cast<Elf64_Rela*>(rela);
+
+    if (rel.info & 0xffffffff == R_X86_64_RELATIVE)
+      *cast<uintptr mut *>(base + rel.offset) = offset + cast(rel.addend);
+
+    rela += relaent;
+    relasz -= relaent;
+  }
+}
+
+fn set_command_line(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
+{
+  var lip = null<efi::EFI_LOADED_IMAGE_PROTOCOL*>;
+  var guid = efi::EFI_LOADED_IMAGE_PROTOCOL_GUID;
+
+  if (SystemTable.BootServices.HandleProtocol(Image, &guid, cast(&lip)) != 0)
+    efi::panic(SystemTable, "bad_lip_protocol");
+
+  if (bootinfo.cmdline.len < cast(lip.LoadOptionsSize / 2))
+    efi::panic(SystemTable, "bad_cmdline_len");
+
+  for(var i = 0, var ch = cast<u16*>(lip.LoadOptions); i < cast(lip.LoadOptionsSize / 2); ++ch, ++i)
+    bootinfo.cmdline[i] = cast<u8>(*ch & 0xff);
+}
+
+fn set_root_device(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
+{
+  var lip = null<efi::EFI_LOADED_IMAGE_PROTOCOL*>;
+  var lipguid = efi::EFI_LOADED_IMAGE_PROTOCOL_GUID;
+
+  if (SystemTable.BootServices.HandleProtocol(Image, &lipguid, cast(&lip)) != 0)
+    efi::panic(SystemTable, "bad_lip_protocol");
+
+  var dpp = null<efi::EFI_DEVICE_PATH*>;
+  var dppguid = efi::EFI_DEVICE_PATH_PROTOCOL_GUID;
+
+  if (SystemTable.BootServices.HandleProtocol(lip.DeviceHandle, &dppguid, cast(&dpp)) != 0)
+    efi::panic(SystemTable, "bad_dpp_protocol");
+
+  while (dpp.Type < 0x7f)
+  {
+    if (dpp.Type == 4 && dpp.SubType == 1)
+    {
+      for(var i = 0; i < 16; ++i)
+        bootinfo.rootdevice[i] = *(cast<u8*>(dpp) + 24 + i);
+    }
+
+    dpp = cast<efi::EFI_DEVICE_PATH*>(cast<uintptr>(dpp) + cast<usize>(dpp.Length[0]) + cast<usize>(dpp.Length[1]) << 8);
+  }
+}
+
+fn exit_boot_services(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable)
+{
+  var memory = 0;
+  const memorylen = 8*4096;
+  if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, (memorylen + 4095) / 4096, &memory) != 0)
+    efi::panic(SystemTable, "bad_memmap_alloc");
+
+  var MemoryMapSize = memorylen;
+  var MemoryMap = cast<efi::EFI_MEMORY_DESCRIPTOR mut *>(memory);
+  var MapKey = usize();
+  var DescriptorSize = usize();
+  var DescriptorVersion = u32();
+
+  while (true)
+  {
+    MemoryMapSize = memorylen;
+    SystemTable.BootServices.GetMemoryMap(&MemoryMapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);
+
+    if (SystemTable.BootServices.ExitBootServices(Image, MapKey) == 0)
+      break;
+  }
+
+  for(var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
+  {
+    var entry = cast<efi::EFI_MEMORY_DESCRIPTOR mut *>(cast<uintptr>(MemoryMap) + i * DescriptorSize);
+
+    switch (entry.Type)
+    {
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesData:
+        entry.VirtualStart = PHYSICAL_BASE + entry.PhysicalStart;
+    }
+  }
+
+  SystemTable.RuntimeServices.SetVirtualAddressMap(MemoryMapSize, DescriptorSize, DescriptorVersion, MemoryMap);
+}
+
+extern fn efi_main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> void
+{
+  var mut &bootinfo = *new_bootinfo(Image, SystemTable);
+
+  set_command_line(Image, SystemTable, &mut bootinfo);
+  set_root_device(Image, SystemTable, &mut bootinfo);
+
+  sys::detect(Image, SystemTable, &mut bootinfo);
+
+  video::initialise(Image, SystemTable, &mut bootinfo);
+
+  memory::initialise(Image, SystemTable, &mut bootinfo);
+
+  exit_boot_services(Image, SystemTable);
+
+  smp::initialise(&mut bootinfo);
+
+  enter_kernel(bootinfo);
+}
+
+extern fn platform_finalise_boot(BootInfo &bootinfo, int cpu) -> void
+{
+  sys::setup(bootinfo, cpu);
+  ioapic::setup(bootinfo, cpu);
+  memory::cement(bootinfo, cpu);
+
+  smp::rendezvous(cpu);
+
+  cpu::enable_interrupts();
+}

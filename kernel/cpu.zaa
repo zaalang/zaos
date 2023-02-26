@@ -1,0 +1,113 @@
+//
+// cpu
+//
+
+import std.atomic;
+import scheduler : run_queue;
+import thread as _ : thread;
+import platform;
+
+struct cpu
+{
+  int id;
+  run_queue mut *runqueue;
+  thread mut *current_thread;
+
+  u64 cyc2ns;
+  u64 clockspeed;
+
+  cpu() = default;
+  cpu(#cpu&) = default;
+  ~cpu() = default;
+}
+
+fn self() -> cpu mut &
+{
+  static thread_local self = #cpu();
+
+  return &self;
+}
+
+pub struct irq_lock
+{
+  bool state;
+
+  pub fn lock(this mut &) -> void
+  {
+    this.state = platform::disable_interrupts();
+  }
+
+  pub fn unlock(this mut &) -> void
+  {
+    platform::restore_interrupts(this.state);
+  }
+
+  irq_lock() = default;
+  irq_lock(#irq_lock&) = default;
+  ~irq_lock() = default;
+}
+
+pub fn irqlock() -> irq_lock
+{
+  return irq_lock();
+}
+
+pub fn current() -> int
+{
+  return self.id;
+}
+
+pub fn runqueue() -> run_queue mut &
+{
+  std::assert(platform::interrupts_disabled);
+
+  return &*self.runqueue;
+}
+
+pub fn set_runqueue(run_queue mut *runqueue) -> void
+{
+  std::assert(platform::interrupts_disabled);
+
+  self.runqueue = runqueue;
+}
+
+pub fn current_thread() -> thread mut *
+{
+  std::assert(platform::interrupts_disabled);
+
+  return self.current_thread;
+}
+
+pub fn switch_current_thread(thread mut *thread) -> void
+{
+  std::assert(platform::interrupts_disabled);
+
+  self.current_thread = thread;
+}
+
+pub fn tsc() -> u64
+{
+  return platform::rdtsc();
+}
+
+pub fn cyc2ns() -> u64
+{
+  return self.cyc2ns;
+}
+
+pub fn clockspeed() -> u64
+{
+  return self.clockspeed;
+}
+
+pub fn system_time() -> u64
+{
+  return std::mul_with_carry(tsc, self.cyc2ns).1;
+}
+
+pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+{
+  self.id = cpu;
+  self.clockspeed = bootinfo.early_tsc_frequency;
+  self.cyc2ns = ((1_000_000_000 << 32) / self.clockspeed) << 32;
+}

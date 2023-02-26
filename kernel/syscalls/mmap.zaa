@@ -1,0 +1,130 @@
+//
+// mmap syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import vfs;
+import ioring;
+import result as _ : result;
+import process as _ : process;
+
+enum flags
+{
+  const shared = 0x1;
+  const private = 0x2;
+  const anonymous = 0x20;
+}
+
+enum prot
+{
+  const none = 0;
+  const readonly = 1;
+  const readwrite = 2;
+  const executable = 4;
+}
+
+struct mmvec
+{
+  u64 offset;
+  usize length;
+  uintptr base;
+  u32 flags;
+  u32 prot;
+
+  mmvec() = default;
+  mmvec(mmvec&) = default;
+  ~mmvec() = default;
+}
+
+extern fn sys_mmap(i32 fd, virtaddr mmvsbuf, usize n, virtaddr addrbuf, u64 flags) -> result
+{
+  var file = vfs::fd();
+
+  if (fd != -1)
+  {
+    file = process::current.fd(fd);
+
+    if (!file)
+      return vfs::result::bad_descriptor;
+  }
+
+  var mmvs = std::vector<mmvec, N:8>::with_size(n);
+
+  if (var result = vm::read_process_memory(mmvsbuf, mmvs.data, mmvs.len * sizeof<mmvec>); !result)
+    return result;
+
+  var length = 0;
+  for(var &mm : mmvs)
+    length = std::max(length, mm.base + mm.length);
+
+  var addr = process::current.sbrk(length);
+
+  for(var &mm : mmvs)
+  {
+    var protection = vm::protection::none;
+
+    switch (mm.prot & 0x7)
+    {
+      case prot::readonly:
+        protection = vm::protection::readonly;
+
+      case prot::readwrite:
+        protection = vm::protection::readwrite;
+
+      case prot::executable:
+        protection = vm::protection::executable;
+    }
+
+    var usage = vm::usage::private;
+
+    if (mm.flags & flags::shared != 0)
+      usage = vm::usage::shared;
+
+    if (mm.flags & flags::anonymous != flags::anonymous)
+    {
+      if (fd == -1)
+        return vfs::result::bad_descriptor;
+
+      switch (file.node.type)
+      {
+        case vfs::node::type::file:
+        case vfs::node::type::volume:
+          if (var result = vm::create_backed_region(vm::virtrange(addr + mm.base, mm.length), file.node, mm.offset, protection, usage); !result)
+            return result;
+
+        case vfs::node::type::device:
+          if (var result = file.node.device_operations.mmap(file.node, vm::virtrange(addr + mm.base, mm.length), mm.offset, protection, usage); !result)
+            return result;
+
+        case vfs::node::type::ring:
+          if (var result = ioring::mmap(file.node, &mut addr, mm.length, mm.offset, protection, usage); !result)
+            return result;
+
+        else:
+          return vfs::result::bad_descriptor;
+      }
+    }
+    else
+    {
+      if (var result = vm::create_anonymous_region(vm::virtrange(addr + mm.base, mm.length), protection, vm::usage::private); !result)
+        return result;
+    }
+  }
+
+  if (var result = vm::write_process_memory(addrbuf, &addr, sizeof(addr)); !result)
+    return result;
+
+  return 0;
+}
+
+extern fn sys_munmap(virtaddr addr, usize length) -> result
+{
+  if (!vm::is_user_address(addr))
+    return vm::result::bad_address;
+
+  if (var result = vm::munmap(vm::virtrange(addr, length)); !result)
+    return result;
+
+  return 0;
+}

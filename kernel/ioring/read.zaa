@@ -1,0 +1,102 @@
+//
+// read
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import blk;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buffer, usize length) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  var iovec = vm::iovec();
+
+  if (!vm::is_user_address(buffer))
+    return vm::result::invalid_argument;
+
+  if (var result = vm::lock(process, vm::virtrange(buffer, length), vm::protection::readwrite, &mut iovec); !result)
+    return result;
+
+  switch (var &node = file.node; node.type)
+  {
+    case vfs::node::type::file:
+    case vfs::node::type::volume:
+      var count = cast<usize>(ctx.state[0]);
+      var offset = cast<usize>(ctx.state[0]);
+      var position = file.readcursor;
+
+      length -= offset;
+      position += cast(offset);
+
+      var stat = vfs::stat();
+      if (var result = vfs::stat(node, &mut stat, vfs::stats::size); !result)
+        return result;
+
+      if (position + cast(length) > stat.size)
+        length = cast<usize>(stat.size - std::min(position, stat.size));
+
+      while (length != 0)
+      {
+        var block = blk::fetch(node, position);
+
+        if (!block.ready)
+        {
+          ctx.state[0] = count;         
+          ctx.blockers.push_back(block.response);
+
+          return ioring::result::should_block;
+        }
+
+        if (block.wait(); !block)
+          return block.result;
+
+        var data = block.ptr(position);
+        var bytes = std::min(block.base + block.size - data, length);
+
+        if (var result = vm::memcpy(iovec, offset, data, bytes); !result)
+          return result;
+
+        length -= bytes;
+        position += cast(bytes);
+        offset += bytes;
+        count += bytes;
+      }
+
+      file.readcursor = position;
+
+      return cast<i32>(count);
+
+    case vfs::node::type::symlink:
+      var buffer = std::string();
+      if (var result = node.symlink_operations.readlink(node, &mut buffer); !result)
+        return result;
+
+      if (var result = vm::memcpy(iovec, 0, buffer.data, buffer.len); !result)
+        return result;
+
+      return cast<i32>(buffer.len);
+
+    case vfs::node::type::directory:
+      return node.directory_operations.readdir(node, &mut file.readcursor, iovec, 0, length);
+
+    case vfs::node::type::pipe:
+    case vfs::node::type::device:
+      return node.pipe_operations.read(node, iovec, 0, length);
+
+    else:
+      return vfs::result::bad_descriptor;
+  }
+
+  return 0;
+}

@@ -1,0 +1,29 @@
+//
+// dup
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_dup(process mut *process, ioring_ctx mut &ctx, i32 oldfd) -> result
+{
+  var file = process.fd(oldfd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  return process.new_fd(file);
+}
+
+pub fn sys_dup2(process mut *process, ioring_ctx mut &ctx, i32 oldfd, i32 newfd) -> result
+{
+  var file = process.fd(oldfd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  return process.new_fd(newfd, file);
+}

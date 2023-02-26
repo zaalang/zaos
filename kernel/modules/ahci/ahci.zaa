@@ -1,0 +1,671 @@
+//
+// ahci
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import pci;
+import msi;
+import vm;
+import io;
+import dev;
+import blk;
+import blk.partdev;
+import scheduler;
+import platform;
+import ahci.satadev;
+
+using vm::physaddr;
+
+enum cap
+{
+  s64a = 0x80000000,  // Supports 64-bit Addressing
+  sncq = 0x40000000,  // Supports Native Command Queuing
+  ssntf = 0x20000000, // Supports SNotification Register
+  smps = 0x10000000,  // Supports Mechanical Presence Switch
+  sss = 0x8000000,    // Supports Staggered Spin-up
+  salp = 0x4000000,   // Supports Aggressive Link Power Management
+  sal = 0x2000000,    // Supports Activity LED
+  sclo = 0x1000000,   // Supports Command List Override
+  iss_mask = 0xf,     // Interface Speed Support
+  iss_shift = 20,
+  snzo = 0x80000,     // Supports Non-Zero DMA Offsets
+  sam = 0x40000,      // Supports AHCI mode only
+  spm = 0x20000,      // Supports Port Multiplier
+  fbss = 0x10000,     // FIS-based Switching Supported
+  pmd = 0x8000,       // PIO Multiple DRQ Block
+  ssc = 0x4000,       // Slumber State Capable
+  psc = 0x2000,       // Partial State Capable
+  ncs_mask = 0x1f,    // Number of Command Slots
+  ncs_shift = 8,
+  cccs = 0x80,        // Command Completion Coalescing Supported
+  ems = 0x40,         // Enclosure Management Supported
+  sxs = 0x20,         // Supports External SATA
+  np_mask = 0x1f,     // Number of Ports
+  np_shift = 0,
+}
+
+enum ghc : u32
+{
+  const interrupt_enabled = 2;
+}
+
+enum cmd : u32
+{
+  icc_active = 0x10000000,  // Interface Communication control
+  icc_slumber = 0x60000000, // Interface Communication control
+  icc_mask = 0xf0000000,    // Interface Communication control
+  atapi = 0x1000000,        // Device is ATAPI
+  cr = 0x8000,              // Command List Running (DMA active)
+  fr = 0x4000,              // FIS Receive Running
+  fre = 0x10,               // FIS Receive Enable
+  clo = 0x8,                // Command List Override
+  pod = 0x4,                // Power On Device
+  sud = 0x2,                // Spin-up Device
+  st = 0x1,                 // Start DMA
+
+  pub const fn ~(cmd lhs) -> cmd { return cast<cmd>(~cast<u32>(lhs)); }
+  pub const fn &(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+enum isr : u32
+{
+  cpd = 0x80000000,         // Cold Presence Detect
+  tfe = 0x40000000,         // Task File Error
+  hbf = 0x20000000,         // Host Bus Fatal Error
+  hbd = 0x10000000,         // Host Bus Data Error
+  iff = 0x8000000,          // Interface Fatal Error
+  inf = 0x4000000,          // Interface Non-fatal Error
+  of = 0x1000000,           // Overflow
+  ipm = 0x800000,           // Incorrect Port Multiplier
+  prc = 0x400000,           // PhyRdy Change
+  di = 0x80,                // Device Interlock
+  pc = 0x40,                // Port Change
+  dp = 0x20,                // Descriptor Processed Interrupt
+  uf = 0x10,                // Unknown FIS Interrupt
+  sdb = 0x8,                // Set Device Bits FIS Interrupt
+  ds = 0x4,                 // DMA Setup FIS Interrupt
+  ps = 0x2,                 // PIO Setup FIS Interrupt
+  dhr = 0x1,                // Device to Host Register FIS Interrupt
+
+  none = 0x0,
+  error = 0x7dc00050,       // errors
+  all = 0x7dc0007f,         // errors and interrupts
+
+  pub const fn &(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+enum tfd : u32
+{
+  error = 0x1,              // error
+  index = 0x2,              // obsolete
+  corr = 0x4,               // obsolete
+  request = 0x8,            // data request
+  dsc = 0x10,               // reserved
+  service = 0x10,           // ready to service device
+  dwf = 0x20,               // reserved
+  dma = 0x20,               // reserved
+  dma_ready = 0x20,         // packet: DMA ready
+  device_fault = 0x20,      // device fault
+  device_ready = 0x40,      // device ready
+  busy = 0x80,              // busy
+
+  pub const fn &(tfd lhs, tfd rhs) -> tfd { return cast<tfd>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(tfd lhs, tfd rhs) -> tfd { return cast<tfd>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+struct ahci_hba
+{
+  u32 cap;
+  u32 ghc;
+  u32 is;
+  u32 pi;
+  u32 vs;
+  u32 ccc_ctl;
+  u32 ccc_ports;
+  u32 em_loc;
+  u32 em_ctl;
+  u32 cap2;
+  u32 bohc;
+  u32[29] reserved0;
+  u32[24] vendor;
+  ahci_port[32] ports;
+}
+
+struct ahci_port
+{
+  physaddr clb;
+  physaddr fb;
+  isr is;
+  isr ie;
+  cmd cmd;
+  u32 reserved0;
+  tfd tfd;
+  u32 sig;
+  u32 ssts;
+  u32 sctl;
+  u32 serr;
+  u32 sact;
+  u32 ci;
+  u32 sntf;
+  u32 fbs;
+  u32 devslp;
+  u32[10] reserved1;
+  u32[4] vs;
+}
+
+struct ahci_command
+{
+  const atapi = 0x20;
+  const write = 0x40;
+
+  u16 opts;
+  u16 prdtl;
+  u32 prdbc;
+  physaddr ctba;
+  u32[4] reserved0;
+}
+
+struct ahci_command_table
+{
+  u8[64] cfis;
+  u8[32] acmd;
+  u8[32] reserved0;
+  ahci_prdt[8] prdt;
+}
+
+struct ahci_prdt
+{
+  physaddr dba;
+  u32 reserved0;
+  u32 dbc;
+}
+
+struct fis
+{
+  u8[28] dsfis;
+  u8[4] reserved1;
+  u8[20] psfis;
+  u8[12] reserved2;
+  u8[20] rfis;
+  u8[4] reserved3;
+  u8[08] sdbfis;
+  u8[64] ufis;
+  u8[96] reserved4;
+}
+
+fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for(var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == mask)
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for(var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == cast(0))
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+pub enum result: i32
+{
+  ok = 0,
+  io_error = -5,
+  device_busy = -16,
+  invalid_argument = -22,
+  timed_out = -110,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct controller
+{
+  pub controller(pci::device &device)
+    : device(&device)
+  {
+  }
+
+  fn reset(this mut &) -> result
+  {
+    std::print("ahci ", this.name, " device reset");
+
+    var hba = this.hba;
+
+    std::volatile_store(&hba.ghc, hba.ghc | 0x80000000);
+    std::volatile_store(&hba.ghc, hba.ghc | 0x00000001);
+
+    if (!wait_until_clear(&hba.ghc, 0x00000001, 1000))
+      return timed_out;
+
+    std::volatile_store(&hba.ccc_ctl, 0);
+
+    return ok;
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
+  }
+
+  pub ~controller() = default;
+
+  port mut *[32] ports;
+
+  u8 irq;
+  ahci_hba mut *hba;
+  pci::device &device;
+}
+
+pub struct port
+{
+  const CLSZ = 8;
+
+  pub port(controller mut &controller, usize index)
+    : controller(&controller), index(index)
+  {
+    var size = sizeof<ahci_command[32]> + sizeof<fis> + sizeof<ahci_command_table[CLSZ]>;
+    var memory = vm::allocate_physical_pages(size);
+
+    std::memset(memory.addr.ptr, 0, size);
+
+    regs = &this.controller.hba.ports[this.index];
+    regs.clb = memory.addr;
+    regs.fb = memory.addr + sizeof<ahci_command[32]>;
+
+    this.cl = cast<ahci_command[CLSZ] mut *>(regs.clb.ptr);
+
+    for(var i = 0; i < CLSZ; ++i)
+    {
+      cl[i].ctba = memory.addr + sizeof<ahci_command[32]> + sizeof<fis> + i * sizeof<ahci_command_table>;
+    }
+
+    this.slots = (~1 << ((controller.hba.cap >> 8) & 0b11111)) & (CLSZ - 1);
+
+    std::volatile_store(&regs.sctl, regs.sctl | 0x00000300);
+  }
+
+  fn enable(this mut &) -> result
+  {
+    if (!wait_until_clear(&this.regs.cmd, cmd::cr, 500))
+      return timed_out;
+
+    std::volatile_store(&this.regs.cmd, this.regs.cmd | cmd::st);
+
+    return ok;
+  }
+
+  fn disable(this mut &) -> result
+  {
+    std::volatile_store(&this.regs.cmd, this.regs.cmd & ~cmd::st);
+
+    if (!wait_until_clear(&this.regs.cmd, cmd::cr, 500))
+      return timed_out;
+
+    return ok;
+  }
+
+  fn reset(this mut &) -> result
+  {
+    std::print("ahci ", this.name, " port reset");
+
+    disable(this);
+
+    std::volatile_store(&this.regs.serr, this.regs.serr);
+
+    if (!wait_until_clear(&this.regs.tfd, tfd::busy | tfd::request, 500))
+    {
+      std::volatile_store(&this.regs.sctl, 0x0100 | 0x0200 | 0x0004);
+
+      scheduler::sleep_until(cpu::system_time + 1_100_000);
+
+      std::volatile_store(&this.regs.sctl, this.regs.sctl & ~0xf);
+    }
+
+    enable(this);
+
+    if (!wait_until_set(&this.regs.ssts, 0x3, 500))
+      return timed_out;
+
+    return ok;
+  }
+
+  fn find_slot(this mut &) -> usize
+  {
+    var slot = 0;
+
+    for(; slot < CLSZ; ++slot)
+    {
+      var mask = std::volatile_load(&this.slots);
+
+      if (mask & (1 << slot) == 0)
+      {
+        if (std::atomic_cmpxchg_weak(&this.slots, mask, mask | (1 << slot)))
+          break;
+      }
+    }
+
+    return slot;
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}/{}", this.controller.name, this.index);
+  }
+
+  pub ~port() = default;
+
+  u32 slots;
+  blk::request mut *[CLSZ] requests;
+
+  ahci_port mut *regs;
+  ahci_command[CLSZ] mut *cl;
+
+  usize index;
+  controller mut &controller;
+}
+
+extern fn ahci_io_handler(controller mut *controller) -> void
+{
+  var pending = controller.hba.is;
+
+  for(var i = 0; i < controller.ports.len; ++i)
+  {
+    if (pending & (1 << i) != 0)
+    {
+      if (controller.ports[i])
+      {
+        var port = controller.ports[i];
+
+        var is = port.regs.is;
+        std::volatile_store(&port.regs.is, is);
+
+        var ci = port.slots & ~(port.regs.sact | port.regs.ci);
+
+        var status = blk::request::status::success;
+
+        if (is & isr::error != isr::none)
+        {
+          var serr = port.regs.serr;
+          std::volatile_store(&port.regs.serr, port.regs.serr);
+
+          if (is & isr::inf == isr::inf)
+            continue;
+
+          if (is & isr::prc == isr::prc)
+            continue;
+
+          std::print("ahci port error - ", serr);
+
+          status = blk::request::status::errored;
+        }
+
+        for(var slot = 0; ci != 0; ++slot)
+        {
+          if (ci & 1 != 0)
+          {
+            if (port.requests[slot])
+            {
+              blk::complete(port.requests[slot], status);
+
+              port.requests[slot] = null;
+
+              if (std::atomic_and(&port.slots, ~(1 << slot)) == port::CLSZ - 1)
+                blk::wake_from_stall();
+            }
+          }
+
+          ci >>= 1;
+        }
+      }
+    }
+  }
+
+  std::volatile_store(&controller.hba.is, pending);
+}
+
+pub fn initialise() -> void
+{
+  for(var &device : pci::devices)
+  {
+    if (device.class_code == [1, 6, 1])
+    {
+      var controller = std::allocator::new<controller>(device);
+
+      if (var result = controller.initialise(); !result)
+        std::print("ahci error initialising controller - ", result);
+    }
+  }
+}
+
+fn initialise(controller mut &controller) -> result
+{
+  var &device = controller.device;
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var irq = device.read_interrupt_line();
+
+  if (msi::count(device) != 0)
+  {
+    var vector = io::allocate_vectors(1);
+
+    if (msi::configure(device, vector))
+    {
+      msi::enable(device);
+
+      irq = vector.0;
+    }
+  }
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  controller.irq = irq;
+  controller.hba = cast<ahci_hba mut *>(device.read_base_address(5).ptr);
+
+  var hba = controller.hba;
+
+  std::volatile_store(&hba.ghc, hba.ghc & ~ghc::interrupt_enabled);
+
+  if (var result = controller.reset(); !result)
+    return result;
+
+  io::install_handler(irq, cast(extern(ahci_io_handler)), &controller);
+
+  var port_count = 1 + cast<usize>(hba.cap & 0b11111);
+
+  for(var i = 0; i < port_count; ++i)
+  {
+    if (hba.pi & (1 << i) != 0)
+    {
+      if (hba.ports[i].ssts & 0xdf == 0x13)
+      {
+        controller.ports[i] = std::allocator::new<port>(controller, i);
+      }
+    }
+  }
+
+  std::volatile_store(&hba.is, hba.is);
+  std::volatile_store(&hba.ghc, hba.ghc | ghc::interrupt_enabled);
+
+  for(var i = 0; i < controller.ports.len; ++i)
+  {
+    if (controller.ports[i])
+    {
+      if (var result = controller.ports[i].initialise(); !result)
+        std::print("ahci error initialising port ", i, " - ", result);
+    }
+  }
+
+  return ok;
+}
+
+fn initialise(port mut &port) -> result
+{
+  var regs = port.regs;
+
+  std::volatile_store(&regs.is, regs.is);
+  std::volatile_store(&regs.serr, regs.serr);
+
+  std::volatile_store(&regs.cmd, regs.cmd | cmd::pod);
+  std::volatile_store(&regs.cmd, regs.cmd | cmd::sud);
+  std::volatile_store(&regs.cmd, regs.cmd & cmd::icc_mask | cmd::icc_active);
+  std::volatile_store(&regs.cmd, regs.cmd | cmd::fre);
+
+  if (var result = port.enable(); !result)
+    return result;
+
+  std::volatile_store(&regs.ie, isr::all);
+
+  if (std::volatile_load(&regs.ssts) & 0xf != 3)
+    std::panic("ahci port device awol");
+
+  switch (regs.ssts & 0xf0)
+  {
+    case 0x10: // gen 1
+      std::print("ahci ", port.name, " link speed 1.5Gbps");
+
+    case 0x20: // gen 2
+      std::print("ahci ", port.name, " link speed 3Gbps");
+
+    case 0x40: // gen 3
+      std::print("ahci ", port.name, " link speed 6Gbps");
+  }
+
+  if (!wait_until_clear(&regs.tfd, tfd::busy, 30000))
+    return timed_out;
+
+  switch (regs.sig)
+  {
+    case 0x00000101: // SATA drive
+      std::print("ahci ", port.name, " sata device");
+
+      var dev = blk::blkdev::create<satadev>(port);
+
+      dev::register(dev);
+      blk::scan_for_partitions(dev);
+
+    case 0xEB140101: // ATAPI drive
+      std::print("ahci ", port.name, " atapi device");
+      regs.cmd |= cmd::atapi;
+
+    else:
+      std::print("ahci ", port.name, " unsupported device");
+  }
+
+  return ok;
+}
+
+pub fn identify(port mut &port, vm::physaddr buffer) -> result
+{
+  var slot = 0;
+
+  var cmd = &port.cl[slot];
+  var tbl = cast<ahci_command_table mut *>(cmd.ctba.ptr);
+
+  std::memset(tbl.cfis.data, 0, 20);
+  tbl.cfis[0] = 0x27;
+  tbl.cfis[1] = 0x80;
+  tbl.cfis[2] = 0xec;
+  tbl.prdt[0].dba = buffer;
+  tbl.prdt[0].dbc = cast<u32>(512 - 1);
+
+  cmd.opts = 5;
+  cmd.prdtl = 1;
+  cmd.prdbc = 0;
+
+  if (!wait_until_clear(&port.regs.tfd, tfd::busy | tfd::request, 1000))
+    return device_busy;
+
+  std::atomic_thread_fence();
+  std::volatile_store(&port.regs.ci, 1 << slot);
+
+  if (!wait_until_clear(&port.regs.ci, 1 << slot, 1000))
+    return timed_out;
+
+  return ok;
+}
+
+pub fn enqueue(port mut &port, blk::request mut *request) -> result
+{
+  std::assert(request.length & 511 == 0);
+  std::assert(request.length/512 < 65536);
+  std::assert(request.position < (1 << 48));
+
+  var slot = port.find_slot();
+
+  if (slot == port::CLSZ)
+    return device_busy;
+
+  var cmd = &port.cl[slot];
+  var tbl = cast<ahci_command_table mut *>(cmd.ctba.ptr);
+
+  std::memset(tbl.cfis.data, 0, 20);
+  tbl.cfis[0] = 0x27;
+  tbl.cfis[1] = 0x80;
+  tbl.cfis[2] = (request.type == blk::request::type::read) ? 0x60 : 0x61;
+  tbl.cfis[3] = cast<u8>((request.length >> 9) & 0xff);
+  tbl.cfis[4] = cast<u8>((request.position >> 9) & 0xff);
+  tbl.cfis[5] = cast<u8>((request.position >> 17) & 0xff);
+  tbl.cfis[6] = cast<u8>((request.position >> 25) & 0xff);
+  tbl.cfis[7] = 0x40;
+  tbl.cfis[8] = cast<u8>((request.position >> 33) & 0xff);
+  tbl.cfis[9] = cast<u8>((request.position >> 41) & 0xff);
+  tbl.cfis[10] = cast<u8>((request.position >> 49) & 0xff);
+  tbl.cfis[11] = cast<u8>((request.length >> 17) & 0xff);
+  tbl.cfis[12] = cast<u8>(slot) << 3;
+
+  for(var i = 0; i != request.host.len; ++i)
+  {
+    var range = request.host[i];
+
+    tbl.prdt[i].dba = range.addr;
+    tbl.prdt[i].dbc = cast<u32>(range.size - 1) | (1 << 31);
+  }
+
+  cmd.opts = 5;
+
+  if (request.type == blk::request::type::write)
+    cmd.opts |= ahci_command::write;
+
+  cmd.prdtl = cast<u16>(request.host.len);
+  cmd.prdbc = 0;
+
+  request.status = blk::request::status::running;
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(&port.regs.sact, 1 << slot);
+  std::volatile_store(&port.requests[slot], request);
+  std::volatile_store(&port.regs.ci, 1 << slot);
+
+  return ok;
+}
+
+pub fn cancel(port mut &port, blk::request mut *request) -> result
+{
+  while (std::volatile_load(&request.status) == blk::request::status::running)
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+
+  return ok;
+}

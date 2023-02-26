@@ -1,0 +1,38 @@
+//
+// fs
+//
+
+import std.stdio;
+import std.string;
+import vfs.node;
+
+pub struct file_system
+{
+  pub file_system_operations &ops;
+
+  pub file_system(file_system_operations &ops)
+    : ops(&ops)
+  {
+  }
+
+  pub ~file_system() = default;
+}
+
+pub struct file_system_context
+{
+  pub vfs::node_ptr source;
+
+  pub file_system_context() = default;
+  pub ~file_system_context() = default;
+}
+
+pub vtable file_system_type
+{
+  pub fn name() -> std::string_view;
+  pub fn create(file_system_context &ctx) -> file_system mut *;
+}
+
+pub vtable file_system_operations
+{
+  pub fn mount(file_system mut *fs, vfs::node_ptr mut &dentry) -> vfs::result;
+}

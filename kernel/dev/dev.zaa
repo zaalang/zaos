@@ -1,0 +1,182 @@
+//
+// dev
+//
+
+import std.stdio;
+import std.vector;
+import blk.blkdev;
+import chr.chrdev;
+import devfs;
+import mutex as _ : shared_mutex;
+
+pub struct dev_t
+{
+  i32 id;
+
+  const IndexBits = 12;
+
+  pub dev_t(i32 generation, usize index)
+  {
+    id = generation << IndexBits + cast<i32>(index);
+  }
+
+  pub fn bool(this&) -> bool { return id > 0; }
+  pub fn index(this&) -> usize { return cast<usize>(this.id & ((1 << IndexBits) - 1)); }
+  pub fn generation(this&) -> i32 { return this.id >> IndexBits; }
+
+  pub fn ==(dev_t &, dev_t &) -> bool = default;
+
+  pub dev_t() = default;
+  pub dev_t(dev_t&) = default;
+  pub fn =(dev_t mut &, dev_t &) -> dev_t mut & = default;
+  pub ~dev_t() = default;
+}
+
+pub union device
+{
+  pub bus,
+  pub blkdev(blk::blkdev_ptr),
+  pub chrdev(chr::chrdev_ptr),
+
+  pub fn bool(this&) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub device() = default;
+  pub device(device&&) = default;
+  pub fn =(device mut &, device &&) -> device mut & = default;
+  pub ~device() = default;
+}
+
+struct device_manager
+{
+  shared_mutex lock;
+
+  struct node
+  {
+    dev_t id;
+    device device;
+    dev_t parent;
+
+    node() = default;
+    node(node&) = default;
+    fn =(node mut &, node &&) -> node mut & = default;
+    ~node() = default;
+  }
+
+  std::vector<node> nodes;
+
+  device_manager() = default;
+  device_manager(#device_manager&) = default;
+  ~device_manager() = default;
+}
+
+fn devman() -> device_manager mut &
+{
+  static instance = #device_manager();
+
+  return &instance;
+}
+
+fn register(device_manager mut &devman, device device) -> dev_t
+{
+  var guard = std::lock_guard(&mut devman.lock);
+
+  var slot = devman.nodes.len;
+
+  for(var i = 0; i != devman.nodes.len; ++i)
+    if (!devman.nodes[i].device)
+      slot = i;
+
+  if (slot == devman.nodes.len)
+    devman.nodes.resize(devman.nodes.len + 1);
+
+  var mut &node = devman.nodes[slot];
+
+  node.id = dev_t(node.id.generation + 1, slot);
+  node.device = &move device;
+  node.parent.id = 0;
+
+  devfs::publish(node.id, node.device);
+
+  return node.id;
+}
+
+pub fn register(blk::blkdev_ptr &dev) -> dev_t
+{
+  return devman.register(device::blkdev(dev));
+}
+
+pub fn register(chr::chrdev_ptr &dev) -> dev_t
+{
+  return devman.register(device::chrdev(dev));
+}
+
+pub fn remove(blk::blkdev_ptr &dev) -> void
+{
+  var guard = std::lock_guard(&mut devman.lock);
+
+  var node = devman.nodes.find_if(|node| [dev] {
+    switch (node.device)
+    {
+      case blkdev[device]:
+        return device == dev;
+
+      else:
+        return false;
+    }
+  });
+
+  if (node != devman.nodes.end)
+  {
+    devfs::remove(node.id, node.device);
+
+    devman.nodes.erase(node);
+  }
+}
+
+pub fn remove(chr::chrdev_ptr &dev) -> void
+{
+  var guard = std::lock_guard(&mut devman.lock);
+
+  var node = devman.nodes.find_if(|node| [dev] {
+    switch (node.device)
+    {
+      case chrdev[device]:
+        return device == dev;
+
+      else:
+        return false;
+    }
+  });
+
+  if (node != devman.nodes.end)
+  {
+    devfs::remove(node.id, node.device);
+
+    devman.nodes.erase(node);
+  }
+}
+
+pub fn get(dev_t id) -> device
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  var mut &node = devman.nodes[id.index];
+
+  if (node.id == id)
+    return node.device;
+
+  return device();
+}
+
+pub fn enumerate(var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  for(var &node : devman.nodes)
+  {
+    callback(node.id, node.device);
+  }
+}

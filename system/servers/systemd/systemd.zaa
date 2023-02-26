@@ -1,0 +1,10 @@
+//
+// systemd
+//
+
+import std.stdio;
+
+fn main()
+{
+  std::print("systemd");
+}

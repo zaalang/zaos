@@ -1,0 +1,37 @@
+//
+// x86 apic
+//
+
+import std.stdio;
+import std.atomic;
+import platform.x64-efi.cpu as cpu;
+
+pub fn set_timer_deadline(u64 ticks) -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_tsc_deadline, cpu::rdtsc() + ticks);
+}
+
+pub fn unicast_ipi_interrupt(u8 apicid)
+{
+  var command = cpu::rdmsr(cpu::msr_index::apic_intr_command);
+
+  command = command & 0xfff32000 | cast<u64>(apicid) << 32 | 0x40fd;
+
+  cpu::sfence();
+  cpu::wrmsr(cpu::msr_index::apic_intr_command, command);
+}
+
+pub fn broadcast_ipi_interrupt()
+{
+  var command = cpu::rdmsr(cpu::msr_index::apic_intr_command);
+
+  command = command & 0xfff32000 | 0xc40fd;
+
+  cpu::sfence();
+  cpu::wrmsr(cpu::msr_index::apic_intr_command, command);
+}
+
+pub extern fn allocate_io_vectors(usize count) -> (u8, u8);
+pub extern fn enable_io_vector(u8 irq) -> void;
+pub extern fn disable_io_vector(u8 irq) -> void;
+pub extern fn io_vector_id(u8 irq) -> u8;

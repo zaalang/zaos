@@ -1,0 +1,288 @@
+//
+// painter
+//
+
+import std.stdlib;
+import os.zaos.fcntl;
+import std.string : String;
+import termios;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct painter
+{
+  int fd;
+
+  int width;
+  int height;
+
+  int x;
+  int y;
+  int lines;
+
+  usize len;
+  u8[256] buffer;
+
+  int saved_x;
+  int saved_y;
+
+  pub fn x(this&) -> int
+  {
+    return this.x;
+  }
+
+  pub fn y(this&) -> int
+  {
+    return this.y;
+  }
+
+  pub fn width(this&) -> int
+  {
+    return this.width;
+  }
+
+  pub fn height(this&) -> int
+  {
+    return this.height;
+  }
+
+  pub fn lines(this&) -> int
+  {
+    return this.lines;
+  }
+
+  pub fn flush(this mut &) -> void
+  {
+    os::write(&mut thread_ring, this.fd, this.buffer.data, this.len);
+
+    this.len = 0;
+  }
+
+  pub fn write(this mut &, u8 *data, usize len) -> void
+  {
+    while (len != 0)
+    {
+      var bytes = std::min(this.buffer.len - this.len, len);
+
+      std::memcpy(this.buffer.data + this.len, data, bytes);
+
+      if ((this.len += bytes) == this.buffer.len)
+        this.flush();
+
+      len -= bytes;
+      data += bytes;
+    }
+  }
+
+  pub painter(int fd)
+    : fd(fd)
+  {
+    termios::get_window_size(fd, &mut width, &mut height);
+
+    if (height < 1)
+      height = 1;
+  }
+
+  pub ~painter() = default;
+}
+
+pub fn hide_cursor(painter mut &painter) -> void
+{
+  painter.write("\x1b[?25l".data, 6);
+}
+
+pub fn show_cursor(painter mut &painter) -> void
+{
+  painter.write("\x1b[?25h".data, 6);
+}
+
+pub fn save_position(painter mut &painter) -> void
+{
+  painter.saved_x = painter.x;
+  painter.saved_y = painter.y;
+}
+
+pub fn restore_position(painter mut &painter) -> void
+{
+  if (painter.saved_y < painter.y)
+    painter.move_up(painter.y - painter.saved_y);
+
+  if (painter.saved_y > painter.y)
+    painter.move_down(painter.saved_y - painter.y);
+
+  painter.move_to_column(painter.saved_x);
+}
+
+pub fn move_to(painter mut &painter, int x, int y) -> void
+{
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{};{}H", x + 1, y + 1);
+
+  painter.write(buf.data, len);
+}
+
+pub fn move_up(painter mut &painter, int count) -> void
+{
+  if (count == 0)
+    return;
+
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{}A", count);
+
+  painter.write(buf.data, len);
+
+  painter.y = std::max(painter.y - count, 0);
+}
+
+pub fn move_down(painter mut &painter, int count) -> void
+{
+  if (count == 0)
+    return;
+
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{}B", count);
+
+  painter.write(buf.data, len);
+
+  painter.y += count;
+}
+
+pub fn move_left(painter mut &painter, int count) -> void
+{
+  if (count == 0)
+    return;
+
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{}D", count);
+
+  painter.write(buf.data, len);
+
+  painter.x = std::max(painter.x - count, 0);
+}
+
+pub fn move_right(painter mut &painter, int count) -> void
+{
+  if (count == 0)
+    return;
+
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{}C", count);
+
+  painter.write(buf.data, len);
+
+  painter.x += count;
+}
+
+pub fn move_to_column(painter mut &painter, int x) -> void
+{
+  var buf = [0; 64];
+  var len = std::sprintf(&mut buf, "\x1b[{}G", x + 1);
+
+  painter.write(buf.data, len);
+
+  painter.x = x;
+}
+
+pub fn move_home(painter mut &painter) -> void
+{
+  painter.write("\r".data, 1);
+}
+
+pub fn erase_screen_to_cursor(painter mut &painter) -> void
+{
+  painter.write("\x1b[1J".data, 3);
+}
+
+pub fn erase_cursor_to_screen(painter mut &painter) -> void
+{
+  painter.write("\x1b[J".data, 3);
+}
+
+pub fn erase_home_to_cursor(painter mut &painter) -> void
+{
+  painter.write("\x1b[1K".data, 3);
+}
+
+pub fn erase_cursor_to_end(painter mut &painter) -> void
+{
+  painter.write("\x1b[K".data, 3);
+}
+
+pub fn erase_home_to_end(painter mut &painter) -> void
+{
+  painter.write("\x1b[2K".data, 3);
+}
+
+pub fn erase_characters(painter mut &painter, usize count) -> void
+{
+  painter.write("\x1b[1J".data, 3);
+}
+
+pub fn erase_screen(painter mut &painter) -> void
+{
+  painter.write("\x1b[2J".data, 3);
+}
+
+pub fn cell_width(char ch) -> int
+{
+  if (ch == 0)
+    return 0;
+
+  if (ch < 32 || (ch >= 0x7f && ch < 0xa0))
+    return 2;
+
+  if (std::is_non_spacing(ch))
+    return 0;
+
+  if (std::is_wide_spacing(ch))
+    return 2;
+
+  return 1;
+}
+
+pub fn cell_width(String &str) -> int
+{
+  var x = 0;
+
+  for(var ch : str.chars)
+    x += cell_width(ch);
+
+  return x;
+}
+
+pub fn text(painter mut &painter, String &str) -> void
+{
+  painter.write(str.data, str.len);
+
+  for(var ch = str.chars.begin, var end = str.end; ch != end; ++ch)
+  {
+    switch (*ch)
+    {
+      case '\r':
+        painter.x = 0;
+
+      case '\n':
+        painter.y += 1;
+
+        if (painter.y > painter.lines)
+          painter.lines += 1;
+
+      case '\x1b':
+
+        for(var it = cast<u8*>(ch) + 1; it != end && std::is_ascii(*it) && !std::is_alpha(*it); ++it)
+          ++ch;
+
+      else:
+        painter.x += cell_width(*ch);
+    }
+
+    if (painter.x > painter.width)
+    {
+      painter.x = 1;
+      painter.y += 1;
+
+      if (painter.y > painter.lines)
+        painter.lines += 1;
+    }
+  }
+}

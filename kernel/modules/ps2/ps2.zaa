@@ -1,0 +1,654 @@
+//
+// ps2 controller
+//
+
+import std.stdio;
+import std.atomic;
+import std.circular_buffer;
+import dev;
+import chr;
+import ps2.mouse;
+import ps2.keyboard;
+import io;
+import vm;
+import cpu;
+import input;
+import scheduler;
+import platform;
+
+const PS2_DATA_PORT = 0x60;
+const PS2_CTRL_PORT = 0x64;
+
+enum status : u8
+{
+  output_buffer_full = 0x01,
+  input_buffer_full = 0x02,
+  aux_data = 0x20,
+  timeout = 0x40,
+  parity = 0x80,
+
+  const fn ~(status lhs) -> status { return cast<status>(~cast<u16>(lhs)); }
+  const fn &(status lhs, status rhs) -> status { return cast<status>(cast<u16>(lhs) & cast<u16>(rhs)); }
+  const fn |(status lhs, status rhs) -> status { return cast<status>(cast<u16>(lhs) | cast<u16>(rhs)); }
+}
+
+enum command : u8
+{
+  read = 0x20,
+  write = 0x60,
+  write_aux = 0xd4,
+  mouse_disable = 0xa7,
+  mouse_enable = 0xa8,
+  mouse_test = 0xa9,
+  self_test = 0xaa,
+  keyboard_test = 0xab,
+  keyboard_enable = 0xae,
+  keyboard_disable = 0xad,
+}
+
+enum config : u8
+{
+  const keyboard_interrupt = 0x01;
+  const mouse_interrupt = 0x02;
+  const keyboard_clock = 0x10;
+  const mouse_clock = 0x20;
+  const translate_scancodes = 0x40;
+}
+
+enum request : u8
+{
+  const get_device_id = 0xf2;
+  const set_sample_rate = 0xf3;
+  const enable = 0xf4;
+  const disable = 0xf5;
+
+  const reset = 0xff;
+  const resend = 0xfe;
+}
+
+enum response : u8
+{
+  const success = 0xaa;
+  const acknowledge = 0xfa;
+  const resend = 0xfe;
+}
+
+fn read_ctrl_port() -> status
+{
+  return cast<status>(platform::in8(PS2_CTRL_PORT));
+}
+
+fn read_data_port() -> u8
+{
+  return platform::in8(PS2_DATA_PORT);
+}
+
+fn wait_then_read<T>(u16 port, T mut *value, u64 timeout) -> bool
+{
+  for(var k = 0; k < timeout; ++k)
+  {
+    if (read_ctrl_port() & status::output_buffer_full != cast(0))
+    {
+      *value = cast(platform::in8(port));
+
+      return true;
+    }
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_then_write<T>(u16 port, T value, u64 timeout) -> bool
+{
+  for(var k = 0; k < timeout; ++k)
+  {
+    if (read_ctrl_port() & status::input_buffer_full == cast(0))
+    {
+      platform::out8(port, cast(value));
+
+      return true;
+    }
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn flush() -> bool
+{
+  for(var i = 0; i < 64; ++i)
+  {
+    if (read_ctrl_port() & status::output_buffer_full == cast(0))
+      return true;
+
+    read_data_port();
+
+    platform::spin(100);
+  }
+
+  return false;
+}
+
+pub enum type
+{
+  mouse,
+  keyboard,
+}
+
+pub enum result: i32
+{
+  ok = 0,
+  io_error = -5,
+  port_busy = -16,
+  invalid_argument = -22,
+  timed_out = -110,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct controller
+{
+  pub controller()
+  {
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return "ps2";
+  }
+
+  ~controller() = default;
+
+  port mut *[2] ports;
+}
+
+pub struct port
+{
+  type type;
+  usize index;
+
+  usize state;
+  u8[6] packet;
+  u8[32] pressed;
+
+  std::spin_lock lock;
+  std::circular_buffer<input::event, N:256> buffer;
+
+  pub io::response readable;
+
+  pub fn pop(this mut &, input::event mut &evt) -> bool
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    if (this.buffer.empty)
+      return false;
+
+    evt = this.buffer.take_front();
+
+    if (this.buffer.len == 0)
+      io::initiate(&mut this.readable.cb, 1);
+
+    return true;
+  }
+
+  pub port(controller mut &controller, usize index, type type)
+    : index(index), type(type)
+  {
+    var pages = std::vector<vm::physrange, N:8>();
+
+    vm::lock(vm::virtrange(&this, sizeof(this)), vm::protection::readwrite, &mut pages);
+
+    io::initiate(&mut this.readable.cb, 1);
+  }
+
+  pub ~port() = default;
+}
+
+fn add_event(port mut *port, input::event &evt) -> void
+{
+  if (port.buffer.full)
+  {
+    var mut &back = port.buffer.back;
+
+    back.type = input::type::syn;
+    back.code = input::syn::dropped;
+    back.value = 0;
+
+    return;
+  }
+
+  port.buffer.push_back(evt);
+
+  if (port.buffer.len == 1)
+    io::complete(&mut port.readable.cb, 0);
+}
+
+fn keyboard_handler(port mut *port, u8 data) -> void
+{
+  var code = 0;
+  var value = 0;
+
+  switch (port.state)
+  {
+    case 0:
+      switch (data)
+      {
+        case 0xe0:
+          port.state = 0xe0;
+
+        case 0xe1:
+          port.state = 0xe1;
+
+        else:
+          code = (data & 0x7f);
+          value = (data >> 7);
+          port.state = 0xff;
+      }
+
+    case 0xe0:
+      switch (data)
+      {
+        case 0x2a:
+        case 0xb7:
+          port.state = 0;
+
+        else:
+          code = 0x80 | (data & 0x7f);
+          value = (data >> 7);
+          port.state = 0xff;
+      }
+
+    case 0xe1:
+      switch (data)
+      {
+        case 0x1d:
+        case 0x9d:
+          port.state = 0x1d;
+
+        else:
+          port.state = 0;
+      }
+
+    case 0x1d:
+      switch (data)
+      {
+        case 0x45:
+        case 0xc5:
+          code = 0x80 | (data & 0x7f);
+          value = (data >> 7);
+          port.state = 0xff;
+
+        else:
+          port.state = 0;
+      }
+
+    else:
+      port.state = 0;
+  }
+
+  if (port.state == 0xff)
+  {
+    switch (value)
+    {
+      case 0:
+        if (port.pressed[cast(code >> 3)] & (1 << (code & 0x7)) != 0)
+          port.state = 0;
+
+        port.pressed[cast(code >> 3)] |= (1 << (code & 0x7));
+
+      case 1:
+        port.pressed[cast(code >> 3)] &= ~(1 << (code & 0x7));
+    }
+  }
+
+  if (port.state == 0xff)
+  {
+    var evt = input::event(void);
+    evt.time = cpu::system_time();
+    evt.type = input::type::key;
+    evt.code = cast(code);
+    evt.value = cast(1 - value);
+
+    port.lock.lock();
+
+    add_event(port, evt);
+
+    port.lock.unlock();
+
+    port.state = 0;
+  }
+}
+
+fn mouse_handler(port mut *port, u8 data) -> void
+{
+  switch (port.state)
+  {
+    case 0:
+      if (data & 8 == 0)
+        return;
+
+      port.packet[port.state++] = data;
+
+    case 1:
+      port.packet[port.state++] = data;
+
+    case 2:
+      port.packet[port.state++] = data;
+
+    case 3:
+      port.packet[port.state++] = data;
+      port.state = 0xff;
+
+    else:
+      port.state = 0;
+  }
+
+  if (port.state == 0xff)
+  {
+    var evt = input::event(void);
+    evt.time = cpu::system_time();
+
+    if (port.packet[0] & 0x7 != port.pressed[0] & 0x7)
+    {
+      port.lock.lock();
+
+      if (port.packet[0] & 0x1 != port.pressed[0] & 0x1)
+      {
+        evt.type = input::type::key;
+        evt.code = input::button::left;
+        evt.value = cast(port.packet[0] >> 0) & 0x1;
+
+        add_event(port, evt);
+      }
+
+      if (port.packet[0] & 0x2 != port.pressed[0] & 0x2)
+      {
+        evt.type = input::type::key;
+        evt.code = input::button::right;
+        evt.value = cast(port.packet[0] >> 1) & 0x1;
+
+        add_event(port, evt);
+      }
+
+      if (port.packet[0] & 0x4 != port.pressed[0] & 0x4)
+      {
+        evt.type = input::type::key;
+        evt.code = input::button::middle;
+        evt.value = cast(port.packet[0] >> 2) & 0x1;
+
+        add_event(port, evt);
+      }
+
+      port.lock.unlock();
+
+      port.pressed[0] = port.packet[0];
+    }
+
+    port.lock.lock();
+
+    if (port.packet[1] != 0)
+    {
+      evt.type = input::type::rel;
+      evt.code = input::axis::x;
+      evt.value = (port.packet[0] & 0x10 != 0) ? cast<i32>(port.packet[1]) - 0x100 : cast<i32>(port.packet[1]);
+
+      add_event(port, evt);
+    }
+
+    if (port.packet[2] != 0)
+    {
+      evt.type = input::type::rel;
+      evt.code = input::axis::y;
+      evt.value = (port.packet[0] & 0x20 != 0) ? cast<i32>(port.packet[2]) : cast<i32>(port.packet[2]) - 0x100;
+
+      add_event(port, evt);
+    }
+
+    if (port.packet[3] != 0)
+    {
+      evt.type = input::type::rel;
+      evt.code = input::axis::z;
+      evt.value = (port.packet[3] & 0x8 != 0) ? cast<i32>(port.packet[3] & 0x7) : cast<i32>(port.packet[3] & 0x7) - 0x8;
+
+      add_event(port, evt);
+    }
+
+    port.lock.unlock();
+
+    port.state = 0;
+  }
+}
+
+extern fn ps2_io_handler(controller mut *controller) -> void
+{
+  var ctrl = read_ctrl_port();
+
+  if (ctrl & status::output_buffer_full == cast(0))
+    return;
+
+  var data = read_data_port();
+
+  if (ctrl & status::aux_data != cast(0))
+    mouse_handler(controller.ports[1], data);
+  else
+    keyboard_handler(controller.ports[0], data);
+}
+
+fn probe_mouse() -> result
+{
+  var response = 0;
+
+  for(var cmd : [ 0xf3, 0xc8, 0xf3, 0x64, 0xf3, 0x50])
+  {
+    while (true)
+    {
+      if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
+        return timed_out;
+
+      if (!wait_then_write(PS2_DATA_PORT, cmd, 500))
+        return timed_out;
+
+      if (!wait_then_read(PS2_DATA_PORT, &response, 500))
+        return timed_out;
+
+      if (response != response::resend)
+        break;
+    }
+
+    if (response != response::acknowledge)
+      return io_error;
+  }
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
+    return timed_out;
+
+  if (!wait_then_write(PS2_DATA_PORT, request::get_device_id, 500))
+    return timed_out;
+
+  if (!wait_then_read(PS2_DATA_PORT, &response, 500))
+    return timed_out;
+
+  if (!wait_then_read(PS2_DATA_PORT, &response, 500))
+    return timed_out;
+
+  return cast(response);
+}
+
+pub fn initialise() -> void
+{
+  var controller = std::allocator::new<controller>();
+
+  if (var result = controller.initialise(); !result)
+    std::print("ps2 error initialising controller - ", result);
+}
+
+fn initialise(controller mut &controller) -> result
+{
+  flush();
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::keyboard_disable, 500))
+    return timed_out;
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::mouse_disable, 500))
+    return timed_out;
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::read, 500))
+    return timed_out;
+
+  var cfg = 0;
+  if (!wait_then_read(PS2_DATA_PORT, &cfg, 500))
+    return timed_out;
+
+  cfg |= config::translate_scancodes;
+  cfg &= ~(config::keyboard_clock | config::mouse_clock);
+  cfg &= ~(config::keyboard_interrupt | config::mouse_interrupt);
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::write, 500))
+    return timed_out;
+
+  if (!wait_then_write(PS2_DATA_PORT, cfg, 500))
+    return timed_out;
+
+  flush();
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::keyboard_test, 500))
+    return timed_out;
+
+  var keyboard_response = 0;
+  if (!wait_then_read(PS2_DATA_PORT, &keyboard_response, 500))
+    return timed_out;
+
+  if (keyboard_response == 0)
+  {
+    if (!wait_then_write(PS2_CTRL_PORT, command::keyboard_enable, 500))
+      return timed_out;
+
+    while (true)
+    {
+      if (!wait_then_write(PS2_DATA_PORT, request::reset, 500))
+        return timed_out;
+
+      if (!wait_then_read(PS2_DATA_PORT, &keyboard_response, 500))
+        return timed_out;
+
+      if (keyboard_response != response::resend)
+        break;
+    }
+
+    if (keyboard_response == response::acknowledge)
+    {
+      if (!wait_then_read(PS2_DATA_PORT, &keyboard_response, 500))
+        return timed_out;
+    }
+
+    if (keyboard_response == response::success)
+    {
+      controller.ports[0] = std::allocator::new<port>(controller, 0, type::keyboard);
+
+      cfg |= config::keyboard_interrupt;
+    }
+
+    flush();
+  }
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::mouse_test, 500))
+    return timed_out;
+
+  var mouse_response = 0;
+  if (!wait_then_read(PS2_DATA_PORT, &mouse_response, 500))
+    return timed_out;
+
+  if (mouse_response == 0)
+  {
+    if (!wait_then_write(PS2_CTRL_PORT, command::mouse_enable, 500))
+      return timed_out;
+
+    while (true)
+    {
+      if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
+        return timed_out;
+
+      if (!wait_then_write(PS2_DATA_PORT, request::reset, 500))
+        return timed_out;
+
+      if (!wait_then_read(PS2_DATA_PORT, &mouse_response, 500))
+        return timed_out;
+
+      if (mouse_response != response::resend)
+        break;
+    }
+
+    if (mouse_response == response::acknowledge)
+    {
+      if (!wait_then_read(PS2_DATA_PORT, &mouse_response, 500))
+        return timed_out;
+    }
+
+    if (mouse_response == response::success)
+    {
+      var mid = 0;
+      if (!wait_then_read(PS2_DATA_PORT, &mid, 500))
+        return timed_out;
+
+      if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
+        return timed_out;
+
+      if (!wait_then_write(PS2_DATA_PORT, request::enable, 500))
+        return timed_out;
+
+      if (!wait_then_read(PS2_DATA_PORT, &mouse_response, 500))
+        return timed_out;
+
+      if (probe_mouse())
+      {
+        controller.ports[1] = std::allocator::new<port>(controller, 1, type::mouse);
+
+        cfg |= config::mouse_interrupt;
+      }
+    }
+
+    flush();
+  }
+
+  io::install_handler(0x01, cast(extern(ps2_io_handler)), &controller);
+  io::install_handler(0x0c, cast(extern(ps2_io_handler)), &controller);
+
+  if (!wait_then_write(PS2_CTRL_PORT, command::write, 500))
+    return timed_out;
+
+  if (!wait_then_write(PS2_DATA_PORT, cfg, 500))
+    return timed_out;
+
+  for(var i = 0; i < controller.ports.len; ++i)
+  {
+    if (controller.ports[i])
+    {
+      if (var result = controller.ports[i].initialise(); !result)
+        std::print("ps2 error initialising port ", i, " - ", result);
+    }
+  }
+
+  return ok;
+}
+
+fn initialise(port mut &dev) -> result
+{
+  switch(dev.type)
+  {
+    case mouse:
+      std::print("ps2 mouse on port ", dev.index);
+      dev::register(chr::chrdev::create<mouse>(dev));
+
+    case keyboard:
+      std::print("ps2 keyboard on port ", dev.index);
+      dev::register(chr::chrdev::create<keyboard>(dev));
+  }
+
+  return ok;
+}

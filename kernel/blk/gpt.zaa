@@ -1,0 +1,94 @@
+//
+// gpt
+//
+
+import std.vector;
+import vm;
+import io;
+import blk.partdev;
+
+using guid = blk::guid;
+using partition = blk::partition;
+
+struct gpt_header
+{
+  u8[8] signature;
+  u32 revision;
+  u32 header_size;
+  u32 header_crc32;
+  u32 reserved0;
+
+  u64 absolute_block;
+  u64 alternate_block;
+  u64 first_usable_block;
+  u64 last_usable_block;
+  guid disk_guid;
+  u64 entries_block;
+  u32 entry_count;
+  u32 entry_size;
+  u32 entries_crc32;
+}
+
+struct gpt_entry
+{
+  guid type;
+  guid guid;
+  u64 start_block;
+  u64 end_block;
+  u64 attributes;
+  u16[36] name;
+}
+
+pub fn read_gpt_header(blk::blkdev_ptr &dev, std::vector<u8> mut &buffer) -> gpt_header *
+{
+  if (var result = blk::read(dev, 1 << dev.block_shift, buffer.data, buffer.len); !result)
+    return null;
+
+  return cast<gpt_header*>(buffer.data);
+}
+
+pub fn read_gpt_entries(blk::blkdev_ptr &dev, gpt_header *header, std::vector<u8> mut &buffer) -> u8 *
+{
+  if (var result = blk::read(dev, header.entries_block << dev.block_shift, buffer.data, buffer.len); !result)
+    return null;
+
+  return cast<u8*>(buffer.data);
+}
+
+pub fn detect(blk::blkdev_ptr &dev) -> std::vector<partition>
+{
+  var results = std::vector<partition>();
+
+  var buffer1 = std::vector<u8>::with_size(dev.block_size);
+  var header = read_gpt_header(dev, &mut buffer1);
+
+  if (!header)
+    return results;
+
+  if (header.signature != std::string_view("EFI PART"))
+    return results;
+
+  var buffer2 = std::vector<u8>::with_size(cast(header.entry_count * header.entry_size));
+  var entries = read_gpt_entries(dev, header, &mut buffer2);
+
+  if (!entries)
+    return results;
+
+  for(var i = 0; i < header.entry_count; ++i)
+  {
+    var entry = cast<gpt_entry*>(entries + cast(i * header.entry_size));
+
+    if (entry.type != guid(0x00000000, 0x0000, 0x0000, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    {
+      var pd = partition();
+      pd.guid = entry.guid;
+      pd.type = entry.type;
+      pd.start_block = entry.start_block;
+      pd.end_block = entry.end_block;
+
+      results.push_back(pd);
+    }
+  }
+
+  return results;
+}

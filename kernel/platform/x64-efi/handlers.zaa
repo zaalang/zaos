@@ -1,0 +1,152 @@
+//
+// interrupt handlers
+//
+
+import std.stdlib;
+import std.fmt;
+import cpu;
+import sys;
+import bootinfo : BootInfo;
+
+extern fn page_fault(uintptr addr, bool write, bool fetch, bool user) -> void;
+extern fn io_dispatch(u8 irq) -> void;
+extern fn timer_deadline() -> void;
+extern fn ipi() -> void;
+
+enum fault : u64
+{
+  present = 0x01,
+  write = 0x02,
+  user = 0x04,
+  reserved = 0x08,
+  fetch = 0x10,
+
+  pub const fn &(fault lhs, fault rhs) -> bool { return cast<u64>(lhs) & cast<u64>(rhs) != 0; }
+}
+
+struct interrupt_frame
+{
+  uintptr rip;
+  u64 cs;
+  u64 rflags;
+  uintptr rsp;
+  u64 ss;
+}
+
+fn is_user_frame(interrupt_frame &frame) -> bool
+{
+  return frame.cs & 0x3 != 0;
+}
+
+fn is_kernel_frame(interrupt_frame &frame) -> bool
+{
+  return frame.cs & 0x3 == 0;
+}
+
+fn is_user_address(uintptr addr) -> bool
+{
+  return addr <= USER_LIMIT;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, interrupt_frame &frame) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "interrupt_frame {{ rip: {}, cs: {}, rflags: {}, rsp: {}, ss: {} }}", cast<void*>(frame.rip), frame.cs, frame.rflags, cast<void*>(frame.rsp), frame.ss);
+}
+
+extern fn divide_by_zero_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print(frame);
+  std::panic("divide-by-zero: ", cast<void*>(frame.rip));
+}
+
+extern fn nmi_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print(frame);
+  std::panic("nmi: ", cast<void*>(frame.rip));
+}
+
+extern fn break_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print("Break: ", cast<void*>(frame.rip));
+}
+
+extern fn double_fault_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
+{
+  std::panic("Double Fault: ", cast<void*>(frame.rip), " ", errorcode);
+}
+
+extern fn page_fault_handler(interrupt_frame &frame, u8 irq, fault errorcode) -> void
+{
+  var cr2 = cpu::rdcr2();
+
+  if (is_kernel_frame(frame) && (errorcode & fault::fetch))
+    std::panic("SMEP violation address ", cast<void*>(cr2), " from kernel ", cast<void*>(frame.rip));
+
+  if (is_kernel_frame(frame) && is_user_address(cr2) && (frame.rflags & 0x00040000 == 0))
+    std::panic("SMAP violation address ", cast<void*>(cr2), " from kernel ", cast<void*>(frame.rip));
+
+  if (frame.rflags & 0x200 == 0)
+    std::panic("page fault while interrupts disabled ", cast<void*>(cr2), " from ip ", cast<void*>(frame.rip));
+
+  var gs = cpu::gsbase();
+  cpu::wrgsbase(sys::rsp0());
+  cpu::enable_interrupts();
+
+  page_fault(cr2, errorcode & fault::write, errorcode & fault::fetch, is_user_frame(frame));
+
+  cpu::wrgsbase(gs);
+}
+
+extern fn fatal_exception_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print(frame);
+  std::panic("fatal-exception: ", irq, " ", cast<void*>(frame.rip));
+}
+
+extern fn general_protection_fault_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
+{
+  std::print(frame);
+  std::panic("general-protection-fault: ", cast<void*>(frame.rip), " ", errorcode);
+}
+
+extern fn alignment_check_exception_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
+{
+  std::print(frame);
+  std::panic("alignment-check-exception: ", cast<void*>(frame.rip), " ", errorcode);
+}
+
+extern fn machine_check_exception_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
+{
+  std::panic("machine-check-exception");
+}
+
+extern fn apic_timer_interrupt_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+
+  timer_deadline();
+}
+
+extern fn apic_ipi_interrupt_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+
+  ipi();
+}
+
+extern fn apic_error_interrupt_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print("apic_error_interrupt_handler");
+}
+
+extern fn apic_spurious_interrupt_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::print("apic_spurious_interrupt_handler");
+}
+
+extern fn io_dispatch_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+
+  io_dispatch(irq - 0x20);
+}

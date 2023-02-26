@@ -1,0 +1,52 @@
+//
+// cat
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn cat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var path = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  if (path.empty)
+  {
+    terminal.write("usage: cat <filepath>\n");
+    return -22;
+  }
+
+  var fd = open(&mut thread_ring, os::string(path.data, path.len), O_RDONLY, 0);
+
+  if (fd < 0)
+    return fd;
+
+  var buf = typename u8[4096](void);
+
+  for(;;)
+  {
+    var bytes = read(&mut thread_ring, fd, buf.data, buf.len);
+
+    if (bytes <= 0)
+    {
+      close(&mut thread_ring, fd);
+
+      return bytes;
+    }
+
+    terminal.write(std::string_view(buf.data, cast<usize>(bytes)));
+  }
+}

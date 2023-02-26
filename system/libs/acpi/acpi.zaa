@@ -1,0 +1,168 @@
+//
+// acpi
+//
+
+import std.memory;
+
+const ACPI_RSDP_SIGNATURE = "RSD PTR ";
+const ACPI_RSDT_SIGNATURE = "RSDT";
+const ACPI_XSDT_SIGNATURE = "XSDT";
+const ACPI_MADT_SIGNATURE = "APIC";
+
+#[packed]
+struct rsdp
+{
+  u8[8] signature;
+  u8 checksum;
+  u8[6] oem_id;
+  u8 revision;
+  u32 rsdt_address;
+  u32 xsdt_length;
+  u64 xsdt_address;
+  u8 extended_checksum;
+  u8[3] reserved;
+}
+
+#[packed]
+struct descriptor_header
+{
+  u8[4] signature;
+  u32 length;
+  u8 revision;
+  u8 checksum;
+  u8[6] oem_id;
+  u8[8] oem_table_id;
+  u32 oem_revision;
+  u8[4] creator_id;
+  u32 creator_revision;
+}
+
+#[packed]
+pub struct madt
+{
+  pub descriptor_header header;
+  pub u32 local_apic_address;
+  pub u32 flags;
+}
+
+pub enum madt_type
+{
+  local_apic = 0,
+  io_apic = 1,
+  interrupt_source_override = 2,
+  nmi_source = 3,
+  local_apic_nmi = 4,
+  local_apic_address_override = 5,
+  io_sapic = 6,
+  local_sapic = 7,
+  platform_interrupt_source = 8,
+  processor_local_x2_apic_nmi = 9,
+  local_x2_apic_nmi = 0xa,
+}
+
+#[packed]
+pub struct apic
+{
+  pub u8 type;
+  pub u8 length;
+}
+
+#[packed]
+pub struct local_apic
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 processor_id;
+  pub u8 apic_id;
+  pub u32 flags;
+}
+
+#[packed]
+pub struct io_apic
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 io_apic_id;
+  pub u8 reserved;
+  pub u32 io_apic_address;
+  pub u32 interrupt_base;
+}
+
+#[packed]
+pub struct mcfg
+{
+  pub descriptor_header header;
+  pub u64 reserved;
+}
+
+#[packed]
+pub struct mcfg_entry
+{
+  pub u64 base_address;
+  pub u16 seg_group;
+  pub u8 bus_start;
+  pub u8 bus_end;
+  pub u32 reserved;
+}
+
+pub enum acpi_result
+{
+  ok,
+  bad_root,
+  bad_xsdt,
+  invalid_rsdp_checksum,
+  invalid_rsdp_signature,
+  invalid_xsdt_signature,
+
+  pub fn bool(this&) -> bool { return this == ok; }
+}
+
+fn host_address<T>(T *address, uintptr physical_base) -> T *
+{
+  return cast<T*>(physical_base + cast<uintptr>(address));
+}
+
+pub fn validate_rsdp(void *acpi_root, uintptr physical_base) -> acpi_result
+{
+  if (!acpi_root)
+    return acpi_result::bad_root;
+
+  if (std::memcmp(acpi_root, ACPI_RSDP_SIGNATURE.data, ACPI_RSDP_SIGNATURE.len) != 0)
+    return acpi_result::invalid_rsdp_signature;
+
+  var checksum = u8(0);
+  for(var ch = cast<u8*>(acpi_root); ch != cast<u8*>(acpi_root) + sizeof<rsdp>; ++ch)
+    checksum = __add_with_carry(checksum, *ch).0;
+
+  if (checksum != 0)
+    return acpi_result::invalid_rsdp_checksum;
+
+  var rsdp = cast<rsdp*>(acpi_root);
+  var xsdt = host_address(cast<descriptor_header*>(cast<uintptr>(rsdp.xsdt_address)), physical_base);
+
+  if (!xsdt)
+    return acpi_result::bad_xsdt;
+
+  if (std::memcmp(xsdt, ACPI_XSDT_SIGNATURE.data, ACPI_XSDT_SIGNATURE.len) != 0)
+    return acpi_result::invalid_xsdt_signature;
+
+  return acpi_result::ok;
+}
+
+pub fn find_table(void *acpi_root, uintptr physical_base, var signature) -> descriptor_header *
+{
+  var rsdp = cast<rsdp*>(acpi_root);
+  var xsdt = host_address(cast<descriptor_header*>(cast<uintptr>(rsdp.xsdt_address)), physical_base);
+
+  var entries = cast<usize>(xsdt.length - sizeof<descriptor_header>) / sizeof<uintptr>;
+
+  for(var i = 0; i < entries; ++i)
+  {
+    var entry = host_address(*(cast<descriptor_header**>(xsdt + 1) + i), physical_base);
+
+    if (std::memcmp(entry, signature.data, signature.len) == 0)
+      return entry;
+  }
+
+  return null;
+}

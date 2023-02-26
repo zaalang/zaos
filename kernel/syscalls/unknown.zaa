@@ -1,0 +1,10 @@
+//
+// unknown syscall
+//
+
+import std.stdlib;
+
+extern fn unknown_syscall(u64 num, uintptr rip) -> void
+{
+  std::panic("unknown syscall ", num, " from ", cast<void*>(rip));
+}

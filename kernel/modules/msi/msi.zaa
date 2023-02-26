@@ -1,0 +1,79 @@
+//
+// msi
+//
+
+import std.stdio;
+import pci;
+import sys;
+import platform;
+
+enum msi_register
+{
+  control = 0x02,
+  address = 0x04,
+  data0 = 0x08,
+  data4 = 0x0c,
+
+  fn +(u8 lhs, msi_register rhs) -> u8 { return lhs + cast<u8>(rhs); }
+}
+
+pub fn count(pci::device &device) -> usize
+{
+  var offset = device.read_capability(pci::capabilities::msi);
+
+  if (offset == 0)
+    return 0;
+
+  var control = device.read_config<u16>(offset + msi_register::control);
+
+  return 1 << ((control & 0xe) >> 1);
+}
+
+pub fn configure(pci::device &device, (u8, u8) &vectors) -> bool
+{
+  std::assert(vectors.1 - vectors.0 != 0);
+  std::assert(cast<usize>(vectors.1 - vectors.0) <= count(device));
+
+  var address = uintptr(0xfee00000);
+  var data = platform::io_vector_id(vectors.0);
+
+  var offset = device.read_capability(pci::capabilities::msi);
+  var control = device.read_config<u16>(offset + msi_register::control);
+
+  if (control & 0x80 == 0x80)
+  {
+    device.write_config<u32>(offset + msi_register::address, cast<u32>(address & 0xffffffff));
+    device.write_config<u32>(offset + msi_register::data0, cast<u32>(address >> 32));
+    device.write_config<u16>(offset + msi_register::data4, cast<u16>(data));
+  }
+  else
+  {
+    device.write_config<u32>(offset + msi_register::address, cast<u32>(address & 0xffffffff));
+    device.write_config<u16>(offset + msi_register::data0, cast<u16>(data));
+  }
+
+  control &= ~0x70;
+  control |= cast<u16>(std::ctz(vectors.1 - vectors.0)) << 4;
+
+  device.write_config<u16>(offset + msi_register::control, control);
+
+  return true;
+}
+
+pub fn enable(pci::device &device) -> void
+{
+  device.write_command(device.read_command() | pci::command::interrupt_disable);
+
+  var offset = device.read_capability(pci::capabilities::msi);
+  var control = device.read_config<u16>(offset + msi_register::control);
+
+  device.write_config<u16>(offset + msi_register::control, control | 0x1);
+}
+
+pub fn disable(pci::device &device) -> void
+{
+  var offset = device.read_capability(pci::capabilities::msi);
+  var control = device.read_config<u16>(offset + msi_register::control);
+
+  device.write_config<u16>(offset + msi_register::control, control & ~0x1);
+}

@@ -1,0 +1,266 @@
+//
+// sys
+//
+
+import std.atomic;
+import std.function;
+import std.string : String;
+import std.sys.clock;
+import cpu;
+import vdso;
+import scheduler : run_queue;
+import platform : MAX_CPU_COUNT, PHYSICAL_BASE;
+
+struct system
+{
+  usize cpu_count;
+  u8[MAX_CPU_COUNT] apic_ids;
+  run_queue[MAX_CPU_COUNT] runqueues;
+  msg_queue[MAX_CPU_COUNT] ipiqueue;
+
+  u64 clock_base;
+
+  platform::physaddr_t acpi_root;
+
+  frame_buffer boot_frame_buffer;
+
+  u8[512] cmdline;
+
+  system() = default;
+  system(#system&) = default;
+  ~system() = default;
+}
+
+fn sys() -> system mut &
+{
+  static state = #system();
+
+  return &state;
+}
+
+pub fn cpu_count() -> usize
+{
+  return sys.cpu_count;
+}
+
+pub fn runqueue(int cpu) -> run_queue mut &
+{
+  return &sys.runqueues[cast(cpu)];
+}
+
+pub fn runqueues() -> std::mutable_span<run_queue>
+{
+  return std::mutable_span(sys.runqueues.data, sys.cpu_count);
+}
+
+pub fn clock_base() -> u64
+{
+  return std::atomic_load(&sys.clock_base);
+}
+
+pub fn acpi_root() -> void *
+{
+  return cast<void*>(sys.acpi_root + PHYSICAL_BASE);
+}
+
+pub struct frame_buffer
+{
+  pub usize width;
+  pub usize height;
+  pub usize depth;
+  pub usize pitch;
+  pub platform::physaddr_t address;
+
+  pub frame_buffer() = default;
+  pub frame_buffer(frame_buffer&) = default;
+  pub ~frame_buffer() = default;
+}
+
+pub fn boot_frame_buffer() -> frame_buffer &
+{
+  return &sys.boot_frame_buffer;
+}
+
+pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+{
+  std::assert(bootinfo.cpu_count < MAX_CPU_COUNT);
+
+  cpu::set_runqueue(&sys.runqueues[cast(cpu)]);
+
+  if (cpu != 0)
+    return;
+
+  sys.cpu_count = bootinfo.cpu_count;
+  sys.acpi_root = bootinfo.acpi_root;
+  sys.apic_ids = bootinfo.apic_ids;
+  sys.cmdline = bootinfo.cmdline;
+
+  sys.clock_base = platform::get_hwclock() * 1_000_000_000 - cpu::system_time();
+
+  vdso::update_clock_base(sys.clock_base, cpu::cyc2ns);
+
+  sys.boot_frame_buffer.width = bootinfo.fb_width;
+  sys.boot_frame_buffer.height = bootinfo.fb_height;
+  sys.boot_frame_buffer.depth = bootinfo.fb_depth;
+  sys.boot_frame_buffer.pitch = bootinfo.fb_pitch;
+  sys.boot_frame_buffer.address = bootinfo.fb_base_address;
+
+  std::printf("sys: {} cpus\n", sys.cpu_count);
+}
+
+pub fn cmdline() -> std::string_view
+{
+  return std::string_view(sys.cmdline.data, sys.cmdline.len);
+}
+
+pub fn cmdline(String &name) -> std::string_view
+{
+  for(var ch = sys.cmdline.begin, var end = sys.cmdline.end; ch != end; ++ch)
+  {
+    if (*ch == 0)
+      break;
+
+    if (std::string_view(ch, end).starts_with(name) && *(ch + name.len) == cast('='))
+    {
+      var last = ch + name.len + 1;
+      while (last != end && *last != cast(' ') && *last != 0)
+        ++last;
+
+      return std::string_view(ch + name.len + 1, last);
+    }
+  }
+
+  return std::string_view();
+}
+
+extern fn clk_gettime(u32 clockid) -> std::clk_result
+{
+  var result = std::clk_result();
+
+  switch (clockid)
+  {
+    case 0:
+      result.timestamp = clock_base + cpu::system_time;
+
+    case 1:
+      result.timestamp = cpu::system_time;
+
+    else:
+      result.errno = 22;
+  }
+
+  return result;
+}
+
+struct msg_queue
+{
+  struct msg
+  {
+    std::delegate<void fn()> delegate;
+
+    msg() = default;
+    msg(#msg&) = default;
+    ~msg() = default;
+  }
+
+  usize readhead;
+  usize readtail;
+  usize writehead;
+  usize writetail;
+  msg[4] messages;
+
+  #[lifetime(consume(delegate))]
+  fn push(this mut &, std::delegate<void fn()> mut &delegate) -> bool
+  {
+    std::assert(this.messages.len & (this.messages.len - 1) == 0);
+
+    var index = 0;
+
+    while (true)
+    {
+      index = std::volatile_load(&this.writetail);
+
+      if ((index + 1) & (this.messages.len - 1) == std::volatile_load(&this.readhead))
+        return false;
+
+      if (std::atomic_cmpxchg_weak(&this.writetail, index, (index + 1) & (this.messages.len - 1)))
+        break;
+    }
+
+    this.messages[index].delegate = &move delegate;
+
+    while (true)
+    {
+      if (std::atomic_cmpxchg_weak(&this.writehead, index, (index + 1) & (this.messages.len - 1)))
+        break;
+    }
+
+    return true;
+  }
+
+  fn pop(this mut &, std::delegate<void fn()> mut &delegate) -> bool
+  {
+    var index = 0;
+
+    while (true)
+    {
+      index = std::volatile_load(&this.readtail);
+
+      if (index & (this.messages.len - 1) == std::volatile_load(&this.writehead))
+        return false;
+
+      if (std::atomic_cmpxchg_weak(&this.readtail, index, (index + 1) & (this.messages.len - 1)))
+        break;
+    }
+
+    delegate = &move this.messages[index].delegate;
+
+    while (true)
+    {
+      if (std::atomic_cmpxchg_weak(&this.readhead, index, (index + 1) & (this.messages.len - 1)))
+        break;
+    }
+
+    std::launder(this);
+
+    return true;
+  }
+
+  msg_queue() = default;
+  msg_queue(#msg_queue&) = default;
+  ~msg_queue() = default;
+}
+
+extern fn ipi() -> void
+{
+  var delegate = std::delegate<void fn()>();
+
+  while (sys.ipiqueue[cast(cpu::current)].pop(&mut delegate))
+    delegate();
+}
+
+pub fn unicast_ipi_message<Callback>(int cpu, Callback &&callback) -> bool
+{
+  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<void fn()>(callback)))
+    return false;
+
+  platform::unicast_ipi_interrupt(sys.apic_ids[cast(cpu)]);
+
+  return true;
+}
+
+pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
+{
+  std::assert(platform::interrupts_disabled);
+
+  for(var i = 0; i < sys.cpu_count; ++i)
+  {
+    if (i == cast(cpu::current))
+      continue;
+
+    if (!sys.ipiqueue[i].push(&move std::delegate<void fn()>(callback)))
+      __relax();
+  }
+
+  platform::broadcast_ipi_interrupt();
+}

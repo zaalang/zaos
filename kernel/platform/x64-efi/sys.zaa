@@ -1,0 +1,431 @@
+//
+// efi system
+//
+
+import acpi;
+import std.atomic;
+import bootinfo : BootInfo;
+import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+import cpu;
+
+struct thread
+{
+  int id;
+
+  gdt gdt;
+  idt idt;
+  u8[1024] exception_stack;
+
+  fn tss(this mut &) { return &*cast<tss mut *>(__asm("mov $0, fs:0x0; lea $0, [$0 - tss@tpoff]", "=r")); }
+
+  thread() = default;
+  thread(#thread&) = default;
+  ~thread() = default;
+}
+
+fn td() -> thread mut &
+{
+  static thread_local td = #thread();
+
+  return &td;
+}
+
+pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
+{
+  var table = SystemTable.ConfigurationTable;
+
+  for(var i = 0; i < SystemTable.NumberOfTableEntries; ++i)
+  {
+    var entry = table + i;
+
+    if (entry.VendorGuid != efi::ACPI_20_TABLE_GUID)
+      continue;
+
+    if (!acpi::validate_rsdp(cast<void*>(entry.VendorTable), 0))
+      efi::panic(SystemTable, "invalid_rsdp");
+
+    bootinfo.acpi_root = entry.VendorTable;
+  }
+
+  bootinfo.cpu_count = 1;
+  bootinfo.apic_ids[0] = early_apic_id();
+  bootinfo.early_tsc_frequency = early_tsc_frequency();
+
+  var acpi_root = cast<void*>(bootinfo.acpi_root);
+
+  if (acpi_root)
+  {
+    var madt = acpi::find_table(acpi_root, 0, "APIC");
+
+    if (!madt)
+      efi::panic(SystemTable, "bad_acpi_madt");
+
+    bootinfo.apic_base = cast<acpi::madt*>(madt).local_apic_address;
+
+    var apic = cast<acpi::apic*>(cast<uintptr>(madt) + sizeof<acpi::madt>);
+    var end = cast<acpi::apic*>(cast<uintptr>(madt) + cast<usize>(madt.length));
+
+    while (apic != end)
+    {
+      switch (apic.type)
+      {
+        case acpi::madt_type::local_apic:
+
+          var local_apic = cast<acpi::local_apic*>(apic);
+
+          if (local_apic.flags & 1 == 1 && local_apic.apic_id != bootinfo.apic_ids[0] && bootinfo.cpu_count < bootinfo.apic_ids.len)
+          {
+            bootinfo.apic_ids[bootinfo.cpu_count] = local_apic.apic_id;
+            bootinfo.cpu_count += 1;
+          }
+
+        case acpi::madt_type::io_apic:
+
+          var io_apic = cast<acpi::io_apic*>(apic);
+
+          if (bootinfo.ioapic_base == 0)
+          {
+            bootinfo.ioapic_base = io_apic.io_apic_address;
+            bootinfo.ioapic_interrupt_base = io_apic.interrupt_base;
+          }
+      }
+
+      apic = cast<acpi::apic*>(cast<uintptr>(apic) + cast<usize>(apic.length));
+    }
+  }
+
+  if (cpu::cpuid(1).2 & 0x200000 == 0)
+    efi::panic(SystemTable, "missing_x2apic");
+
+  //if (cpu::cpuid(0x80000007).3 & 0x100 == 0)
+  //  efi::panic(SystemTable, "missing_invariant_tsc");
+
+  if (cpu::cpuid(1).2 & 0x1000000 == 0)
+    efi::panic(SystemTable, "missing_tsc_deadline");
+
+  if (cpu::cpuid(7).1 & 0x1 == 0)
+    efi::panic(SystemTable, "missing_fsgsbase");
+
+  if (cpu::cpuid(7).1 & 0x100000 == 0)
+    efi::panic(SystemTable, "missing_clac");
+
+  if (cpu::cpuid(1).2 & 0x4000000 == 0)
+    efi::panic(SystemTable, "missing_xsave");
+
+  if (cpu::cpuid(0x80000001).3 & 0x800 == 0)
+    efi::panic(SystemTable, "missing_syscall");
+
+  if (cpu::cpuid(0x80000001).3 & 0x4000000 == 0)
+    efi::panic(SystemTable, "missing_pdpe1gb");
+
+  if (cpu::cpuid(0x80000001).3 & 0x8000000 == 0)
+    efi::panic(SystemTable, "missing_rdtscp");
+
+  if (cpu::cpuid(0x80000001).3 & 0x100000 == 0)
+    efi::panic(SystemTable, "missing_nx");
+
+  if (cpu::cpuid(1).3 & 0x80 == 0)
+    efi::panic(SystemTable, "missing_mce");
+}
+
+fn early_apic_id() -> u8
+{
+  return cast<u8>(cpu::cpuid(0x1).1 >> 24);
+}
+
+fn early_tsc_frequency() -> u64
+{
+  var frequency = 0;
+
+  if (cpu::cpuid(0x0).0 >= 0x16)
+  {
+    frequency = cast<u64>(cpu::cpuid(0x16).0) * 1000000;
+  }
+
+  if (frequency == 0)
+  {
+    // fallback to quick pit
+
+    // gate high, disable speaker
+    cpu::out8(0x61, cpu::in8(0x61) & ~0x2 | 0x1);
+
+    // counter 2, mode 0 (one-shot), binary count
+    cpu::out8(0x43, 0xb0);
+
+    // starting count
+
+    cpu::out8(0x42, 0xff);
+    cpu::out8(0x42, 0xff);
+
+    var lo = cpu::in8(0x42);
+    var hi = cpu::in8(0x42);
+
+    // read back
+    while (hi != 255)
+    {
+      lo = cpu::in8(0x42);
+      hi = cpu::in8(0x42);
+    }
+
+    // timing loop
+
+    var start = cpu::rdtsc();
+    var startcount = cast<u64>(hi) << 8 | cast<u64>(lo);
+
+    while (hi > 128)
+    {
+      lo = cpu::in8(0x42);
+      hi = cpu::in8(0x42);
+    }
+
+    var end = cpu::rdtsc();
+    var endcount = cast<u64>(hi) << 8 | cast<u64>(lo);
+
+    // gate low
+    cpu::out8(0x61, cpu::in8(0x61) & ~0x2);
+
+    frequency = (end - start) * (14318180 / 12) / (startcount - endcount);
+  }
+
+  return frequency;
+}
+
+struct gdt
+{
+  u64[8] entries;
+
+  gdt() = default;
+  gdt(#gdt&) = default;
+  ~gdt() = default;
+}
+
+fn load_gdt(gdt &gdt)
+{
+  #[packed]
+  struct gdtptr
+  {
+    u16 limit;
+    void *address;
+
+    gdtptr() = default;
+    ~gdtptr() = default;
+  }
+
+  var ptr = gdtptr(void);
+  ptr.limit = cast<u16>(sizeof(gdt)) - 1;
+  ptr.address = gdt.entries.data;
+
+  cpu::lgdt(&ptr);
+  cpu::ltr(cpu::selector::tss);
+}
+
+struct idt
+{
+  u64[2][256] entries;
+
+  idt() = default;
+  idt(#gdt&) = default;
+  ~idt() = default;
+}
+
+fn load_idt(idt &idt)
+{
+  #[packed]
+  struct idtptr
+  {
+    u16 limit;
+    void *address;
+
+    idtptr() = default;
+    ~idtptr() = default;
+  }
+
+  var ptr = idtptr(void);
+  ptr.limit = cast<u16>(sizeof(idt)) - 1;
+  ptr.address = idt.entries.data;
+
+  cpu::lidt(&ptr);
+}
+
+#[packed]
+struct tss
+{
+  u32 _reserved1;
+  uintptr[3] rsp;
+  u64 _reserved2;
+  uintptr[7] ist;
+  u64 _reserved3;
+  u16 _reserved4;
+  u16 io_map_base;
+}
+
+fn tss_set_iomap_offset(tss mut &tss, u16 offset) -> void
+{
+  tss.io_map_base = offset;
+}
+
+fn tss_set_interrupt_frame(tss mut &tss, usize index, void mut *stacktop) -> void
+{
+  tss.ist[index - 1] = cast<uintptr>(stacktop);
+}
+
+fn tss_set_privilege_frame(tss mut &tss, usize index, void mut *stacktop) -> void
+{
+  tss.rsp[index] = cast<uintptr>(stacktop);
+}
+
+fn gdt_set_descriptor(gdt mut &gdt, usize index, u64 value) -> void
+{
+  gdt.entries[index] = value;
+}
+
+fn gdt_set_tss_offset(gdt mut &gdt, usize index, uintptr offset) -> void
+{
+  gdt.entries[index+0] |= cast<u64>((offset & 0xffffff) << 16 | (offset & 0xff000000) << 32);
+  gdt.entries[index+1] |= cast<u64>((offset & 0xffffffff00000000) >> 32);
+}
+
+fn idt_set_system_gate(idt mut &idt, usize index, uintptr offset, cpu::selector segment, usize ist) -> void
+{
+  idt.entries[index][0] = cast<u64>(0x8e0000000000 | (cast<usize>(segment) << 16) | (ist << 32) | (offset & 0xffff) | (offset & 0xffff0000) << 32);
+  idt.entries[index][1] = cast<u64>((offset & 0xffffffff00000000) >> 32);
+}
+
+fn idt_set_user_gate(idt mut &idt, usize index, uintptr offset, cpu::selector segment, usize ist) -> void
+{
+  idt.entries[index][0] = cast<u64>(0xee0000000000 | (cast<usize>(segment) << 16) | (ist << 32) | (offset & 0xffff) | (offset & 0xffff0000) << 32);
+  idt.entries[index][1] = cast<u64>((offset & 0xffffffff00000000) >> 32);
+}
+
+pub fn rsp0() -> uintptr
+{
+  return td.tss.rsp[0];
+}
+
+pub fn setup(BootInfo &bootinfo, int cpu) -> void
+{
+  static rendezvous = i32(0);
+
+  std::atomic_add(&rendezvous, 1);
+
+  while (std::volatile_load(&rendezvous) < cast(bootinfo.cpu_count))
+    __relax();
+
+  cpu::wrmsr(cpu::msr_index::tsc, 0);
+  cpu::wrmsr(cpu::msr_index::tsc_aux, cast(cpu));
+
+  td.id = cpu;
+
+  var mut &gdt = td.gdt;
+
+  gdt_set_descriptor(&mut gdt, 0, 0);
+  gdt_set_descriptor(&mut gdt, 1, 0xa0980000000000); // 0x08 kernel_code_segment
+  gdt_set_descriptor(&mut gdt, 2, 0xc0920000000000); // 0x10 kernel_data_segment
+  gdt_set_descriptor(&mut gdt, 3, 0);
+  gdt_set_descriptor(&mut gdt, 4, 0xc0f20000000000); // 0x20 user_data_segment
+  gdt_set_descriptor(&mut gdt, 5, 0xa0f80000000000); // 0x28 user_code_segment
+
+  var mut &tss = td.tss;
+
+  tss_set_iomap_offset(&mut tss, sizeof<tss>);
+  tss_set_interrupt_frame(&mut tss, 1, td.exception_stack.data + td.exception_stack.len);
+
+  gdt_set_descriptor(&mut gdt, 6, 0x00890000000068); // 0x30 tss lo
+  gdt_set_descriptor(&mut gdt, 7, 0x00000000000000); //      tss hi
+  gdt_set_tss_offset(&mut gdt, 6, cast<uintptr>(&tss));
+
+  var mut &idt = td.idt;
+
+  var isr_table = extern(isr_table);
+
+  idt_set_system_gate(&mut idt, 0, isr_table + 0*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 1, isr_table + 1*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 2, isr_table + 2*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 3, isr_table + 3*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 4, isr_table + 4*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 5, isr_table + 5*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 6, isr_table + 6*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 7, isr_table + 7*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 8, isr_table + 8*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 9, isr_table + 9*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 10, isr_table + 10*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 11, isr_table + 11*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 12, isr_table + 12*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 13, isr_table + 13*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 14, isr_table + 14*64, cpu::selector::code0, 0);
+  idt_set_system_gate(&mut idt, 16, isr_table + 16*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 17, isr_table + 17*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 18, isr_table + 18*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 19, isr_table + 19*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 20, isr_table + 20*64, cpu::selector::code0, 1);
+
+  for(var i = 32; i < 250; ++i)
+    idt_set_system_gate(&mut idt, i, isr_table + i*64, cpu::selector::code0, 0); // io_dispatch_handler
+
+  idt_set_system_gate(&mut idt, 0xfc, isr_table + 252*64, cpu::selector::code0, 0); // apic_timer_interrupt_handler
+  idt_set_system_gate(&mut idt, 0xfd, isr_table + 253*64, cpu::selector::code0, 0); // apic_ipi_interrupt_handler
+  idt_set_system_gate(&mut idt, 0xfe, isr_table + 254*64, cpu::selector::code0, 0); // apic_error_interrupt_handler
+  idt_set_system_gate(&mut idt, 0xff, isr_table + 255*64, cpu::selector::code0, 0); // apic_spurious_interrupt_handler
+
+  load_gdt(td.gdt);
+  load_idt(td.idt);
+
+  if (cpu::cpuid(7).1 & 0x100000 != 0)
+  {
+    cpu::wrcr4(cpu::rdcr4 | 0x200000); // SMAP
+  }
+
+  if (cpu::cpuid(7).1 & 0x80 != 0)
+  {
+    cpu::wrcr4(cpu::rdcr4 | 0x100000); // SMEP
+  }
+
+  if (cpu::cpuid(7).2 & 0x4 != 0)
+  {
+    cpu::wrcr4(cpu::rdcr4 | 0x800); // UMIP
+  }
+
+  if (cpu::cpuid(1).2 & 0x4000000 != 0)
+  {
+    cpu::wrcr4(cpu::rdcr4 | 0x40000); // XSAVE
+
+    var xcr0 = 0;
+
+    xcr0 |= 0x1; // x87
+    xcr0 |= 0x2; // SSE
+
+    if (cpu::cpuid(0x1).2 & 0x10000000 != 0)
+      xcr0 |= 0x4; // AVX
+
+    if (cpu::cpuid(0x7).1 & 0x10000 != 0)
+      xcr0 |= 0xE0; // AVX-512
+
+    cpu::xsetbv(cpu::xcr_index::xcr0, xcr0);
+
+    std::assert(cpu::cpuid(0xd).1 <= 2560);
+  }
+
+  cpu::wrmsr(cpu::msr_index::efer, cpu::rdmsr(cpu::msr_index::efer) | 0x1); // sce
+  cpu::wrmsr(cpu::msr_index::star, 0x0018_0008_0000_0000); // sysret
+  cpu::wrmsr(cpu::msr_index::lstar, cast<u64>(extern(syscall_entry))); // syscall
+  cpu::wrmsr(cpu::msr_index::fmask, 0x47fff); // mask syscall flags
+
+  // apic
+
+  cpu::wrmsr(cpu::msr_index::apic_base, cpu::rdmsr(cpu::msr_index::apic_base) | 0x400); // x2apic enable
+
+  cpu::wrmsr(cpu::msr_index::apic_spurious_intr_vector, cpu::rdmsr(cpu::msr_index::apic_spurious_intr_vector) & 0xffffff00 | 0x1ff); // apic spurious interrupt vector
+
+  cpu::wrmsr(cpu::msr_index::apic_lvt_timer, cpu::rdmsr(cpu::msr_index::apic_lvt_timer) & 0xfffcef00 | 0x500fc); // apic timer
+  cpu::wrmsr(cpu::msr_index::apic_timer_divide_config, cpu::rdmsr(cpu::msr_index::apic_timer_divide_config) & 0xfffffff0 | 0x0b);
+
+  cpu::wrmsr(cpu::msr_index::apic_tsc_deadline, 0);
+  cpu::wrmsr(cpu::msr_index::apic_lvt_timer, cpu::rdmsr(cpu::msr_index::apic_lvt_timer) & ~0x10000);
+
+  cpu::wrmsr(cpu::msr_index::apic_lvt_error, cpu::rdmsr(cpu::msr_index::apic_lvt_error) & 0xffffff00 | 0xfe); // apic error vector
+
+  cpu::wrmsr(cpu::msr_index::apic_task_priority, cpu::rdmsr(cpu::msr_index::apic_task_priority) & 0xffffff00); // apic task priority
+
+  cpu::rdmsr(cpu::msr_index::apic_spurious_intr_vector);
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+}

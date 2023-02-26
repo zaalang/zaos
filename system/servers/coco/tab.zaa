@@ -1,0 +1,80 @@
+//
+// tab completion
+//
+
+import std.string;
+import os.zaos.fcntl;
+import readline.completer;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct completer : pub readline::completer
+{
+  using suggestion = readline::completer::suggestion;
+
+  pub fn complete(readline::completer mut &this, std::string &buffer, usize cursor) -> std::vector<suggestion>
+  {
+    using os;
+
+    var &this = cast<completer&>(this);
+
+    var results = std::vector<suggestion>();
+
+    var matcher = buffer[0 .. cursor];
+    if (var j = matcher.find_last_of(" "); j != matcher.end)
+      matcher = buffer[j + 1 .. matcher.end];
+
+    if (!buffer.empty)
+    {
+      var base = std::string_view();
+
+      if (var j = matcher.find_last_of("/"); j != matcher.end)
+        base = matcher[matcher.data .. j + 1];
+
+      var dir = open(&mut thread_ring, os::string(base.data, base.len), O_RDONLY | O_DIRECTORY, 0);
+
+      if (dir < 0)
+        std::print("tab: error opening dir: ", base, " - ", std::errc(cast(-dir)));
+
+      while (dir >= 0)
+      {
+        var buffer = typename u8[4096](void);
+
+        var dirres = read(&mut thread_ring, dir, buffer.data, buffer.len);
+
+        if (dirres <= 0)
+        {
+          if (dirres < 0)
+            std::print("tab: error reading directory - ", std::errc(cast(-dirres)));
+
+          break;
+        }
+
+        for(var pos = 0; pos < cast(dirres); )
+        {
+          var entry = cast<dirent*>(buffer.data + cast(pos));
+
+          if (entry.name != "." && entry.name != ".." && entry.name.starts_with(matcher[base.len .. matcher.len]))
+          {
+            var match = std::string(base) + entry.name + " ";
+
+            if (entry.ftype == ftype::directory)
+              match.back = cast('/');
+
+            results.push_back(completer::suggestion(match, matcher.len));
+          }
+
+          pos += entry.rec_len;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  pub completer()
+  {
+  }
+
+  pub ~completer() = default;
+}

@@ -1,0 +1,42 @@
+//
+// mem
+//
+
+import os.zaos.mman;
+
+struct mem_result
+{
+  u32 errno;
+  usize size;
+  void mut *addr;
+
+  mem_result() = default;
+  mem_result(mem_result&) = default;
+  ~mem_result() = default;
+}
+
+extern fn mem_alloc(usize size) -> mem_result
+{
+  var result = mem_result();
+
+  var mmvec = os::mmvec();
+  mmvec.length = size;
+  mmvec.flags = os::mmap::anonymous;
+  mmvec.prot = os::prot::readwrite;
+
+  result.size = size;
+
+  if (var res = os::mmap(-1, &mmvec, 1, &result.addr, 0); res < 0)
+  {
+    result.errno = -cast<u32>(res);
+    result.addr = null;
+    result.size = 0;
+  }
+
+  return result;
+}
+
+extern fn mem_free(void *addr, usize size) -> void
+{
+  os::munmap(addr, size);
+}

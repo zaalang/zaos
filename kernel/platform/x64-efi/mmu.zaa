@@ -1,0 +1,340 @@
+//
+// x86 mmu
+//
+
+import std.range;
+import std.atomic;
+import std.optional;
+import platform.x64-efi.bootinfo;
+import platform.x64-efi.cpu as cpu;
+
+using platform::physaddr_t;
+using platform::virtaddr_t;
+using platform::physrange_t;
+using platform::virtrange_t;
+
+pub enum mflags
+{
+  zero,
+  copy,
+  keep,
+}
+
+pub enum protection
+{
+  none,
+  readonly,
+  readwrite,
+  executable,
+}
+
+pub struct page_table
+{
+  uintptr pml4;
+
+  pub fn bool(this&) -> bool
+  {
+    return this.pml4 != 0;
+  }
+
+  page_table(uintptr cr3)
+    : pml4(cr3)
+  {
+  }
+
+  pub page_table() = default;
+  pub page_table(page_table&) = default;
+  pub fn =(page_table mut &, page_table&) -> page_table mut & = default;
+  pub ~page_table() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, page_table &pagetable) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "page_table {{ cr3: {:#08x} }}", pagetable.pml4);
+}
+
+pub struct page_table_query
+{
+  uintptr entry;
+
+  pub fn present(this&) -> bool { return this.entry & pdbits::present != 0; }
+  pub fn writeable(this&) -> bool { return this.entry & pdbits::writeable != 0; }
+  pub fn address(this&) -> physaddr_t { return physaddr_t(this.entry & 0x7ffffffffffff000); }
+
+  page_table_query(uintptr entry)
+    : entry(entry)
+  {
+  }
+
+  pub page_table_query(page_table_query&) = default;
+  pub fn =(page_table_query mut &, page_table_query &) ->page_table_query mut & = default;
+  pub ~page_table_query() = default;
+}
+
+enum pdbits : u64
+{
+  present = 0x1,
+  writeable = 0x2,
+  user = 0x4,
+  write_through	= 0x8,
+  caching_disabled = 0x10,
+  accessed = 0x20,
+  dirty = 0x40,
+  large = 0x80,
+  global = 0x100,
+  no_execute = 1 << 63,
+
+  const fn &(uintptr lhs, pdbits rhs) -> uintptr { return lhs & cast(rhs); }
+  const fn |(uintptr lhs, pdbits rhs) -> uintptr { return lhs | cast(rhs); }
+}
+
+fn pds(virtaddr_t addr) -> usize[3]
+{
+  return [ (addr >> 39) & 0x1ff, (addr >> 30) & 0x1ff, (addr >> 21) & 0x1ff ];
+}
+
+fn pt_entry(virtaddr_t addr) -> usize
+{
+  return (addr >> 12) & 0x1ff;
+}
+
+pub fn is_user_address(virtaddr_t addr) -> bool
+{
+  return addr <= USER_LIMIT;
+}
+
+pub fn is_kernel_address(virtaddr_t addr) -> bool
+{
+  return addr >= KERNEL_SPACE;
+}
+
+pub fn pagetable() -> page_table
+{
+  return page_table(cpu::rdcr3());
+}
+
+pub fn activate(page_table mut &this) -> void
+{
+  if (cpu::rdcr3() != this.pml4)
+    cpu::wrcr3(this.pml4);
+}
+
+pub fn new(page_table mut &this, physaddr_t fn() &allocate) -> void
+{
+  this.pml4 = allocate();
+
+  var irqs = cpu::disable_interrupts();
+  std::memset(cast<u8 mut *>(this.pml4 + PHYSICAL_BASE), 0, 2048);
+  std::memcpy(cast<u8 mut *>(this.pml4 + 2048 + PHYSICAL_BASE), cast<u8 mut *>(cpu::rdcr3() + 2048 + PHYSICAL_BASE), 2048);
+  cpu::restore_interrupts(irqs);
+}
+
+pub fn query(page_table mut &this, virtaddr_t addr) -> page_table_query
+{
+  var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+  for(var i : pds(addr))
+  {
+    if (pt[i] & pdbits::present == 0)
+      return page_table_query(0);
+
+    pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+  }
+
+  return page_table_query(pt[pt_entry(addr)]);
+}
+
+pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protection prot, mflags mflags, physaddr_t fn() &allocate) -> void
+{
+  var addr = baseaddr;
+  var page = pages.0;
+
+  while (page != pages.1)
+  {
+    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+    for(var i : pds(addr))
+    {
+      var entry = std::atomic_load(&pt[i], std::memory_order::relaxed);
+
+      while (entry & pdbits::present == 0)
+      {
+        var irqs = cpu::disable_interrupts();
+
+        if (std::atomic_cmpxchg_strong(&pt[i], 0, 0xffe))
+        {
+          var addr = allocate();
+          std::memset(cast<u8 mut *>(addr + PHYSICAL_BASE), 0, PAGE_SIZE);
+
+          std::atomic_store(&pt[i], addr | pdbits::present | pdbits::writeable | pdbits::user);
+        }
+
+        cpu::restore_interrupts(irqs);
+
+        entry = std::atomic_load(&pt[i], std::memory_order::relaxed);
+      }
+
+      pt = cast<uintptr[512] mut *>(entry & ~0xfff + PHYSICAL_BASE);
+    }
+
+    for(var i = pt_entry(addr); page != pages.1 && i < 512; ++i)
+    {
+      var flags = uintptr(0);
+
+      if (prot == protection::readwrite)
+        flags |= pdbits::writeable;
+
+      if (prot != protection::executable)
+        flags |= pdbits::no_execute;
+
+      if (baseaddr < USER_LIMIT)
+        flags |= pdbits::user;
+      else
+        flags |= pdbits::global;
+
+      switch (mflags)
+      {
+        case zero:
+          std::memset(cast<void mut *>(page + PHYSICAL_BASE), 0, PAGE_SIZE);
+
+        case copy:
+          std::memcpy(cast<void mut *>(page + PHYSICAL_BASE), cast<void mut *>(pt[i] & 0x7ffffffffffff000 + PHYSICAL_BASE), PAGE_SIZE);
+      }
+
+      pt[i] = page | pdbits::present | flags;
+
+      if (cpu::rdcr3() == this.pml4)
+        cpu::invlpg(addr);
+
+      addr += PAGE_SIZE;
+      page += PAGE_SIZE;
+    }
+  }
+}
+
+pub fn unmap(page_table mut &this, virtrange_t range) -> void
+{
+  var addr = range.0;
+
+  while (addr < range.1)
+  {
+    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+    for(var i : pds(addr))
+    {
+      std::assert(pt[i] & pdbits::present != 0);
+
+      pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+    }
+
+    for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+    {
+      std::assert(pt[i] != 0);
+
+      pt[i] = 0;
+
+      if (cpu::rdcr3() == this.pml4)
+        cpu::invlpg(addr);
+
+      addr += PAGE_SIZE;
+    }
+  }
+
+  //if (USER_LIMIT < range.begin)
+  //  cpu::flush_global_tlb();
+}
+
+pub fn unmap(page_table mut &this, virtrange_t range, void fn(physaddr_t) &callback) -> void
+{
+  var addr = range.0;
+
+  while (addr < range.1)
+  {
+    var pds = pds(addr);
+
+    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+    if (pt[pds[0]] & pdbits::present != 0)
+    {
+      pt = cast<uintptr[512] mut *>(pt[pds[0]] & ~0xfff + PHYSICAL_BASE);
+
+      if (pt[pds[1]] & pdbits::present != 0)
+      {
+        pt = cast<uintptr[512] mut *>(pt[pds[1]] & ~0xfff + PHYSICAL_BASE);
+
+        if (pt[pds[2]] & pdbits::present != 0)
+        {
+          pt = cast<uintptr[512] mut *>(pt[pds[2]] & ~0xfff + PHYSICAL_BASE);
+
+          for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+          {
+            if (pt[i] & pdbits::present != 0)
+            {
+              var page = pt[i] & 0x7ffffffffffff000;
+
+              pt[i] = 0;
+
+              if (cpu::rdcr3() == this.pml4)
+                cpu::invlpg(addr);
+
+              callback(page);
+            }
+
+            addr += PAGE_SIZE;
+          }
+        }
+        else
+          addr += PAGE_SIZE << 9;
+      }
+      else
+        addr += PAGE_SIZE << 18;
+    }
+    else
+      addr += PAGE_SIZE << 27;
+  }
+
+  //if (USER_LIMIT < range.begin)
+  //  cpu::flush_global_tlb();
+}
+
+pub fn dispose(page_table mut &this, void fn(physaddr_t) &callback) -> void
+{
+  var pml4 = cast<physaddr_t[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+  for(var k = 0; k < 256; ++k)
+  {
+    if (pml4[k] & pdbits::present != 0)
+    {
+      var pdp = cast<physaddr_t[512] mut *>(pml4[k] & ~0xfff + PHYSICAL_BASE);
+
+      for(var j = 0; j < 512; ++j)
+      {
+        if (pdp[j] & pdbits::present != 0)
+        {
+          var pd = cast<physaddr_t[512] mut *>(pdp[j] & ~0xfff + PHYSICAL_BASE);
+
+          for(var i = 0; i < 512; ++i)
+          {
+            if (pd[i] & pdbits::present != 0)
+            {
+              var pt = cast<physaddr_t[512] mut *>(pd[i] & ~0xfff + PHYSICAL_BASE);
+
+              for(var i = 0; i < 512; ++i)
+                std::assert(pt[i] == 0);
+
+              callback(pd[i] & ~0xfff);
+            }
+          }
+
+          callback(pdp[j] & ~0xfff);
+        }
+      }
+
+      callback(pml4[k] & ~0xfff);
+    }
+  }
+
+  callback(this.pml4);
+
+  this.pml4 = 0;
+}

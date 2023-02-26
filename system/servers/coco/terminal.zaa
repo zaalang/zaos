@@ -1,0 +1,440 @@
+//
+// terminal
+//
+
+import std.stdio;
+import std.span : Span;
+import std.string : String;
+import chrono : duration;
+import os.zaos.fcntl;
+import input.driver;
+import display;
+import font;
+import pty;
+import vt;
+import readline;
+
+const palette = [
+  0xff000000, // black
+  0xffcd0000, // red
+  0xff00cd00, // green
+  0xffcdcd00, // yellow
+  0xff0000ee, // blue
+  0xffcd00cd, // magenta
+  0xff00cdcd, // cyan
+  0xffe5e5e5, // light grey
+  0xff7f7f7f, // dark grey
+  0xffff0000, // light red
+  0xff00ff00, // light green
+  0xffffff00, // light yellow
+  0xff5c5cff, // light blue
+  0xffff00ff, // light magenta
+  0xff00ffff, // light cyan
+  0xffffffff, // white
+  0xff000000, // foreground
+  0xff009000, // background
+];
+
+const cursor_palette = [
+  0xff00cd00, // green
+  0xffcdcd00, // yellow
+  0xff0000cd, // blue
+  0xffcd0000, // red
+  0xffcdcdcd, // buff
+  0xff00cdcd, // cyan
+  0xffcd00cd, // magenta
+  0xffcd6600, // orange
+];
+
+pub struct terminal
+{
+  input::driver mut &driver;
+  display::display mut &display;
+
+  terminal(input::driver mut &driver, display::display mut &display)
+    : driver(&driver), display(&display)
+  {
+  }
+
+  int top;
+  int left;
+  int bottom;
+  int right;
+
+  pty::pty pty;
+  font::font font;
+  vt::screen screen;
+
+  usize cursor_color;
+
+  readline::default_history history;
+
+  pub fn x(this&) { return this.screen.cursor.0; }
+  pub fn y(this&) { return this.screen.cursor.1; }
+
+  pub fn rows(this&) { return this.screen.rows; }
+  pub fn columns(this&) { return this.screen.columns; }
+
+  pub fn pty(this&) { return this.pty; }
+
+  pub ~terminal() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn create(input::driver mut &driver, display::display mut &display) -> terminal
+{
+  return terminal(&mut driver, &mut display);
+}
+
+pub fn initialise(terminal mut &terminal) -> i32
+{
+  terminal.top = std::align_down(terminal.display.height / 16, 16);
+  terminal.left = std::align_down(terminal.display.width / 16, 8);
+  terminal.bottom = std::align_up(terminal.display.height - terminal.top, 16);
+  terminal.right = std::align_up(terminal.display.width - terminal.left, 8);
+
+  var rows = cast<usize>(terminal.bottom - terminal.top) / 16;
+  var columns = cast<usize>(terminal.right - terminal.left) / 8;
+
+  terminal.screen.set_palette(palette);
+
+  if (var result = terminal.screen.resize(columns, rows); !result)
+    return cast(result);
+
+  if (var result = font::initialise(&mut terminal.font); result != 0)
+    return result;
+
+  if (var result = pty::open_pty(&mut terminal.pty); result != 0)
+    return result;
+
+  if (var result = terminal.pty.resize(columns, rows); result != 0)
+    return result;
+
+  terminal.clear();
+
+  return 0;
+}
+
+pub fn set_font(terminal mut &terminal, String &path) -> i32
+{
+  if (var result = terminal.font.load(path); result != 0)
+    return result;
+
+  return 0;
+}
+
+pub fn clear(terminal mut &this) -> void
+{
+  this.screen.erase_screen();
+}
+
+pub fn print(terminal mut &this, String &str) -> void
+{
+  this.screen.write(str.data, str.len);
+}
+
+pub fn render(terminal mut &this) -> void
+{
+  var x = this.left;
+  var y = this.top;
+
+  this.screen.draw(fn [this, x, y](usize i, usize j, char ch, usize n, var attrs) {
+
+    if (x + this.font.width(ch, 0) <= this.right)
+      this.display.blit(x, y, this.font.lookup(ch), attrs.foreground_color, attrs.background_color);
+
+    x += this.font.width(ch, 0);
+
+    if (i + n >= this.screen.columns)
+    {
+      this.display.fill(x, y, this.right, y + this.font.lineheight(), this.screen.background_color);
+
+      x = this.left;
+      y += this.font.lineheight();
+    }
+  });
+
+  this.display.fill(this.left, y, this.right, this.bottom, this.screen.background_color);
+
+  if (this.screen.cursor_state)
+  {
+    var cx = this.left + cast<int>(this.screen.cursor.0) * 8;
+    var cy = this.top + cast<int>(this.screen.cursor.1) * 16;
+
+    if (this.left <= cx && cx < this.right && this.top <= cy && cy < this.bottom)
+      this.display.fill(cx, cy, cx + 8, cy + 16, cursor_palette[this.cursor_color]);
+
+    this.cursor_color += 1;
+    if (this.cursor_color == cursor_palette.len)
+      this.cursor_color = 0;
+  }
+}
+
+pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanoseconds(-1)) -> i32
+{
+  var mut &pty = terminal.pty;
+  var mut &driver = terminal.driver;
+
+  var events = 0;
+
+  var sp = os::timespec(void);
+  if (var result = os::clock_time(os::clock::monotonic, &sp); result < 0)
+    return result;
+
+  while (true)
+  {
+    var buf = typename u8[4096](void);
+    var bytes = pty.read_master(buf.data, buf.len);
+
+    if (bytes > 0)
+    {
+      terminal.screen.write(buf.data, cast(bytes));
+    }
+
+    driver.dispatch();
+
+    while (driver.has_events)
+    {
+      switch (driver.get_event)
+      {
+        case keyboard_key[kv]:
+
+          switch (kv.state)
+          {
+            case pressed:
+              switch (kv.key)
+              {
+                case Enter:
+                  pty.write_master("\r".data, 1);
+
+                case Backspace:
+                  pty.write_master("\x7f".data, 1);
+
+                case Left:
+                  pty.write_master("\x1bOD".data, 3);
+
+                case Up:
+                  pty.write_master("\x1bOA".data, 3);
+
+                case Right:
+                  pty.write_master("\x1bOC".data, 3);
+
+                case Down:
+                  pty.write_master("\x1bOB".data, 3);
+
+                case Insert:
+                  pty.write_master("\x1b[2~".data, 4);
+
+                case Delete:
+                  pty.write_master("\x1b[3~".data, 4);
+
+                case Home:
+                  pty.write_master("\x1bOH".data, 3);
+
+                case End:
+                  pty.write_master("\x1bOF".data, 3);
+
+                case PageUp:
+                  pty.write_master("\x1b[5~".data, 4);
+
+                case PageDown:
+                  pty.write_master("\x1b[6~".data, 4);
+
+                case F1:
+                  pty.write_master("\x1bOP".data, 3);
+
+                case F2:
+                  pty.write_master("\x1bOQ".data, 3);
+
+                case F3:
+                  pty.write_master("\x1bOR".data, 3);
+
+                case F4:
+                  pty.write_master("\x1bOS".data, 3);
+
+                case F5:
+                  pty.write_master("\x1b[15~".data, 5);
+
+                case F6:
+                  pty.write_master("\x1b[17~".data, 5);
+
+                case F7:
+                  pty.write_master("\x1b[18~".data, 5);
+
+                case F8:
+                  pty.write_master("\x1b[19~".data, 5);
+
+                case F9:
+                  pty.write_master("\x1b[20~".data, 5);
+
+                case F10:
+                  pty.write_master("\x1b[21~".data, 5);
+
+                case F11:
+                  pty.write_master("\x1b[23~".data, 5);
+
+                case F12:
+                  pty.write_master("\x1b[24~".data, 5);
+
+                else:
+                  if (kv.sym != 0)
+                  {
+                    var buf = [0; 8];
+                    var len = std::ctoa(buf.begin, buf.end, kv.sym).len;
+
+                    pty.write_master(buf.data, len);
+                  }
+              }
+          }
+      }
+
+      events += 1;
+    }
+
+    terminal.render();
+
+    if (events != 0)
+      return events;
+
+    var tp = os::timespec(void);
+    if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
+      return result;
+
+    if (timeout.count >= 0)
+    {
+      if (tp - sp > cast(timeout.count))
+        return 0;
+    }
+
+    var pollset = [
+      os::pollevt(pty.master, os::POLLFD, os::POLLIN, 0),
+      os::pollevt(driver.get_fd, os::POLLFD, os::POLLIN, 0)
+    ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8);
+  }
+}
+
+pub fn pump<R, P>(terminal mut &terminal, chrono::duration<R, P> timeout) -> i32
+{
+  return terminal.pump(timeout.nanoseconds);
+}
+
+pub fn write(terminal mut &terminal, Span<u8> &buffer) -> i32
+{
+  var remaining = buffer.len;
+
+  while (remaining != 0)
+  {
+    var result = terminal.pty.write_slave(buffer.data + (buffer.len - remaining), remaining);
+
+    if (result < 0)
+    {
+      if (result != os::EAGAIN)
+        return result;
+
+      terminal.pump(0.nanoseconds);
+
+      result = 0;
+    }
+
+    remaining -= cast(result);
+  }
+
+  return cast(buffer.len);
+}
+
+pub fn read(terminal mut &terminal, Span<u8> mut &buffer) -> i32
+{
+  while (true)
+  {
+    var result = terminal.pty.read_slave(buffer.data, buffer.len);
+
+    if (result != os::EAGAIN)
+      return result;
+
+    terminal.pump();
+  }
+}
+
+pub fn read_pass(terminal mut &terminal, Span<u8> mut &buffer) -> i32
+{
+  var mut &pty = terminal.pty;
+
+  pty.echo_off();
+
+  var result = terminal.read(&mut buffer);
+
+  pty.echo_on();
+
+  return result;
+}
+
+pub fn read_line(terminal mut &terminal, readline::completer mut *completer = null) -> readline::result
+{
+  var mut &pty = terminal.pty;
+  var status = readline::status::ok;
+  var input = readline::termin();
+  var editor = readline::editor();
+  var prompt = readline::default_prompt("");
+
+  editor.history = &terminal.history;
+  editor.completer = completer;
+
+  pty.enable_raw_mode();
+
+  while (true)
+  {
+    if (readline::dispatch(&mut input, pty.slave))
+    {
+      switch (status = readline::process(&mut editor, input.next))
+      {
+        case accepted:
+          break;
+
+        case canceled:
+          break;
+      }
+    }
+    else
+    {
+      readline::paint(&mut editor, pty.slave, prompt);
+
+      terminal.pump(1.seconds);
+    }
+  }
+
+  pty.restore_cooked_mode();
+
+  switch (status)
+  {
+    case accepted:
+      readline::render(&mut editor, pty.slave, prompt);
+
+    case canceled[signal]:
+      readline::flush(&mut editor, pty.slave, prompt);
+
+      switch(signal)
+      {
+        case ctrl_c:
+          return readline::result::ctrl_c;
+
+        case ctrl_d:
+          return readline::result::ctrl_c;
+
+        case error[errc]:
+          return readline::result::error(errc);
+
+        case end_of_file:
+          return readline::result::end_of_file;
+      }
+  }
+
+  return readline::result::enter(&move std::launder(editor.buffer));
+}
+
+pub fn flush(terminal mut &terminal) -> i32
+{
+  return terminal.pump(0.nanoseconds);
+}

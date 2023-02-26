@@ -1,0 +1,272 @@
+//
+// pci
+//
+
+import std.stdio;
+import acpi;
+import sys;
+import vm;
+import platform;
+
+using vm::physaddr;
+
+pub enum command : u16
+{
+  io_space = 0x001,
+  memory_space = 0x002,
+  master = 0x004,
+  special = 0x008,
+  mwi = 0x010,
+  vga_palette_snoop = 0x020,
+  parity_check = 0x040,
+  address_stepping = 0x080,
+  serr = 0x100,
+  fastback = 0x200,
+  interrupt_disable = 0x400,
+
+  pub const fn ~(command lhs) -> command { return cast<command>(~cast<u16>(lhs)); }
+  pub const fn &(command lhs, command rhs) -> command { return cast<command>(cast<u16>(lhs) & cast<u16>(rhs)); }
+  pub const fn |(command lhs, command rhs) -> command { return cast<command>(cast<u16>(lhs) | cast<u16>(rhs)); }
+}
+
+pub enum status : u16
+{
+  capabilities = 0x0010,
+  mhz_capable = 0x0020,
+  udf_supported = 0x0040,
+  fastback_capable = 0x0080,
+  parity_signalled = 0x0100,
+  devsel = 0x0600,
+  target_abort_signalled = 0x0800,
+  target_abort_received = 0x1000,
+  master_abort_received = 0x2000,
+  serr_signalled = 0x4000,
+  parity_error_detected = 0x8000,
+
+  pub const fn &(status lhs, status rhs) -> bool{ return cast<u16>(lhs) & cast<u16>(rhs) != 0; }
+  pub const fn |(status lhs, status rhs) -> status { return cast<status>(cast<u16>(lhs) | cast<u16>(rhs)); }
+}
+
+pub enum capabilities : u8
+{
+  power_management = 0x01,
+  agp = 0x02,
+  vital_product_data = 0x03,
+  slot_id = 0x04,
+  msi = 0x05,
+  compact_hotswap = 0x06,
+  pcix = 0x07,
+  hypertransport = 0x08,
+  vendspec = 0x09,
+  debugport = 0x0a,
+  cpci_rsrcctl = 0x0b,
+  hotplug = 0x0c,
+  subvendor = 0x0d,
+  agp8x = 0x0e,
+  secure_dev = 0x0f,
+  pcie = 0x10,
+  msix = 0x11,
+  sata = 0x12,
+  pciaf = 0x13,
+  extended_allocation = 0x14,
+  flattening_portal = 0x15,
+}
+
+pub struct device
+{
+  pub u8 bus;
+  pub u8 dev;
+  pub u8 func;
+  pub u16 vendor_id;
+  pub u16 device_id;
+  pub u8[3] class_code;
+
+  pci_header *header;
+
+  device() = default;
+  pub device(device&) = default;
+  pub ~device() = default;
+}
+
+struct pci_manager
+{
+  std::vector<device> devices;
+
+  pci_manager() = default;
+  pci_manager(#pci_manager&) = default;
+  ~pci_manager() = default;
+}
+
+fn pci()
+{
+  static instance = #pci_manager();
+
+  return &instance;
+}
+
+pub fn devices() -> std::span<device>
+{
+  return std::span(pci.devices.data, pci.devices.len);
+}
+
+struct pci_header
+{
+  u16 vendor_id;
+  u16 device_id;
+  command command;
+  status status;
+  u8 revision_id;
+  u8[3] class_code;
+  u8 cache_line_size;
+  u8 primary_latency_timer;
+  u8 header_type;
+  u8 bist;
+}
+
+struct pci_general_device
+{
+  pci_header header;
+
+  u32[6] bar;
+  u32 cardbus_ptr;
+  u16[2] subsys_id;
+  u32 rom_address;
+  u8 capabilities_ptr;
+  u16 reserved1;
+  u32 reserved2;
+  u8 interrupt_line;
+  u8 interrupt_pin;
+  u8 min_grant;
+  u8 max_latency;
+}
+
+pub fn initialise() -> void
+{
+  var acpi_root = sys::acpi_root;
+
+  if (acpi_root)
+  {
+    var mcfg = acpi::find_table(acpi_root, platform::PHYSICAL_BASE, "MCFG");
+
+    if (mcfg)
+    {
+      var entry = cast<acpi::mcfg_entry*>(cast<uintptr>(mcfg) + sizeof<acpi::mcfg>);
+      var end = cast<acpi::mcfg_entry*>(cast<uintptr>(mcfg) + cast<usize>(mcfg.length));
+
+      while (entry != end)
+      {
+        for(var bus = entry.bus_start; bus != entry.bus_end; ++bus)
+        {
+          var busentry = cast<pci_header*>(physaddr(cast<uintptr>(entry.base_address) + cast<uintptr>(bus) << 20).ptr);
+
+          if (busentry.device_id == 0 || busentry.device_id == 0xffff)
+            continue;
+
+          for(var dev = 0; dev < 32; ++dev)
+          {
+            var deventry = cast<pci_header*>(cast<uintptr>(busentry) + cast<uintptr>(dev) << 15);
+
+            if (deventry.device_id == 0 || deventry.device_id == 0xffff)
+              continue;
+
+            for(var func = 0; func < 8; ++func)
+            {
+              var entry = cast<pci_header*>(cast<uintptr>(deventry) + cast<uintptr>(func) << 12);
+
+              if (entry.device_id == 0 || entry.device_id == 0xffff)
+                continue;
+
+              var device = device();
+
+              device.bus = bus;
+              device.dev = dev;
+              device.func = func;
+              device.vendor_id = entry.vendor_id;
+              device.device_id = entry.device_id;
+              device.class_code = entry.class_code;
+              device.header = entry;
+
+              pci.devices.push_back(device);
+            }
+          }
+        }
+
+        entry += 1;
+      }
+    }
+
+    std::print("pci bus: ", pci.devices.len, " devices");
+
+    for(var &device : pci.devices)
+      std::printf("  {}:{}.{} {} {} {}\n", device.bus, device.dev, device.func, device.vendor_id, device.device_id, device.class_code);
+  }
+}
+
+pub fn read_config<T>(device &device, var offset) -> T
+{
+  return std::volatile_load(cast<T*>(cast<uintptr>(device.header) + cast<usize>(offset)));
+}
+
+pub fn write_config<T>(device &device, var offset, T value) -> void
+{
+  std::volatile_store(cast<T mut *>(cast<uintptr>(device.header) + cast<usize>(offset)), value);
+}
+
+pub fn read_command(device &device) -> command
+{
+  return std::volatile_load(&device.header.command);
+}
+
+pub fn write_command(device &device, command command) -> void
+{
+  std::volatile_store(&cast<pci_header mut *>(device.header).command, command);
+}
+
+pub fn read_status(device &device) -> status
+{
+  return std::volatile_load(&device.header.status);
+}
+
+pub fn read_capabilities_ptr(device &device) -> u8
+{
+  std::assert(device.header.header_type & 0x7f == 0);
+
+  return std::volatile_load(&cast<pci_general_device*>(device.header).capabilities_ptr);
+}
+
+pub fn read_base_register(device &device, usize bar) -> u32
+{
+  std::assert(device.header.header_type & 0x7f == 0);
+
+  return std::volatile_load(&cast<pci_general_device*>(device.header).bar[bar]);
+}
+
+pub fn read_base_address(device &device, usize bar) -> physaddr
+{
+  return physaddr(cast<uintptr>(read_base_register(device, bar)));
+}
+
+pub fn read_interrupt_line(device &device) -> u8
+{
+  std::assert(device.header.header_type & 0x7f == 0);
+
+  return std::volatile_load(&cast<pci_general_device*>(device.header).interrupt_line);
+}
+
+pub fn read_capability(device &device, capabilities id) -> u8
+{
+  if (device.read_status() & status::capabilities)
+  {
+    var ptr = device.read_capabilities_ptr();
+
+    for(var i = 0; ptr != 0 && i < 48; ++i)
+    {
+      if (device.read_config<u8>(ptr) == cast(id))
+        return ptr;
+
+      ptr = device.read_config<u8>(ptr + 1) & ~3;
+    }
+  }
+
+  return 0;
+}

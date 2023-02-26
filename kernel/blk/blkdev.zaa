@@ -1,0 +1,126 @@
+//
+// blk dev
+//
+
+import std.atomic;
+import blk.result;
+import blk.request;
+import vm;
+import process as _ : process;
+import support.rc : Rc;
+
+pub struct blkdev
+{
+  pub usize block_size;
+  pub int block_shift;
+  pub usize block_count;
+
+  pub fn create<T>(var && ...args) -> shared_ptr<T>
+  {
+    var dev = std::allocator::new<T>(&&args...);
+
+    dev.destroy = fn(blkdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
+
+    return shared_ptr(dev);
+  }
+
+  pub blkdev(device_operations &ops)
+    : ops(&ops)
+  {
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub ~blkdev() = default;
+
+  i32 refcnt;
+  device_operations &ops;
+  void fn(blkdev mut *) *destroy;
+}
+
+pub enum query
+{
+  device_path,
+  device_part,
+  device_uuid,
+}
+
+pub vtable device_operations
+{
+  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result;
+
+  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result;
+
+  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result;
+  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result;
+}
+
+pub struct blkdev_ptr : pub Rc<blkdev>
+{
+  pub fn query(this &, blk::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(*this, query, result);
+
+    return result;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
+  {
+    return this.ops.ioctl(*this, op, buffer);
+  }
+
+  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
+  {
+    return this.ops.enqueue(*this, request);
+  }
+
+  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
+  {
+    return this.ops.cancel(*this, request);
+  }
+
+  blkdev_ptr(blkdev mut *inner)
+    : super(inner)
+  {
+  }
+
+  pub blkdev_ptr() = default;
+  pub blkdev_ptr(blkdev_ptr &&other) = default;
+  pub fn =(blkdev_ptr mut &lhs, blkdev_ptr &&rhs) -> blkdev_ptr mut & = default;
+  pub ~blkdev_ptr() = default;
+}
+
+pub struct shared_ptr<T> : pub blkdev_ptr
+{
+  pub fn *(this &&)
+  {
+    return &cast<T&&>(*this.super);
+  }
+
+  shared_ptr(T mut *inner)
+    : super(inner)
+  {
+  }
+
+  pub shared_ptr() = default;
+  pub shared_ptr(shared_ptr &&other) = default;
+  pub fn =(shared_ptr mut &lhs, shared_ptr &&rhs) -> shared_ptr mut & = default;
+  pub ~shared_ptr() = default;
+}
+
+fn destroy(blkdev mut *dev) -> void
+{
+  if (dev.destroy)
+    dev.destroy(dev);
+}

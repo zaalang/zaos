@@ -1,0 +1,514 @@
+//
+// event
+//
+
+import std.fmt;
+import std.error;
+import os.zaos.time;
+import os.zaos.fcntl;
+import std.bits.utf as utf;
+
+pub union event
+{
+  pub key(key_event),
+  pub mouse(mouse_event),
+  pub error(std::errc),
+  pub end_of_file,
+
+  pub event() = default;
+  pub event(event&&) = default;
+  pub fn =(event mut &, event&&) -> event mut & = default;
+  pub ~event() = default;
+}
+
+pub union key_code
+{
+  pub escape,
+  pub tab,
+  pub enter,
+  pub backspace,
+  pub sym(char),
+  pub f(u32),
+  pub left,
+  pub right,
+  pub up,
+  pub down,
+  pub home,
+  pub end,
+  pub insert,
+  pub delete,
+  pub page_up,
+  pub page_down,
+
+  key_code(key_code&) = default;
+  ~key_code() = default;
+}
+
+pub enum key_state
+{
+  pressed,
+  released,
+  repeat,
+}
+
+pub enum key_modifiers
+{
+  none = 0,
+  shift = 0x1,
+  control = 0x02,
+  alt = 0x04,
+  super = 0x8,
+  hyper = 0x10,
+  meta = 0x20,
+
+  pub fn |(key_modifiers lhs, key_modifiers rhs) -> key_modifiers { return cast<key_modifiers>(cast<int>(lhs) | cast<int>(rhs)); }
+  pub fn &(key_modifiers lhs, key_modifiers rhs) -> key_modifiers { return cast<key_modifiers>(cast<int>(lhs) & cast<int>(rhs)); }
+}
+
+pub struct key_event
+{
+  pub key_code key;
+  pub key_state state;
+  pub key_modifiers modifiers;
+
+  pub key_event(key_code key, key_state state, key_modifiers modifiers)
+    : key(key), state(state), modifiers(modifiers)
+  {
+  }
+
+  key_event(key_event&) = default;
+  ~key_event() = default;
+}
+
+pub enum buttons_state
+{
+  none = 0,
+  primary = 0x1,
+  middle = 0x2,
+  secondary = 0x4,
+  scroll_up = 0x8,
+  scroll_down = 0x10,
+
+  pub fn |(buttons_state lhs, buttons_state rhs) -> buttons_state { return cast<buttons_state>(cast<int>(lhs) | cast<int>(rhs)); }
+  pub fn &(buttons_state lhs, buttons_state rhs) -> buttons_state { return cast<buttons_state>(cast<int>(lhs) & cast<int>(rhs)); }
+}
+
+pub struct mouse_event
+{
+  pub u32 cursor_x;
+  pub u32 cursor_y;
+  pub buttons_state buttons;
+  pub key_modifiers modifiers;
+
+  pub mouse_event(u32 cursor_x, u32 cursor_y, buttons_state buttons, key_modifiers modifiers)
+    : cursor_x(cursor_x), cursor_y(cursor_y), buttons(buttons), modifiers(modifiers)
+  {
+  }
+
+  mouse_event(mouse_event&) = default;
+  ~mouse_event() = default;
+}
+
+pub struct termin
+{
+  u32 state;
+  usize argc;
+  u32[16] argv;
+  char codepoint;
+
+  pub event next;
+
+  pub termin() = default;
+  pub ~termin() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn csi_keycode(u32 code) -> key_code
+{
+  switch (code)
+  {
+    case 1:
+      return key_code::home;
+
+    case 2:
+      return key_code::insert;
+
+    case 3:
+      return key_code::delete;
+
+    case 4:
+      return key_code::end;
+
+    case 5:
+      return key_code::page_up;
+
+    case 6:
+      return key_code::page_down;
+
+    case 7:
+      return key_code::home;
+
+    case 8:
+      return key_code::end;
+
+    case 11 ..= 15:
+      return key_code::f(code - 10);
+
+    case 17 ..= 21:
+      return key_code::f(code - 11);
+
+    case 23 ..= 26:
+      return key_code::f(code - 12);
+
+    case 28 ..= 29:
+      return key_code::f(code - 15);
+
+    case 31 ..= 34:
+      return key_code::f(code - 17);
+  }
+
+  return key_code::sym(' ');
+}
+
+fn csi_key_modifiers(u32 mask) -> key_modifiers
+{
+  var modifiers = key_modifiers::none;
+
+  if (mask != 0)
+  {
+    mask -= 1;
+
+    if (mask & 0x1 != 0)
+      modifiers |= key_modifiers::shift;
+
+    if (mask & 0x2 != 0)
+      modifiers |= key_modifiers::alt;
+
+    if (mask & 0x4 != 0)
+      modifiers |= key_modifiers::control;
+
+    if (mask & 0x8 != 0)
+      modifiers |= key_modifiers::super;
+
+    if (mask & 0x10 != 0)
+      modifiers |= key_modifiers::hyper;
+
+    if (mask & 0x20 != 0)
+      modifiers |= key_modifiers::meta;
+  }
+
+  return modifiers;
+}
+
+fn csi_buttons_state(u32 mask) -> buttons_state
+{
+  var buttons = buttons_state::none;
+
+  if (mask >= 32)
+  {
+    mask -= 32;
+
+    switch (mask & 0xc3)
+    {
+      case 0:
+        buttons |= buttons_state::primary;
+
+      case 1:
+        buttons |= buttons_state::middle;
+
+      case 2:
+        buttons |= buttons_state::secondary;
+
+      case 0x40:
+        buttons |= buttons_state::scroll_up;
+
+      case 0x41:
+        buttons |= buttons_state::scroll_down;
+    }
+  }
+
+  return buttons;
+}
+
+fn csi_button_modifiers(u32 mask) -> key_modifiers
+{
+  var modifiers = key_modifiers::none;
+
+  if (mask >= 32)
+  {
+    mask -= 32;
+
+    if (mask & 0x4 == 0x4)
+      modifiers |= key_modifiers::shift;
+
+    if (mask & 0x8 == 0x8)
+      modifiers |= key_modifiers::alt;
+
+    if (mask & 0x10 == 0x10)
+      modifiers |= key_modifiers::control;
+  }
+
+  return modifiers;
+}
+
+pub fn dispatch(termin mut &ctx, int fd) -> bool
+{
+  while (true)
+  {
+    var in = u8(0);
+
+    if (var result = os::read(&mut thread_ring, fd, &in, 1); result != 1)
+    {
+      if (result == 0)
+      {
+        ctx.next = event::end_of_file;
+        return true;
+      }
+
+      if (result != os::EAGAIN)
+      {
+        ctx.next = event::error(cast<std::errc>(-result));
+        return true;
+      }
+
+      if (ctx.state != 0)
+      {
+        ctx.next = event::key(key_code::escape, key_state::pressed, key_modifiers::none);
+        ctx.state = 0;
+        return true;
+      }
+
+      return false;
+    }
+
+    switch (ctx.state)
+    {
+      case 0 .. 0xff:
+        switch (in)
+        {
+          case 0x00 ..= 0x1f:
+            switch(in)
+            {
+              case 0x00:
+                ctx.next = event::key(key_code::sym(' '), key_state::pressed, key_modifiers::control);
+                return true;
+
+              case 0x09:
+                ctx.next = event::key(key_code::tab, key_state::pressed, key_modifiers::none);
+                return true;
+
+              case 0x0d:
+                ctx.next = event::key(key_code::enter, key_state::pressed, key_modifiers::none);
+                return true;
+
+              case 0x1b:
+                ctx.argc = 0;
+                ctx.argv = [0; 16];
+                ctx.state = 0xfe1b;
+
+              else:
+                ctx.next = event::key(key_code::sym(cast(0x40 + in)), key_state::pressed, key_modifiers::control);
+                return true;
+            }
+
+          case 0x20 ..= 0x40:
+            ctx.next = event::key(key_code::sym(cast(in)), key_state::pressed, key_modifiers::none);
+            return true;
+
+          case 0x41 ..= 0x5a:
+            ctx.next = event::key(key_code::sym(cast(in)), key_state::pressed, key_modifiers::shift);
+            return true;
+
+          case 0x5b ..= 0x7e:
+            ctx.next = event::key(key_code::sym(cast(in)), key_state::pressed, key_modifiers::none);
+            return true;
+
+          case 0x7f:
+            ctx.next = event::key(key_code::backspace, key_state::pressed, key_modifiers::none);
+            return true;
+
+          case 0x80 ..= 0xff:
+            switch (utf::decode(&mut ctx.state, &mut ctx.codepoint, in))
+            {
+              case utf::ACCEPT:
+                ctx.next = event::key(key_code::sym(ctx.codepoint), key_state::pressed, key_modifiers::none);
+                ctx.state = 0;
+                return true;
+
+              case utf::REJECT:
+                ctx.state = 0;
+            }
+
+          else:
+            ctx.state = 0;
+        }
+
+      case 0xfe1b:
+        switch (in)
+        {
+          case 0x1b:
+            ctx.next = event::key(key_code::escape, key_state::pressed, key_modifiers::none);
+            return true;
+
+          case 0x4f:
+            ctx.state = 0xfe4f;
+
+          case 0x5b:
+            ctx.state = 0xfe5b;
+
+          case 0x0d:
+            ctx.next = event::key(key_code::enter, key_state::pressed, key_modifiers::alt);
+            ctx.state = 0;
+            return true;
+
+          case 0x61 ..= 0x7b:
+            ctx.next = event::key(key_code::sym(cast(in - 0x20)), key_state::pressed, key_modifiers::alt);
+            ctx.state = 0;
+            return true;
+
+          else:
+            ctx.state = 0;
+        }
+
+        case 0xfe4f:
+          switch (in)
+          {
+            case 0x41:
+              ctx.next = event::key(key_code::up, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x42:
+              ctx.next = event::key(key_code::down, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x43:
+              ctx.next = event::key(key_code::right, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x44:
+              ctx.next = event::key(key_code::left, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x46:
+              ctx.next = event::key(key_code::end, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x48:
+              ctx.next = event::key(key_code::home, key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            case 0x50 ..= 0x53:
+              ctx.next = event::key(key_code::f(cast(in - 0x4f)), key_state::pressed, key_modifiers::none);
+              ctx.state = 0;
+              return true;
+
+            else:
+              ctx.state = 0;
+          }
+
+        case 0xfe5b:
+          switch (in)
+          {
+            case 0x30 ..= 0x39:
+              if (ctx.argc < ctx.argv.len)
+                ctx.argv[ctx.argc] = ctx.argv[ctx.argc] * 10 + cast(in - 0x30);
+
+            case 0x3b:
+              if (ctx.argc < ctx.argv.len)
+                ctx.argc += 1;
+
+            case 0x41:
+              ctx.next = event::key(key_code::up, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x42:
+              ctx.next = event::key(key_code::down, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x43:
+              ctx.next = event::key(key_code::right, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x44:
+              ctx.next = event::key(key_code::left, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x46:
+              ctx.next = event::key(key_code::end, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x48:
+              ctx.next = event::key(key_code::home, key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x7e:
+              ctx.next = event::key(csi_keycode(ctx.argv[0]), key_state::pressed, csi_key_modifiers(ctx.argv[1]));
+              ctx.state = 0;
+              return true;
+
+            case 0x5a:
+              ctx.next = event::key(key_code::tab, key_state::pressed, key_modifiers::shift);
+              ctx.state = 0;
+              return true;
+
+            case 0x4d:
+              switch (ctx.argc)
+              {
+                case 0:
+                  ctx.state = 0xfe4d;
+
+                case 2:
+                  ctx.argv[1] = std::max(ctx.argv[1], 1);
+                  ctx.argv[2] = std::max(ctx.argv[2], 1);
+                  ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0]), csi_button_modifiers(ctx.argv[0]));
+                  ctx.state = 0;
+                  return true;
+
+                else:
+                  ctx.state = 0;
+              }
+
+            else:
+              ctx.state = 0;
+          }
+
+        case 0xfe4d:
+          switch (ctx.argc)
+          {
+            case 0:
+            case 1:
+              ctx.argv[ctx.argc] = cast(in);
+              ctx.argc += 1;
+
+            case 2:
+              ctx.argv[ctx.argc] = cast(in);
+              ctx.argv[1] = std::max(ctx.argv[1], 33) - 32;
+              ctx.argv[2] = std::max(ctx.argv[2], 33) - 32;
+              ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0]), csi_button_modifiers(ctx.argv[0]));
+              ctx.state = 0;
+              return true;
+          }
+    }
+  }
+}
+
+pub fn enable_mouse_capture(int fd)
+{
+  os::write(&mut thread_ring, fd, "\x1b[?1000h".data, 8);
+  os::write(&mut thread_ring, fd, "\x1b[?1002h".data, 8);
+  os::write(&mut thread_ring, fd, "\x1b[?1003h".data, 8);
+  os::write(&mut thread_ring, fd, "\x1b[?1015h".data, 8);
+}

@@ -1,0 +1,135 @@
+//
+// wait queue
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import scheduler;
+import thread as _ : thread;
+
+pub struct wait_queue
+{
+  pub fn empty(this&) -> bool
+  {
+    return !this.waiters;
+  }
+
+  pub fn head(this&) -> thread *
+  {
+    return this.waiters.thread;
+  }
+
+  pub fn notify_one(this mut &) -> void
+  {
+    notify_n(&mut this, 1);
+  }
+
+  pub fn notify_all(this mut &) -> void
+  {
+    notify_n(&mut this, ~0);
+  }
+
+  pub fn notify_n(this mut &, usize n) -> void
+  {
+    for(var waiter = this.waiters; waiter && n != 0; waiter = this.waiters, n -= 1)
+    {
+      pop_waiter(&mut this, waiter);
+
+      scheduler::unblock(waiter.thread);
+    }
+  }
+
+  pub fn wait<Lock>(this mut &, Lock mut &lock) -> void
+  {
+    var waiter = waiter();
+
+    {
+      append_waiter(&mut this, &waiter);
+
+      scheduler::prepare_to_block();
+
+      lock.unlock();
+    }
+
+    scheduler::block();
+
+    lock.lock();
+  }
+
+  pub fn wait_until<Lock>(this mut &, Lock mut &lock, u64 timeout) -> bool
+  {
+    var waiter = waiter();
+
+    {
+      append_waiter(&mut this, &waiter);
+
+      scheduler::prepare_to_block();
+    }
+
+    if (scheduler::block_until(&mut lock, timeout) != 0)
+    {
+      remove_waiter(&mut this, &waiter);
+
+      return false;
+    }
+
+    return true;
+  }
+
+  struct waiter
+  {
+    thread mut *thread;
+    waiter mut *next;
+    waiter mut *last;
+
+    waiter() = default;
+    ~waiter() = default;
+  }
+
+  fn pop_waiter(this mut &, waiter mut *waiter) -> void
+  {
+    this.waiters = waiter.next;
+
+    if (this.waiters)
+      this.waiters.last = waiter.last;
+  }
+
+  fn append_waiter(this mut &, waiter mut *waiter) -> void
+  {
+    waiter.thread = cpu::current_thread;
+
+    if (this.waiters)
+      this.waiters.last.next = waiter;
+    else
+      this.waiters = waiter;
+
+    this.waiters.last = waiter;
+  }
+
+  fn remove_waiter(this mut &, waiter mut *waiter) -> void
+  {
+    var prev = null<waiter mut *>;
+    var curr = &this.waiters;
+
+    while (*curr != waiter)
+    {
+      prev = *curr;
+      curr = &curr.next;
+    }
+
+    if (waiter.next)
+      waiter.next.last = waiter.last;
+
+    if (this.waiters.last == waiter)
+      this.waiters.last = prev;
+
+    *curr = waiter.next;
+  }
+
+  pub wait_queue() = default;
+  pub wait_queue(#wait_queue&) = default;
+  pub ~wait_queue() = default;
+
+  waiter mut *waiters;
+}

@@ -1,0 +1,259 @@
+//
+// coco
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import os.zaos.unistd;
+
+enum tio
+{
+  const getptn = 0x80035430;
+  const grantpt = 0x80035431;
+  const gettermios = 0x80035401;
+  const settermios = 0x80035402;
+  const getwinsize = 0x80035413;
+  const setwinsize = 0x80035414;
+}
+
+enum IFLAG
+{
+  const IGNBRK = 0o00001;  // ignore break condition
+  const BRKINT = 0o00002;  // signal interrupt on break
+  const ISTRIP = 0o00040;  // strip 8th bit off characters
+  const INLCR  = 0o00100;  // map NL to CR on input
+  const IGNCR  = 0o00200;  // ignore CR
+  const ICRNL  = 0o00400;  // map CR to NL on input
+  const IUTF8  = 0o40000;  // input is UTF8
+}
+
+enum OFLAG
+{
+  const OPOST = 0o00001;   // post-process output
+  const ONLCR = 0o00004;   // map NL to CR-NL on output
+  const OCRNL = 0o00010;   // map CR to NL on output
+  const OFILL = 0o00100;   // use fill characters for delay
+  const OFDEL = 0o00200;   // fill is DEL
+}
+
+enum CFLAG
+{
+  const CSIZE  = 0o00060;  // character size mask
+  const   CS5  = 0o00000;
+  const   CS6  = 0o00020;
+  const   CS7  = 0o00040;
+  const   CS8  = 0o00060;
+  const CSTOPB = 0o00100;  // set two stop bits, rather than one
+  const CREAD  = 0o00200;  // enable receiver
+}
+
+enum LFLAG
+{
+  const ISIG   = 0o000001; // enable signals
+  const ICANON = 0o000002; // canonical input
+  const ECHO   = 0o000010; // enable echo
+  const ECHOE  = 0o000020; // echo ERASE
+  const ECHOK  = 0o000040; // echo KILL
+  const ECHONL = 0o000100; // echo NL
+  const NOFLSH = 0o000200; // disable flush after interrupt or quit
+  const IEXTEN = 0o100000; // enable implementation-defined input
+}
+
+struct grantpt
+{
+  u32 uid;
+  u32 gid;
+  u32 mode;
+
+  grantpt() = default;
+  ~grantpt() = default;
+}
+
+struct termios
+{
+  u32 c_iflag;
+  u32 c_oflag;
+  u32 c_cflag;
+  u32 c_lflag;
+  u8 c_line;
+  u8[32] c_cc;
+  u32 __c_ispeed;
+  u32 __c_ospeed;
+
+  termios() = default;
+  termios(termios&) = default;
+  fn =(termios mut &, termios &) -> termios mut & = default;
+  ~termios() = default;
+}
+
+struct winsize
+{
+  u16 ws_row;
+  u16 ws_col;
+  u16 ws_xpixel;
+  u16 ws_ypixel;
+
+  winsize() = default;
+  winsize(winsize&) = default;
+  fn =(winsize mut &, winsize &) -> winsize mut & = default;
+  ~winsize() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct pty
+{
+  pub i32 master;
+  pub i32 slave;
+
+  termios state;
+
+  pub pty() = default;
+  pub pty(pty&) = default;
+  pub fn =(pty mut &, pty &) -> pty mut & = default;
+  pub ~pty() = default;
+}
+
+pub fn create() -> pty
+{
+  return pty();
+}
+
+pub fn open_pty(pty mut &pty) -> i32
+{
+  using os;
+
+  var master = open(&mut thread_ring, 4, os::string("/dev/pts/ptmx"), O_RDWR, 0);
+  if (master < 0)
+    return master;
+
+  var grantpt = grantpt();
+  grantpt.uid = getuid();
+  grantpt.gid = getgid();
+  grantpt.mode = 0o660;
+
+  if (var result = ioctl(&mut thread_ring, master, tio::grantpt, &grantpt, sizeof<grantpt>); result < 0)
+    return result;
+
+  var ptn = 0;
+  if (var result = ioctl(&mut thread_ring, master, tio::getptn, &ptn, sizeof<int>); result < 0)
+    return result;
+
+  var buffer = [0; 64];
+  var len = std::sprintf(&mut buffer, "/dev/pts/{}", ptn);
+
+  var slave = open(&mut thread_ring, 4, os::string(buffer.data, len), O_RDWR, 0);
+  if (slave < 0)
+    return slave;
+
+  pty.master = master;
+  pty.slave = slave;
+
+  return 0;
+}
+
+pub fn read_master(pty mut &pty, u8 mut *data, usize len) -> i32
+{
+  return os::read(&mut thread_ring, pty.master, data, len);
+}
+
+pub fn write_master(pty mut &pty, u8 *data, usize len) -> i32
+{
+  return os::write(&mut thread_ring, pty.master, data, len);
+}
+
+pub fn read_slave(pty mut &pty, u8 mut *data, usize len) -> i32
+{
+  return os::read(&mut thread_ring, pty.slave, data, len);
+}
+
+pub fn write_slave(pty mut &pty, u8 *data, usize len) -> i32
+{
+  return os::write(&mut thread_ring, pty.slave, data, len);
+}
+
+pub fn get_winsize(pty mut &pty) -> winsize
+{
+  var ws = winsize(void);
+
+  os::ioctl(&mut thread_ring, pty.slave, tio::getwinsize, &ws, sizeof(ws));
+
+  return ws;
+}
+
+pub fn get_termios(pty mut &pty) -> termios
+{
+  var ts = termios(void);
+
+  os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &ts, sizeof(ts));
+
+  return ts;
+}
+
+pub fn resize(pty mut &pty, usize width, usize height) -> i32
+{
+  var ws = winsize(void);
+
+  ws.ws_col = cast(width);
+  ws.ws_row = cast(height);
+  ws.ws_xpixel = 0;
+  ws.ws_ypixel = 0;
+
+  if (var result = os::ioctl(&mut thread_ring, pty.master, tio::setwinsize, &ws, sizeof(ws)); result < 0)
+    return result;
+
+  return 0;
+}
+
+pub fn echo_off(pty mut &pty) -> i32
+{
+  var state = termios(void);
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); result < 0)
+    return result;
+
+  state.c_lflag &= ~LFLAG::ECHO;
+
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); result < 0)
+    return result;
+
+  return 0;
+}
+
+pub fn echo_on(pty mut &pty) -> i32
+{
+  var state = termios(void);
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); result < 0)
+    return result;
+
+  state.c_lflag |= LFLAG::ECHO;
+
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); result < 0)
+    return result;
+
+  return 0;
+}
+
+pub fn enable_raw_mode(pty mut &pty) -> i32
+{
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &pty.state, sizeof<termios>); result < 0)
+    return result;
+
+  var raw = pty.state;
+  raw.c_iflag &= ~(IFLAG::BRKINT | IFLAG::ICRNL | IFLAG::ISTRIP);
+  raw.c_oflag &= ~(OFLAG::OPOST);
+  raw.c_cflag |= (CFLAG::CS8);
+  raw.c_lflag &= ~(LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ISIG);
+
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &raw, sizeof<termios>); result < 0)
+    return result;
+
+  return 0;
+}
+
+pub fn restore_cooked_mode(pty mut &pty) -> i32
+{
+  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &pty.state, sizeof<termios>); result < 0)
+    return result;
+
+  return 0;
+}

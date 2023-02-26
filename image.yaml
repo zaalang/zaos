@@ -1,0 +1,68 @@
+
+# https://docs.ansible.com/ansible/2.4/copy_module.html#examples
+
+image:
+  name: zaos
+  uuid: a870c66f-67e7-b344-8fd7-df4168fa640f
+  partitions:
+
+    - name: boot
+      size: 36Mb
+      type: efi
+      uuid: bfe00834-a4a7-4ecb-8342-625d385c6d07
+      actions:
+        - md:
+            dest: /EFI
+        - md:
+            dest: /EFI/Boot
+        - cp:
+            src: build/grub.cfg
+            dest: /EFI/Boot/grub.cfg
+        - cp:
+            src: build/grubx64.efi
+            dest: /EFI/Boot/bootx64.efi
+
+    - name: root
+      size: 64Mb
+      type: ext2
+      uuid: a1eb64ad-52c6-4e96-9c85-b7263c18d4f0
+      actions:
+        - md:
+            dest: /boot
+        - cp:
+            src: build/kernel/kernel.efi
+            dest: /boot/kernel.efi
+        - cp:
+            src: system/servers/coco/unifont-14.0.03.hex
+            dest: /boot/unifont-14.0.03.hex
+        - md:
+            dest: /root
+        - cp:
+            src: build/test.txt
+            dest: /root/test.txt
+        - md:
+            dest: /etc
+        - md:
+            dest: /lib
+        - cp:
+            src: build/system/loader/loader
+            dest: /lib/loader
+        - md:
+            dest: /data
+        - cp:
+            src: data/us.keymap
+            dest: /data/us.keymap
+        - md:
+            dest: /srv
+        - cp:
+            src: build/system/servers/systemd/systemd
+            dest: /srv/systemd
+        - cp:
+            src: build/system/servers/coco/coco
+            dest: /srv/coco
+        - cp:
+            src: build/system/apps/baz/baz
+            dest: /root/baz
+        - cp:
+            src: build/system/apps/breakout/breakout
+            dest: /root/breakout

@@ -1,0 +1,10 @@
+//
+// platform interface
+//
+
+import platform.x64-efi.cpu;
+import platform.x64-efi.mmu;
+import platform.x64-efi.rtc;
+import platform.x64-efi.apic;
+import platform.x64-efi.task;
+import platform.x64-efi.bootinfo;

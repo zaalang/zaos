@@ -1,0 +1,22 @@
+//
+// chr result
+//
+
+pub enum result : i32
+{
+  ok = 0,
+  not_permitted = -1,
+  io_error = -5,
+  no_such_device = -6,
+  would_block = -11,
+  device_busy = -16,
+  invalid_argument = -22,
+  not_supported = -95,
+  timed_out = -110,
+  operation_cancelled = -125,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}

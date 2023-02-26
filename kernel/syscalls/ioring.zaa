@@ -1,0 +1,55 @@
+//
+// ioring
+//
+
+import std.stdlib;
+import vm : virtaddr, virtrange;
+import vfs;
+import ioring : ioring_header, ioring_sqe, ioring_cqe, io_ring;
+import result as _ : result;
+import process as _ : process;
+
+enum flags
+{
+}
+
+extern fn sys_ioring_setup(virtaddr buffer, usize buflen, u64 flags) -> result
+{
+  if (buflen < 256)
+    return invalid_argument;
+
+  if (!vm::is_user_address(buffer))
+    return invalid_argument;
+
+  var ring = create_ioring(process::current);
+
+  if (var result = setup_ioring(ring, virtrange(buffer, buflen)); !result)
+    return cast(result);
+
+  return process::current.new_fd(vfs::file_descriptor::create(ring));
+}
+
+extern fn sys_ioring_enter(i32 fd, u32 to_submit, u32 min_complete, u64 flags) -> result
+{
+  var file = process::current.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (!file.node.is_ring)
+    return vfs::result::bad_descriptor;
+
+  if (to_submit != 0)
+  {
+    if (ioring::submit(file.node, to_submit) != to_submit)
+      return ioring::result::device_busy;
+  }
+
+  if (min_complete != 0)
+  {
+    if (ioring::wait(file.node, min_complete) < min_complete)
+      return ioring::result::interrupted;
+  }
+
+  return 0;
+}

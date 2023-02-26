@@ -1,0 +1,633 @@
+//
+// screen
+//
+
+import std.vector;
+import std.function;
+import vt.result;
+import vt.vte : *;
+
+struct cell
+{
+  char ch;
+  usize width;
+  attrs attrs;
+
+  cell() = default;
+  cell(cell&) = default;
+  fn =(cell mut &, cell &) -> cell mut & = default;
+  ~cell() = default;
+}
+
+struct line
+{
+  std::vector<cell> cells;
+
+  line() = default;
+  line(line&) = default;
+  fn =(line mut &, line &) -> line mut & = default;
+  ~line() = default;
+}
+
+pub struct screen
+{
+  usize rows;
+  usize columns;
+
+  usize head;
+  std::vector<line> lines;
+
+  pub u32 foreground_color = 0xffffffff;
+  pub u32 background_color = 0xff000000;
+
+  pub fn rows(this&) { return this.rows; }
+  pub fn columns(this&) { return this.columns; }
+
+  pub std::delegate<void fn(u8*, usize)> on_reply;
+
+  vte state;
+
+  usize cursor_x;
+  usize cursor_y;
+  bool cursor_state = true;
+
+  usize margin_top;
+  usize margin_bottom;
+
+  pub screen() = default;
+  pub ~screen() = default;
+}
+
+pub fn cursor(screen &screen) -> (usize, usize)
+{
+  return (screen.cursor_x, screen.cursor_y);
+}
+
+pub fn margins(screen &screen) -> (usize, usize)
+{
+  return (screen.margin_top, screen.margin_bottom);
+}
+
+pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
+{
+  if (rows == screen.rows && columns == screen.columns)
+    return 0;
+
+  if (screen.lines.len < rows)
+  {
+    var lines = std::vector<line>::with_capacity(rows);
+
+    for(var i = 0; i != rows - screen.lines.len; ++i)
+    {
+      // insert from scroll buffer
+    }
+
+    screen.cursor_y += lines.len;
+
+    for(var i = 0; i != screen.lines.len; ++i)
+    {
+      lines.push_back(&move screen.lines[(screen.head + i) % screen.lines.len]);
+    }
+
+    lines.resize(rows);
+
+    screen.head = 0;
+    screen.lines = &move lines;
+  }
+
+  for(var mut &line : screen.lines)
+  {
+    if (var existing = line.cells.len; existing < columns)
+    {
+      line.cells.resize(columns);
+
+      for(var i = existing; i < line.cells.len; ++i)
+      {
+        line.cells[i].ch = ' ';
+        line.cells[i].width = 1;
+        line.cells[i].attrs.foreground_color = screen.foreground_color;
+        line.cells[i].attrs.background_color = screen.background_color;
+      }
+    }
+  }
+
+  if (screen.cursor_y + 1 == screen.rows || rows <= screen.cursor_y)
+  {
+    if (rows > screen.rows)
+    {
+      screen.cursor_y += (rows - screen.rows);
+      screen.head = (screen.head + screen.lines.len - (rows - screen.rows)) % screen.lines.len;
+    }
+
+    if (screen.cursor_y >= rows)
+    {
+      screen.cursor_y = rows - 1;
+      screen.head = (screen.head + (screen.rows - rows)) % screen.lines.len;
+    }
+  }
+
+  screen.rows = rows;
+  screen.columns = columns;
+
+  set_scroll_region(&mut screen, screen.margin_top, screen.margin_bottom);
+
+  return 0;
+}
+
+pub fn draw(screen mut &screen, var callback) -> vt::result
+{
+  var attrs = attrs(void);
+
+  for(var y = 0; y < screen.rows; ++y)
+  {
+    var &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+    for(var x = 0; x < screen.columns; ++x)
+    {
+      var &cell = line.cells[x];
+
+      if (cell.width == 0)
+        continue;
+
+      attrs = cell.attrs;
+
+      callback(x, y, cell.ch, cell.width, attrs);
+    }
+  }
+
+  return 0;
+}
+
+pub fn move_to(screen mut &screen, usize x, usize y) -> vt::result
+{
+  screen.cursor_x = x;
+  screen.cursor_y = y;
+
+  return 0;
+}
+
+pub fn move_up(screen mut &screen, usize count, bool scroll) -> vt::result
+{
+  if (screen.cursor_y < screen.margin_top)
+    screen.cursor_y = screen.margin_top;
+
+  if (screen.cursor_y - screen.margin_top < count)
+  {
+    if (scroll)
+      scroll_down(&mut screen, count - (screen.cursor_y - screen.margin_top));
+
+    count = screen.cursor_y - screen.margin_top;
+  }
+
+  move_to(&mut screen, screen.cursor_x, screen.cursor_y - count);
+
+  return 0;
+}
+
+pub fn move_down(screen mut &screen, usize count, bool scroll) -> vt::result
+{
+  if (screen.cursor_y >= screen.margin_bottom)
+    screen.cursor_y = screen.margin_bottom - 1;
+
+  if (screen.margin_bottom - screen.cursor_y - 1 < count)
+  {
+    if (scroll)
+      scroll_up(&mut screen, count - (screen.margin_bottom - screen.cursor_y - 1));
+
+    count = screen.margin_bottom - screen.cursor_y - 1;
+  }
+
+  move_to(&mut screen, screen.cursor_x, screen.cursor_y + count);
+
+  return 0;
+}
+
+pub fn move_left(screen mut &screen, usize count) -> vt::result
+{
+  if (screen.cursor_x < count)
+    count = screen.cursor_x;
+
+  move_to(&mut screen, screen.cursor_x - count, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn move_right(screen mut &screen, usize count) -> vt::result
+{
+  if (screen.cursor_x >= screen.columns)
+    screen.cursor_x = screen.columns - 1;
+
+  if (screen.columns - screen.cursor_x - 1 < count)
+    count = screen.columns - screen.cursor_x - 1;
+
+  move_to(&mut screen, screen.cursor_x + count, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn move_home(screen mut &screen) -> vt::result
+{
+  move_to(&mut screen, 0, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn move_end(screen mut &screen) -> vt::result
+{
+  move_to(&mut screen, screen.columns - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn backspace(screen mut &screen) -> vt::result
+{
+  var x = screen.cursor_x;
+  var y = screen.cursor_y;
+
+  if (y < screen.rows)
+  {
+    if (x <= screen.columns)
+    {
+      if (x == 0 && y != 0)
+      {
+        y = y - 1;
+        x = screen.columns;
+      }
+
+      var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+      while (x != 0 && line.cells[x - 1].width == 0)
+      {
+        x = x - 1;
+      }
+    }
+  }
+
+  if (x != 0)
+    x = x - 1;
+
+  move_to(&mut screen, x, y);
+
+  return 0;
+}
+
+pub fn cursor_state(screen &screen) -> bool
+{
+  return screen.cursor_state;
+}
+
+pub fn set_cursor_state(screen mut &screen, bool state) -> vt::result
+{
+  screen.cursor_state = state;
+
+  return 0;
+}
+
+pub fn set_scroll_region(screen mut &screen, usize y0, usize y1) -> vt::result
+{
+  if (y1 <= y0 || y1 >= screen.rows)
+  {
+    y0 = 0;
+    y1 = screen.rows - 1;
+  }
+
+  screen.margin_top = y0;
+  screen.margin_bottom = y1 + 1;
+
+  return 0;
+}
+
+pub fn scroll_up(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (count > screen.margin_bottom - screen.margin_top)
+    count = screen.margin_bottom - screen.margin_top;
+
+  if (screen.margin_bottom - screen.margin_top == screen.rows)
+  {
+    screen.head += count;
+
+    if (screen.head >= screen.lines.len)
+      screen.head -= screen.lines.len;
+  }
+  else
+  {
+    for(var y = screen.margin_top; y != screen.margin_bottom - count; ++y)
+    {
+      var mut &src = screen.lines[(screen.head + y + count) % screen.lines.len];
+      var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
+
+      std::swap(&mut src.cells, &mut dst.cells);
+    }
+  }
+
+  erase(&mut screen, 0, screen.margin_bottom - count, screen.columns - 1, screen.margin_bottom - 1);
+
+  return 0;
+}
+
+pub fn scroll_down(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (count > screen.margin_bottom - screen.margin_top)
+    count = screen.margin_bottom - screen.margin_top;
+
+  if (screen.margin_bottom - screen.margin_top == screen.rows)
+  {
+    if (screen.head < count)
+      screen.head += screen.lines.len;
+
+    screen.head -= count;
+  }
+  else
+  {
+    rof(var y = screen.margin_bottom; y == screen.margin_top + count; --y)
+    {
+      var mut &src = screen.lines[(screen.head + y - count) % screen.lines.len];
+      var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
+
+      std::swap(&mut src.cells, &mut dst.cells);
+    }
+  }
+
+  erase(&mut screen, 0, screen.margin_top, screen.columns - 1, screen.margin_top + count - 1);
+
+  return 0;
+}
+
+pub fn tab_left(screen mut &screen, usize count) -> vt::result
+{
+  var x = 0;
+
+  if (count * 8 < screen.cursor_x)
+    x = std::align_down(screen.cursor_x - count * 8, 8);
+
+  move_to(&mut screen, x, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn tab_right(screen mut &screen, usize count) -> vt::result
+{
+  var x = screen.columns - 1;
+
+  if (screen.cursor_x + (count - 1) * 8 + 1 < screen.columns)
+    x = std::align_up(screen.cursor_x + (count - 1) * 8 + 1, 8);
+
+  move_to(&mut screen, x, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn insert_lines(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (screen.cursor_y >= screen.margin_bottom)
+    return 0;
+
+  if (screen.margin_bottom - screen.cursor_y - 1 < count)
+    count = screen.margin_bottom - screen.cursor_y - 1;
+
+  rof(var y = screen.margin_bottom; y == screen.cursor_y + count; --y)
+  {
+    var mut &src = screen.lines[(screen.head + y - count) % screen.lines.len];
+    var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
+
+    std::swap(&mut src.cells, &mut dst.cells);
+  }
+
+  erase(&mut screen, 0, screen.cursor_y, screen.columns - 1, screen.cursor_y + count - 1);
+
+  return 0;
+}
+
+pub fn delete_lines(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (screen.cursor_y >= screen.margin_bottom)
+    return 0;
+
+  if (screen.margin_bottom - screen.cursor_y - 1 < count)
+    count = screen.margin_bottom - screen.cursor_y - 1;
+
+  for(var y = screen.cursor_y; y != screen.margin_bottom - count; ++y)
+  {
+    var mut &src = screen.lines[(screen.head + y + count) % screen.lines.len];
+    var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
+
+    std::swap(&mut src.cells, &mut dst.cells);
+  }
+
+  erase(&mut screen, 0, screen.margin_bottom - count, screen.columns - 1, screen.margin_bottom - 1);
+
+  return 0;
+}
+
+pub fn insert_characters(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (screen.cursor_y >= screen.rows)
+    return 0;
+
+  if (screen.cursor_x >= screen.columns)
+    return 0;
+
+  if (screen.columns - screen.cursor_x - 1 < count)
+    count = screen.columns - screen.cursor_x - 1;
+
+  var y = screen.cursor_y;
+  var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+  rof(var x = screen.columns; x == screen.cursor_x + count; --x)
+  {
+    line.cells[x] = line.cells[x - count];
+  }
+
+  erase(&mut screen, screen.cursor_x, screen.cursor_y, screen.cursor_x + count - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn delete_characters(screen mut &screen, usize count) -> vt::result
+{
+  if (count == 0)
+    return -22;
+
+  if (screen.cursor_y >= screen.rows)
+    return 0;
+
+  if (screen.cursor_x >= screen.columns)
+    return 0;
+
+  if (screen.columns - screen.cursor_x - 1 < count)
+    count = screen.columns - screen.cursor_x - 1;
+
+  var y = screen.cursor_y;
+  var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+  for(var x = screen.cursor_x; x != screen.columns - count; ++x)
+  {
+    line.cells[x] = line.cells[x + count];
+  }
+
+  erase(&mut screen, screen.columns - count, screen.cursor_y, screen.columns - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase(screen mut &screen, usize x0, usize y0, usize x1, usize y1) -> vt::result
+{
+  if (x1 >= screen.columns)
+    x1 = screen.columns - 1;
+
+  if (y1 >= screen.rows)
+    y1 = screen.rows - 1;
+
+  for(var y = y0; y <= y1; ++y)
+  {
+    var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+    var beg = (y == y0) ? x0 : 0;
+    var end = (y == y1) ? x1 : screen.columns - 1;
+
+    for(var x = beg; x <= end; ++x)
+    {
+      line.cells[x].ch = ' ';
+      line.cells[x].width = 1;
+      line.cells[x].attrs.foreground_color = screen.foreground_color;
+      line.cells[x].attrs.background_color = screen.background_color;
+    }
+  }
+
+  return 0;
+}
+
+pub fn erase_screen_to_cursor(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, 0, 0, screen.cursor_x, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase_cursor_to_screen(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, screen.cursor_x, screen.cursor_y, screen.columns - 1, screen.rows - 1);
+
+  return 0;
+}
+
+pub fn erase_home_to_cursor(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, 0, screen.cursor_y, screen.cursor_x, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase_cursor_to_end(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, screen.cursor_x, screen.cursor_y, screen.columns - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase_home_to_end(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, 0, screen.cursor_y, screen.columns - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase_characters(screen mut &screen, usize count) -> vt::result
+{
+  erase(&mut screen, screen.cursor_x, screen.cursor_y, screen.cursor_x + count - 1, screen.cursor_y);
+
+  return 0;
+}
+
+pub fn erase_screen(screen mut &screen) -> vt::result
+{
+  erase(&mut screen, 0, 0, screen.columns - 1, screen.rows - 1);
+
+  return 0;
+}
+
+pub fn put(screen mut &screen, char ch, attrs &attrs) -> vt::result
+{
+  var width = 1;
+
+  if (std::is_non_spacing(ch))
+    width = 0;
+
+  if (std::is_wide_spacing(ch))
+    width = 2;
+
+  if (ch < 32 || (ch >= 0x7f && ch < 0xa0))
+    width = 2;
+
+  if (ch == 0 || width == 0)
+    return 0;
+
+  var x = screen.cursor_x;
+  var y = screen.cursor_y;
+
+  if (y >= screen.rows)
+    return 0;
+
+  if (x + width > screen.columns)
+    x = screen.columns - width;
+
+  var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
+
+  line.cells[x].ch = ch;
+  line.cells[x].width = width;
+  line.cells[x].attrs = attrs;
+
+  for(var i = 1; i < width && i + x < line.cells.len; ++i)
+  {
+    line.cells[x + i].width = 0;
+  }
+
+  move_to(&mut screen, x + width, y);
+
+  return 0;
+}
+
+pub fn post(screen mut &screen, u8 *data, usize len) -> vt::result
+{
+  if (screen.on_reply)
+  {
+    screen.on_reply(data, len);
+  }
+
+  return 0;
+}
+
+pub fn set_palette(screen mut &screen, vt::palette &palette) -> vt::result
+{
+  screen.state.set_palette(palette);
+
+  screen.foreground_color = palette[cast(vt::color::foreground)];
+  screen.background_color = palette[cast(vt::color::background)];
+
+  return 0;
+}
+
+pub fn write(screen mut &screen, u8 *data, usize len) -> vt::result
+{
+  for(var ch = data, var end = data + len; ch != end; ++ch)
+  {
+    scan(&mut screen, &mut screen.state, *ch);
+  }
+
+  return 0;
+}

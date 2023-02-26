@@ -1,0 +1,73 @@
+//
+// stat
+//
+
+import std.stdio;
+import std.algorithm;
+import os.zaos.fcntl;
+import chrono : duration;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var path = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  if (path.empty)
+  {
+    terminal.write("usage: stat <filepath>\n");
+    return -22;
+  }
+
+  var fd = open(&mut thread_ring, os::string(path.data, path.len), O_NOFOLLOW, 0);
+
+  if (fd < 0)
+    terminal.write(std::format("stat: error on stat {} - {}\n", path, std::errc(cast(-fd))));
+
+  if (fd < 0)
+    return fd;
+
+  var stat = os::stat();
+  var result = stat(&mut thread_ring, fd, &stat, 0x7f);
+
+  terminal.write(std::format("  File: {}", path));
+
+  if (stat.ftype == os::ftype::symbolic_link)
+  {
+    var buffer = typename u8[4096](void);
+
+    var linkres = read(&mut thread_ring, fd, buffer.data, buffer.len);
+
+    if (linkres < 0)
+      terminal.write(std::format("stat: error on readlink {} - {}\n", path, std::errc(cast(-linkres))));
+
+    if (linkres > 0)
+      terminal.write(std::format(" -> {}", std::string_view(buffer.data, cast<usize>(linkres))));
+  }
+
+  terminal.write("\n");
+
+  terminal.write(std::format("  Size: {:14}  Type: {}\n", stat.size, std::meta::enumerator_name(stat.ftype)));
+
+  terminal.write(std::format("Access: {:#14o}   Uid: {:14}   Gid: {:14}\n", stat.mode & 0xfff, stat.uid, stat.gid));
+
+  terminal.write(std::format("Modify: {}\n", chrono::system_time(stat.mtime.nanoseconds)));
+  terminal.write(std::format("Change: {}\n", chrono::system_time(stat.ctime.nanoseconds)));
+  terminal.write(std::format(" Birth: {}\n", chrono::system_time(stat.btime.nanoseconds)));
+
+  close(&mut thread_ring, fd);
+
+  return result;
+}

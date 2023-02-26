@@ -1,0 +1,299 @@
+//
+// heap
+//
+
+import std.stdio;
+import vm.page : PAGE_SIZE, physaddr, virtaddr, physrange, virtrange;
+import vfs.node;
+import platform;
+import cpu;
+
+pub struct heap_allocator
+{
+  std::spin_lock lock;
+
+  virtaddr base;
+  virtaddr limit;
+
+  usize used;
+
+  int blockshift;
+  usize blocksize;
+  bitmap[16] blockmap;
+
+  heap_allocator() = default;
+  heap_allocator(#heap_allocator&) = default;
+  ~heap_allocator() = default;
+}
+
+fn heap() -> heap_allocator mut &
+{
+  static instance = #heap_allocator();
+
+  return &instance;
+}
+
+struct bitmap
+{
+  usize n;
+  u64 mut *bits;
+
+  fn set(this mut &, usize bit) -> void
+  {
+    *(this.bits + bit >> 6) |= 1 << (bit & 0x3f);
+  }
+
+  fn unset(this mut &, usize bit) -> void
+  {
+    *(this.bits + bit >> 6) &= ~(1 << (bit & 0x3f));
+  }
+
+  fn test(this mut &, usize bit) -> bool
+  {
+    return *(this.bits + bit >> 6) & (1 << (bit & 0x3f)) != 0;
+  }
+
+  fn find(this &) -> usize
+  {
+    for(var i = 0; i < this.n; ++i)
+    {
+      if (*(this.bits + i) != 0)
+        return i << 6 + cast<usize>(std::ctz(*(this.bits + i)));
+    }
+
+    return ~0;
+  }
+
+  bitmap() = default;
+  bitmap(#bitmap&) = default;
+  ~bitmap() = default;
+}
+
+fn order_for_size(usize size) -> usize
+{
+  return std::ceil_log2(std::align_up(size, heap.blocksize) >> heap.blockshift);
+}
+
+pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+{
+  if (cpu != 0)
+    return;
+
+  var mut &heap = heap();
+
+  heap.base = virtaddr(bootinfo.heap_base);
+  heap.limit = virtaddr(bootinfo.heap_limit);
+
+  std::print("heap base: ", heap.base.ptr);
+  std::print("heap limit: ", heap.limit.ptr);
+  std::print("heap initial memory: ", bootinfo.hunk_size);
+
+  var bitmapsize = 0;
+  for(var i = 0; i < heap.blockmap.len; ++i)
+    bitmapsize += std::pow(2, i);
+
+  var memory = cast<u64 mut *>(early_malloc(bootinfo, bitmapsize * sizeof<u64>).ptr);
+
+  for(var i = 0; i < heap.blockmap.len; ++i)
+  {
+    var n = std::pow(2, heap.blockmap.len - i - 1);
+
+    heap.blockmap[i].n = n;
+    heap.blockmap[i].bits = memory;
+
+    memory += n;
+  }
+
+  heap.blocksize = std::align_up((heap.limit - heap.base) / (64 * heap.blockmap[0].n + 1), 0x10000);
+  heap.blockshift = std::ctz(heap.blocksize);
+
+  std::memset(memory, 0, bitmapsize * sizeof<u64>);
+
+  for(var i = 0; i < (heap.limit - heap.base) / (heap.blockmap[0].n * heap.blocksize); ++i)
+    heap.blockmap[heap.blockmap.len - 1].set(i);
+
+  for(var i = 0; i <= bootinfo.hunk_size / heap.blocksize; ++i)
+    heap.take_blocks(0);
+
+  std::print("heap block size: ", heap.blocksize);
+}
+
+pub fn early_malloc(platform::BootInfo &bootinfo, usize size) -> virtaddr
+{
+  var mut &heap = heap();
+
+  var base = heap.base + heap.used;
+
+  heap.used = std::align_up(heap.used + size, PAGE_SIZE);
+
+  if (bootinfo.hunk_size < heap.used)
+    std::panic("booloader hunk exhausted");
+
+  std::print("early malloc: ", base.ptr, " ", size);
+
+  return base;
+}
+
+fn take_blocks(heap_allocator mut &heap, usize order) -> virtaddr
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut heap.lock);
+
+  for(var i = order; i < heap.blockmap.len; ++i)
+  {
+    if (var bit = heap.blockmap[i].find(); bit != ~0)
+    {
+      heap.blockmap[i].unset(bit);
+
+      for(var j = i; j > order; --j)
+      {
+        bit *= 2;
+
+        heap.blockmap[j - 1].set(bit + 1);
+      }
+
+      return heap.base + bit * (heap.blocksize << order);
+    }
+  }
+
+  std::panic("heap_exhausted");
+}
+
+fn release_blocks(heap_allocator mut &heap, virtaddr addr, usize order) -> void
+{
+  var bit = (addr - heap.base) / (heap.blocksize << order);
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut heap.lock);
+
+  for(var i = order; i != heap.blockmap.len - 1; ++i)
+  {
+    var buddy = bit ^ 1;
+
+    if (!heap.blockmap[i].test(buddy))
+      break;
+
+    heap.blockmap[i].unset(buddy);
+
+    order += 1;
+    bit >>= 1;
+  }
+
+  heap.blockmap[order].set(bit);
+}
+
+fn allocate(heap_allocator mut &heap, usize size) -> virtrange
+{
+  var range = virtrange(heap.take_blocks(order_for_size(size)), size);
+
+  std::atomic_add(&heap.used, std::align_up(size, heap.blocksize));
+
+  return range;
+}
+
+fn free(heap_allocator mut &heap, virtrange range) -> void
+{
+  heap.release_blocks(range.addr, order_for_size(range.size));
+
+  std::atomic_sub(&heap.used, std::align_up(range.size, heap.blocksize));
+}
+
+pub fn usage() -> usize
+{
+  return std::align_up(std::atomic_load(&heap.used), heap.blocksize);
+}
+
+pub struct heap_allocation
+{
+  virtrange range;
+  vm::page_allocation pages;
+
+  pub fn ptr(this&) -> void mut *
+  {
+    return this.range.addr.ptr;
+  }
+
+  pub fn addr(this&) -> virtaddr
+  {
+    return this.range.addr;
+  }
+
+  pub fn size(this&) -> usize
+  {
+    return this.range.size;
+  }
+
+  pub fn range(this&) -> virtrange
+  {
+    return this.range;
+  }
+
+  pub heap_allocation() = default;
+  pub heap_allocation(heap_allocation&) = default;
+  pub fn =(heap_allocation mut &, heap_allocation &) -> heap_allocation mut & = default;
+  pub ~heap_allocation() = default;
+}
+
+pub fn malloc(usize size) -> heap_allocation
+{
+  var allocation = heap_allocation();
+
+  allocation.pages = vm::allocate_physical_pages(size);
+  allocation.range = heap.allocate(allocation.pages.size);
+
+  vm::map_physical_pages(allocation.addr, allocation.pages, vm::protection::readwrite);
+
+  return allocation;
+}
+
+pub fn free(heap_allocation &allocation) -> void
+{
+  vm::unmap_physical_pages(allocation.range);
+  vm::release_physical_pages(allocation.pages);
+
+  heap.free(allocation.range);
+}
+
+pub fn mmap(usize size) -> virtrange
+{
+  var allocation = heap.allocate(size);
+
+  vm::create_anonymous_region(allocation, vm::protection::readwrite, vm::usage::private);
+
+  return allocation;
+}
+
+pub fn mmap(vfs::node_ptr &node, u64 offset, usize size) -> virtrange
+{
+  var allocation = heap.allocate(size);
+
+  vm::create_backed_region(allocation, node, offset, vm::protection::readonly, vm::usage::private);
+
+  return allocation;
+}
+
+pub fn munmap(virtrange allocation) -> void
+{
+  vm::munmap(allocation);
+
+  heap.free(allocation);
+}
+
+extern fn mem_alloc(usize size) -> std::mem_result
+{
+  var result = std::mem_result();
+
+  var allocation = heap.allocate(std::align_up(size, 65536));
+
+  vm::create_anonymous_region(allocation, vm::protection::readwrite, vm::usage::private);
+
+  result.addr = allocation.addr.ptr;
+  result.size = allocation.size;
+
+  return result;
+}
+
+extern fn mem_free(void *addr, usize size) -> void
+{
+  vm::munmap(virtrange(addr, size));
+
+  heap.free(virtrange(addr, size));
+}

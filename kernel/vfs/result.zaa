@@ -1,0 +1,48 @@
+//
+// vfs result
+//
+
+import blk.result;
+import chr.result;
+
+pub enum result : i32
+{
+  ok = 0,
+  not_permitted = -1,
+  not_found = -2,
+  io_error = -5,
+  no_such_device = -6,
+  format_error = -8,
+  bad_descriptor = -9,
+  would_block = -11,
+  device_busy = -16,
+  already_exists = -17,
+  cross_device_link = -18,
+  not_a_directory = -20,
+  is_a_directory = -21,
+  invalid_argument = -22,
+  resource_exhausted = -24,
+  no_space_remaining = -28,
+  readonly_file_system = -30,
+  too_many_links = -31,
+  argument_out_of_domain = -33,
+  name_too_long = -36,
+  directory_not_empty = -39,
+  not_supported = -95,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+
+  pub fn result(blk::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(chr::result result) -> result
+  {
+    return cast(result);
+  }
+}
+

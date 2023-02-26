@@ -1,0 +1,23 @@
+//
+// thread syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import result as _ : result;
+import thread as _ : thread;
+
+extern fn sys_get_tid() -> thread::id
+{
+  return thread::current.id;
+}
+
+extern fn sys_thread_create(virtaddr entry, void *parameter, u64 flags) -> result
+{
+  return not_implemented;
+}
+
+extern fn sys_thread_exit(i32 rval) -> void
+{
+  thread::exit(rval);
+}

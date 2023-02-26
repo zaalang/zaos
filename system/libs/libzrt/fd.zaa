@@ -1,0 +1,228 @@
+//
+// fd
+//
+
+import os.zaos.fcntl;
+
+enum filetype
+{
+  unknown,
+  block_device,
+  character_device,
+  directory,
+  regular_file,
+  socket_dgram,
+  socket_stream,
+  symbolic_link,
+}
+
+struct filestat
+{
+  u8 type;
+  u64 size;
+  u64 atime;
+  u64 mtime;
+  u64 ctime;
+}
+
+struct iovec
+{
+  u8 mut *data;
+  usize len;
+}
+
+struct ciovec
+{
+  u8 *data;
+  usize len;
+}
+
+struct string
+{
+  u8 *data;
+  usize len;
+}
+
+struct fd
+{
+  enum oflags
+  {
+    const open = 0x0;
+    const create = 0x01;
+    const exclusive = 0x02;
+    const trunc = 0x04;
+  }
+
+  enum rights
+  {
+    const read = 0x01;
+    const write = 0x02;
+  }
+
+  enum fdflags
+  {
+    const append = 0x01;
+    const dsync = 0x02;
+    const nonblock = 0x04;
+    const rsync = 0x08;
+    const sync = 0x10;
+  }
+}
+
+struct fd_result
+{
+  u32 errno;
+  usize length;
+
+  fd_result() = default;
+  fd_result(fd_result&) = default;
+  ~fd_result() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+extern fn fd_open(uintptr mut &fd, string path, u32 oflags, u64 rights, u32 fdflags) -> u32
+{
+  using os;
+
+  var flags = 0;
+
+//  if (oflags & fd::oflags::create)
+//    flags |= O_CREAT;
+//
+//  if (oflags & fd::oflags::exclusive)
+//    flags |= O_EXCL;
+//
+//  if (oflags & fd::oflags::trunc)
+//    flags |= O_TRUNC;
+//
+//  if (fdflags & fd::fdflags::append)
+//    flags |= O_APPEND;
+//
+//  if (fdflags & fd::fdflags::dsync)
+//    flags |= O_DSYNC;
+//
+//  if (fdflags & fd::fdflags::nonblock)
+//    flags |= O_NONBLOCK;
+//
+//  if (fdflags & fd::fdflags::rsync)
+//    flags |= O_SYNC;
+//
+//  if (fdflags & fd::fdflags::sync)
+//    flags |= O_SYNC;
+
+  if (rights & (fd::rights::read | fd::rights::write) == fd::rights::read)
+    flags |= O_RDONLY;
+
+  if (rights & (fd::rights::read | fd::rights::write) == fd::rights::write)
+    flags |= O_WRONLY;
+
+  if (rights & (fd::rights::read | fd::rights::write) == (fd::rights::read | fd::rights::write))
+    flags |= O_RDWR;
+
+  var res = open(&mut thread_ring, os::string(path.data, path.len), flags, 0o666);
+
+  if (res < 0)
+    return cast(-res);
+
+  fd = cast(res);
+
+  return 0;
+}
+
+extern fn fd_stat(uintptr fd, filestat mut *fs) -> u32
+{
+  var buf = os::stat(void);
+  var res = os::stat(&mut thread_ring, cast(fd), &buf, 0x7f);
+
+  if (res < 0)
+    return cast(-res);
+
+  fs.size = buf.size;
+  fs.type = cast(buf.ftype);
+  fs.atime = cast(buf.mtime);
+  fs.ctime = cast(buf.ctime);
+  fs.mtime = cast(buf.mtime);
+
+  return 0;
+}
+
+extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
+{
+  var result = fd_result();
+
+  for(var i = 0; i < n; ++i)
+  {
+    var res = os::read(&mut thread_ring, cast(fd), (iovs + i).data, (iovs + i).len);
+
+    if (res < 0)
+    {
+      result.errno = cast(-res);
+      break;
+    }
+
+    result.length += cast(res);
+
+    if (cast(res) != (iovs + i).len)
+      break;
+  }
+
+  return result;
+}
+
+extern fn fd_preadv(uintptr fd, iovec mut *iovs, usize n, u64 offset) -> fd_result
+{
+  var result = fd_result();
+
+  return result;
+}
+
+extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
+{
+  var result = fd_result();
+
+  for(var i = 0; i < n; ++i)
+  {
+    for(var data = (iovs + i).data, var len = (iovs + i).len; len != 0; )
+    {
+      var cnt = os::write(&mut thread_ring, cast(fd), data, len);
+
+      if (cnt < 0)
+      {
+        if (cnt == os::EAGAIN)
+        {
+          var pollset = [ os::pollevt(cast(fd), os::POLLFD, os::POLLOUT, 0) ];
+
+          os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+
+          continue;
+        }
+
+        result.errno = cast(-cnt);
+
+        return result;
+      }
+
+      result.length += cast(cnt);
+
+      data += cast(cnt);
+      len -= cast(cnt);
+    }
+  }
+
+  return result;
+}
+
+extern fn fd_pwritev(uintptr fd, ciovec *iovs, usize n, u64 offset) -> fd_result
+{
+  var result = fd_result();
+
+  return result;
+}
+
+extern fn fd_close(uintptr fd) -> u32
+{
+  os::close(&mut thread_ring, cast(fd));
+
+  return 0;
+}

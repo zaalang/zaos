@@ -1,0 +1,41 @@
+//
+// rename
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn rename(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var src = std::string();
+  var dst = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    if (src == "")
+      src = arg;
+
+    else if (dst == "")
+      dst = arg;
+  }
+
+  if (src.empty || dst.empty)
+  {
+    terminal.write("usage: rename <src> <dst>\n");
+    return -22;
+  }
+
+  if (var result = rename(&mut thread_ring, os::string(src.data, src.len), os::string(dst.data, dst.len), 0); result < 0)
+    return result;
+
+  return 0;
+}

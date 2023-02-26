@@ -1,0 +1,62 @@
+//
+// elf hash
+//
+
+import elf;
+import std.math;
+
+pub fn gnu_hash(u8 *name) -> u32
+{
+  var hash = u32(5381);
+
+  for(; *name != 0; ++name)
+  {
+    hash = std::add_with_carry(std::add_with_carry(hash << 5, hash).0, cast(*name)).0;
+  }
+
+  return hash;
+}
+
+pub fn gnu_lookup(uintptr hashtb, uintptr strtab, uintptr symtab, u32 namehash, u8 *name) -> elf::elf64_sym *
+{
+  var nbuckets = *cast<u32*>(hashtb);
+  var symbase  = *cast<u32*>(hashtb + 4);
+  var maskwords = *cast<u32*>(hashtb + 8);
+  var shift2 = *cast<u32*>(hashtb + 12);
+  var bloom = cast<u64*>(hashtb + 16);
+  var buckets = cast<u32*>(hashtb + 16 + cast(maskwords)*8);
+  var chains = cast<u32*>(hashtb + 16 + cast(maskwords)*8 + cast(nbuckets)*4);
+
+  var word = *(bloom + cast(namehash / 64 % maskwords));
+  var mask = 1 << (namehash % 64) | 1 << ((namehash >> shift2) % 64);
+
+  if ((word & mask) == mask)
+  {
+    var symidx = *(buckets + cast(namehash % nbuckets));
+
+    while (symidx != 0)
+    {
+      var sym = cast<elf::elf64_sym*>(symtab + cast(symidx) * sizeof<elf::elf64_sym>);
+      var hash = *(chains + cast(symidx - symbase));
+
+      if ((namehash | 1) == (hash | 1))
+      {
+        var lhs = name;
+        var rhs = cast<u8*>(strtab + cast(sym.st_name));
+
+        for(; *lhs == *rhs && *rhs != 0; ++lhs, ++rhs)
+          ;
+
+        if (*lhs == *rhs)
+          return sym;
+      }
+
+      if (hash & 1 == 1)
+        break;
+
+      symidx += 1;
+    }
+  }
+
+  return null;
+}

@@ -1,0 +1,206 @@
+//
+// slab
+//
+
+import std.atomic;
+import vm.page : PAGE_SIZE;
+import heap;
+import cpu;
+
+pub struct slab_allocator<T>
+{
+  std::ticket_lock lock;
+
+  pub fn allocate(this mut &) -> T mut *
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    if (!this.slabs || !this.slabs.firstfree)
+      kmem_cache_grow(&mut this);
+
+    var entry = this.slabs.firstfree;
+
+    this.slabs.firstfree = entry.nextfree;
+
+    entry.nextfree = null;
+
+    if (!this.slabs.firstfree)
+      this.slabs = this.slabs.next;
+
+    return &entry.item;
+  }
+
+  pub fn free(this mut &, T mut *item) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    var entry = cast<kmem_slab_entry mut *>(item);
+    var slab = cast<kmem_slab mut *>(std::align_down(cast<uintptr>(entry) + SLAB_SIZE, SLAB_SIZE)- sizeof<kmem_slab>);
+
+    entry.nextfree = slab.firstfree;
+    slab.firstfree = entry;
+  }
+
+  struct kmem_slab_entry
+  {
+    T item;
+    kmem_slab_entry mut *nextfree;
+
+    kmem_slab_entry() = default;
+    ~kmem_slab_entry() = default;
+  }
+
+  struct kmem_slab
+  {
+    kmem_slab mut *next;
+    kmem_slab mut *prev;
+    kmem_slab_entry mut *firstfree;
+    heap::heap_allocation allocation;
+
+    kmem_slab() = default;
+    ~kmem_slab() = default;
+  }
+
+  const SLAB_SIZE = PAGE_SIZE << std::ceil_log2(std::align_up(sizeof<kmem_slab> + 8 * sizeof<T>, PAGE_SIZE)/PAGE_SIZE);
+
+  fn kmem_cache_grow(this mut &) -> void
+  {
+    #if (sizeof<kmem_slab_entry> % 64 != 0)
+      #std::print(__type_name($T), " ", sizeof<kmem_slab_entry>);
+
+    std::assert(sizeof<kmem_slab_entry> % 64 == 0);
+
+    var allocation = heap::malloc(SLAB_SIZE);
+
+    std::assert(allocation.addr & (SLAB_SIZE-1) == 0);
+
+    var slab = cast<kmem_slab mut *>((allocation.range.end - sizeof<kmem_slab>).ptr);
+
+    slab.allocation = allocation;
+    slab.next = slab.prev = slab;
+
+    if (this.slabs)
+    {
+      slab.prev = this.slabs;
+      slab.next = this.slabs.next;
+
+      slab.prev.next = slab;
+      slab.next.prev = slab;
+    }
+
+    this.slabs = slab;
+
+    var prev = &slab.firstfree;
+    for(var addr = allocation.range.begin; addr + sizeof<kmem_slab_entry> <= allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
+    {
+      *prev = new<kmem_slab_entry>(cast<kmem_slab_entry mut *>(addr.ptr))();
+
+      prev = &prev.nextfree;
+    }
+  }
+
+  kmem_slab mut *slabs;
+
+  pub slab_allocator() = default;
+  pub slab_allocator(#slab_allocator&) = default;
+  pub ~slab_allocator() = default;
+}
+
+pub struct slab_cache<T>
+{
+  pub fn get(this mut &) -> T mut *
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock);
+
+    var entry = this.head;
+
+    if (!entry)
+      return null;
+
+    this.head = entry.nextfree;
+
+    entry.nextfree = null;
+
+    return &entry.item;
+  }
+
+  pub fn put(this mut &, T mut *item) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock);
+
+    var entry = cast<slab_allocator<T>::kmem_slab_entry mut *>(item);
+
+    entry.nextfree = this.head;
+
+    this.head = entry;
+  }
+
+  pub fn siphon(this mut &, slab_allocator<T> mut &slab) -> T mut *
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut slab.lock);
+
+    if (!slab.slabs || !slab.slabs.firstfree)
+      slab_allocator<T>::kmem_cache_grow(&mut slab);
+
+    var entry = slab.slabs.firstfree;
+
+    slab.slabs.firstfree = entry.nextfree;
+
+    if (this.head == null)
+    {
+      this.head = slab.slabs.firstfree;
+
+      slab.slabs.firstfree = null;
+
+      slab.slabs = slab.slabs.next;
+    }
+
+    entry.nextfree = null;
+
+    return &entry.item;
+  }
+
+  slab_allocator<T>::kmem_slab_entry mut *head;
+
+  pub slab_cache() = default;
+  pub slab_cache(#slab_cache&) = default;
+  pub ~slab_cache() = default;
+}
+
+pub fn reap<T>(slab_allocator<T> mut &this) -> void
+{
+  using kmem_slab = slab_allocator<T>::kmem_slab;
+  using kmem_slab_entry = slab_allocator<T>::kmem_slab_entry;
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  if (!this.slabs)
+    return;
+
+  var slab = this.slabs.next;
+  var next = slab.next;
+
+  while (slab != this.slabs)
+  {
+    var free = 0;
+    for(var entry = slab.firstfree; entry; entry = entry.nextfree)
+      free += sizeof<kmem_slab_entry>;
+
+    if (slab.allocation.size - sizeof<kmem_slab> < free + sizeof<kmem_slab_entry>)
+    {
+      slab.prev.next = slab.next;
+      slab.next.prev = slab.prev;
+
+      for(var addr = slab.allocation.range.begin; addr + sizeof<kmem_slab_entry> <= slab.allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
+      {
+        cast<kmem_slab_entry mut *>(addr.ptr).~kmem_slab_entry();
+      }
+
+      heap::free(slab.allocation);
+    }
+
+    slab = next;
+    next = slab.next;
+  }
+}
+

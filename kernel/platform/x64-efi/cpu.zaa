@@ -1,0 +1,264 @@
+//
+// x86 cpu
+//
+
+import std.tuple;
+
+pub fn in8(u16 port) -> u8
+{
+  return cast<u8>(__asm("in al, $1", "={ax},N{dx}", port) & 0xFF);
+}
+
+pub fn out8(u16 port, u8 value) -> void
+{
+  __asm("out $1, al", "{ax},N{dx}", value, port);
+}
+
+pub fn cpuid(u32 eax, u32 ecx = 0) -> (u32, u32, u32, u32)
+{
+  var regs = std::tuple(0, 0, 0, 0);
+
+  __asm("xchg rbx,${1:q}; cpuid; xchg rbx,${1:q}", "=*{ax},=*r,=*{cx},=*{dx},0,2", &regs.0, &regs.1, &regs.2, &regs.3, eax, ecx);
+
+  return regs;
+}
+
+pub fn rdcr2() -> uintptr
+{
+  return __asm("mov $0, cr2", "=r");
+}
+
+pub fn rdcr3() -> uintptr
+{
+  return __asm("mov $0, cr3", "=r");
+}
+
+pub fn wrcr3(uintptr cr3) -> void
+{
+  __asm("mov cr3, $0", "r,~{memory}", cr3);
+}
+
+pub fn rdcr4() -> uintptr
+{
+  return __asm("mov $0, cr4", "=r");
+}
+
+pub fn wrcr4(uintptr cr4) -> void
+{
+  __asm("mov cr4, $0", "r,~{memory}", cr4);
+}
+
+pub fn ldmxcsr(uintptr csr) -> void
+{
+  __asm("ldmxcsr $0", "*m", &csr);
+}
+
+pub fn stmxcsr(uintptr mut *csr) -> void
+{
+  __asm("stmxcsr $0", "=*m", csr);
+}
+
+pub fn rdtsc() -> u64
+{
+  return __rdtsc();
+}
+
+pub fn rdtscp() -> (u64, u32)
+{
+  return __rdtscp();
+}
+
+pub fn swapgs() -> void
+{
+  __asm("swapgs", "");
+}
+
+pub fn lfence() -> void
+{
+  __asm("lfence", "");
+}
+
+pub fn sfence() -> void
+{
+  __asm("sfence", "");
+}
+
+pub fn mfence() -> void
+{
+  __asm("mfence", "");
+}
+
+pub fn gsbase() -> uintptr
+{
+  return __asm("rdgsbase $0", "=r");
+}
+
+pub fn fsbase() -> uintptr
+{
+  return __asm("rdfsbase $0", "=r");
+}
+
+pub fn wrgsbase(uintptr gs) -> void
+{
+  __asm("wrgsbase $0", "r", gs);
+}
+
+pub fn wrfsbase(uintptr fs) -> void
+{
+  __asm("wrfsbase $0", "r", fs);
+}
+
+pub fn lgdt(void *ptr) -> void
+{
+  __asm("lgdt $0", "*m", ptr);
+}
+
+pub fn lidt(void *ptr) -> void
+{
+  __asm("lidt $0", "*m", ptr);
+}
+
+pub enum msr_index : u32
+{
+  tsc = 0x10,
+  tsc_aux = 0xc0000103,
+  efer = 0xc0000080,
+  star = 0xc0000081,
+  lstar = 0xc0000082,
+  cstar = 0xc0000083,
+  fmask = 0xc0000084,
+  mperf = 0xe7,
+  aperf = 0xe8,
+  apic_base = 0x1b,
+  apic_version = 0x00000803,
+  apic_task_priority = 0x00000808,
+  apic_eoi = 0x0000080b,
+  apic_logical_dest = 0x0000080d,
+  apic_spurious_intr_vector = 0x0000080f,
+  apic_intr_command = 0x00000830,
+  apic_lvt_timer = 0x00000832,
+  apic_lvt_thermal_sensor = 0x00000833,
+  apic_lvt_perfmon_counters = 0x00000834,
+  apic_lvt_lint0 = 0x00000835,
+  apic_lvt_lint1 = 0x00000836,
+  apic_lvt_error = 0x00000837,
+  apic_initial_timer_count = 0x00000838,
+  apic_current_timer_count = 0x00000839,
+  apic_timer_divide_config = 0x0000083e,
+  apic_tsc_deadline = 0x000006e0,
+}
+
+pub fn rdmsr(msr_index index) -> u64
+{
+  var lo = u64(0);
+  var hi = u64(0);
+
+  __asm("rdmsr", "{ecx},=*{eax},=*{edx}", index, &lo, &hi);
+
+  return (hi << 32) | lo;
+}
+
+pub fn wrmsr(msr_index index, u64 value) -> void
+{
+  var lo = cast<u32>(value & 0xffffffff);
+  var hi = cast<u32>(value >> 32);
+
+  __asm("wrmsr", "{ecx},{eax},{edx},~{memory}", index, lo, hi);
+}
+
+pub enum xcr_index : u32
+{
+  xcr0 = 0x0,
+}
+
+pub fn xsetbv(xcr_index index, u64 value) -> void
+{
+  var lo = cast<u32>(value & 0xffffffff);
+  var hi = cast<u32>(value >> 32);
+
+  __asm("xsetbv", "{ecx},{eax},{edx},~{memory}", index, lo, hi);
+}
+
+pub enum selector
+{
+  code0 = 0x08,
+  data0 = 0x10,
+  code3 = 0x28,
+  data3 = 0x20,
+  tss = 0x30,
+}
+
+pub fn ltr(selector segment) -> void
+{
+  __asm("ltr ${0:w}", "r", segment);
+}
+
+pub fn invlpg(uintptr addr)
+{
+  __asm("invlpg [$0])", "r,~{memory}", addr);
+}
+
+pub fn flush_user_tlb()
+{
+  wrcr3(rdcr3);
+}
+
+pub fn flush_global_tlb()
+{
+  wrcr4(rdcr4 & ~0x80);
+  wrcr4(rdcr4 | 0x80);
+}
+
+pub fn idle() -> void
+{
+  __asm("hlt", "");
+}
+
+pub fn spin(u64 ticks) -> void
+{
+  var start = rdtsc();
+
+  while (rdtsc() - start < ticks)
+    __asm("pause", "");
+}
+
+pub fn cld() -> void
+{
+  __asm("cld", "");
+}
+
+pub fn enable_memory_protect() -> void
+{
+  __asm("clac", "");
+}
+
+pub fn disable_memory_protect() -> void
+{
+  __asm("stac", "");
+}
+
+pub fn enable_interrupts() -> void
+{
+  __asm("sti", "");
+}
+
+pub fn disable_interrupts() -> bool
+{
+  return __asm("pushf; pop $0; cli", "=r") & 0x200 != 0;
+}
+
+pub fn restore_interrupts(bool old) -> void
+{
+  if (old)
+    enable_interrupts();
+}
+
+pub fn interrupts_enabled() -> bool
+{
+  return __asm("pushf; pop $0", "=r") & 0x200 != 0;
+}
+
+pub fn interrupts_disabled() -> bool
+{
+  return __asm("pushf; pop $0", "=r") & 0x200 == 0;
+}

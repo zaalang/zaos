@@ -1,0 +1,33 @@
+//
+// stat
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+enum flags
+{
+  const statmask = 0xfff;
+}
+
+pub fn sys_stat(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr statbuf, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  var stat = vfs::stat();
+
+  if (var result = vfs::stat(file.node, &mut stat, flags & 0xfff); !result)
+    return result;
+
+  if (var result = vm::write_process_memory(process, statbuf, &stat, sizeof(stat)); !result)
+    return result;
+
+  return 0;
+}

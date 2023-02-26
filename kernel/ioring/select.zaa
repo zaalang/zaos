@@ -1,0 +1,143 @@
+//
+// select
+//
+
+import std.stdlib;
+import ioring : ioring_ctx, ioring_epoll;
+import vm : virtaddr;
+import io;
+import cpu;
+import vfs;
+import thread as _ : thread;
+import process as _ : process;
+import result as _ : result;
+
+enum type
+{
+  const fd = 0x1;
+  const thread = 0x2;
+}
+
+enum events
+{
+  const pollin = 0x001;
+  const pollout = 0x004;
+}
+
+struct pollevt
+{
+  i32 id;
+  u16 type;
+  u16 mask;
+  uintptr user_data;
+
+  pollevt(i32 id, u16 type, u16 mask, uintptr user_data)
+    : id(id), type(type), mask(mask), user_data(user_data)
+  {
+  }
+
+  pollevt() = default;
+  pollevt(pollevt&) = default;
+  ~pollevt() = default;
+}
+
+pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, usize n, u64 timeout) -> result
+{
+  var evts = std::vector<pollevt, N:8>::with_size(n);
+
+  if (var result = vm::read_process_memory(process, evtsbuf, evts.data, evts.len * sizeof<pollevt>); !result)
+    return result;
+
+  var count = 0;
+
+  for(var mut &event : evts)
+  {
+    if (event.id < 0)
+      continue;
+
+    var revents = 0;
+    var readable = io::response();
+    var writeable = io::response();
+
+    switch (event.type)
+    {
+      case type::fd:
+
+        var file = process.fd(event.id);
+
+        if (!file)
+          return vfs::result::bad_descriptor;
+
+        switch (var &node = file.node; node.type)
+        {
+          case vfs::node::type::pipe:
+          case vfs::node::type::device:
+
+            if (var result = node.pipe_operations.poll(node, readable.cb, writeable.cb); !result)
+              return result;
+
+          case vfs::node::type::epoll:
+
+            readable = cast<ioring_epoll mut &>(*node).readable;
+
+          else:
+            return vfs::result::bad_descriptor;
+        }
+
+      case type::thread:
+
+        var thread = thread::find(event.id);
+
+        if (!thread)
+          return vm::result::no_such_process;
+
+        readable = thread.rval;
+
+      else:
+        return invalid_argument;
+    }
+
+    if (event.mask & events::pollin == events::pollin && readable.ready)
+      revents |= events::pollin;
+
+    if (event.mask & events::pollout == events::pollout && writeable.ready)
+      revents |= events::pollout;
+
+    if (revents == 0)
+    {
+      if (event.mask & events::pollin == events::pollin && !readable.ready)
+        ctx.blockers.push_back(&move readable);
+
+      if (event.mask & events::pollout == events::pollout && !writeable.ready)
+        ctx.blockers.push_back(&move writeable);
+    }
+
+    if (revents != 0)
+    {
+      evts[count].id = event.id;
+      evts[count].type = event.type;
+      evts[count].mask = revents;
+      evts[count].user_data = event.user_data;
+
+      count += 1;
+    }
+  }
+
+  if (count == 0)
+  {
+    ctx.wake_time = timeout;
+
+    if (timeout == 0 && ctx.blockers.len == 0)
+      return 0;
+
+    if (timeout != 0 && timeout < cpu::system_time)
+      return 0;
+
+    return ioring::result::should_block;
+  }
+
+  if (var result = vm::write_process_memory(process, evtsbuf, evts.data, count * sizeof<pollevt>); !result)
+    return result;
+
+  return cast(count);
+}

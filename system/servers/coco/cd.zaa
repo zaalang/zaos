@@ -1,0 +1,93 @@
+//
+// cd
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn cd(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var path = std::string("/zaos/root");
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  var relpath = std::string();
+  var fullpath = env.working_directory;
+
+  if (path.starts_with("/"))
+    fullpath = "";
+
+  for(var part : path.split("/"))
+  {
+    if (part == "")
+      continue;
+
+    if (part == ".")
+      continue;
+
+    if (part == "..")
+    {
+      if (!relpath.empty)
+        relpath.erase(relpath.find_last('/'), relpath.end);
+      else
+        fullpath.erase(fullpath.find_last('/'), fullpath.end);
+
+      continue;
+    }
+
+    relpath += "/";
+    relpath += part;
+  }
+
+  var cwd = 0;
+
+  if (fullpath.len == env.working_directory.len)
+  {
+    if (relpath.empty)
+      return 0;
+
+    if (fullpath == "/")
+      fullpath = "";
+
+    fullpath += relpath;
+
+    cwd = open(&mut thread_ring, STDCWD_FILENO, os::string(relpath.data, relpath.len), O_RDONLY | O_DIRECTORY, 0);
+  }
+  else
+  {
+    fullpath += relpath;
+
+    if (fullpath.empty)
+      fullpath = "/";
+
+    cwd = open(&mut thread_ring, STDROOT_FILENO, os::string(fullpath.data, fullpath.len), O_RDONLY | O_DIRECTORY, 0);
+  }
+
+  if (cwd < 0)
+    return cwd;
+
+  if (var result = dup2(&mut thread_ring, cwd, STDCWD_FILENO); result < 0)
+  {
+    close(&mut thread_ring, cwd);
+
+    return result;
+  }
+
+  env.working_directory = fullpath;
+
+  close(&mut thread_ring, cwd);
+
+  return 0;
+}

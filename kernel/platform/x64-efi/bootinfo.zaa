@@ -1,0 +1,158 @@
+//
+// bootinfo
+//
+
+import std.span;
+
+pub using physaddr_t = uintptr;
+pub using virtaddr_t = uintptr;
+pub using physrange_t = ( physaddr_t, physaddr_t );
+pub using virtrange_t = ( virtaddr_t, virtaddr_t );
+
+pub const PAGE_SIZE = 4096;
+pub const USER_LIMIT = 0x00007fffffffffff;
+pub const KERNEL_SPACE = 0xffff000000000000;
+pub const PHYSICAL_BASE = 0xffffff0000000000;
+pub const PHYSICAL_LIMIT = 0xffffff8000000000;
+pub const USER_STACK_BASE = 0x00007f0000000000;
+pub const USER_STACK_SIZE = 8*1024*1024;
+pub const MAX_CPU_COUNT = 128;
+
+pub struct BootInfo
+{
+  pub physaddr_t gdt;
+  pub physaddr_t pml4;
+  pub virtaddr_t kernel_base;
+
+  pub usize cpu_count;
+  pub virtaddr_t[MAX_CPU_COUNT] threads;
+
+  pub usize usable_memory_len;
+  pub physrange_t[128] usable_memory_spans;
+
+  pub u64 early_tsc_frequency;
+
+  pub usize fb_width;
+  pub usize fb_height;
+  pub usize fb_depth;
+  pub usize fb_pitch;
+  pub physaddr_t fb_base_address;
+
+  pub physaddr_t acpi_root;
+  pub u32 apic_base;
+  pub u32 ioapic_base;
+  pub u32 ioapic_interrupt_base;
+  pub u8[MAX_CPU_COUNT] apic_ids;
+
+  pub virtaddr_t heap_base;
+  pub virtaddr_t heap_limit;
+
+  pub usize hunk_size;
+  pub physaddr_t hunk_base;
+
+  pub u8[512] cmdline;
+  pub u8[16] rootdevice;
+
+  pub BootInfo() = default;
+  pub ~BootInfo() = default;
+}
+
+pub fn insert_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t end) -> bool
+{
+  if (bootinfo.usable_memory_len == bootinfo.usable_memory_spans.len)
+    return false;
+
+  bootinfo.usable_memory_spans[bootinfo.usable_memory_len].0 = begin;
+  bootinfo.usable_memory_spans[bootinfo.usable_memory_len].1 = end;
+
+  bootinfo.usable_memory_len += 1;
+
+  return true;
+}
+
+pub fn remove_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t end) -> bool
+{
+  for(var i = 0; i < bootinfo.usable_memory_len; ++i)
+  {
+    var mut &span = bootinfo.usable_memory_spans[i];
+
+    if (begin < span.end && span.begin < end)
+    {
+      if (begin < span.begin)
+      {
+        if (end < span.end)
+          span.begin = end;
+        else
+          span.begin = span.end;
+      }
+      else
+      {
+        if (end < span.end)
+        {
+          if (!insert_usable_memory(bootinfo, end, span.end))
+            return false;
+        }
+
+        span.end = begin;
+      }
+    }
+  }
+
+  return true;
+}
+
+pub fn for_each_usable_memory(BootInfo &bootinfo, void fn(physrange_t&) &callback) -> void
+{
+  for(var i = 0; i < bootinfo.usable_memory_len; ++i)
+    callback(bootinfo.usable_memory_spans[i]);
+}
+
+pub fn for_each_allocated_memory(BootInfo &bootinfo, void fn(physaddr_t) &callback) -> void
+{
+  var pml4 = cast<physaddr_t[512] mut *>(bootinfo.pml4);
+
+  callback(bootinfo.pml4);
+
+  for(var k = 256; k < 512; ++k)
+  {
+    if (pml4[k] & 0x81 == 1)
+    {
+      callback(pml4[k] & ~0xfff);
+
+      var pdp = cast<physaddr_t[512] mut *>(pml4[k] & ~0xfff);
+
+      for(var j = 0; j < 512; ++j)
+      {
+        if (pdp[j] & 0x81 == 1)
+        {
+          callback(pdp[j] & ~0xfff);
+
+          var pd = cast<physaddr_t[512] mut *>(pdp[j] & ~0xfff);
+
+          for(var i = 0; i < 512; ++i)
+          {
+            if (pd[i] & 0x81 == 1)
+            {
+              callback(pd[i] & ~0xfff);
+
+              var pt = cast<physaddr_t[512] mut *>(pd[i] & ~0xfff);
+
+              for(var i = 0; i < 512; ++i)
+              {
+                if (pt[i] != 0)
+                  callback(pt[i] & 0x7ffffffffffff000);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn finalise_boot(BootInfo &bootinfo, int cpu)
+{
+  platform_finalise_boot(bootinfo, cpu);
+}
+
+extern fn platform_finalise_boot(BootInfo &bootinfo, int cpu) -> void;

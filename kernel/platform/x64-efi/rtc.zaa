@@ -1,0 +1,98 @@
+//
+// x86 rtc
+//
+
+import std.atomic;
+import platform.x64-efi.cpu as cpu;
+
+const CMOS_ADDR_PORT = 0x70;
+const CMOS_DATA_PORT = 0x71;
+
+fn cmos_read(u8 addr) -> u8
+{
+  cpu::out8(CMOS_ADDR_PORT, addr);
+
+  return cpu::in8(CMOS_DATA_PORT);
+}
+
+fn cmos_write(u8 addr, u8 data) -> void
+{
+  cpu::out8(CMOS_ADDR_PORT, addr);
+  cpu::out8(CMOS_DATA_PORT, data);
+}
+
+struct cmos_time
+{
+  u8 second;
+  u8 minute;
+  u8 hour;
+  u8 day;
+  u8 month;
+  u8 year;
+  u8 century;
+
+  cmos_time() = default;
+  cmos_time(cmos_time&) = default;
+  fn =(cmos_time mut &, cmos_time &) -> cmos_time mut & = default;
+  fn ==(cmos_time &, cmos_time &) -> bool = default;
+  ~cmos_time() = default;
+}
+
+fn read_cmos_clock() -> cmos_time
+{
+  var time = cmos_time(void);
+
+  // set 24-hour mode
+  cmos_write(0x0b, cmos_read(0x0b) | 0x02);
+
+  // wait until not updating
+  while (cmos_read(0x0a) & 0x80 != 0)
+    __relax();
+
+  time.century = cmos_read(0x32);
+  time.year = cmos_read(0x09);
+  time.month = cmos_read(0x08);
+  time.day = cmos_read(0x07);
+  time.hour = cmos_read(0x04);
+  time.minute = cmos_read(0x02);
+  time.second = cmos_read(0x00);
+
+  return time;
+}
+
+fn bcd_to_int(u8 bcd) -> int
+{
+  return cast<int>(bcd >> 4) * 10 + cast<int>(bcd & 0x0f);
+}
+
+pub fn get_hwclock() -> u64
+{
+  var time1 = read_cmos_clock();
+
+  while (true)
+  {
+    var time2 = read_cmos_clock();
+
+    if (time2 == time1)
+      break;
+
+    time1 = time2;
+  }
+
+  var day = bcd_to_int(time1.day);
+  var month = bcd_to_int(time1.month);
+  var year = bcd_to_int(time1.century) * 100 + bcd_to_int(time1.year);
+  var second = bcd_to_int(time1.second);
+  var minute = bcd_to_int(time1.minute);
+  var hour = bcd_to_int(time1.hour);
+
+  if (month <= 2)
+    year -= 1;
+
+  var yoe = year % 400;
+  var doy = (153 * (month + (month > 2 ? -3 : 9)) + 2)/5 + day - 1;
+  var doe = yoe * 365 + yoe/4 - yoe/100 + doy;
+  var days = (year / 400) * 146097 + doe - 719468;
+
+  return cast<u64>(second + minute * 60 + hour * 3600) + cast<u64>(days) * 86400;
+}

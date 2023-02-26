@@ -1,0 +1,139 @@
+//
+// part dev
+//
+
+import std.fmt;
+import std.vector;
+import dev;
+import blk;
+import blk.gpt as gpt;
+import vm;
+
+pub struct guid
+{
+  u32 data1;
+  u16 data2;
+  u16 data3;
+  u8[8] data4;
+
+  pub guid(u32 data1, u16 data2, u16 data3, u8[8] data4)
+    : data1(data1), data2(data2), data3(data3), data4(data4)
+  {
+  }
+
+  pub fn ==(guid &lhs, guid &rhs) -> bool
+  {
+    return lhs.data1 == rhs.data1 && lhs.data2 == rhs.data2 && lhs.data3 == rhs.data3 && lhs.data4 == rhs.data4;
+  }
+
+  pub guid() = default;
+  pub guid(guid&) = default;
+  pub fn =(guid mut &, guid &) -> guid mut & = default;
+  pub ~guid() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, guid &guid) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", guid.data1, guid.data2, guid.data3, guid.data4[0], guid.data4[1], guid.data4[2], guid.data4[3], guid.data4[4], guid.data4[5], guid.data4[6], guid.data4[7]);
+}
+
+pub struct partition
+{
+  enum type
+  {
+    const efi = guid(0xc12a7328, 0xf81f, 0x11d2, [0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b]);
+    const linux = guid(0x0fc63daf, 0x8483, 0x4772, [0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4]);
+  }
+
+  pub guid guid;
+  pub guid type;
+  pub u64 start_block;
+  pub u64 end_block;
+
+  pub partition() = default;
+  pub partition(partition&&) = default;
+  pub ~partition() = default;
+}
+
+pub struct partdev : pub blk::blkdev
+{
+  pub partdev(blk::blkdev_ptr &dev, partition &part)
+    : super(blk::device_operations()),
+      partition(part),
+      device(dev),
+  {
+    this.block_size = dev.block_size;
+    this.block_shift = dev.block_shift;
+    this.block_count = cast(part.end_block - part.start_block + 1);
+  }
+
+  pub ~partdev() = default;
+
+  partition partition;
+  blk::blkdev_ptr device;
+}
+
+pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+{
+  var &this = cast<partdev&>(dev);
+
+  switch(query)
+  {
+    case device_path:
+      result = this.device.query(query);
+
+    case device_part:
+      result = std::format("{}", this.partition.guid);
+
+    case device_uuid:
+      result = std::format("{}", this.partition.guid);
+  }
+
+  return ok;
+}
+
+pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+{
+  return not_supported;
+}
+
+pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+{
+  var mut &this = cast<partdev mut &>(dev);
+
+  request.position += this.partition.start_block << dev.block_shift;
+
+  if (var result = this.device.enqueue(request); !result)
+  {
+    request.position -= this.partition.start_block << dev.block_shift;
+
+    return cast<blk::result>(result);
+  }
+
+  return ok;
+}
+
+pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+{
+  var mut &this = cast<partdev mut &>(dev);
+
+  if (var result = this.device.cancel(request); !result)
+    return cast<blk::result>(result);
+
+  return ok;
+}
+
+pub fn scan_for_partitions(blk::blkdev_ptr &dev) -> void
+{
+  var partitions = gpt::detect(dev);
+
+  for(var &part : partitions)
+  {
+    std::printf("  detected partition, {} bytes\n", (part.end_block - part.start_block + 1) << dev.block_shift);
+
+    dev::register(blk::blkdev::create<partdev>(dev, part));
+  }
+
+  if (partitions.empty)
+    std::print("  no partitions detected");
+}

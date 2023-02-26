@@ -1,0 +1,127 @@
+//
+// vfs stat
+//
+
+import std.string;
+
+pub using uid_t = u32;
+pub using gid_t = u32;
+pub using mode_t = u32;
+pub using off_t = u64;
+pub using time_t = i64;
+pub using dev_t = uintptr;
+pub using ino_t = uintptr;
+
+pub const O_RDONLY = 0x1;
+pub const O_WRONLY = 0x2;
+pub const O_RDWR = 0x3;
+
+pub const O_CREAT = 0o100;
+pub const O_EXCL = 0o200;
+pub const O_TRUNC = 0o1000;
+pub const O_APPEND = 0o2000;
+pub const O_DIRECTORY = 0o200000;
+pub const O_NOFOLLOW = 0o400000;
+
+pub const S_IUMSK = 0o7777;  // user settable bits
+
+pub const S_IRWXU = 0o700;   // read, write, execute: owner
+pub const S_IRUSR = 0o400;   // read permission: owner
+pub const S_IWUSR = 0o200;   // write permission: owner
+pub const S_IXUSR = 0o100;   // execute permission: owner
+pub const S_IRWXG = 0o070;   // read, write, execute: group
+pub const S_IRGRP = 0o040;   // read permission: group
+pub const S_IWGRP = 0o020;   // write permission: group
+pub const S_IXGRP = 0o010;   // execute permission: group
+pub const S_IRWXO = 0o007;   // read, write, execute: other
+pub const S_IROTH = 0o004;   // read permission: other
+pub const S_IWOTH = 0o002;   // write permission: other
+pub const S_IXOTH = 0o001;   // execute permission: other
+
+pub const S_ISUID = 0o4000;  // set user id on execution
+pub const S_ISGID = 0o2000;  // set group id on execution */
+pub const S_ISVTX = 0o1000;  // sticky bit
+
+pub const S_IFMT = 0xf000;   // type of file
+pub const S_IFDATA = 0xb000; // socket dgram
+pub const S_IFSOCK = 0xc000; // socket stream
+pub const S_IFLNK = 0xa000;  // symbolic link
+pub const S_IFREG = 0x8000;  // regular
+pub const S_IFBLK = 0x6000;  // block device
+pub const S_IFDIR = 0x4000;  // directory
+pub const S_IFCHR = 0x2000;  // character device
+pub const S_IFIFO = 0x1000;  // fifo
+
+pub enum ftype
+{
+  unknown,
+  block_device,
+  character_device,
+  directory,
+  regular_file,
+  socket_dgram,
+  socket_stream,
+  symbolic_link,
+}
+
+pub enum stats
+{
+  pub const uid = 0x01;
+  pub const gid = 0x02;
+  pub const mode = 0x04;
+  pub const size = 0x08;
+  pub const mtime = 0x10;
+  pub const ctime = 0x20;
+  pub const btime = 0x40;
+  pub const inode = 0x100;
+  pub const device = 0x200;
+}
+
+pub struct stat
+{
+  pub uid_t uid,
+  pub gid_t gid,
+  pub mode_t mode,
+
+  pub off_t size,
+
+  pub time_t mtime,
+  pub time_t ctime,
+  pub time_t btime,
+
+  pub ino_t inode,
+  pub dev_t device,
+
+  pub stat() = default;
+  pub stat(stat&) = default;
+  pub fn =(stat mut &, stat &) -> stat mut & = default;
+  pub ~stat() = default;
+}
+
+pub struct dirent
+{
+  pub u32 rec_len;
+  pub u16 file_type;
+  pub u16 name_len;
+  pub u8[0] file_name;
+
+  pub fn name(this&) -> std::string_view
+  {
+    return std::string_view(this.file_name.data, cast<usize>(this.name_len));
+  }
+
+  pub fn ftype(this&) -> ftype
+  {
+    return cast<ftype>(this.file_type);
+  }
+
+  pub fn ftype=(this mut &, ftype type) -> void
+  {
+    this.file_type = cast<u16>(type);
+  }
+
+  pub dirent() = default;
+  pub dirent(dirent&) = default;
+  pub fn =(dirent mut &, stat &) -> dirent mut & = default;
+  pub ~dirent() = default;
+}

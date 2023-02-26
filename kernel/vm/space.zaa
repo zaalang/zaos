@@ -1,0 +1,309 @@
+//
+// vm address space
+//
+
+import std.stdio;
+import std.array;
+import vm.region : region, virtaddr;
+
+pub struct address_space
+{
+  region mut *root;
+
+  pub std::spin_lock lock;
+
+  pub address_space() = default;
+  pub address_space(#address_space&) = default;
+  pub ~address_space() = default;
+}
+
+pub fn find(address_space &&this, virtaddr address)
+{
+  var node = this.root;
+
+  while (node)
+  {
+    if (node.range.contains(address))
+      return node;
+
+    if (address < node.range.addr)
+      node = node.left;
+    else
+      node = node.right;
+  }
+
+  return null;
+}
+
+pub fn each(address_space &&this, var &&callback)
+{
+  if (!this.root)
+    return;
+
+  for(var node = this.root.leftmost; node; )
+  {
+    var next = node.next;
+
+    callback(node);
+
+    node = next;
+  }
+}
+
+pub fn insert(address_space mut &this, region mut *region) -> void
+{
+  var node = &this.root;
+  var parent = this.root;
+
+  while (*node)
+  {
+    std::assert(node.range != region.range);
+
+    parent = *node;
+
+    if (region.range < node.range)
+      node = &node.left;
+    else
+      node = &node.right;
+  }
+
+  region.parent = parent;
+  region.height = 1;
+  *node = region;
+
+  tree_balance(&mut this, parent);
+}
+
+pub fn remove(address_space mut &this, region mut *region) -> void
+{
+  var node = &this.root;
+  var parent = region.parent;
+
+  if (region == this.root)
+    node = &this.root;
+  else if (region == parent.left)
+    node = &parent.left;
+  else
+    node = &parent.right;
+
+  if (node.left && node.right)
+  {
+    var x = &node.left;
+
+    parent = *x;
+
+    while (x.right)
+    {
+      parent = *x;
+
+      x = &x.right;
+    }
+
+    var y = *x;
+
+    if (x.left)
+      x.left.parent = x.parent;
+
+    *x = x.left;
+
+    y.parent = node.parent;
+    y.left = node.left;
+    y.right = node.right;
+    if (y.left)
+      y.left.parent = y;
+    y.right.parent = y;
+
+    *node = y;
+  }
+
+  else if (node.left)
+  {
+    node.left.parent = parent;
+    *node = node.left;
+  }
+
+  else if (node.right)
+  {
+    node.right.parent = parent;
+    *node = node.right;
+  }
+  else
+  {
+    *node = null;
+  }
+
+  region.left = null;
+  region.right = null;
+  region.parent = null;
+  region.height = 0;
+
+  tree_balance(&mut this, parent);
+}
+
+fn tree_rotate_left(address_space mut &this, region mut *x) -> void
+{
+  var y = x.right;
+
+  x.right = y.left;
+
+  if (x.right)
+    x.right.parent = x;
+
+  y.parent = x.parent;
+
+  if (x == this.root)
+    this.root = y;
+  else if (x == x.parent.left)
+    x.parent.left = y;
+  else
+    x.parent.right = y;
+
+  y.left = x;
+  x.parent = y;
+}
+
+fn tree_rotate_right(address_space mut &this, region mut *x) -> void
+{
+  var y = x.left;
+
+  x.left = y.right;
+
+  if (x.left)
+    x.left.parent = x;
+
+  y.parent = x.parent;
+
+  if (x == this.root)
+    this.root = y;
+  else if (x == x.parent.right)
+    x.parent.right = y;
+  else
+    x.parent.left = y;
+
+  y.right = x;
+  x.parent = y;
+}
+
+fn tree_balance(address_space mut &this, region mut *x) -> void
+{
+  fn height(region *node) -> int
+  {
+    return 1 + std::max(node.left ? node.left.height : 0, node.right ? node.right.height : 0);
+  }
+
+  fn balance_factor(region *node) -> int
+  {
+    return (node.left ? node.left.height : 0) - (node.right ? node.right.height : 0);
+  }
+
+  while (x)
+  {
+    if (balance_factor(x) > 1)
+    {
+      if (balance_factor(x.left) >= 0)
+      {
+        tree_rotate_right(&mut this, x);
+
+        x = x.parent;
+        x.right.height = height(x.right);
+      }
+      else
+      {
+        tree_rotate_left(&mut this, x.left);
+        tree_rotate_right(&mut this, x);
+
+        x = x.parent;
+        x.left.height = height(x.left);
+        x.right.height = height(x.right);
+      }
+    }
+
+    else if (balance_factor(x) < -1)
+    {
+      if (balance_factor(x.right) <= 0)
+      {
+        tree_rotate_left(&mut this, x);
+
+        x = x.parent;
+        x.left.height = height(x.left);
+      }
+      else
+      {
+        tree_rotate_right(&mut this, x.right);
+        tree_rotate_left(&mut this, x);
+
+        x = x.parent;
+        x.left.height = height(x.left);
+        x.right.height = height(x.right);
+      }
+    }
+
+    x.height = height(x);
+
+    x = x.parent;
+  }
+
+  std::assert(tree_verify(this));
+}
+
+fn tree_verify(address_space &this) -> bool
+{
+  fn height(region *node) -> int
+  {
+    if (!node)
+      return 0;
+
+    var left_height = node.left ? height(node.left) : 0;
+    var right_height = node.right ? height(node.right) : 0;
+
+    return 1 + std::max(left_height, right_height);
+  }
+
+  fn balance_factor(region *node) -> int
+  {
+    return (node.left ? node.left.height : 0) - (node.right ? node.right.height : 0);
+  }
+
+  if (!this.root)
+    return true;
+
+  for(var node = this.root.leftmost; node; node = node.next)
+  {
+    var x = node;
+    var l = x.left;
+    var r = x.right;
+
+    if (l && x.range < l.range)
+      return false;
+
+    if (r && r.range < x.range)
+      return false;
+
+    if (node.height != height(node))
+      return false;
+
+    if (balance_factor(node) < -1 || balance_factor(node) > +1)
+      return false;
+  }
+
+  return true;
+}
+
+pub fn dump(address_space &this) -> void
+{
+  std::print("[address space]");
+
+  if (!this.root)
+  {
+    std::print("  (empty)");
+    return;
+  }
+
+  for(var node = this.root.leftmost; node; node = node.next)
+  {
+    if (node.backing)
+      std::printf("  {:#016x} - {:#016x} {:7} {:10} {}\n", node.range.begin, node.range.end, node.usage, node.protection, node.offset);
+    else
+      std::printf("  {:#016x} - {:#016x} {:7} {:10}\n", node.range.begin, node.range.end, node.usage, node.protection);
+  }
+}

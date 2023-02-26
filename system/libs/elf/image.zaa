@@ -1,0 +1,223 @@
+//
+// elf image
+//
+
+import elf;
+import std.fmt;
+import std.range;
+
+pub enum result : i32
+{
+  ok = 0,
+  format_error = -8,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct image
+{
+  pub image(void *data, usize len)
+    : len(len),
+      ehdr(cast<elf::elf64_ehdr*>(data))
+  {
+  }
+
+  pub struct section_header
+  {
+    pub section_header(elf::elf64_shdr *shdr)
+      : shdr(shdr)
+    {
+    }
+
+    pub ~section_header() = default;
+
+    pub elf::elf64_shdr *shdr;
+  }
+
+  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, section_header &header) throws -> void
+  {
+    ctx.written += std::print_to(os, *header.shdr);
+  }
+
+  pub fn data(this&, section_header &header) -> std::span<u8>
+  {
+    var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(header.shdr.sh_offset));
+
+    if (this.len < cast(header.shdr.sh_offset + header.shdr.sh_size))
+      return std::span(data, 0);
+
+    return std::span(data, cast(header.shdr.sh_size));
+  }
+
+  pub fn get_string(this&, section_header &table, u32 offset) -> std::string_view
+  {
+    var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(table.shdr.sh_offset + cast(offset)));
+
+    if (table.shdr.sh_size < cast(offset))
+      return "";
+
+    if (this.len < cast(table.shdr.sh_offset + table.shdr.sh_size))
+      return "";
+
+    return std::string_view(data, std::memchr(data, 0, cast(table.shdr.sh_size - cast(offset))));
+  }
+
+  pub struct section_header_iterator
+  {
+    pub section_header_iterator() = default;
+    pub section_header_iterator(section_header_iterator&) = default;
+    pub fn =(section_header_iterator mut &this, section_header_iterator &that) -> section_header_iterator mut & = default;
+    pub ~section_header_iterator() = default;
+
+    pub fn ++(section_header_iterator mut &this) -> section_header_iterator mut &
+    {
+      this.shdr = cast<elf::elf64_shdr*>(cast<uintptr>(this.shdr) + cast(this.ehdr.e_shentsize));
+
+      return &this;
+    }
+
+    pub fn ==(section_header_iterator &lhs, section_header_iterator &rhs) -> bool
+    {
+      return lhs.shdr == rhs.shdr;
+    }
+
+    section_header_iterator(elf::elf64_ehdr *ehdr, elf::elf64_shdr *shdr)
+      : ehdr(ehdr), shdr(shdr)
+    {
+    }
+
+    elf::elf64_ehdr *ehdr;
+    elf::elf64_shdr *shdr;
+  }
+
+  pub fn [](this&, section_header_iterator iter) -> section_header
+  {
+    return section_header(iter.shdr);
+  }
+
+  pub fn section_headers(this&)
+  {
+    var beg = cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff));
+    var end = cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff + cast(this.ehdr.e_shnum * this.ehdr.e_shentsize)));
+
+    return std::range_view<typeof(this)>(this, section_header_iterator(this.ehdr, beg), section_header_iterator(this.ehdr, end));
+  }
+
+  pub fn section(this&, usize index) -> section_header
+  {
+    return section_header(cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff) + index * cast(this.ehdr.e_shentsize)));
+  }
+
+  pub fn section_string_table(this&)
+  {
+    return section_header(cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff) + cast(this.ehdr.e_shstrndx * this.ehdr.e_shentsize)));
+  }
+
+  pub struct program_header
+  {
+    pub program_header(elf::elf64_phdr *phdr)
+      : phdr(phdr)
+    {
+    }
+
+    pub ~program_header() = default;
+
+    pub elf::elf64_phdr *phdr;
+  }
+
+  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, program_header &header) throws -> void
+  {
+    ctx.written += std::print_to(os, *header.phdr);
+  }
+
+  pub fn data(this&, program_header &header) -> std::span<u8>
+  {
+    var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(header.phdr.p_offset));
+
+    if (this.len < cast(header.phdr.p_offset + header.phdr.p_filesz))
+      return std::span(data, 0);
+
+    return std::span(data, cast(header.phdr.p_filesz));
+  }
+
+  pub struct program_header_iterator
+  {
+    pub program_header_iterator() = default;
+    pub program_header_iterator(program_header_iterator&) = default;
+    pub fn =(program_header_iterator mut &this, program_header_iterator &that) -> program_header_iterator mut & = default;
+    pub ~program_header_iterator() = default;
+
+    pub fn ++(program_header_iterator mut &this) -> program_header_iterator mut &
+    {
+      this.phdr = cast<elf::elf64_phdr*>(cast<uintptr>(this.phdr) + cast(this.ehdr.e_phentsize));
+
+      return &this;
+    }
+
+    pub fn ==(program_header_iterator &lhs, program_header_iterator &rhs) -> bool
+    {
+      return lhs.phdr == rhs.phdr;
+    }
+
+    program_header_iterator(elf::elf64_ehdr *ehdr, elf::elf64_phdr *phdr)
+      : ehdr(ehdr), phdr(phdr)
+    {
+    }
+
+    elf::elf64_ehdr *ehdr;
+    elf::elf64_phdr *phdr;
+  }
+
+  pub fn [](this&, program_header_iterator iter) -> program_header
+  {
+    return program_header(iter.phdr);
+  }
+
+  pub fn program_headers(this&)
+  {
+    var beg = cast<elf::elf64_phdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_phoff));
+    var end = cast<elf::elf64_phdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_phoff + cast(this.ehdr.e_phnum * this.ehdr.e_phentsize)));
+
+    return std::range_view<typeof(this)>(this, program_header_iterator(this.ehdr, beg), program_header_iterator(this.ehdr, end));
+  }
+
+  pub ~image() = default;
+
+  pub usize len;
+  pub elf::elf64_ehdr *ehdr;
+}
+
+pub fn verify_elf_header(image &this) -> result
+{
+  if (this.len < 6)
+    return result::format_error;
+
+  if (this.ehdr.e_ident[0] != 0x7f || this.ehdr.e_ident[1] != 69 || this.ehdr.e_ident[2] != 76 || this.ehdr.e_ident[3] != 70)
+    return result::format_error;
+
+  if (this.ehdr.e_ident[4] != 2) // 64 bit
+    return result::format_error;
+
+  if (this.ehdr.e_ident[5] != 1) // little endian
+    return result::format_error;
+
+  if (this.ehdr.e_phoff == 0)
+    return result::format_error;
+
+  if (this.ehdr.e_phentsize < sizeof<elf::elf64_phdr>)
+    return result::format_error;
+
+  if (this.len < cast(this.ehdr.e_phoff + cast(this.ehdr.e_phnum * this.ehdr.e_phentsize)))
+    return result::format_error;
+
+  if (this.len < cast(this.ehdr.e_shoff + cast(this.ehdr.e_shnum * this.ehdr.e_shentsize)))
+    return result::format_error;
+
+  if (this.ehdr.e_shnum <= this.ehdr.e_shstrndx)
+    return result::format_error;
+
+  return result::ok;
+}

@@ -1,0 +1,531 @@
+//
+// scheduler
+//
+
+import std.stdio;
+import std.atomic;
+import sys;
+import cpu;
+import thread as _ : thread;
+import process as _ : process;
+import platform;
+
+pub struct run_queue
+{
+  pub std::spin_lock lock;
+
+  pub u32 len;
+
+  thread mut *[cast(thread::priority::max) + 1] ready;
+  thread mut *[cast(thread::priority::max) + 1] waiting;
+  thread mut *wakelist;
+
+  u64 last_balance;
+
+  fn ready_head(this mut &, thread::priority priority) -> thread mut * mut &
+  {
+    return &this.ready[priority.level];
+  }
+
+  fn waiting_head(this mut &, thread::priority priority) -> thread mut * mut &
+  {
+    return &this.waiting[priority.level];
+  }
+
+  fn push_back(this mut &, thread mut *thread, thread::priority priority) -> void
+  {
+    std::assert(thread.wait_timeout == 0);
+    std::assert(!thread.next && !thread.prev);
+
+    thread.priority = priority;
+    thread.state = thread::state::ready;
+
+    if (this.ready_head(priority))
+    {
+      thread.next = this.ready_head(priority);
+      thread.prev = thread.next.prev;
+      thread.next.prev = thread;
+      thread.prev.next = thread;
+    }
+    else
+    {
+      thread.next = thread;
+      thread.prev = thread;
+      this.ready_head(priority) = thread;
+    }
+
+    this.len += 1;
+  }
+
+  fn push_front(this mut &, thread mut *thread, thread::priority priority) -> void
+  {
+    this.push_back(thread, priority);
+
+    this.ready_head(priority) = thread;
+  }
+
+  fn insert(this mut &, thread mut *thread, thread::priority priority, u64 timeout) -> void
+  {
+    std::assert(timeout != 0);
+    std::assert(thread.wait_timeout == 0);
+    std::assert(!thread.next && !thread.prev);
+
+    thread.priority = priority;
+    thread.wait_timeout = timeout;
+
+    var prev = null<thread mut *>;
+    var insertpos = &this.waiting_head(priority);
+    while (*insertpos && insertpos.wait_timeout < timeout)
+    {
+      prev = *insertpos;
+      insertpos = &insertpos.next;
+    }
+
+    thread.next = *insertpos;
+    thread.prev = prev;
+
+    if (thread.next)
+      thread.next.prev = thread;
+
+    *insertpos = thread;
+  }
+
+  fn remove(this mut &, thread mut *thread) -> thread mut *
+  {
+    var priority = thread.priority;
+
+    thread.prev.next = thread.next;
+    thread.next.prev = thread.prev;
+
+    if (this.ready_head(priority) == thread)
+    {
+      if (thread.next != thread)
+        this.ready_head(priority) = thread.next;
+      else
+        this.ready_head(priority) = null;
+    }
+
+    thread.next = null;
+    thread.prev = null;
+
+    this.len -= 1;
+
+    return thread;
+  }
+
+  fn unblock(this mut &, thread mut *thread) -> thread mut *
+  {
+    var priority = thread.priority;
+
+    if (thread.prev)
+      thread.prev.next = thread.next;
+
+    if (thread.next)
+      thread.next.prev = thread.prev;
+
+    if (this.waiting_head(priority) == thread)
+      this.waiting_head(priority) = thread.next;
+
+    thread.next = null;
+    thread.prev = null;
+    thread.wait_timeout = 0;
+
+    return thread;
+  }
+
+  fn wake(this mut &, thread mut *thread) -> void
+  {
+    while (true)
+    {
+      thread.wakenext = std::volatile_load(&this.wakelist);
+
+      if (std::atomic_cmpxchg_weak(&this.wakelist, thread.wakenext, thread))
+        break;
+    }
+  }
+
+  fn purge(this mut &, thread mut *thread) -> void
+  {
+    var wakelist = std::atomic_xchg(&this.wakelist, null);
+
+    var curr = &wakelist;
+
+    while (*curr)
+    {
+      if (*curr == thread)
+      {
+        *curr = curr.wakenext;
+      }
+      else
+      {
+        curr = &curr.wakenext;
+      }
+    }
+
+    while (wakelist)
+    {
+      *curr = std::volatile_load(&this.wakelist);
+
+      if (std::atomic_cmpxchg_weak(&this.wakelist, *curr, wakelist))
+        break;
+    }
+
+    unblock(&mut this, thread);
+  }
+
+  pub run_queue() = default;
+  pub run_queue(#run_queue&) = default;
+  pub ~run_queue() = default;
+}
+
+pub fn dump(run_queue &this) -> void
+{
+  std::print("[run queue]");
+
+  rof(var queue : this.ready)
+  {
+    for(var thread = queue; thread; thread = thread.next)
+    {
+      std::print("  ", thread.id, " ", thread.state, " ", thread.priority, " ", thread.quantum_used_time);
+
+      if (thread.next == queue)
+        break;
+    }
+  }
+
+  rof(var queue : this.waiting)
+  {
+    for(var thread = queue; thread; thread = thread.next)
+    {
+      std::print("  ", thread.id, " ", thread.state, " ", thread.priority, " ", thread.quantum_used_time, " ", thread.wait_timeout);
+    }
+  }
+}
+
+extern fn idle(void mut *data) -> void
+{
+  cpu::runqueue.lock.unlock();
+  platform::enable_interrupts();
+  platform::set_timer_deadline(0);
+
+  while (true)
+    platform::idle();
+}
+
+extern fn thread_main(thread mut *thread) -> void
+{
+  std::assert(thread);
+
+  cpu::runqueue.lock.unlock();
+  cpu::current_thread.tick_start_time = cpu::tsc;
+  platform::enable_interrupts();
+
+  std::print("[thread:", thread.id, "] started");
+
+  thread.entry(thread.parameter);
+
+  thread::exit(0);
+}
+
+extern fn timer_deadline() -> void
+{
+  reschedule(thread::state::ready);
+
+  if (cpu::tsc > cpu::runqueue.last_balance + cpu::clockspeed / 100)
+    rebalance(&mut cpu::runqueue);
+}
+
+fn pick_next(run_queue mut &runqueue) -> thread mut *
+{
+  var now = cpu::system_time;
+
+  var wakelist = std::atomic_xchg(&runqueue.wakelist, null);
+
+  for(var thread = wakelist; thread; thread = thread.wakenext)
+  {
+    std::assert(thread.cpu == cpu::current);
+
+    if (thread.wait_timeout != 0)
+      runqueue.unblock(thread);
+
+    runqueue.insert(thread, thread.priority, now);
+  }
+
+  for(var priority = cast<usize>(thread::priority::max); priority != 0; --priority)
+  {
+    if (var waiting = runqueue.waiting[priority]; waiting && waiting.wait_timeout <= now)
+    {
+      return runqueue.unblock(waiting);
+    }
+
+    if (var ready = runqueue.ready[priority]; ready)
+    {
+      return runqueue.remove(ready);
+    }
+  }
+
+  return runqueue.remove(runqueue.ready_head(thread::priority::idle));
+}
+
+fn reschedule(thread::state state, bool adopt_lock = false) -> void
+{
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  let quantum = cpu::clockspeed >> 11 | 0x1fff;
+  let quantum_leap = quantum & ~0xfff;
+
+  var used_time = cpu::tsc - current_thread.tick_start_time;
+
+  current_thread.state = state;
+  current_thread.quantum_used_time += used_time;
+  std::atomic_add(&current_thread.cpu_time, used_time);
+
+  if (!adopt_lock)
+    runqueue.lock.lock();
+
+  if (current_thread.state == thread::state::ready)
+  {
+    if (current_thread.quantum_used_time < quantum_leap)
+      runqueue.push_front(current_thread, current_thread.priority);
+    else
+      runqueue.push_back(current_thread, current_thread.priority);
+  }
+
+  if (current_thread.quantum_used_time > quantum_leap)
+    current_thread.quantum_used_time = 0;
+
+  var next_thread = pick_next(&mut runqueue);
+
+  platform::set_timer_deadline(quantum - next_thread.quantum_used_time);
+
+  next_thread.state = thread::state::running;
+
+  if (next_thread != current_thread)
+  {
+    var rsp = __asm("mov $0, rsp", "=r");
+    std::assert(rsp > cast<uintptr>(current_thread) && rsp <= cast<uintptr>(current_thread) + sizeof<thread>);
+
+    if (next_thread.process != current_thread.process)
+      next_thread.process.pagetable.activate();
+
+    cpu::switch_current_thread(next_thread);
+    platform::task_switch(&mut current_thread.task, next_thread.task);
+  }
+
+  reschedule_resume();
+}
+
+#[noinline]
+fn reschedule_resume() -> void
+{
+  cpu::runqueue.lock.unlock();
+  cpu::current_thread.tick_start_time = cpu::tsc;
+}
+
+fn rebalance(run_queue mut &runqueue) -> void
+{
+  var busiest = &runqueue;
+  for(var mut &queue : sys::runqueues)
+  {
+    if (busiest.len < queue.len)
+      busiest = &queue;
+  }
+
+  if (1 < busiest.len && runqueue.len < 3*busiest.len/4)
+  {
+    for(var mut &queue : sys::runqueues)
+    {
+      if (&queue == &runqueue || &queue == busiest)
+        queue.lock.lock();
+    }
+
+    for(var thread : busiest.ready)
+    {
+      if (thread)
+      {
+        if (thread.pinned)
+          continue;
+
+        busiest.remove(thread);
+        thread.cpu = cpu::current;
+        runqueue.push_back(thread, thread.priority);
+
+        break;
+      }
+    }
+
+    busiest.lock.unlock();
+    runqueue.lock.unlock();
+  }
+
+  runqueue.last_balance = cpu::tsc;
+}
+
+pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority::normal) -> void
+{
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = cpu::runqueue;
+
+  var guard = std::lock_guard(&mut runqueue.lock);
+
+  thread.cpu = cpu::current;
+  runqueue.push_back(thread, priority);
+
+  platform::task_fork(&mut thread.task, extern(thread_main), thread);
+}
+
+pub fn sleep_yield() -> void
+{
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  current_thread.quantum_used_time = 0x7ffffffffff;
+
+  reschedule(thread::state::ready);
+}
+
+pub fn sleep_until(u64 timeout) -> void
+{
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  runqueue.lock.lock();
+
+  current_thread.wait_status = 1;
+  runqueue.insert(current_thread, current_thread.priority, timeout);
+
+  reschedule(thread::state::waiting, adopt_lock: true);
+}
+
+pub fn prepare_to_block() -> void
+{
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  std::atomic_store(&current_thread.wait_status, 1);
+}
+
+pub fn block() -> i32
+{
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  runqueue.lock.lock();
+
+  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, 1, 2))
+  {
+    reschedule(thread::state::waiting, adopt_lock: true);
+  }
+  else
+  {
+    runqueue.lock.unlock();
+  }
+
+  std::assert(&runqueue == &cpu::runqueue);
+  std::assert(current_thread == cpu::current_thread);
+
+  return std::volatile_load(&current_thread.wait_status);
+}
+
+pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
+{
+  lock.unlock();
+
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  runqueue.lock.lock();
+
+  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, 1, 2))
+  {
+    runqueue.insert(current_thread, current_thread.priority, timeout);
+
+    reschedule(thread::state::waiting, adopt_lock: true);
+  }
+  else
+  {
+    runqueue.lock.unlock();
+  }
+
+  std::assert(&runqueue == &cpu::runqueue);
+  std::assert(current_thread == cpu::current_thread);
+  std::assert(current_thread.wait_timeout == 0);
+
+  lock.lock();
+
+  runqueue.purge(current_thread);
+
+  return std::volatile_load(&current_thread.wait_status);
+}
+
+pub fn unblock(thread mut *thread, i32 status = 0) -> void
+{
+  std::assert(status <= 0);
+
+  if (std::atomic_xchg(&thread.wait_status, status) == 2)
+  {
+    var irqs = platform::disable_interrupts();
+
+    sys::runqueue(thread.cpu).wake(thread);
+
+    if (thread.cpu != cpu::current || cpu::current_thread.priority < thread.priority)
+    {
+      sys::unicast_ipi_message(thread.cpu, fn[var thread = thread]() -> void {
+        reschedule(thread::state::ready);
+      });
+    }
+
+    platform::restore_interrupts(irqs);
+  }
+}
+
+pub fn bury(thread mut *undertaker, thread mut * mut &graveyard)
+{
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
+
+  runqueue.lock.lock();
+
+  while (true)
+  {
+    current_thread.next = std::volatile_load(&graveyard);
+
+    if (std::atomic_cmpxchg_weak(&graveyard, current_thread.next, current_thread))
+      break;
+  }
+
+  unblock(undertaker);
+
+  reschedule(thread::state::buried, adopt_lock: true);
+
+  std::panic("dead ringer!");
+}
+
+pub fn start() -> void
+{
+  var idle_thread = new<thread>(__alloca(sizeof<thread>, 64));
+
+  platform::disable_interrupts();
+
+  var mut &runqueue = cpu::runqueue;
+
+  idle_thread.pinned = &runqueue;
+  idle_thread.priority = thread::priority::idle;
+  idle_thread.cpu = cpu::current;
+  idle_thread.state = thread::state::ready;
+
+  while (!idle_thread.process)
+    idle_thread.process = std::atomic_load(&colonel);
+
+  runqueue.lock.lock();
+
+  cpu::switch_current_thread(idle_thread);
+  platform::task_init(&mut idle_thread.task);
+  platform::task_enter(&mut idle_thread.task, extern(idle), null);
+}

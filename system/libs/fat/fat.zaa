@@ -1,0 +1,101 @@
+//
+// fat
+//
+
+#[packed]
+pub struct fat_header
+{
+  pub u8[3] jmp;
+  pub u8[8] oem_name;
+  pub u16 bytes_per_sector;
+  pub u8 sectors_per_cluster;
+  pub u16 reserved_sectors;
+  pub u8 number_of_fats;
+  pub u16 root_entry_count;
+  pub u16 total_sectors_short;
+  pub u8 media_descriptor;
+  pub u16 fat_sectors_short;
+  pub u16 sectors_per_track;
+  pub u16 number_of_heads;
+  pub u32 hidden_sectors;
+  pub u32 total_sectors_long;
+}
+
+#[packed]
+pub struct fat12_header
+{
+  pub fat_header header;
+  pub u8 drive_number;
+  pub u8 reserved1;
+  pub u8 boot_signature;
+  pub u32 volume_id;
+  pub u8[11] volume_label;
+  pub u8[8] fstype;
+}
+
+#[packed]
+pub struct fat32_header
+{
+  pub fat_header header;
+  pub u32 fat_sectors_long;
+  pub u16 extflags;
+  pub u16 fsver;
+  pub u32 root_entry_cluster;
+  pub u16 fsinfo_sector;
+  pub u16 boot_sector;
+  pub u8[12] reserved1;
+  pub u8 drive_number;
+  pub u8 reserved2;
+  pub u8 boot_signature;
+  pub u32 volume_id;
+  pub u8[11] volume_label;
+  pub u8[8] fstype;
+}
+
+#[packed]
+pub struct fat32_fsinfo
+{
+  pub u32 lead_signature;  // 0x41615252
+  pub u8[480] reserved1;
+  pub u32 struc_signature; // 0x61417272
+  pub u32 free_cluster_count;
+  pub u32 next_free_cluster;
+  pub u8[12] reserved2;
+  pub u32 tail_signature;  // 0xAA550000
+}
+
+#[packed]
+pub struct directory_entry
+{
+  pub u8[11] name;
+  pub u8 attributes;
+  pub u8 reserved1;
+  pub u8 creation_time_tenths;
+  pub u16 creation_time;
+  pub u16 creation_date;
+  pub u16 last_access_date;
+  pub u16 first_cluster_hi;
+  pub u16 write_time;
+  pub u16 write_date;
+  pub u16 first_cluster_lo;
+  pub u32 filesize;
+
+  pub fn isreg(this&) -> bool { return this.attributes & 0x10 == 0; }
+  pub fn isdir(this&) -> bool { return this.attributes & 0x10 != 0; }
+
+  pub fn first_cluster(this&) -> u32
+  {
+    var cluster = cast<u32>(this.first_cluster_hi) << 16 + cast<u32>(this.first_cluster_lo);
+
+    if (cluster == 0)
+      cluster = 0x0fffffff;
+
+    return cluster;
+  }
+
+  pub fn first_cluster=(this mut &, u32 value) -> void
+  {
+    this.first_cluster_lo = cast<u16>(value & 0xffff);
+    this.first_cluster_hi = cast<u16>(value >> 16);
+  }
+}

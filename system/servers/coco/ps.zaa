@@ -1,0 +1,33 @@
+//
+// ps
+//
+
+import std.stdio;
+import json;
+import terminal;
+import env;
+
+pub fn ps(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  try
+  {
+    var proclist = json::load_from_file("/sys/proc/list");
+
+    if (proclist.error)
+      std::print("ps: error parsing proc list - ", proclist.error);
+
+    terminal.write(std::format("{:>8} {:12}\n", "PID", "CMD"));
+
+    for(var &process : proclist.value.as_array)
+    {
+      terminal.write(std::format("{:>8} {:12}\n", process["pid"].as<int>, process["name"].as_str));
+    }
+
+  }
+  catch (std::error e)
+  {
+    std::print("ps: error - ", e);
+  }
+
+  return 0;
+}

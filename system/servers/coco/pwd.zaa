@@ -1,0 +1,15 @@
+//
+// pwd
+//
+
+import std.stdio;
+import terminal;
+import env;
+
+pub fn pwd(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  terminal.write(env.working_directory);
+  terminal.write("\n");
+
+  return 0;
+}

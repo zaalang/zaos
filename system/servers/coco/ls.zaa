@@ -1,0 +1,222 @@
+//
+// ls
+//
+
+import std.stdio;
+import std.algorithm;
+import os.zaos.fcntl;
+import chrono : duration;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var long_mode = false;
+  var human_readable = false;
+  var show_hidden = false;
+
+  var paths = std::vector<std::string>();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+    {
+      for(var ch : arg.chars)
+      {
+        if (ch == 'l')
+          long_mode = true;
+
+        if (ch == 'h')
+          human_readable = true;
+
+        if (ch == 'a')
+          show_hidden = true;
+      }
+
+      continue;
+    }
+
+    paths.push_back(arg);
+  }
+
+  if (paths.empty)
+    paths.push_back(".");
+
+  std::sort(&mut paths);
+
+  for(var &path : paths)
+  {
+    var dir = open(&mut thread_ring, os::string(path.data, path.len), O_RDONLY | O_DIRECTORY, 0);
+
+    if (dir < 0)
+    {
+      terminal.write(std::format("ls: unable to open {} - {}\n", path, std::errc(cast(-dir))));
+
+      continue;
+    }
+
+    if (paths.len != 1)
+    {
+      if (&path != &paths.front)
+        terminal.write("\n");
+
+      terminal.write(std::format("{}:\n", path));
+    }
+
+    var files = std::vector<std::string>();
+
+    var buffer = typename u8[4096](void);
+
+    for(;;)
+    {
+      var dirres = read(&mut thread_ring, dir, buffer.data, buffer.len);
+
+      if (dirres <= 0)
+      {
+        if (dirres < 0)
+          terminal.write(std::format("ls: error reading directory - {}\n", std::errc(cast(-dirres))));
+
+        break;
+      }
+
+      for(var pos = 0; pos < cast(dirres); )
+      {
+        var entry = cast<dirent*>(buffer.data + cast(pos));
+
+        if (!entry.name.starts_with(".") || show_hidden)
+        {
+          files.push_back(entry.name);
+        }
+
+        pos += entry.rec_len;
+      }
+    }
+
+    if (long_mode)
+    {
+      for(var &file : files)
+      {
+        var fd = open(&mut thread_ring, dir, os::string(file.data, file.len), O_NOFOLLOW, 0);
+
+        if (fd < 0)
+          terminal.write(std::format("ls: error opening file {} - {}\n", file, std::errc(cast(-fd))));
+
+        if (fd < 0)
+          continue;
+
+        var stat = os::stat();
+        var statres = stat(&mut thread_ring, fd, &stat, 0x7f);
+
+        if (statres < 0)
+          terminal.write(std::format("ls: error stating file {} - {}\n", file, std::errc(cast(-statres))));
+
+        var attrs = std::string("----------");
+
+        switch (stat.ftype)
+        {
+          case block_device:
+            attrs[0] = cast('b');
+
+          case character_device:
+            attrs[0] = cast('c');
+
+          case directory:
+            attrs[0] = cast('d');
+
+          case symbolic_link:
+            attrs[0] = cast('l');
+        }
+
+        if (stat.mode & 0o400 != 0)
+          attrs[1] = cast('r');
+
+        if (stat.mode & 0o200 != 0)
+          attrs[2] = cast('w');
+
+        if (stat.mode & 0o100 != 0)
+          attrs[3] = cast('x');
+
+        if (stat.mode & 0o040 != 0)
+          attrs[4] = cast('r');
+
+        if (stat.mode & 0o020 != 0)
+          attrs[5] = cast('w');
+
+        if (stat.mode & 0o010 != 0)
+          attrs[6] = cast('x');
+
+        if (stat.mode & 0o004 != 0)
+          attrs[7] = cast('r');
+
+        if (stat.mode & 0o002 != 0)
+          attrs[8] = cast('w');
+
+        if (stat.mode & 0o001 != 0)
+          attrs[9] = cast('x');
+
+        var date = std::string();
+        var mtime = chrono::system_time(stat.mtime.nanoseconds);
+
+        if (mtime < chrono::system_clock::now - 1.years)
+          date = chrono::format("%b %e  %Y", mtime);
+        else
+          date = chrono::format("%b %e %H:%M", mtime);
+
+        terminal.write(std::format("{} {:>5d} {:>5d} {:>10} {:6} {}", attrs, stat.uid, stat.gid, stat.size, date, file));
+
+        if (stat.ftype == os::ftype::symbolic_link)
+        {
+          var linkres = read(&mut thread_ring, fd, buffer.data, buffer.len);
+
+          if (linkres < 0)
+            terminal.write(std::format("ls: error on readlink {} - {}\n", file, std::errc(cast(-linkres))));
+
+          if (linkres > 0)
+            terminal.write(std::format(" -> {}", std::string_view(buffer.data, cast<usize>(linkres))));
+        }
+
+        terminal.write("\n");
+
+        close(&mut thread_ring, fd);
+      }
+    }
+    else
+    {
+      var x = 0;
+      var maxwidth = 0;
+
+      for(var &file : files)
+        if (var len = file.chars.len; maxwidth < len)
+          maxwidth = len;
+
+      for(var &file : files)
+      {
+        terminal.write(std::format("{:*s}", maxwidth, file));
+
+        if (x + maxwidth + 2 < terminal.columns)
+          terminal.write("  ");
+
+        x += maxwidth + 2;
+
+        if (x + maxwidth >= terminal.columns)
+        {
+          terminal.write("\n");
+          x = 0;
+        }
+      }
+
+      if (x != 0)
+      {
+        terminal.write("\n");
+      }
+    }
+
+    close(&mut thread_ring, dir);
+  }
+
+  return 0;
+}

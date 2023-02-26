@@ -1,0 +1,15 @@
+//
+// input
+//
+
+pub enum errc : u32
+{
+  internal_error = 1,
+  keys_load_error,
+  keys_format_invalid,
+  syms_load_error,
+  syms_format_invalid,
+  invalid_scancode,
+  invalid_keycode,
+  io_error,
+}

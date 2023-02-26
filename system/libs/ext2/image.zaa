@@ -1,0 +1,1165 @@
+//
+// ext2 image
+//
+
+import std.span;
+import std.memory : memcpy, memset;
+import ext2 : ext2_ino_t, ext2_super_block, ext2_group_descriptor, ext2_inode, ext2_dir_entry, ext2_ftype;
+import chrono;
+
+pub enum result : i32
+{
+  ok = 0,
+  file_not_found = -2,
+  format_error = -8,
+  bad_descriptor = -9,
+  already_exists = -17,
+  invalid_argument = -22,
+  file_too_large = -27,
+  no_space_remaining = -28,
+  readonly_file_system = -30,
+  argument_out_of_domain = -33,
+  name_too_long = -36,
+  directory_not_empty = -39,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct image
+{
+  pub image(void *data, usize len)
+    : len(len),
+      data(data)
+  {
+  }
+
+  pub image(void mut *data, usize len)
+    : len(len),
+      data(data),
+      mutdata(data)
+  {
+  }
+
+  pub fn superblock(this&) -> ext2_super_block *
+  {
+    return cast<ext2_super_block*>(cast<uintptr>(this.data) + EXT2_SUPER_BLOCK_OFFSET);
+  }
+
+  pub struct volume
+  {
+    pub ext2_super_block *superblock;
+
+    pub int block_shift;
+    pub usize block_count;
+    pub usize group_count;
+    pub usize group_descriptor_size;
+    pub u64 inode_size;
+    pub u32 inodes_per_group;
+    pub u64 blocks_per_group;
+    pub u64 first_data_block;
+    pub u8 *gdt;
+
+    pub volume() = default;
+    pub volume(volume&) = default;
+    pub fn =(volume mut &, volume &) -> volume mut & = default;
+    pub ~volume() = default;
+  }
+
+  pub fn volume_info(this&) -> volume
+  {
+    var vol = volume();
+
+    vol.superblock = this.superblock;
+
+    vol.block_shift = vol.superblock.block_shift;
+
+    vol.group_descriptor_size = 32;
+    if (vol.superblock.is64bit)
+      vol.group_descriptor_size = cast<usize>(vol.superblock.s_group_descriptor_size);
+
+    vol.gdt = cast<u8*>(this.data) + cast<usize>(vol.superblock.s_first_data_block + 1) << vol.block_shift;
+
+    vol.inode_size = cast(vol.superblock.s_inode_size);
+    vol.block_count = cast(vol.superblock.blocks);
+    vol.inodes_per_group = cast(vol.superblock.s_inodes_per_group);
+    vol.blocks_per_group = cast(vol.superblock.s_blocks_per_group);
+    vol.first_data_block = cast(vol.superblock.s_first_data_block);
+    vol.group_count = std::ceil_div(vol.block_count, cast(vol.superblock.s_blocks_per_group));
+
+    return vol;
+  }
+
+  pub struct inode
+  {
+    u64 cursor;
+    ext2_inode *desc;
+
+    pub fn mode(this&) -> u16 { return this.desc.mode; }
+    pub fn uid(this&) -> u32 { return this.desc.uid; }
+    pub fn gid(this&) -> u32 { return this.desc.gid; }
+    pub fn atime(this&) -> u32 { return this.desc.i_atime; }
+    pub fn ctime(this&) -> u32 { return this.desc.i_ctime; }
+    pub fn mtime(this&) -> u32 { return this.desc.i_mtime; }
+
+    pub fn cursor(this&) -> u64 { return this.cursor; }
+    pub fn filesize(this&) -> u64 { return this.desc.size; }
+
+    pub inode() = default;
+    pub inode(inode&) = default;
+    pub fn =(inode mut &, inode &) -> inode mut & = default;
+    pub ~inode() = default;
+  }
+
+  pub struct dentry
+  {
+    pub std::string_view name;
+    pub u8 file_type;
+
+    pub dentry() = default;
+    pub dentry(dentry&) = default;
+    pub fn =(dentry mut &, dentry &) -> dentry mut & = default;
+    pub ~dentry() = default;
+  }
+
+  pub fn root(this&) -> inode
+  {
+    var root = inode();
+
+    root.desc = lookup_inode(this, EXT2_ROOT_NODE);
+
+    return root;
+  }
+
+  pub ~image() = default;
+
+  pub usize len;
+  pub void *data;
+  pub void mut *mutdata;
+}
+
+pub fn verify_ext2_header(image &this) -> result
+{
+  if (this.len < EXT2_SUPER_BLOCK_OFFSET + sizeof<ext2_super_block>)
+    return format_error;
+
+  var superblock = this.superblock;
+
+  if (superblock.s_magic != EXT2_SUPER_BLOCK_MAGIC)
+    return format_error;
+
+  var block_size = 1 << superblock.block_shift;
+
+  if (this.len < cast<usize>(superblock.blocks) * block_size)
+    return format_error;
+
+  return ok;
+}
+
+fn lookup_inode(image &this, ext2_ino_t ino) -> ext2_inode *
+{
+  var vol = this.volume_info;
+
+  var group = (ino - 1) / vol.inodes_per_group;
+  var groupdesc = cast<ext2_group_descriptor*>(vol.gdt + cast(group) * vol.group_descriptor_size);
+  var inodetable = get_inode_table(vol.superblock, groupdesc);
+
+  var offset = inodetable << vol.block_shift + cast<u64>((ino - 1) % vol.inodes_per_group) * vol.inode_size;
+
+  return cast<ext2_inode*>(cast<uintptr>(this.data) + cast<usize>(offset));
+}
+
+fn lookup_block(image &this, ext2_inode *inode, u64 offset) -> std::span<u8>
+{
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_size = 1 << block_shift;
+
+  let k0 = EXT2_DIRECT_BLOCKS;
+  let k1 = k0 + block_size / sizeof<u32>;
+  let k2 = k1 + std::pow(block_size / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(block_size / sizeof<u32>, 3);
+
+  var result = std::span<u8>();
+
+  var index = cast<usize>(offset >> block_shift);
+
+  if (index < k0)
+  {
+    var table = std::span(inode.i_contents.data, k0);
+
+    result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
+
+    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+      result.len += block_size;
+  }
+  else if (index < k1)
+  {
+    var block0 = cast<u8*>(this.data) + cast<usize>(inode.i_contents[EXT2_DIRECT_BLOCKS]) << block_shift;
+
+    index -= k0;
+
+    var table0 = std::span(cast<u32*>(block0), k1 - k0);
+
+    result.data = cast<u8*>(this.data) + cast<usize>(table0[index]) << block_shift;
+
+    for(var current = table0[index]; index < table0.len && table0[index] == current; ++index, ++current)
+      result.len += block_size;
+  }
+  else if (index < k2)
+  {
+    var block0 = cast<u8*>(this.data) + cast<usize>(inode.i_contents[EXT2_DIRECT_BLOCKS + 1]) << block_shift;
+
+    index -= k1;
+
+    var block1 = cast<u8*>(this.data) + cast<usize>(*(cast<u32*>(block0) + index / (k1 - k0))) << block_shift;
+
+    index &= (k1 - k0) - 1;
+
+    var table = std::span(cast<u32*>(block1), k1 - k0);
+
+    result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
+
+    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+      result.len += block_size;
+  }
+  else if (index < k3)
+  {
+    var block0 = cast<u8*>(this.data) + cast<usize>(inode.i_contents[EXT2_DIRECT_BLOCKS + 2]) << block_shift;
+
+    index -= k2;
+
+    var block1 = cast<u8*>(this.data) + cast<usize>(*(cast<u32*>(block0) + index / (k2 - k1))) << block_shift;
+
+    index &= (k2 - k1) - 1;
+
+    var block2 = cast<u8*>(this.data) + cast<usize>(*(cast<u32*>(block1) + index / (k1 - k0))) << block_shift;
+
+    index &= (k1 - k0) - 1;
+
+    var table = std::span(cast<u32*>(block2), k1 - k0);
+
+    result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
+
+    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+      result.len += block_size;
+  }
+
+  return result;
+}
+
+fn now() -> u32
+{
+  return cast<u32>(chrono::system_clock::now.time_since_epoch.floor<chrono::seconds>.count & 0xffffffff);
+}
+
+fn acquire_bits(image mut &this, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 mut &count) -> result
+{
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var bitmap_size = 1 << block_shift;
+
+  var bitmap = cast<u8 mut *>(this.data) + cast<usize>(bitmapblock) << block_shift;
+
+  for(var i = 0; i < bitmap_size; ++i)
+  {
+    if (*(bitmap + i) != 255)
+    {
+      var base = cast<u64>(i << 3);
+      var first = cast<u64>(std::ctz(~*(bitmap + i)));
+      var last = cast<u64>(std::ctz(*(bitmap + i) & ~((1 << first) - 1)));
+
+      if (last == 8)
+      {
+        for(i += 1; i < bitmap_size - 1 && *(bitmap + i) == 0; ++i)
+          last += 8;
+
+        last += cast<u64>(std::ctz(*(bitmap + i)));
+      }
+
+      if (last - first > count)
+      {
+        idx = base + first;
+        count = std::min(last - first, wanted);
+
+        if (count == wanted)
+          break;
+      }
+    }
+  }
+
+  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  {
+    *(bitmap + (i >> 3)) |= 1 << (i & 0x7);
+  }
+
+  return ok;
+}
+
+fn release_bits(image mut &this, u64 bitmapblock, u64 idx, u64 count) -> result
+{
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+
+  var bitmap = cast<u8 mut *>(this.data) + cast<usize>(bitmapblock) << block_shift;
+
+  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  {
+    if (*(bitmap + (i >> 3)) & (1 << (i & 0x7)) == 0)
+      return argument_out_of_domain;
+  }
+
+  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  {
+    *(bitmap + (i >> 3)) &= ~(1 << (i & 0x7));
+  }
+
+  return ok;
+}
+
+fn allocate_inode(image mut &this, ext2_ino_t mut &ino, u16 mode) -> result
+{
+  var vol = this.volume_info;
+  var superblock = cast<ext2_super_block mut *>(vol.superblock);
+
+  for(var group = 0; group < vol.group_count; ++group)
+  {
+    var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
+    var inodebitmap = get_inode_bitmap(vol.superblock, groupdesc);
+
+    var idx = 0;
+    var count = 0;
+
+    if (var n = get_free_inodes(superblock, groupdesc); n == 0)
+      continue;
+
+    if (var result = this.acquire_bits(inodebitmap, 1, &mut idx, &mut count); !result)
+      return result;
+
+    if (count != 0)
+    {
+      ino = cast(idx) + cast(group) * vol.inodes_per_group + 1;
+
+      if (mode & EXT2_IFMT == EXT2_IFDIR)
+        consume_used_directories(superblock, groupdesc, 1);
+
+      consume_free_inodes(superblock, groupdesc, 1);
+
+      return ok;
+    }
+  }
+
+  return no_space_remaining;
+}
+
+fn deallocate_inode(image mut &this, ext2_ino_t ino, u16 mode) -> result
+{
+  var vol = this.volume_info;
+  var superblock = cast<ext2_super_block mut *>(vol.superblock);
+
+  if (ino < 1)
+    return argument_out_of_domain;
+
+  var group = (ino - 1) / vol.inodes_per_group;
+  var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
+  var inodebitmap = get_inode_bitmap(vol.superblock, groupdesc);
+
+  if (var result = this.release_bits(inodebitmap, cast<u64>((ino - 1) % vol.inodes_per_group), 1); !result)
+    return result;
+
+  if (mode & EXT2_IFMT == EXT2_IFDIR)
+    release_used_directories(superblock, groupdesc, 1);
+
+  release_free_inodes(superblock, groupdesc, 1);
+
+  return ok;
+}
+
+fn allocate_blocks(image mut &this, u64 wanted, u64 mut &block, u64 mut &count) -> result
+{
+  var vol = this.volume_info;
+  var superblock = cast<ext2_super_block mut *>(vol.superblock);
+
+  for(var k = 0; k < 2; ++k)
+  {
+    for(var group = 0; group < vol.group_count; ++group)
+    {
+      var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
+      var blockbitmap = get_block_bitmap(vol.superblock, groupdesc);
+
+      if (var n = get_free_blocks(superblock, groupdesc); n == 0 || (k == 0 && n < 4*wanted))
+        continue;
+
+      if (var result = this.acquire_bits(blockbitmap, wanted, &mut block, &mut count); !result)
+        return result;
+
+      if (count != 0)
+      {
+        block += cast(group) * vol.blocks_per_group + vol.first_data_block;
+
+        consume_free_blocks(superblock, groupdesc, count);
+
+        return ok;
+      }
+    }
+  }
+
+  return no_space_remaining;
+}
+
+fn deallocate_blocks(image mut &this, u64 block, u64 count) -> result
+{
+  var vol = this.volume_info;
+  var superblock = cast<ext2_super_block mut *>(vol.superblock);
+
+  if (block < vol.first_data_block)
+    return argument_out_of_domain;
+
+  var idx = block - vol.first_data_block;
+
+  var group = idx / vol.blocks_per_group;
+  var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
+  var blockbitmap = get_block_bitmap(vol.superblock, groupdesc);
+
+  if (var result = this.release_bits(blockbitmap, idx % vol.blocks_per_group, count); !result)
+    return result;
+
+  release_free_blocks(superblock, groupdesc, count);
+
+  return ok;
+}
+
+fn free(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize end) -> result
+{
+  for(var i = beg; i < end; )
+  {
+    if (var block = table[i]; block != 0)
+    {
+      var count = 0;
+      for(var j = 0; i + j < end && table[i + j] == block + cast(j); ++j)
+        count += 1;
+
+      this.deallocate_blocks(cast(block), count);
+
+      for(var j = 0; j < count; ++j)
+        table[i++] = 0;
+    }
+    else
+      ++i;
+  }
+
+  return ok;
+}
+
+fn free_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  {
+    var table0 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.free(&mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
+      return result;
+  }
+
+  if (var result = this.free(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  return ok;
+}
+
+fn free_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  {
+    var table1 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.free_indirect(&mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+      return result;
+  }
+
+  if (var result = this.free(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  return ok;
+}
+
+fn free_triple_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  {
+    var table2 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.free_double_indirect(&mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+      return result;
+  }
+
+  if (var result = this.free(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn recover(image mut &this, ext2_inode mut *inode, u64 last) -> result
+{
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_size = 1 << block_shift;
+
+  let k0 = EXT2_DIRECT_BLOCKS;
+  let k1 = k0 + block_size / sizeof<u32>;
+  let k2 = k1 + std::pow(block_size / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(block_size / sizeof<u32>, 3);
+
+  if (inode.islnk && inode.size < EXT2_SHORT_SYMLINK_LENGTH)
+    return ok;
+
+  var n = cast<usize>(last);
+
+  var table = std::mutable_span(inode.i_contents.data, inode.i_contents.len);
+
+  if (var result = this.free(&mut table, n, k0); !result)
+    return result;
+
+  if (var result = this.free_indirect(&mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, block_shift, std::max(n, k0), k1); !result)
+    return result;
+
+  if (var result = this.free_double_indirect(&mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, block_shift, std::max(n, k1), k2); !result)
+    return result;
+
+  if (var result = this.free_triple_indirect(&mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, block_shift, std::max(n, k2), k3); !result)
+    return result;
+
+  inode.i_blocks = inode_block_usage(superblock, cast(last));
+
+  return ok;
+}
+
+fn alloc(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize end) -> result
+{
+  for(var i = beg; i < end; )
+  {
+    var first = 0;
+    var count = 0;
+
+    if (var result = this.allocate_blocks(cast<u64>(end - i), &mut first, &mut count); !result)
+      return result;
+
+    for(var j = 0; j < count; ++j)
+      table[i++] = cast<u32>(first + j);
+  }
+
+  return ok;
+}
+
+fn alloc_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  {
+    var table0 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.alloc(&mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
+      return result;
+  }
+
+  return ok;
+}
+
+fn alloc_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  {
+    var table1 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.alloc_indirect(&mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+      return result;
+  }
+
+  return ok;
+}
+
+fn alloc_triple_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
+{
+  if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+    return result;
+
+  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  {
+    var table2 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
+
+    if (var result = this.alloc_double_indirect(&mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+      return result;
+  }
+
+  return ok;
+}
+
+fn grow(image mut &this, ext2_inode mut *inode, u64 last) -> result
+{
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_size = 1 << block_shift;
+
+  let k0 = EXT2_DIRECT_BLOCKS;
+  let k1 = k0 + block_size / sizeof<u32>;
+  let k2 = k1 + std::pow(block_size / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(block_size / sizeof<u32>, 3);
+
+  var n = std::ceil_div(cast<usize>(inode.size), block_size);
+  var last = cast<usize>(last);
+
+  if (n == last)
+    return ok;
+
+  var table = std::mutable_span(inode.i_contents.data, inode.i_contents.len);
+
+  if (n < k0)
+  {
+    if (var result = this.alloc(&mut table, n, std::min(last, k0)); !result)
+      return result;
+  }
+
+  if (k0 < last && n < k1)
+  {
+    if (var result = this.alloc_indirect(&mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, block_shift, std::max(n, k0), std::min(last, k1)); !result)
+      return result;
+  }
+
+  if (k1 < last && n < k2)
+  {
+    if (var result = this.alloc_double_indirect(&mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, block_shift, std::max(n, k1), std::min(last, k2)); !result)
+      return result;
+  }
+
+  if (k2 < last && n < k3)
+  {
+    if (var result = this.alloc_triple_indirect(&mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, block_shift, std::max(n, k2), std::min(last, k3)); !result)
+      return result;
+  }
+
+  inode.i_blocks = inode_block_usage(superblock, cast(last));
+
+  return ok;
+}
+
+fn set_type(ext2_dir_entry mut &entry, ext2_ftype type) -> void
+{
+  entry.file_type = cast(type);
+}
+
+fn set_name(ext2_dir_entry mut &entry, std::string_view name) -> void
+{
+  memcpy(entry.file_name.data, name.data, name.len);
+
+  entry.name_len = cast(name.len);
+}
+
+fn find(image &this, image::inode &dir, std::string_view name, ext2_dir_entry * mut &entry) -> result
+{
+  var dentry = cast<ext2_inode mut *>(dir.desc);
+
+  for(var position = 0; position < dentry.size; )
+  {
+    var block = lookup_block(this, dentry, position);
+
+    for(entry = cast<ext2_dir_entry*>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    {
+      if (entry.rec_len == 0)
+        break;
+
+      if (entry.inode != 0 && entry.name == name)
+      {
+        return ok;
+      }
+
+      entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
+    }
+
+    position += cast(block.len);
+  }
+
+  return file_not_found;
+}
+
+fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2_dir_entry mut * mut &entry) -> result
+{
+  var dentry = cast<ext2_inode mut *>(dir.desc);
+
+  for(var position = 0;; )
+  {
+    if (position >= dentry.size)
+    {
+      var superblock = this.superblock;
+      var block_shift = superblock.block_shift;
+
+      if (var result = this.grow(dentry, dentry.size >> block_shift + 1); !result)
+        return result;
+
+      var block = lookup_block(this, dentry, position);
+
+      cast<ext2_dir_entry mut *>(block.data).inode = 0;
+      cast<ext2_dir_entry mut *>(block.data).rec_len = (1 << block_shift);
+
+      dentry.size = dentry.size + (1 << block_shift);
+    }
+
+    var block = lookup_block(this, dentry, position);
+
+    for(entry = cast<ext2_dir_entry mut *>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    {
+      if (entry.rec_len == 0)
+        break;
+
+      if (entry.inode != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
+      {
+        var remaining = entry.rec_len - dentry_required_len(entry.name_len);
+
+        entry.rec_len -= remaining;
+
+        entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
+
+        entry.inode = 0;
+        entry.rec_len = remaining;
+      }
+
+      if (entry.inode == 0 && entry.rec_len >= required_len)
+      {
+        return ok;
+      }
+
+      entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
+    }
+
+    position += cast(block.len);
+  }
+}
+
+pub fn open(image &this, image::inode &dir, std::string_view name, image::inode mut &fd) -> result
+{
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  var entry = null<ext2_dir_entry*>();
+
+  if (var result = find(this, dir, name, &mut entry); !result)
+    return result;
+
+  fd.desc = lookup_inode(this, entry.inode);
+  fd.cursor = 0;
+
+  return ok;
+}
+
+pub fn read(image &this, image::inode mut &fd, std::span<u8> mut &view) -> result
+{
+  if (!fd.desc.isreg)
+    return bad_descriptor;
+
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_mask = cast<u64>((1 << block_shift) - 1);
+
+  var block = lookup_block(this, fd.desc, fd.cursor & ~block_mask);
+
+  view.data = block.data + cast(fd.cursor & block_mask);
+  view.len = std::min(block.len - cast(fd.cursor & block_mask), cast(fd.filesize - fd.cursor));
+
+  fd.cursor += cast(view.len);
+
+  return cast(view.len);
+}
+
+pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) -> result
+{
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_mask = cast<u64>((1 << block_shift) - 1);
+
+  for(var position = dir.cursor & ~block_mask; position < dir.size; )
+  {
+    var block = lookup_block(this, dir.desc, position);
+
+    for(var entry = cast<ext2_dir_entry*>(block.data + cast(dir.cursor & block_mask)); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    {
+      if (entry.rec_len == 0)
+        break;
+
+      dir.cursor += cast(entry.rec_len);
+
+      if (entry.inode != 0)
+      {
+        dentry.name = entry.name;
+        dentry.file_type = entry.file_type;
+
+        return cast(entry.rec_len);
+      }
+
+      entry = cast<ext2_dir_entry*>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
+    }
+
+    position += cast(block.len);
+  }
+
+  return cast(0);
+}
+
+pub fn create(image mut &this, image::inode &dir, std::string_view name, u32 uid, u32 gid, u16 mode, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  if (name.len >= EXT2_NAME_LENGTH)
+    return name_too_long;
+
+  var entry = null<ext2_dir_entry mut *>();
+
+  if (var result = this.allocate_dir_entry(dir, dentry_required_len(cast(name.len)), &mut entry); !result)
+    return result;
+
+  entry.set_name(name);
+  entry.set_type(ext2_ftype::regular_file);
+
+  var ino = 0;
+  if (var result = this.allocate_inode(&mut ino, EXT2_IFREG); !result)
+    return result;
+
+  var inode = cast<ext2_inode mut *>(lookup_inode(this, ino));
+
+  memset(inode, 0, sizeof<ext2_inode>);
+
+  inode.uid = uid;
+  inode.gid = gid;
+  inode.i_mode = EXT2_IFREG | (mode & 0xfff);
+  inode.i_ctime = now();
+  inode.i_atime = inode.i_ctime;
+  inode.i_mtime = inode.i_ctime;
+  inode.i_links = 1;
+
+  entry.inode = ino;
+
+  fd.desc = inode;
+  fd.cursor = 0;
+
+  return ok;
+}
+
+pub fn expand(image mut &this, image::inode mut &fd, u64 size) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (!fd.desc.isreg)
+    return bad_descriptor;
+
+  if (size < fd.cursor)
+    return bad_descriptor;
+
+  var entry = cast<ext2_inode mut *>(fd.desc);
+
+  if (fd.filesize < size)
+  {
+    var superblock = this.superblock;
+    var block_shift = superblock.block_shift;
+
+    if (var result = this.grow(entry, (size - 1) >> block_shift + 1); !result)
+    {
+      this.recover(entry, (entry.size - 1) >> block_shift + 1);
+
+      return result;
+    }
+
+    entry.size = size;
+  }
+
+  return ok;
+}
+
+pub fn truncate(image mut &this, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (!fd.desc.isreg)
+    return bad_descriptor;
+
+  var entry = cast<ext2_inode mut *>(fd.desc);
+
+  if (fd.filesize != 0)
+  {
+    var superblock = this.superblock;
+    var block_shift = superblock.block_shift;
+
+    if (var result = this.recover(entry, (fd.cursor - 1) >> block_shift + 1); !result)
+      return result;
+
+    entry.size = fd.cursor;
+  }
+
+  return ok;
+}
+
+pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (!fd.desc.isreg)
+    return bad_descriptor;
+
+  if (fd.filesize < fd.cursor + cast(len))
+    return no_space_remaining;
+
+  var superblock = this.superblock;
+  var block_shift = superblock.block_shift;
+  var block_mask = cast<u64>((1 << block_shift) - 1);
+
+  for(var i = 0; i < len; )
+  {
+    var block = lookup_block(this, fd.desc, fd.cursor & ~block_mask);
+
+    var bytes = std::min(block.len - cast(fd.cursor & block_mask), len - i);
+
+    memcpy(cast<u8 mut *>(block.data + cast(fd.cursor & block_mask)), cast<u8*>(data) + i, bytes);
+
+    fd.cursor += cast(bytes);
+
+    i += bytes;
+  }
+
+  return cast(len);
+}
+
+pub fn chown(image mut &this, image::inode mut &fd, u32 owner) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  var inode = cast<ext2_inode mut *>(fd.desc);
+
+  inode.uid = owner;
+
+  return ok;
+}
+
+pub fn chgrp(image mut &this, image::inode mut &fd, u32 group) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  var inode = cast<ext2_inode mut *>(fd.desc);
+
+  inode.gid = group;
+
+  return ok;
+}
+
+pub fn chmod(image mut &this, image::inode mut &fd, u16 mode) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  var inode = cast<ext2_inode mut *>(fd.desc);
+
+  inode.i_mode = (inode.i_mode & 0xf000) | (mode & 0xfff);
+
+  return ok;
+}
+
+pub fn utime(image mut &this, image::inode mut &fd, u32 time) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  var inode = cast<ext2_inode mut *>(fd.desc);
+
+  inode.i_mtime = time;
+  inode.i_atime = inode.i_mtime;
+
+  return ok;
+}
+
+pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid, u32 gid, u16 mode, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  if (name.len >= EXT2_NAME_LENGTH)
+    return name_too_long;
+
+  var entry = null<ext2_dir_entry mut *>();
+
+  if (var result = this.allocate_dir_entry(dir, dentry_required_len(cast(name.len)), &mut entry); !result)
+    return result;
+
+  entry.set_name(name);
+  entry.set_type(ext2_ftype::directory);
+
+  var ino = 0;
+  if (var result = this.allocate_inode(&mut ino, EXT2_IFDIR); !result)
+    return result;
+
+  var inode = cast<ext2_inode mut *>(lookup_inode(this, ino));
+
+  memset(inode, 0, sizeof<ext2_inode>);
+
+  inode.uid = uid;
+  inode.gid = gid;
+  inode.i_mode = EXT2_IFDIR | (mode & 0xfff);
+  inode.i_ctime = now();
+  inode.i_atime = inode.i_ctime;
+  inode.i_mtime = inode.i_ctime;
+  inode.i_dtime = 0;
+  inode.i_links = 1;
+
+  if (var result = this.grow(inode, 1); !result)
+  {
+    this.recover(inode, 0);
+    this.deallocate_inode(ino, EXT2_IFDIR);
+
+    return result;
+  }
+
+  var block = lookup_block(this, inode, 0);
+
+  var parent = null<ext2_dir_entry*>();
+
+  if (var result = find(this, dir, std::string_view("."), &mut parent); !result)
+    return result;
+
+  var dotentry = cast<ext2_dir_entry mut *>(block.data);
+
+  dotentry.inode = ino;
+  dotentry.ftype = ext2_ftype::directory;
+  dotentry.file_name[0] = cast('.');
+  dotentry.name_len = 1;
+  dotentry.rec_len = 12;
+
+  inode.i_links += 1;
+
+  var dotdotentry = cast<ext2_dir_entry mut *>(block.data + 12);
+
+  dotdotentry.inode = parent.inode;
+  dotdotentry.ftype = ext2_ftype::directory;
+  dotdotentry.file_name[0] = cast('.');
+  dotdotentry.file_name[1] = cast('.');
+  dotdotentry.name_len = 2;
+  dotdotentry.rec_len = cast(block.len) - 12;
+
+  cast<ext2_inode mut *>(dir.desc).i_links += 1;
+
+  inode.size = cast(block.len);
+
+  entry.inode = ino;
+
+  fd.desc = inode;
+  fd.cursor = 0;
+
+  return ok;
+}
+
+pub fn rename(image mut &this, image::inode &dir, std::string_view oldname, std::string_view newname) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  if (newname.len >= EXT2_NAME_LENGTH)
+    return name_too_long;
+
+  var dentry = null<ext2_dir_entry*>();
+
+  if (var result = find(this, dir, oldname, &mut dentry); !result)
+    return result;
+
+  var entry = cast<ext2_dir_entry mut *>(dentry);
+  var required_len = dentry_required_len(cast(newname.len));
+
+  if (entry.rec_len < required_len)
+  {
+    if (var result = this.allocate_dir_entry(dir, required_len, &mut entry); !result)
+      return result;
+
+    entry.inode = dentry.inode;
+    entry.file_type = dentry.file_type;
+
+    cast<ext2_dir_entry mut *>(dentry).inode = 0;
+  }
+
+  entry.set_name(newname);
+
+  return ok;
+}
+
+pub fn unlink(image mut &this, image::inode &dir, std::string_view name) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  var dentry = null<ext2_dir_entry*>();
+
+  if (var result = find(this, dir, name, &mut dentry); !result)
+    return result;
+
+  var entry = cast<ext2_dir_entry mut *>(dentry);
+  var inode = cast<ext2_inode mut *>(lookup_inode(this, entry.inode));
+
+  if (inode.i_links == 0)
+    return argument_out_of_domain;
+
+  inode.i_links -= 1;
+
+  if ((inode.isdir && inode.i_links == 1) || inode.i_links == 0)
+  {
+    if (var result = this.recover(inode, 0); !result)
+      return result;
+
+    inode.size = 0;
+    inode.i_dtime = now();
+    inode.i_links = 0;
+
+    if (inode.isdir)
+      cast<ext2_inode mut *>(dir.desc).i_links -= 1;
+
+    this.deallocate_inode(entry.inode, inode.mode);
+  }
+
+  entry.inode = 0;
+
+  return ok;
+}

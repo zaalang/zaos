@@ -1,0 +1,65 @@
+//
+// completer
+//
+
+import std.vector;
+import std.string : String;
+
+pub vtable completer
+{
+  pub struct suggestion
+  {
+    pub std::string value;
+    pub std::string description;
+    pub usize matched;
+
+    pub suggestion(String &&value, usize matched)
+      : value(&&value), matched(matched)
+    {
+    }
+
+    pub suggestion(String &&value, String &&description, usize matched)
+      : value(&&value), description(&&description), matched(matched)
+    {
+    }
+
+    pub suggestion() = default;
+    pub suggestion(suggestion&&) = default;
+    pub fn =(suggestion mut &, suggestion &&) -> suggestion mut & = default;
+    pub ~suggestion() = default;
+  }
+
+  pub fn complete(completer mut &, std::string &buffer, usize cursor) -> std::vector<suggestion>;
+}
+
+pub struct default_completer : pub completer
+{
+  pub std::vector<std::string> words;
+
+  pub fn complete(completer mut &this, std::string &buffer, usize cursor) -> std::vector<completer::suggestion>
+  {
+    var &this = cast<default_completer&>(this);
+
+    var results = std::vector<completer::suggestion>();
+
+    var matcher = buffer[0 .. cursor];
+    if (var j = matcher.find_last_of(" \t\r\n"); j != matcher.end)
+      matcher = buffer[j + 1 .. matcher.end];
+
+    for(var &word : this.words)
+    {
+      if (word.starts_with(matcher))
+      {
+        results.push_back(completer::suggestion(word, matcher.len));
+      }
+    }
+
+    return results;
+  }
+
+  pub default_completer()
+  {
+  }
+
+  pub ~default_completer() = default;
+}

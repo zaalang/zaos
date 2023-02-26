@@ -1,0 +1,114 @@
+//
+// x86 smp
+//
+
+import std.memory;
+import std.atomic;
+import acpi;
+import bootinfo : BootInfo;
+import cpu;
+
+const APIC_ESR = 0x280;  // Error Status Register
+const APIC_ICR0 = 0x300; // Interrupt Command Register [bits 0-31]
+const APIC_ICR1 = 0x310; // Interrupt Command Register [bits 32-63]
+
+fn cpu_rendezvous() -> i32 mut &
+{
+  static rendezvous = i32(0);
+
+  return &rendezvous;
+}
+
+fn apic_read(uintptr base, uintptr offset) -> u32
+{
+  return std::volatile_load(cast<u32*>(base + offset));
+}
+
+fn apic_write(uintptr base, uintptr offset, u32 value) -> void
+{
+  std::volatile_store(cast<u32 mut *>(base + offset), value);
+}
+
+pub fn initialise(BootInfo mut &bootinfo)
+{
+  const code_base = 0x8000;
+  const stack_base = 0x10000;
+  const stack_size = 64; // bytes per cpu
+
+  cpu_rendezvous = cast(bootinfo.cpu_count);
+
+  var trampoline_base = extern(_trampoline);
+  var trampoline_size = extern(trampoline_) - trampoline_base;
+
+  std::memcpy(cast<void mut *>(code_base), cast<void*>(trampoline_base), trampoline_size);
+
+  std::memcpy(cast<void mut *>(code_base + 0x10), &bootinfo.gdt, sizeof(bootinfo.gdt));
+  std::memcpy(cast<void mut *>(code_base + 0x18), &bootinfo.pml4, sizeof(bootinfo.pml4));
+
+  for(var cpu = 1; cpu < bootinfo.cpu_count; ++cpu)
+  {
+    var apic = cast<uintptr>(bootinfo.apic_base);
+    var apic_id = cast<u32>(bootinfo.apic_ids[cpu]);
+
+    var stack = cast<uintptr mut *>(stack_base - cast<usize>(apic_id * stack_size));
+
+    *(stack - 1) = cast<uintptr>(cpu);
+    *(stack - 2) = cast<uintptr>(&bootinfo);
+
+    // clear apic errors
+    apic_write(apic, APIC_ESR, 0);
+
+    // select ap
+    apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+
+    // trigger INIT IPI
+    apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff00000 | 0x00C500);
+
+    // wait for delivery
+    while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
+      __relax();
+
+    // select ap
+    apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+
+    // deassert INIT IPI
+    apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff00000 | 0x008500);
+
+    // wait for delivery
+    while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
+      __relax();
+
+    // 10 millisecond pause
+    cpu::spin(bootinfo.early_tsc_frequency / 100 + 1);
+
+    // send STARTUP IPI (twice)
+    for(var j = 0; j < 2; j++)
+    {
+      // clear apic errors
+      apic_write(apic, APIC_ESR, 0);
+
+      // select ap
+      apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+
+      // trigger STARTUP IPI for 0800:0000
+      apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff0f800 | 0x000608);
+
+      // wait 200 usec
+      cpu::spin(bootinfo.early_tsc_frequency / 5000 + 1);
+
+      // wait for delivery
+      while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
+        __relax();
+    }
+  }
+
+  std::volatile_store(cast<u64 mut *>(code_base + 0x20), 1);
+}
+
+pub fn rendezvous(int cpu) -> void
+{
+  std::atomic_sub(&cpu_rendezvous, 1);
+
+  while (std::volatile_load(&cpu_rendezvous) != 0)
+    __relax();
+}

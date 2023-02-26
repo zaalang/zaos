@@ -1,0 +1,713 @@
+//
+// vm
+//
+
+import std.stdio;
+import std.atomic;
+import heap;
+import vm.page;
+import vm.space;
+import vm.result;
+import vm.iovec;
+import vfs.node;
+import blk;
+import process as _ : process;
+import cpu;
+import scheduler;
+import platform;
+import slab : slab_allocator, slab_cache;
+
+struct memory_manager
+{
+  usize total_physical_memory;
+  usize available_physical_memory;
+
+  page mut *zeropage;
+
+  address_space kernelspace;
+  page_allocator pageallocator;
+  slab_allocator<region> regionallocator;
+
+  memory_manager() = default;
+  memory_manager(#memory_manager&) = default;
+  ~memory_manager() = default;
+}
+
+fn mm() -> memory_manager mut &
+{
+  static instance = #memory_manager();
+
+  return &instance;
+}
+
+fn pagecache(memory_manager mut &)
+{
+  static thread_local cache = #page_cache();
+
+  return &cache;
+}
+
+fn regioncache(memory_manager mut &)
+{
+  static thread_local cache = #slab_cache<region>();
+
+  return &cache;
+}
+
+pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+{
+  if (cpu != 0)
+    return;
+
+  std::print("platform usable memory:");
+  bootinfo.for_each_usable_memory(fn(var &range) {
+    std::print("  ", cast<void*>(range.0), '-', cast<void*>(range.1), " ", (range.1 - range.0));
+  });
+
+  bootinfo.for_each_usable_memory(fn(var &range) {
+    if (mm.total_physical_memory < range.1)
+      mm.total_physical_memory = range.1;
+  });
+
+  std::print("total physical memory: ", mm.total_physical_memory);
+
+  var pages = mm.total_physical_memory / PAGE_SIZE;
+  var pagetable = cast<page mut *>(heap::early_malloc(bootinfo, pages * sizeof<page>).ptr);
+
+  bootstrap(&mut mm.pageallocator, pagetable, pages);
+
+  bootinfo.for_each_usable_memory(fn(var &range) {
+    mm.pageallocator.seed_usable_memory(range.0, range.1);
+    mm.available_physical_memory += range.1 - range.0;
+  });
+
+  bootinfo.for_each_allocated_memory(fn(var addr) {
+    mm.pageallocator.inject_allocated_page(addr);
+    mm.available_physical_memory -= PAGE_SIZE;
+  });
+
+  var zeropage = heap::early_malloc(bootinfo, PAGE_SIZE);
+
+  std::memset(zeropage.ptr, 0, PAGE_SIZE);
+
+  mm.zeropage = mm.pageallocator.page_from_address(physaddr(bootinfo.hunk_base) + (zeropage - bootinfo.heap_base));
+  mm.zeropage.ref();
+
+  std::print("available physical memory: ", mm.available_physical_memory);
+}
+
+pub fn available_physical_memory() -> usize
+{
+  return std::atomic_load(&mm.available_physical_memory);
+}
+
+pub fn is_user_address(virtaddr addr) -> bool
+{
+  return platform::is_user_address(addr);
+}
+
+pub fn is_kernel_address(virtaddr addr) -> bool
+{
+  return platform::is_kernel_address(addr);
+}
+
+pub fn allocate_physical_page() -> page mut *
+{
+  if (var page = mm.pagecache.get())
+    return page;
+
+  var allocation = allocate_physical_pages(8*PAGE_SIZE);
+
+  if (!allocation)
+    allocation = allocate_physical_pages(PAGE_SIZE);
+
+  std::assert(allocation.len != 0);
+
+  for(var mut &page : allocation[1 .. allocation.len])
+    mm.pagecache.put(&page);
+
+  return mm.pageallocator.page_from_address(allocation.addr);
+}
+
+pub fn release_physical_page(page mut *page) -> void
+{
+  mm.pagecache.put(page);
+}
+
+pub fn allocate_physical_pages(usize size) -> page_allocation
+{
+  var allocation = mm.pageallocator.allocate(size);
+
+  std::atomic_sub(&mm.available_physical_memory, allocation.size);
+
+  return allocation;
+}
+
+pub fn release_physical_pages(page_allocation &pages) -> void
+{
+  mm.pageallocator.release(pages);
+
+  std::atomic_add(&mm.available_physical_memory, pages.size);
+}
+
+pub fn release_physical_pages(physrange range) -> void
+{
+  var pages = page_allocation();
+
+  pages.addr = range.addr;
+  pages.super = mm.pageallocator.pages_for_range(range);
+
+  mm.pageallocator.release(pages);
+}
+
+fn ref_physical_pages(physrange range) -> void
+{
+  for(var addr = range.addr; addr < range.end; addr += PAGE_SIZE)
+  {
+    mm.pageallocator.page_from_address(addr).ref();
+  }
+}
+
+fn map_physical_pages(page_table mut &pagetable, virtaddr baseaddr, physrange range, protection prot, mflags flags) -> virtrange
+{
+  pagetable.map(baseaddr, range, prot, flags, fn() -> platform::physaddr_t {
+    return mm.pageallocator.address_for_page(allocate_physical_page());
+  });
+
+  return virtrange(baseaddr, range.size);
+}
+
+pub fn map_physical_pages(virtaddr baseaddr, physrange range, protection prot) -> virtrange
+{
+  return map_physical_pages(&mut platform::pagetable, baseaddr, range, prot, mflags::keep);
+}
+
+pub fn map_physical_pages(virtaddr baseaddr, page_allocation &pages, protection prot) -> virtrange
+{
+  return map_physical_pages(&mut platform::pagetable, baseaddr, pages.range, prot, mflags::keep);
+}
+
+fn unmap_physical_pages(page_table mut &pagetable, virtrange range) -> void
+{
+  pagetable.unmap(range);
+}
+
+pub fn unmap_physical_pages(virtrange range) -> void
+{
+  unmap_physical_pages(&mut platform::pagetable, range);
+}
+
+//pub fn query_physical(void *addr) -> physaddr
+//{
+//  return physaddr(platform::pagetable.query(virtaddr(addr)).address + cast<uintptr>(addr) & PAGE_MASK);
+//}
+//
+//pub fn query_physical(void *addr, usize len) -> physrange
+//{
+//  return physrange(query_physical(addr), len);
+//}
+
+fn addressspace(virtaddr addr) -> address_space mut &
+{
+  if (is_kernel_address(addr))
+    return &mm.kernelspace;
+
+  return &process::current.userspace;
+}
+
+fn lock_region(address_space mut &space, virtaddr addr) -> region mut *
+{
+  while (true)
+  {
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+      if (var region = space.find(addr); !region || region.try_lock())
+        return region;
+    }
+
+    scheduler::sleep_yield();
+  }
+}
+
+pub fn create_anonymous_region(address_space mut &space, virtrange range, protection prot, usage use) -> vm::result
+{
+  var region = mm.regioncache.get();
+
+  if (!region)
+    region = mm.regioncache.siphon(&mut mm.regionallocator);
+
+  region.range = range;
+  region.protection = prot;
+  region.usage = use;
+
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+    space.insert(region);
+  }
+
+  return ok;
+}
+
+pub fn create_anonymous_region(virtrange range, protection prot, usage use) -> vm::result
+{
+  return create_anonymous_region(&mut addressspace(range.addr), range, prot, use);
+}
+
+pub fn create_physical_region(address_space mut &space, virtrange range, std::vector<physrange> &physical, protection prot, usage use) -> vm::result
+{
+  var region = mm.regioncache.get();
+
+  if (!region)
+    region = mm.regioncache.siphon(&mut mm.regionallocator);
+
+  region.range = range;
+  region.protection = prot;
+  region.usage = use;
+
+  var addr = range.addr;
+
+  for(var phys : physical)
+  {
+    var pages = physrange(phys.begin & ~PAGE_MASK, (phys.end + PAGE_MASK) & ~PAGE_MASK);
+
+    if (!region.is_foreign)
+      ref_physical_pages(pages);
+
+    vm::map_physical_pages(addr, pages, prot);
+
+    addr += pages.size;
+  }
+
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+    space.insert(region);
+  }
+
+  return ok;
+}
+
+pub fn create_physical_region(virtrange range, std::vector<physrange> &physical, protection prot, usage use) -> vm::result
+{
+  return create_physical_region(&mut addressspace(range.addr), range, physical, prot, use);
+}
+
+pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node_ptr &node, u64 offset, protection prot, usage use) -> vm::result
+{
+  var region = mm.regioncache.get();
+
+  if (!region)
+    region = mm.regioncache.siphon(&mut mm.regionallocator);
+
+  region.range = range;
+  region.protection = prot;
+  region.usage = use;
+  region.offset = offset;
+  region.backing = node;
+
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+    space.insert(region);
+  }
+
+  return ok;
+}
+
+pub fn create_backed_region(virtrange range, vfs::node_ptr &node, u64 offset, protection prot, usage use) -> vm::result
+{
+  return create_backed_region(&mut addressspace(range.addr), range, node, offset, prot, use);
+}
+
+fn mprotect(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot) -> vm::result
+{
+  var region = lock_region(&mut space, range.addr);
+
+  if (!region)
+    return bad_address;
+
+  region.protection = prot;
+
+  if (prot == protection::readonly || prot == protection::executable)
+  {
+    for(var addr = region.range.addr; addr < region.range.end; addr += PAGE_SIZE)
+    {
+      if (var mapping = pagetable.query(addr); mapping.present)
+        map_physical_pages(&mut pagetable, addr, physrange(mapping.address, PAGE_SIZE), prot, mflags::keep);
+    }
+  }
+
+  region.unlock();
+
+  return ok;
+}
+
+pub fn mprotect(virtrange range, protection prot)
+{
+  return mprotect(&mut platform::pagetable, &mut addressspace(range.addr), range, prot);
+}
+
+pub fn mprotect(process mut *process, virtrange range, protection prot)
+{
+  return mprotect(&mut process.pagetable, &mut process.userspace, range, prot);
+}
+
+fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) -> vm::result
+{
+  var region = lock_region(&mut space, range.addr);
+
+  if (!region)
+    return bad_address;
+
+  if (region.is_foreign)
+  {
+    pagetable.unmap(region.range);
+  }
+
+  if (!region.is_foreign)
+  {
+    pagetable.unmap(region.range, fn(platform::physaddr_t phys) {
+      var page = mm.pageallocator.page_from_address(phys);
+
+      if (page.unref() == 1)
+        release_physical_page(page);
+    });
+  }
+
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+    space.remove(region);
+  }
+
+  region.offset = 0;
+  region.backing = vfs::node_ptr();
+
+  region.unlock();
+
+  mm.regioncache.put(region);
+
+  return ok;
+}
+
+pub fn munmap(virtrange range) -> vm::result
+{
+  return munmap(&mut platform::pagetable, &mut addressspace(range.addr), range);
+}
+
+pub fn munmap(process mut *process, virtrange range) -> vm::result
+{
+  return munmap(&mut process.pagetable, &mut process.userspace, range);
+}
+
+fn lock(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot, std::vector<physrange> mut &result) -> vm::result
+{
+  var status = result::ok;
+
+  var region = lock_region(&mut space, range.addr);
+
+  if (!region)
+    status = result::bad_address;
+
+  if (status == result::ok)
+  {
+    if (!region.is_readable)
+      status = result::not_permitted;
+
+    if (prot == protection::readwrite && !region.is_writeable)
+      status = result::not_permitted;
+
+    if (!region.contains(range))
+      status = result::bad_address;
+  }
+
+  if (status == result::ok)
+  {
+    for(var addr = range.addr; addr < range.end; addr = (addr + PAGE_SIZE) & ~PAGE_MASK)
+    {
+      var mapping = pagetable.query(addr);
+
+      if (!mapping.present || (prot == protection::readwrite && !mapping.writeable))
+      {
+        status = fault_region(&mut pagetable, region, addr, prot == protection::readwrite, false);
+
+        if (status != result::ok)
+          break;
+
+        mapping = pagetable.query(addr);
+      }
+
+      var page = mm.pageallocator.page_from_address(mapping.address);
+
+      var phys = physrange(mapping.address + cast<usize>(addr & PAGE_MASK), std::min((addr + PAGE_SIZE) & ~PAGE_MASK, virtaddr(range.end)) - addr);
+
+      if (!result.empty && result.back.end == phys.begin)
+        result.back.super.1 += phys.size;
+      else
+        result.push_back(phys);
+
+      page.ref();
+    }
+  }
+
+  if (region)
+  {
+    region.unlock();
+  }
+
+  return status;
+}
+
+pub fn lock(virtrange range, protection prot, std::vector<physrange> mut &result)
+{
+  return lock(&mut platform::pagetable, &mut addressspace(range.addr), range, prot, &mut result);
+}
+
+pub fn lock(process mut *process, virtrange range, protection prot, vm::iovec mut &result) -> vm::result
+{
+  result.length += range.size;
+
+  return lock(&mut process.pagetable, &mut process.userspace, range, prot, &mut result.host);
+}
+
+pub fn lock(virtrange range, protection prot, vm::iovec mut &result)
+{
+  result.length += range.size;
+
+  return lock(&mut platform::pagetable, &mut addressspace(range.addr), range, prot, &mut result.host);
+}
+
+pub fn unlock(physrange range) -> void
+{
+  for(var phys = range.begin; phys < range.end; phys = (phys + PAGE_SIZE) & ~PAGE_MASK)
+  {
+    var page = mm.pageallocator.page_from_address(phys);
+
+    if (page.unref() == 1)
+      release_physical_page(page);
+  }
+}
+
+pub fn unlock(std::vector<physrange> &regions) -> void
+{
+  for(var &range : regions)
+    unlock(range);
+}
+
+pub fn read_process_memory(process mut *process, virtaddr src, void mut *dst, usize length) -> vm::result
+{
+  var iovec = vm::iovec();
+
+  if (src == 0 && length == 0)
+    return ok;
+
+  if (var result = lock(process, virtrange(src, length), vm::protection::readonly, &mut iovec); !result)
+    return result;
+
+  if (var result = vm::memcpy(dst, iovec, 0, length); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn read_process_memory(virtaddr src, void mut *dst, usize length) -> vm::result
+{
+  var status = result::ok;
+
+  if (src == 0 && length == 0)
+    return ok;
+
+  var region = lock_region(&mut process::current.userspace, src);
+
+  if (!region)
+    status = result::bad_address;
+
+  if (status == result::ok)
+  {
+    if (!region.is_readable)
+      status = result::not_permitted;
+
+    if (!region.contains(virtrange(src, length)))
+      status = result::bad_address;
+  }
+
+  if (status == result::ok)
+  {
+    platform::disable_memory_protect();
+
+    std::memcpy(dst, src.ptr, length);
+
+    platform::enable_memory_protect();
+  }
+
+  if (region)
+  {
+    region.unlock();
+  }
+
+  return status;
+}
+
+pub fn write_process_memory(process mut *process, virtaddr dst, void *src, usize length) -> vm::result
+{
+  var iovec = vm::iovec();
+
+  if (var result = lock(process, virtrange(dst, length), vm::protection::readwrite, &mut iovec); !result)
+    return result;
+
+  if (var result = vm::memcpy(iovec, 0, src, length); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn write_process_memory(virtaddr dst, void *src, usize length) -> vm::result
+{
+  var status = result::ok;
+
+  var region = lock_region(&mut process::current.userspace, dst);
+
+  if (!region)
+    status = result::bad_address;
+
+  if (status == result::ok)
+  {
+    if (!region.is_writeable)
+      status = result::not_permitted;
+
+    if (!region.contains(virtrange(dst, length)))
+      status = result::bad_address;
+  }
+
+  if (status == result::ok)
+  {
+    platform::disable_memory_protect();
+
+    std::memcpy(dst.ptr, src, length);
+
+    platform::enable_memory_protect();
+  }
+
+  if (region)
+  {
+    region.unlock();
+  }
+
+  return status;
+}
+
+fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, page mut *page, protection prot, mflags mflags) -> void
+{
+  page.ref();
+
+  map_physical_pages(&mut pagetable, addr & ~PAGE_MASK, physrange(mm.pageallocator.address_for_page(page), PAGE_SIZE), prot, mflags);
+}
+
+fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bool write, bool fetch) -> vm::result
+{
+  var mapping = pagetable.query(addr);
+
+  if (!mapping.present)
+  {
+    if (region.backing)
+    {
+      var pos = cast<u64>(addr - region.range.addr) + region.offset;
+
+      var block = blk::fetch(region.backing, pos);
+
+      if (block.wait(); !block)
+        return cast(block.result);
+
+      var page = mm.pageallocator.page_from_address(pagetable.query(virtaddr(block.ptr(pos))).address);
+
+      if (fetch)
+        fault_region(&mut pagetable, region, addr, page, protection::executable, mflags::keep);
+      else
+        fault_region(&mut pagetable, region, addr, page, protection::readonly, mflags::keep);
+    }
+    else
+    {
+      if (write)
+        fault_region(&mut pagetable, region, addr, allocate_physical_page(), protection::readwrite, mflags::zero);
+      else
+        fault_region(&mut pagetable, region, addr, mm.zeropage, protection::readonly, mflags::keep);
+    }
+
+    mapping = pagetable.query(addr);
+  }
+
+  if (!mapping.writeable && write)
+  {
+    var page = mm.pageallocator.page_from_address(mapping.address);
+
+    if (region.is_private && page.refcnt > 1)
+      fault_region(&mut pagetable, region, addr, allocate_physical_page(), protection::readwrite, mflags::copy);
+    else
+      fault_region(&mut pagetable, region, addr, page, protection::readwrite, mflags::keep);
+
+    if (page.unref() == 1)
+      release_physical_page(page);
+  }
+
+  return ok;
+}
+
+extern fn page_fault(virtaddr addr, bool write, bool fetch, bool user) -> void
+{
+  var status = result::ok;
+  var mut &space = addressspace(addr);
+
+  var region = lock_region(&mut space, addr);
+
+  if (!region)
+    status = result::bad_address;
+
+  if (user && is_kernel_address(addr))
+    status = result::not_permitted;
+
+  if (status == result::ok)
+  {
+    if (!region.is_readable)
+      status = result::not_permitted;
+
+    if (write && !region.is_writeable)
+      status = result::not_permitted;
+
+    if (fetch && !region.is_executable)
+      status = result::not_permitted;
+  }
+
+  if (status == result::ok)
+  {
+    status = fault_region(&mut platform::pagetable, region, addr, write, fetch);
+  }
+
+  if (region)
+  {
+    region.unlock();
+  }
+
+  if (status != result::ok)
+  {
+    std::panic("page fault: ", cast<i32>(status), " ", addr);
+  }
+}
+
+pub fn reap() -> void
+{
+  while (var page = null<page mut *>(); page = mm.pagecache.get(); page)
+  {
+    mm.pageallocator.release(std::mutable_span(page, 1));
+
+    std::atomic_add(&mm.available_physical_memory, PAGE_SIZE);
+  }
+
+  while (var region = null<region mut *>(); region = mm.regioncache.get(); region)
+  {
+    mm.regionallocator.free(region);
+  }
+
+  reap(&mut mm.regionallocator);
+}

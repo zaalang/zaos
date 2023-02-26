@@ -1,0 +1,41 @@
+//
+// symlink
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn symlink(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  var src = std::string();
+  var tgt = std::string();
+
+  for(var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    if (src == "")
+      src = arg;
+
+    else if (tgt == "")
+      tgt = arg;
+  }
+
+  if (src.empty || tgt.empty)
+  {
+    terminal.write("usage: symlink <src> <tgt>\n");
+    return -22;
+  }
+
+  if (var result = symlink(&mut thread_ring, os::string(src.data, src.len), os::string(tgt.data, tgt.len), 0); result < 0)
+    return result;
+
+  return 0;
+}

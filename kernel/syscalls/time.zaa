@@ -1,0 +1,61 @@
+//
+// time syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import cpu;
+import sys;
+import result as _ : result;
+
+pub enum clock
+{
+  pub const realtime = 0;
+  pub const monotonic = 1;
+}
+
+pub using timespec = u64;
+
+extern fn sys_clock_res(i32 clockid, virtaddr resbuf) -> result
+{
+  var res = u64(1);
+
+  switch (clockid)
+  {
+    case clock::realtime:
+      ;
+
+    case clock::monotonic:
+      ;
+
+    else:
+      return invalid_argument;
+  }
+
+  if (var result = vm::write_process_memory(resbuf, &res, sizeof(res)); !result)
+    return result;
+
+  return 0;
+}
+
+extern fn sys_clock_time(i32 clockid, virtaddr tpbuf) -> result
+{
+  var tp = cpu::system_time();
+
+  switch (clockid)
+  {
+    case clock::realtime:
+      tp += sys::clock_base;
+
+    case clock::monotonic:
+      ;
+
+    else:
+      return invalid_argument;
+  }
+
+  if (var result = vm::write_process_memory(tpbuf, &tp, sizeof(tp)); !result)
+    return result;
+
+  return 0;
+}

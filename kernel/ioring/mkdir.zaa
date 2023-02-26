@@ -1,0 +1,43 @@
+//
+// mkdir
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_mkdir(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr pathbuf, usize pathlen, u64 flags, u32 mode) -> result
+{
+  if (pathbuf == 0 || pathlen == 0)
+    return invalid_argument;
+
+  if (pathlen > 4096)
+    return vfs::result::name_too_long;
+
+  var path = std::string<N:256>::with_size(pathlen);
+
+  if (var result = vm::read_process_memory(process, pathbuf, path.data, path.len); !result)
+    return result;
+
+  var dir = process.fd(dirfd);
+
+  if (!dir)
+    return vfs::result::bad_descriptor;
+
+  if (dir.node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var base = dir.node;
+  var node = vfs::lookup(&mut base, path);
+
+  if (!base)
+    return vfs::result::invalid_argument;
+
+  if (var result = vfs::mkdir(base, vfs::basename(path), &mut node, 0, 0, mode); !result)
+    return result;
+
+  return ok;
+}

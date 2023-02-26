@@ -1,0 +1,52 @@
+//
+// syscall result
+//
+
+import blk.result;
+import chr.result;
+import vfs.result;
+import vm.result;
+import ioring;
+
+pub enum result : i32
+{
+  ok = 0,
+  invalid_argument = -22,
+  not_implemented = -38,
+  not_supported = -95,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+
+  pub fn result(vm::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(blk::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(chr::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(vfs::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(ioring::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
+}

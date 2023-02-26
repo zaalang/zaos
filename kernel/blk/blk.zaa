@@ -1,0 +1,323 @@
+//
+// blk
+//
+
+import std.stdio;
+import blk.blkdev;
+import blk.request;
+import vm;
+import io;
+import cpu;
+import dev;
+import vfs;
+import platform;
+import scheduler;
+import thread as _ : thread;
+import process as _ : process;
+import support.rc : Rc;
+
+struct io_queue
+{
+  std::spin_lock lock;
+
+  request mut *head;
+  request mut * mut *last;
+
+  fn take(this mut &) -> (request mut *, request mut * mut *)
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    var result = std::tuple(this.head, this.last);
+
+    this.head = null;
+    this.last = &this.head;
+
+    return result;
+  }
+
+  fn append(this mut &, request mut *rq) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    *this.last = rq;
+    this.last = &rq.next;
+  }
+
+  fn prepend(this mut &, (request mut *, request mut * mut *) mut &entries) -> void
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    *entries.1 = this.head;
+
+    if (!this.head)
+      this.last = entries.1;
+
+    this.head = entries.0;
+  }
+
+  fn remove(this mut &, request mut *rq) -> bool
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+    var prev = null<request mut *>;
+
+    for(var curr = this.head; curr; curr = curr.next)
+    {
+      if (curr == rq)
+      {
+        if (prev)
+        {
+          prev.next = rq.next;
+
+          if (!rq.next)
+            this.last = &prev.next;
+        }
+        else
+        {
+          this.head = rq.next;
+
+          if (!rq.next)
+            this.last = &this.head;
+        }
+
+        return true;
+      }
+
+      prev = curr;
+    }
+
+    return false;
+  }
+
+  io_queue() = default;
+  io_queue(#io_queue&) = default;
+  ~io_queue() = default;
+}
+
+fn dump(io_queue &this) -> void
+{
+  std::print("[io queue]");
+
+  for(var rq = this.head; rq; rq = rq.next)
+  {
+    std::print("  ", rq.type, " ", rq.position, " ", rq.length);
+  }
+}
+
+struct blkdev_manager
+{
+  io_queue ioqueue;
+
+  thread mut *kblockd;
+
+  blkdev_manager() = default;
+  blkdev_manager(#blkdev_manager&) = default;
+  ~blkdev_manager() = default;
+}
+
+fn blkman() -> blkdev_manager mut &
+{
+  static instance = #blkdev_manager();
+
+  return &instance;
+}
+
+pub fn enqueue(request mut *rq) -> void
+{
+  rq.ref();
+
+  blkman.ioqueue.append(rq);
+
+  if (blkman.ioqueue.head == rq)
+    scheduler::unblock(blkman.kblockd);
+}
+
+pub fn open(blkdev_ptr &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> blk::result
+{
+  return ok;
+}
+
+pub fn read(blkdev_ptr &dev, u64 position, void mut *buffer, usize length) -> blk::result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(buffer, length), vm::protection::readwrite, &mut iovec); !result)
+    return cast(result);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  blk::read(dev, &mut response.cb, position, iovec, 0, length);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(length);
+}
+
+pub fn write(blkdev_ptr &dev, u64 position, void *buffer, usize length) -> blk::result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(buffer, length), vm::protection::readonly, &mut iovec); !result)
+    return cast(result);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  blk::write(dev, response.cb, position, iovec, 0, length);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(length);
+}
+
+pub fn read(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+{
+  var rq = request::create();
+  rq.device = dev;
+  rq.type = request::type::read;
+  rq.position = position;
+  rq.length = length;
+  rq.cb = cb;
+
+  buffer.foreach_region_in(offset, length, fn [rq](var &region) {
+    rq.host.push_back(region);
+  });
+
+  enqueue(rq);
+}
+
+pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+{
+  var rq = request::create();
+  rq.device = dev;
+  rq.type = request::type::write;
+  rq.position = position;
+  rq.length = length;
+  rq.cb = cb;
+
+  buffer.foreach_region_in(offset, length, fn [rq](var &region) {
+    rq.host.push_back(region);
+  });
+
+  enqueue(rq);
+}
+
+pub fn ioctl(blkdev_ptr dev, u32 op, vm::iovec &buffer) -> result
+{
+  return dev.ioctl(op, buffer);
+}
+
+pub fn complete(request mut *rq, request::status status) -> void
+{
+  switch (status)
+  {
+    case request::status::success:
+      io::complete(&mut rq.cb, rq.length);
+
+    case request::status::errored:
+      io::complete(&mut rq.cb, blk::result::io_error);
+
+    case request::status::cancelled:
+      io::complete(&mut rq.cb, blk::result::operation_cancelled);
+
+    else:
+      std::panic("bad_status");
+  }
+
+  rq.cb = Rc<io::iocb>();
+  rq.device = blk::blkdev_ptr();
+  rq.status = status;
+
+  rq.unref();
+}
+
+pub fn wake_from_stall() -> void
+{
+  scheduler::unblock(blkman.kblockd);
+}
+
+fn kblockd(void*) -> void
+{
+  platform::disable_interrupts();
+
+  while (true)
+  {
+    scheduler::prepare_to_block();
+
+    platform::enable_interrupts();
+
+    var entries = blkman.ioqueue.take();
+
+    for(var entry = &entries.0; *entry; )
+    {
+      var rq = *entry;
+
+      if ((*rq.cb).result < 0)
+      {
+        *entry = entry.next;
+
+        if (!*entry)
+          entries.1 = entry;
+
+        complete(rq, blk::request::status::cancelled);
+      }
+      else
+      {
+        entry = &entry.next;
+      }
+    }
+
+    while (entries.0)
+    {
+      var rq = entries.0;
+      entries.0 = entries.0.next;
+
+      switch (rq.device.enqueue(rq))
+      {
+        case blk::result::ok:
+          ;
+
+        case blk::result::device_busy:
+          entries.0 = rq;
+          break;
+
+        else:
+          complete(rq, blk::request::status::errored);
+      }
+    }
+
+    if (entries.0)
+      blkman.ioqueue.prepend(&mut entries);
+
+    platform::disable_interrupts();
+
+    scheduler::block();
+  }
+}
+
+pub fn initialise() -> void
+{
+  blkman.ioqueue.last = &blkman.ioqueue.head;
+
+  blkman.kblockd = thread::create(process::current, &cast<void fn(void mut *)>(kblockd), null);
+
+  scheduler::enqueue(blkman.kblockd);
+
+  spawn_plumber();
+}
+
+pub fn enumerate(var &&callback) -> void
+{
+  dev::enumerate(|id, dev| [callback] {
+    switch(dev)
+    {
+      case blkdev[dev]:
+        callback(id, dev);
+    }
+  });
+}

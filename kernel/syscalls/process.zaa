@@ -1,0 +1,158 @@
+//
+// process syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import vfs;
+import result as _ : result;
+import thread as _ : thread;
+import process as _ : process;
+
+enum flags
+{
+}
+
+struct arg
+{
+  virtaddr beg;
+  virtaddr end;
+
+  fn len(this&) -> usize
+  {
+    return this.end - this.beg;
+  }
+
+  arg() = default;
+  arg(arg&) = default;
+  ~arg() = default;
+}
+
+struct attr
+{
+  const stdin = 0;
+  const stdout = 1;
+  const stderr = 2;
+  const stdroot = 4;
+  const stdcwd = 5;
+
+  i32 type;
+  i32 value;
+
+  attr() = default;
+  attr(attr&) = default;
+  ~attr() = default;
+}
+
+extern fn sys_get_pid() -> process::id
+{
+  return process::current.id;
+}
+
+extern fn sys_get_uid() -> u32
+{
+  return 0;
+}
+
+extern fn sys_get_euid() -> u32
+{
+  return 0;
+}
+
+extern fn sys_get_gid() -> u32
+{
+  return 0;
+}
+
+extern fn sys_get_egid() -> u32
+{
+  return 0;
+}
+
+extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usize envc, virtaddr attrbuf, usize n, u64 flags) -> result
+{
+  if (argc < 1)
+    return invalid_argument;
+
+  var argv = std::vector<arg>::with_size(argc);
+
+  if (var result = vm::read_process_memory(argvbuf, argv.data, argv.len * sizeof<arg>); !result)
+    return result;
+
+  for(var &arg : argv)
+  {
+    if (arg.end < arg.beg || arg.len > 4096)
+      return invalid_argument;
+  }
+
+  var arg0 = std::string<N:256>::with_size(argv[0].len);
+
+  if (var result = vm::read_process_memory(argv[0].beg, arg0.data, arg0.len); !result)
+    return result;
+
+  var envp = std::vector<arg>::with_size(envc);
+
+  if (var result = vm::read_process_memory(envpbuf, envp.data, envp.len * sizeof<arg>); !result)
+    return result;
+
+  for(var &arg : envp)
+  {
+    if (arg.end < arg.beg || arg.end - arg.beg > 4096)
+      return invalid_argument;
+  }
+
+  var attrs = std::vector<attr>::with_size(n);
+
+  if (var result = vm::read_process_memory(attrbuf, attrs.data, attrs.len * sizeof<attr>); !result)
+    return result;
+
+  var process = create_process(process::current, vfs::basename(arg0));
+
+  for(var &arg : argv)
+  {
+    var str = std::string<N:256>::with_size(arg.len);
+
+    if (var result = vm::read_process_memory(arg.beg, str.data, str.len); !result)
+      return result;
+
+    process_push_cmdline(process, [ std::string_view(str) ]);
+  }
+
+  for(var &arg : envp)
+  {
+    var str = std::string<N:256>::with_size(arg.len);
+
+    if (var result = vm::read_process_memory(arg.beg, str.data, str.len); !result)
+      return result;
+
+    process_push_environ(process, [ std::string_view(str) ]);
+  }
+
+  for(var &attr : attrs)
+  {
+    switch (attr.type)
+    {
+      case attr::stdin:
+      case attr::stdout:
+      case attr::stderr:
+      case attr::stdroot:
+      case attr::stdcwd:
+
+        var file = process::current.fd(attr.value);
+
+        if (!file)
+          return vfs::result::bad_descriptor;
+
+        process.new_fd(attr.type, file);
+    }
+  }
+
+  process_push_ioring(process, 256);
+
+  return process_start(process, thread::priority::normal);
+}
+
+extern fn sys_process_exit(i32 rval) -> void
+{
+  process::exit(rval);
+}

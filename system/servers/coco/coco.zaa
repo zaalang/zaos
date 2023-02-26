@@ -1,0 +1,175 @@
+//
+// coco
+//
+
+import std.stdio;
+import display;
+import terminal;
+import input.driver;
+import input.keymap;
+import env;
+import tab;
+
+fn main()
+{
+  var driver = input::driver();
+  if (var result = driver.initialise(); result != 0)
+    std::print("coco: failed to initialise input driver - ", result);
+
+  var keymap = input::keymap();
+  if (var result = keymap.initialise("/zaos/data/us.keymap", "/zaos/data/us.keymap"); result != 0)
+    std::print("coco: failed to initialise input keymap - ", result);
+
+  driver.add_device("/dev/input/keyboard/ps2/0", keymap);
+
+  var display = display::create();
+  if (var result = display::initialise(&mut display); result != 0)
+    std::print("coco: failed to initialise display - ", result);
+
+  var terminal = terminal::create(&mut driver, &mut display);
+  if (var result = terminal::initialise(&mut terminal); result != 0)
+    std::print("coco: failed to initialise terminal - ", result);
+
+  if (var result = terminal.set_font("/zaos/boot/unifont-14.0.03.hex"); result != 0)
+    std::print("coco: failed to set terminal font - ", result);
+
+  terminal.print(std::string_view("ZaOS Extended Colour Console\r\n\r\n"));
+  terminal.render();
+
+  var env = env::create();
+
+  while (true)
+  {
+    var username = [0; 128];
+
+    terminal.write("login: ");
+
+    if (terminal.read(&mut username) > 0)
+    {
+      var password = [0; 128];
+
+      terminal.write("password: ");
+
+      if (terminal.read_pass(&mut password) > 0)
+      {
+        if (env.login(username, password) == 0)
+        {
+          terminal.write("\nOK\n");
+
+          break;
+        }
+      }
+    }
+  }
+
+  while (true)
+  {
+    var completer = tab::completer();
+
+    switch (terminal.read_line(&completer))
+    {
+      case enter[cmdline]:
+        var args = cmdline.words;
+
+        if (!args.empty)
+        {
+          var result = -2;
+
+          if (args.front == "ls")
+          {
+            import ls : *;
+            result = ls(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "cd")
+          {
+            import cd : *;
+            result = cd(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "cat")
+          {
+            import cat : *;
+            result = cat(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "cp")
+          {
+            import cp : *;
+            result = cp(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "pwd")
+          {
+            import pwd : *;
+            result = pwd(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "stat")
+          {
+            import stat : *;
+            result = stat(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "mkdir")
+          {
+            import mkdir : *;
+            result = mkdir(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "rm")
+          {
+            import rm : *;
+            result = rm(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "rename")
+          {
+            import rename : *;
+            result = rename(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "symlink")
+          {
+            import symlink : *;
+            result = symlink(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "ps")
+          {
+            import ps : *;
+            result = ps(&mut terminal, &mut env, cmdline);
+          }
+
+          if (args.front == "start")
+          {
+            import start : *;
+            result = start(&mut terminal, &mut env, cmdline);
+          }
+
+          terminal.flush();
+
+          if (terminal.x != 0)
+            terminal.write("\x1b[36m%\x1b[0m\n");
+
+          switch (result)
+          {
+            case 0:
+              terminal.write("OK\n");
+
+            case -2:
+              terminal.write("?NOTFOUND\n");
+
+            case -17:
+              terminal.write("?EXISTS\n");
+
+            else:
+              terminal.write("?ERROR\n");
+          }
+        }
+
+      else:
+        terminal.write("?CANCELLED\n");
+    }
+  }
+}

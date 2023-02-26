@@ -1,0 +1,185 @@
+//
+// font
+//
+
+import std.stdio;
+import std.string : String;
+import display;
+
+struct glyph
+{
+  u8 sz;
+  u8[32] data;
+
+  glyph() = default;
+  glyph(glyph&) = default;
+  ~glyph() = default;
+}
+
+pub struct font
+{
+  int ascent;
+  int descent;
+  int leading;
+  int pixelscale;
+  int pixelheight;
+
+  pub fn width(String &str) -> int;
+  pub fn width(char codepoint, char nextcodepoint) -> int;
+  pub fn height() -> int;
+  pub fn lineheight() -> int;
+
+  usize len;
+  glyph *glyphs;
+
+  pub font() = default;
+  pub ~font() = default;
+}
+
+fn preload(std::string_literal name)
+{
+  var font = std::vector<glyph>::with_size(128);
+
+  try
+  {
+    for(var line : std::readfile(__srcdir__ + name).lines)
+    {
+      if ((line.len != 37 && line.len != 69) || line[4] != cast(':'))
+        std::panic("invalid glyph record");
+
+      var codepoint = usize(0);
+      if (std::atoi(&line[0], &line[0]+4, &mut codepoint, 16).error)
+        std::panic("invalid glyph point");
+
+      if (font.len <= codepoint)
+        break;
+
+      font[codepoint].sz = cast<u8>(line.len - 5);
+
+      for(var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
+      {
+        if (std::atoi(&line[j], &line[j]+2, &mut font[codepoint].data[i], 16).error)
+          std::panic("invalid glyph bytes");
+      }
+    }
+
+    return [ font.data : font.len ];
+  }
+  catch(std::error e)
+  {
+    std::panic(name, " load error - ", e);
+  }
+}
+
+pub fn create() -> font
+{
+  return font();
+}
+
+pub fn initialise(font mut &font) -> i32
+{
+  font.ascent = 15;
+  font.descent = 1;
+  font.leading = 0;
+  font.pixelscale = 1;
+  font.pixelheight = 16;
+  font.len = 128;
+  font.glyphs = (#preload("unifont-14.0.03.hex")).data;
+
+  return 0;
+}
+
+pub fn load(font mut &font, String &path) -> i32
+{
+  var glyphs = std::allocator::new<glyph[0xffff]>();
+
+  try
+  {
+    var fin = std::file::open(path);
+
+    for(var line : std::buffered_reader(&mut fin).lines)
+    {
+      if ((line.len != 37 && line.len != 69) || line[4] != cast(':'))
+        return -cast<i32>(std::errc::format_error);
+
+      var codepoint = usize(0);
+      if (std::atoi(&line[0], &line[0]+4, &mut codepoint, 16).error)
+        return -cast<i32>(std::errc::format_error);
+
+      if (codepoint >= 0xffff)
+        return -cast<i32>(std::errc::format_error);
+
+      glyphs[codepoint].sz = cast<u8>(line.len - 5);
+
+      for(var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
+      {
+        if (std::atoi(&line[j], &line[j]+2, &mut glyphs[codepoint].data[i], 16).error)
+          return -cast<i32>(std::errc::format_error);
+      }
+    }
+
+    font.len = 0xffff;
+    font.glyphs = glyphs.data;
+  }
+  catch(std::error err)
+  {
+    return -cast<i32>(err.value);
+  }
+
+  return 0;
+}
+
+pub fn width(font &font, String &str) -> int
+{
+  var sum = 0;
+
+  for(var ch = str.chars.begin; ch != str.end; )
+  {
+    var codepoint = *ch++;
+
+    sum += font.width(codepoint, (ch != str.end) ? *ch : 0);
+  }
+
+  return sum;
+}
+
+pub fn width(font &font, char codepoint, char nextcodepoint) -> int
+{
+  var codepoint = cast<usize>(codepoint);
+
+  if (codepoint >= font.len)
+    codepoint = font.len - 2;
+
+  var glyph = font.glyphs + codepoint;
+
+  return cast<int>(glyph.sz / 4) * font.pixelscale;
+}
+
+pub fn height(font &font) -> int
+{
+  return (font.ascent + font.descent) * font.pixelscale;
+}
+
+pub fn lineheight(font &font) -> int
+{
+  return (font.ascent + font.descent + font.leading) * font.pixelscale;
+}
+
+pub fn lookup(font &font, char codepoint) -> display::bitmap
+{
+  var codepoint = cast<usize>(codepoint);
+
+  if (codepoint >= font.len)
+    codepoint = font.len - 2;
+
+  var glyph = font.glyphs + codepoint;
+
+  var bm = display::bitmap();
+  bm.width = cast(glyph.sz / 4);
+  bm.height = 16;
+  bm.stride = cast(glyph.sz / 32);
+  bm.format = 1;
+  bm.bits = glyph.data.data;
+
+  return bm;
+}

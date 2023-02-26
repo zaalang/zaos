@@ -1,0 +1,22 @@
+//
+// vt result
+//
+
+pub enum result : i32
+{
+  ok = 0,
+  not_permitted = -1,
+  invalid_argument = -22,
+  not_supported = -95,
+  overflow = -139,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+
+  pub fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
+}

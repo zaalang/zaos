@@ -1,0 +1,135 @@
+//
+// vm iovec
+//
+
+import std.stdlib;
+import std.fmt;
+import vm.page;
+import platform;
+import cpu;
+
+pub struct iovec
+{
+  pub usize length;
+  pub std::vector<vm::physrange, N:8> host;
+
+  pub iovec()
+  {
+  }
+
+  pub ~iovec()
+  {
+    vm::unlock(host);
+  }
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, iovec &iovec) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "iovec{{ length: {} }}", iovec.length);
+}
+
+pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback) -> void
+{
+  var i = this.host.begin;
+
+  if (offset != 0)
+  {
+    for(; i != this.host.end && (*i).size <= offset; ++i)
+      offset -= (*i).size;
+
+    var bytes = std::min((*i).size - offset, length);
+
+    callback(vm::physrange((*i).addr + offset, bytes));
+
+    length -= bytes;
+    offset = 0;
+    i += 1;
+  }
+
+  for(; i != this.host.end && length != 0; ++i)
+  {
+    var bytes = std::min((*i).size, length);
+
+    callback(vm::physrange((*i).addr, bytes));
+
+    length -= bytes;
+  }
+}
+
+pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
+{
+  if (dst.length < offset + length)
+    return overflow;
+
+  var i = dst.host.begin;
+
+  if (offset != 0 && length != 0)
+  {
+    for(; i != dst.host.end && (*i).size <= offset; ++i)
+      offset -= (*i).size;
+
+    var data = ((*i).addr + offset).ptr;
+    var bytes = std::min((*i).size - offset, length);
+
+    std::memcpy(data, src, bytes);
+
+    src = cast<void*>(cast<uintptr>(src) + bytes);
+
+    length -= bytes;
+    offset = 0;
+    i += 1;
+  }
+
+  for(; i != dst.host.end && length != 0; ++i)
+  {
+    var data = (*i).addr.ptr;
+    var bytes = std::min((*i).size, length);
+
+    std::memcpy(data, src, bytes);
+
+    src = cast<void*>(cast<uintptr>(src) + bytes);
+
+    length -= bytes;
+  }
+
+  return ok;
+}
+
+pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::result
+{
+  if (src.length < offset + length)
+    return overflow;
+
+  var i = src.host.begin;
+
+  if (offset != 0 && length != 0)
+  {
+    for(; i != src.host.end && (*i).size <= offset; ++i)
+      offset -= (*i).size;
+
+    var data = ((*i).addr + offset).ptr;
+    var bytes = std::min((*i).size - offset, length);
+
+    std::memcpy(dst, data, bytes);
+
+    dst = cast<void mut *>(cast<uintptr>(dst) + bytes);
+
+    length -= bytes;
+    offset = 0;
+    i += 1;
+  }
+
+  for(; i != src.host.end && length != 0; ++i)
+  {
+    var data = (*i).addr.ptr;
+    var bytes = std::min((*i).size, length);
+
+    std::memcpy(dst, data, bytes);
+
+    dst = cast<void mut *>(cast<uintptr>(dst) + bytes);
+
+    length -= bytes;
+  }
+
+  return ok;
+}

@@ -1,0 +1,16 @@
+//
+// abz
+//
+
+import std.stdio;
+import std.env;
+import chrono;
+
+fn main() -> int
+{
+  std::print("baz");
+  std::print(std::env::args);
+  std::print(std::env::vars);
+
+  return 11;
+}

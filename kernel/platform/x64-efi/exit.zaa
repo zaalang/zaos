@@ -1,0 +1,36 @@
+//
+// exit
+//
+
+import std.stdio;
+import cpu;
+
+extern fn exit(u32) -> void
+{
+  cpu::disable_memory_protect();
+
+  var rbp = cast<uintptr*>(__asm("mov $0, rbp", "=r"));
+
+  for(var i = 0; i < 32; ++i)
+  {
+    if (!rbp)
+      break;
+
+    var ret = *(rbp + 1);
+
+    if (ret >= extern(_BASE))
+      std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
+    else if (ret >= 0x1D0000)
+      std::print(cast<void*>(ret), "  ", cast<void*>(ret - 0x1D0000));
+    else
+      std::print(cast<void*>(ret));
+
+    rbp = cast<uintptr*>(*rbp);
+  }
+
+  while (true)
+  {
+    __asm("cli", "");
+    __asm("hlt", "");
+  }
+}

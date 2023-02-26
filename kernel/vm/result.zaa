@@ -1,0 +1,20 @@
+//
+// vm result
+//
+
+pub enum result : i32
+{
+  ok = 0,
+  not_permitted = -1,
+  no_such_process = -10,
+  would_block = -11,
+  bad_address = -14,
+  invalid_argument = -22,
+  not_supported = -95,
+  overflow = -139,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}

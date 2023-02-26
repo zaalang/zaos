@@ -1,0 +1,788 @@
+//
+// editor
+//
+
+import std.string : String;
+import readline.event : event, key_event, key_modifiers;
+import readline.painter : painter;
+import readline.history : history;
+import readline.completer : completer;
+import readline.prompt : prompt;
+import std.bits.utf as utf;
+
+pub union status
+{
+  pub ok,
+  pub dirty,
+  pub accepted,
+  pub canceled(signal),
+  pub ignored,
+
+  status() = default;
+  pub status(status&&) = default;
+  pub fn =(status mut &, status&&) -> status mut & = default;
+  pub ~status() = default;
+}
+
+pub union signal
+{
+  pub ctrl_c,
+  pub ctrl_d,
+  pub error(std::errc),
+  pub end_of_file,
+
+  signal() = default;
+  pub signal(signal&&) = default;
+  pub fn =(signal mut &, signal&&) -> signal mut & = default;
+  pub ~signal() = default;
+}
+
+pub struct editor
+{
+  int x;
+  int y;
+  int lines;
+  usize sy;
+  usize sx;
+  usize cursor;
+
+  std::string cut;
+
+  pub std::string buffer;
+
+  pub history::item item;
+  pub history mut *history;
+
+  pub completer mut *completer;
+
+  usize completion_index;
+  usize completion_delta_x;
+  usize completion_delta_y;
+  std::vector<completer::suggestion> completions;
+
+  pub editor() = default;
+  pub ~editor() = default;
+}
+
+#[lifetime(depend(str))]
+fn take_first_cells(String &str, int n) -> std::string_view
+{
+  var j = str.chars.begin;
+
+  for(; j != str.end; ++j)
+  {
+    if ((n -= cell_width(*j)) <= 0)
+      break;
+  }
+
+  return std::string_view(str.begin, j);
+}
+
+#[lifetime(depend(str))]
+fn take_last_cells(String &str, int n) -> std::string_view
+{
+  var i = str.end;
+
+  rof(var j = str.chars.end; j == str.begin; --j)
+  {
+    if ((n -= cell_width(*j)) <= 0)
+      break;
+
+    i = j;
+  }
+
+  return std::string_view(i, str.end);
+}
+
+#[lifetime(depend(this.buffer))]
+fn current_line(editor &this) -> std::string_view
+{
+  var i = this.buffer.begin;
+  if (var k = this.buffer[0 .. this.cursor].find_last('\n'); k != this.buffer.begin + this.cursor)
+    i = k + 1;
+
+  var j = this.buffer[this.cursor .. this.buffer.len].find_first('\n');
+
+  return this.buffer[i ..  j];
+}
+
+pub fn is_cursor_top(editor mut &this) -> bool
+{
+  return this.current_line.begin == this.buffer.begin;
+}
+
+pub fn is_cursor_bottom(editor mut &this) -> bool
+{
+  return this.current_line.end == this.buffer.end;
+}
+
+pub fn insert_char(editor mut &this, char ch) -> void
+{
+  var len = utf::len(ch);
+
+  this.buffer.insert(this.cursor, ch);
+  this.cursor += len;
+
+  if (this.completions.len != 0)
+    completions_update(&mut this);
+}
+
+pub fn delete_char_left(editor mut &this) -> void
+{
+  if (this.cursor == 0)
+    return;
+
+  var len = utf::len_prev(this.buffer.data, this.buffer.data + this.cursor);
+
+  this.cursor -= len;
+  this.buffer.erase(this.cursor, len);
+
+  if (this.completions.len != 0)
+    completions_update(&mut this);
+}
+
+pub fn delete_char_right(editor mut &this) -> void
+{
+  if (this.cursor == this.buffer.len)
+    return;
+
+  var len = utf::len_next(this.buffer.data + this.cursor, this.buffer.end);
+
+  this.buffer.erase(this.cursor, len);
+}
+
+pub fn move_char_left(editor mut &this) -> void
+{
+  if (this.cursor == 0)
+    return;
+
+  this.cursor -= utf::len_prev(this.buffer.begin, this.buffer.begin + this.cursor);
+}
+
+pub fn move_char_right(editor mut &this) -> void
+{
+  if (this.cursor == this.buffer.len)
+    return;
+
+  this.cursor += utf::len_next(this.buffer.begin + this.cursor, this.buffer.end);
+}
+
+pub fn move_line_up(editor mut &this) -> void
+{
+  var line = this.current_line();
+
+  if (line.begin == this.buffer.begin)
+    return;
+
+  var sv = this.buffer[this.buffer.begin .. line.begin - 1];
+  if (var k = sv.find_last('\n'); k != sv.end)
+    sv = sv[k + 1 .. sv.end];
+
+  var i = sv.chars.begin;
+  var n = cell_width(this.buffer[line.begin .. this.buffer.begin + this.cursor]);
+
+  for(; i != sv.end; ++i)
+  {
+    if ((n -= cell_width(*i)) < 0)
+      break;
+  }
+
+  this.cursor = i - this.buffer.begin;
+}
+
+pub fn move_line_down(editor mut &this) -> void
+{
+  var line = this.current_line();
+
+  if (line.end == this.buffer.end)
+    return;
+
+  var sv = this.buffer[line.end + 1 .. this.buffer.end];
+  if (var k = sv.find_first('\n'); k != sv.end)
+    sv = sv[sv.begin .. k];
+
+  var i = sv.chars.begin;
+  var n = cell_width(this.buffer[line.begin .. this.buffer.begin + this.cursor]);
+
+  for(; i != sv.end; ++i)
+  {
+    if ((n -= cell_width(*i)) < 0)
+      break;
+  }
+
+  this.cursor = i - this.buffer.begin;
+}
+
+pub fn move_home(editor mut &this) -> void
+{
+  this.cursor = this.current_line.begin - this.buffer.begin;
+
+  this.completions.clear();
+}
+
+pub fn move_end(editor mut &this) -> void
+{
+  this.cursor = this.current_line.end - this.buffer.begin;
+
+  this.completions.clear();
+}
+
+pub fn cut_home_to_cursor(editor mut &this) -> void
+{
+  var line = this.current_line();
+
+  this.cut = this.buffer[line.begin .. this.buffer.begin + this.cursor];
+
+  this.cursor = this.buffer.erase(line.begin, this.buffer.begin + this.cursor) - this.buffer.begin;
+
+  this.completions.clear();
+}
+
+pub fn cut_cursor_to_end(editor mut &this) -> void
+{
+  var line = this.current_line();
+
+  this.cut = this.buffer[this.buffer.begin + this.cursor .. line.end];
+
+  this.cursor = this.buffer.erase(this.buffer.begin + this.cursor, line.end) - this.buffer.begin;
+}
+
+pub fn cut_home_to_end(editor mut &this) -> void
+{
+  var line = this.current_line();
+
+  this.cut = this.buffer[line.begin .. line.end];
+
+  this.cursor = this.buffer.erase(line.begin, line.end) - this.buffer.begin;
+
+  this.completions.clear();
+}
+
+pub fn cut_whole_line(editor mut &this) -> void
+{
+  this.cut_home_to_end();
+
+  if (this.buffer.len != 0)
+  {
+    if (this.cursor != this.buffer.len)
+      this.delete_char_right();
+    else
+      this.delete_char_left();
+  }
+
+  this.cut += "\n";
+}
+
+pub fn insert_cut(editor mut &this) -> void
+{
+  if (this.cut.ends_with("\n"))
+    this.move_home();
+
+  this.buffer.insert(this.cursor, this.cut);
+  this.cursor += this.cut.len;
+}
+
+pub fn history_next(editor mut &this) -> void
+{
+  if (!this.history)
+    return;
+
+  try
+  {
+    this.item.buffer = this.buffer;
+
+    this.history.save(&mut *this.history, &mut this.item);
+
+    if (this.history.load(&mut *this.history, this.item.id + 1, &mut this.item))
+    {
+      this.buffer = this.item.buffer;
+      this.cursor = this.buffer.len;
+    }
+  }
+  catch(std::error e)
+  {
+  }
+}
+
+pub fn history_previous(editor mut &this) -> void
+{
+  if (!this.history)
+    return;
+
+  try
+  {
+    this.item.buffer = this.buffer;
+
+    this.history.save(&mut *this.history, &mut this.item);
+
+    if (this.history.load(&mut *this.history, this.item.id - 1, &mut this.item))
+    {
+      this.buffer = this.item.buffer;
+      this.cursor = this.buffer.find_first('\n') - this.buffer.begin;
+    }
+  }
+  catch(std::error e)
+  {
+  }
+}
+
+pub fn history_accept(editor mut &this) -> void
+{
+  if (!this.history)
+    return;
+
+  try
+  {
+    this.item.buffer = this.buffer;
+
+    this.history.accept(&mut *this.history, &mut this.item);
+  }
+  catch(std::error e)
+  {
+  }
+}
+
+pub fn completion_next(editor mut &this) -> void
+{
+  if (this.completions.len == 0)
+  {
+    completions_update(&mut this);
+
+    if (this.completions.len == 1)
+      completion_accept(&mut this);
+  }
+  else
+  {
+    this.completion_index = (this.completion_index + 1) % this.completions.len;
+  }
+}
+
+pub fn completion_left(editor mut &this) -> void
+{
+  if (this.completion_index >= this.completion_delta_x)
+    this.completion_index -= this.completion_delta_x;
+}
+
+pub fn completion_right(editor mut &this) -> void
+{
+  if (this.completion_index + this.completion_delta_x < this.completions.len)
+    this.completion_index += this.completion_delta_x;
+}
+
+pub fn completion_up(editor mut &this) -> void
+{
+  if (this.completion_index >= this.completion_delta_y)
+    this.completion_index -= this.completion_delta_y;
+}
+
+pub fn completion_down(editor mut &this) -> void
+{
+  if (this.completion_index + this.completion_delta_y < this.completions.len)
+    this.completion_index += this.completion_delta_y;
+}
+
+pub fn completion_accept(editor mut &this) -> void
+{
+  var &suggestion = this.completions[this.completion_index];
+
+  this.buffer.insert(this.cursor, suggestion.value.remove_prefix(suggestion.matched));
+  this.cursor += suggestion.value.len - suggestion.matched;
+
+  this.completions.clear();
+}
+
+pub fn completions_update(editor mut &this) -> void
+{
+  this.completion_index = 0;
+  this.completions = this.completer.complete(&mut *this.completer, this.buffer, this.cursor);
+}
+
+pub fn completions_escape(editor mut &this) -> void
+{
+  this.completions.clear();
+}
+
+pub fn clear(editor mut &this) -> void
+{
+  this.cursor = 0;
+  this.buffer.clear();
+  this.completions.clear();
+}
+
+pub fn process(editor mut &this, event &event) -> status
+{
+  switch (event)
+  {
+    case key[evt]:
+      switch (evt.modifiers)
+      {
+        case key_modifiers::none:
+          switch (evt.key)
+          {
+            case enter:
+
+              if (this.completions.len != 0)
+              {
+                completion_accept(&mut this);
+                return dirty;
+              }
+
+              if (!this.buffer.empty)
+                history_accept(&mut this);
+
+              return accepted;
+
+            case backspace:
+              delete_char_left(&mut this);
+              return dirty;
+
+            case delete:
+              delete_char_right(&mut this);
+              return dirty;
+
+            case left:
+              if (this.completions.len != 0)
+                completion_left(&mut this);
+              else
+                move_char_left(&mut this);
+              return dirty;
+
+            case right:
+              if (this.completions.len != 0)
+                completion_right(&mut this);
+              else
+                move_char_right(&mut this);
+              return dirty;
+
+            case up:
+              if (this.completions.len != 0)
+                completion_up(&mut this);
+              else if (this.is_cursor_top)
+                history_previous(&mut this);
+              else
+                move_line_up(&mut this);
+              return dirty;
+
+            case down:
+              if (this.completions.len != 0)
+                completion_down(&mut this);
+              else if (this.is_cursor_bottom)
+                history_next(&mut this);
+              else
+                move_line_down(&mut this);
+              return dirty;
+
+            case home:
+              move_home(&mut this);
+              return dirty;
+
+            case end:
+              move_end(&mut this);
+              return dirty;
+
+            case tab:
+              if (this.completer)
+              {
+                completion_next(&mut this);
+                return dirty;
+              }
+
+            case escape:
+              if (this.completions.len != 0)
+              {
+                completions_escape(&mut this);
+                return dirty;
+              }
+
+            case sym[ch]:
+              insert_char(&mut this, ch);
+              return dirty;
+          }
+
+        case key_modifiers::shift:
+          switch (evt.key)
+          {
+            case delete:
+              cut_whole_line(&mut this);
+              return dirty;
+
+            case sym[ch]:
+              insert_char(&mut this, ch);
+              return dirty;
+          }
+
+        case key_modifiers::control:
+          switch (evt.key)
+          {
+            case sym[ch]:
+              switch(ch)
+              {
+                case 'C':
+                  return status::canceled(signal::ctrl_c);
+
+                case 'D':
+                  if (this.buffer.empty)
+                    return status::canceled(signal::ctrl_d);
+                  delete_char_right(&mut this);
+                  return dirty;
+
+                case 'H':
+                  delete_char_left(&mut this);
+                  return dirty;
+
+                case 'U':
+                  cut_home_to_cursor(&mut this);
+                  return dirty;
+
+                case 'K':
+                  cut_cursor_to_end(&mut this);
+                  return dirty;
+
+                case 'Y':
+                  insert_cut(&mut this);
+                  return dirty;
+              }
+          }
+
+        case key_modifiers::alt:
+          switch (evt.key)
+          {
+            case enter:
+              insert_char(&mut this, '\n');
+              return dirty;
+
+            case sym[ch]:
+              switch(ch)
+              {
+              }
+          }
+      }
+
+      case error[errc]:
+        return status::canceled(signal::error(errc));
+
+      case end_of_file:
+        return status::canceled(signal::end_of_file);
+  }
+
+  return ignored;
+}
+
+pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
+{
+  var painter = painter(fd);
+
+  var text = std::string_view(this.buffer);
+
+  var edit_max_line = cast<usize>(painter.height) - 1;
+
+  if (this.completions.len != 0)
+    edit_max_line = 1;
+
+  for(var y = 0, var line : text.split("\n"))
+  {
+    if (text.begin + this.cursor <= line.end)
+    {
+      if (y < this.sy)
+        this.sy = y;
+
+      if (y - this.sy > edit_max_line)
+        this.sy = y - edit_max_line;
+
+      break;
+    }
+
+    ++y;
+  }
+
+  painter.hide_cursor();
+  painter.move_home();
+  painter.move_up(this.y);
+  if (this.sy == 0)
+    prompt.paint_left(prompt, painter);
+  painter.save_position();
+
+  for(var y = 0, var line : text.split("\n"))
+  {
+    if (y >= this.sy)
+    {
+      var i = line.begin - text.begin;
+      var j = line.end - text.begin;
+
+      if (y != 0)
+        prompt.paint_indent(prompt, painter);
+
+      if (i <= this.cursor && this.cursor <= j)
+      {
+        if (this.cursor - i < this.sx)
+          this.sx = this.cursor - i;
+
+        if (this.cursor - i - this.sx > cast(7*painter.width/8 - painter.x))
+          this.sx = this.cursor - i - take_last_cells(text[i .. this.cursor], 6*painter.width/8 - painter.x).len;
+
+        i += this.sx;
+
+        painter.text(text[i .. this.cursor]);
+        painter.save_position();
+
+        this.y = painter.y;
+
+        i = this.cursor;
+      }
+
+      if (j - i > cast(painter.width - painter.x))
+        j = i + take_first_cells(text[i .. j], painter.width - painter.x).len;
+
+      painter.text(text[i .. j]);
+
+      painter.erase_cursor_to_end();
+
+      if (y - this.sy == edit_max_line)
+        break;
+
+      if (line.end != text.end)
+        painter.text("\r\n");
+   }
+
+    ++y;
+  }
+
+  if (this.completions.len != 0 && painter.height > 4)
+  {
+    var max_name_len = 0;
+    var has_descriptions = false;
+
+    for(var &entry : this.completions)
+    {
+      if (max_name_len < entry.value.len)
+        max_name_len = entry.value.len;
+
+      if (entry.description.len != 0)
+        has_descriptions = true;
+    }
+
+    if (max_name_len < 16)
+      max_name_len = 16;
+
+    if (max_name_len > cast(painter.width/4))
+      max_name_len = cast(painter.width/4);
+
+    painter.text("\r\n");
+
+    if (!has_descriptions)
+    {
+      var menu_max_line = 4;
+      var columns = std::min(cast(painter.width) / (max_name_len + 2), 4);
+
+      var sy = 0;
+      if (this.completion_index / columns > menu_max_line)
+        sy = this.completion_index / columns - menu_max_line;
+
+      for(var y = 0, var i = 0; i < this.completions.len; i += columns)
+      {
+        if (y >= sy)
+        {
+          for(var index = i; index < std::min(i + columns, this.completions.len); index += 1)
+          {
+            var &entry = this.completions[index];
+
+            var c1 = "\x1b[32m";
+
+            if (index == this.completion_index)
+              c1 = "\x1b[30;42m";
+
+            painter.text(std::format("{}{:*.*}  \x1b[0m", c1, max_name_len, max_name_len, entry.value));
+          }
+
+          painter.erase_cursor_to_end();
+
+          if (y - sy == menu_max_line)
+            break;
+
+          painter.text("\r\n");
+        }
+
+        ++y;
+      }
+
+      this.completion_delta_x = 1;
+      this.completion_delta_y = columns;
+    }
+
+    if (has_descriptions)
+    {
+      var menu_max_line = cast<usize>(painter.height) - (edit_max_line + 1);
+
+      var sy = 0;
+      if (this.completion_index > menu_max_line)
+        sy = this.completion_index - menu_max_line;
+
+      for(var y = 0, var index = 0; index < this.completions.len; ++index)
+      {
+        var &entry = this.completions[index];
+
+        if (y >= sy)
+        {
+          var c1 = "\x1b[32m";
+          var c2 = "\x1b[36m";
+
+          if (index == this.completion_index)
+            c1 = c2 = "\x1b[30;42m";
+
+          painter.text(std::format("{}{:*.*} {}{:.*}\x1b[0m", c1, max_name_len, max_name_len, entry.value, c2, painter.width - cast(max_name_len) - 1, entry.description));
+
+          painter.erase_cursor_to_end();
+
+          if (y - sy == menu_max_line)
+            break;
+
+          painter.text("\r\n");
+        }
+
+        ++y;
+      }
+
+      this.completion_delta_x = 0;
+      this.completion_delta_y = 1;
+    }
+  }
+
+  this.lines = painter.lines;
+
+  painter.erase_cursor_to_screen();
+  prompt.paint_right(prompt, painter);
+  painter.restore_position();
+
+  painter.show_cursor();
+  painter.flush();
+}
+
+pub fn render(editor mut &this, int fd, prompt &prompt) -> void
+{
+  var painter = painter(fd);
+
+  painter.hide_cursor();
+  painter.move_home();
+  painter.move_up(this.y);
+  prompt.paint_left(prompt, painter);
+  painter.erase_cursor_to_screen();
+  painter.text(this.buffer);
+  painter.save_position();
+  prompt.paint_right(prompt, painter);
+  painter.restore_position();
+  painter.text("\n");
+  painter.show_cursor();
+  painter.flush();
+}
+
+pub fn flush(editor mut &this, int fd, prompt &prompt) -> void
+{
+  var painter = painter(fd);
+
+  painter.hide_cursor();
+  painter.move_down(this.lines - this.y);
+  painter.text("\n");
+  painter.erase_cursor_to_screen();
+  painter.show_cursor();
+  painter.flush();
+}

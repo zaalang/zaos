@@ -1,0 +1,348 @@
+//
+// blk cache
+//
+
+import std.stdio;
+import std.flat_hash_map;
+import std.hash;
+import vfs.fs;
+import vfs.node;
+import blk.cache;
+import io;
+import vm : PAGE_SIZE;
+import cpu;
+import heap;
+import platform;
+import scheduler;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import slab : slab_allocator;
+import support.rc : Rc;
+
+const BLOCK_SIZE = 32768;
+const BLOCK_SHIFT = std::ctz(BLOCK_SIZE);
+const BLOCK_MASK = BLOCK_SIZE - 1;
+const BLOCK_FLUSH_SIZE = 512;
+
+struct cache_key
+{
+  vfs::node *node;
+  u64 offset;
+
+  cache_key(vfs::node *node, u64 offset)
+    : node(node), offset(offset)
+  {
+  }
+
+  fn ==(cache_key &, cache_key &) -> bool = default;
+
+  cache_key(cache_key&) = default;
+  ~cache_key() = default;
+}
+
+pub fn hash(var &hasher, cache_key &key) -> usize
+{
+  return hasher.combine(key.node, key.offset);
+}
+
+pub struct cache_entry
+{
+  enum state : int
+  {
+    invalid,
+    initialising,
+    initialised,
+  }
+
+  state state;
+  vm::virtrange allocation;
+  vm::iovec iovs;
+  io::response response;
+
+  vfs::node mut *node;
+  u64 offset;
+  u64 dirty;
+
+  cache_entry mut *next;
+
+  i32 refcnt;
+  u8[16] reserved;
+
+  fn allocator()
+  {
+    static allocator = #slab_allocator<cache_entry>();
+
+    return &allocator;
+  }
+
+  fn create() -> cache_entry mut *
+  {
+    return allocator.allocate();
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> i32
+  {
+    return std::atomic_sub(&this.refcnt, 1);
+  }
+
+  pub cache_entry()
+  {
+    allocation = heap::mmap(BLOCK_SIZE);
+
+    if (var result = vm::lock(allocation, vm::protection::readwrite, &mut iovs); !result)
+      std::panic("unable to lock block");
+  }
+
+  pub ~cache_entry()
+  {
+    heap::munmap(allocation);
+  }
+}
+
+fn destroy(cache_entry mut *entry) -> void
+{
+  std::assert(entry.dirty == 0);
+  std::assert(entry.response.outstanding == 0);
+
+  entry.state = cache_entry::state::invalid;
+
+  cache_entry::allocator.free(entry);
+}
+
+pub struct block_ptr
+{
+  pub fn bool(this&) -> bool
+  {
+    return !!this.response;
+  }
+
+  pub fn ready(this&) -> bool
+  {
+    return this.response.ready;
+  }
+
+  pub fn result(this&) -> i32
+  {
+    return this.response.result;
+  }
+
+  pub fn ptr(this mut &, u64 offset) -> u8 mut *
+  {
+    return this.base + cast(offset & BLOCK_MASK);
+  }
+
+  pub fn base(this mut &) -> u8 mut *
+  {
+    return cast<u8 mut *>((*this.entry).allocation.addr);
+  }
+
+  pub fn size(this mut &) -> usize
+  {
+    return BLOCK_SIZE;
+  }
+
+  pub fn state(this &&)
+  {
+    return &(*this.entry).state;
+  }
+
+  pub fn response(this &&)
+  {
+    return &(*this.entry).response;
+  }
+
+  Rc<cache_entry> entry;
+
+  block_ptr(Rc<cache_entry> &&entry)
+    : entry(&&entry)
+  {
+  }
+
+  pub block_ptr() = default;
+  pub block_ptr(block_ptr &&other) = default;
+  pub fn =(block_ptr mut &lhs, block_ptr &&rhs) -> block_ptr mut & = default;
+  pub ~block_ptr() = default;
+}
+
+pub fn wait(block_ptr mut &block) -> void
+{
+  return block.response.wait();
+}
+
+pub fn wait_until(block_ptr mut &block, u64 timeout) -> bool
+{
+  return block.response.wait_until(timeout);
+}
+
+struct block_cache
+{
+  mutex lock;
+
+  std::flat_hash_map<cache_key, cache_entry mut *> entries;
+
+  thread mut *plumber;
+  cache_entry mut *drain;
+
+  fn get(block_cache mut &pagecache, cache_key &key) -> block_ptr
+  {
+    var guard = std::lock_guard(&mut pagecache.lock);
+
+    var j = pagecache.entries.find(key);
+
+    if (j == pagecache.entries.end)
+      j = pagecache.entries.insert(key, cache_entry::create()).0;
+
+    return block_ptr(Rc(pagecache.entries[j].value));
+  }
+
+  fn purge(block_cache mut &pagecache, vfs::node *node) -> void
+  {
+    var guard = std::lock_guard(&mut pagecache.lock);
+
+    for(var mut &entry : pagecache.entries)
+    {
+      if (entry.key.node == node)
+        destroy(entry.value);
+    }
+
+    std::erase_if(&mut pagecache.entries, fn [node](var &entry) {
+      return entry.key.node == node;
+    });
+  }
+
+  block_cache() = default;
+  block_cache(#block_cache&) = default;
+  ~block_cache() = default;
+}
+
+fn pagecache() -> block_cache mut &
+{
+  static instance = #block_cache();
+
+  return &instance;
+}
+
+pub fn fetch(vfs::node_ptr node, u64 offset) -> block_ptr
+{
+  offset &= ~BLOCK_MASK;
+
+  var block = pagecache.get(cache_key(node, offset));
+
+  if (std::atomic_cmpxchg_strong(&block.state, cache_entry::state::invalid, cache_entry::state::initialising))
+  {
+    block.entry.node = node;
+    block.entry.offset = offset;
+    block.entry.response = io::response();
+
+    if (var result = node.file_operations.read(node, block.response.cb, offset, (*block.entry).iovs, 0, block.size); !result)
+      io::cancel(&mut block.response.cb, result);
+
+    block.state = cache_entry::state::initialised;
+  }
+
+  while (std::volatile_load(&block.state) < cache_entry::state::initialised)
+    scheduler::sleep_yield();
+
+  return block;
+}
+
+pub fn commit(block_ptr mut &block, void *data, usize len) -> void
+{
+  var dirty = 0;
+
+  for(var offset = 0; offset < len; offset += BLOCK_FLUSH_SIZE)
+  {
+    dirty |= 1 << ((cast<u8*>(data) + offset - block.base) / BLOCK_FLUSH_SIZE);
+  }
+
+  if (dirty == 0)
+    return;
+
+  if (std::atomic_or(&block.entry.dirty, dirty) == 0)
+  {
+    block.entry.node.ref();
+
+    while (true)
+    {
+      block.entry.next = std::volatile_load(&pagecache.drain);
+
+      if (std::atomic_cmpxchg_weak(&pagecache.drain, block.entry.next, &*block.entry))
+        break;
+    }
+
+    scheduler::unblock(pagecache.plumber);
+  }
+}
+
+pub fn purge(vfs::node *node) -> void
+{
+  pagecache.purge(node);
+}
+
+fn plumber(void*) -> void
+{
+  platform::disable_interrupts();
+
+  while (true)
+  {
+    scheduler::prepare_to_block();
+
+    platform::enable_interrupts();
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000_000);
+
+    for(var entry = std::atomic_xchg(&pagecache.drain, null); entry; entry = entry.next)
+    {
+      var node = vfs::node_ptr(entry.node);
+      var dirty = std::atomic_xchg(&entry.dirty, 0);
+      var response = io::response();
+      var position = entry.offset;
+
+      for(var offset = 0; dirty != 0; )
+      {
+        var bytes = BLOCK_FLUSH_SIZE;
+
+        if (dirty & 1 != 0)
+        {
+          while (dirty & 0x2 != 0)
+          {
+            dirty >>= 1;
+            bytes += BLOCK_FLUSH_SIZE;
+          }
+
+          if (var result = node.file_operations.write(node, response.cb, position, entry.iovs, offset, bytes); !result)
+            std::print("plumber: unable to initiate write back - ", result);
+        }
+
+        dirty >>= 1;
+        offset += bytes;
+        position += cast(bytes);
+      }
+
+      if (response.wait(); !response)
+        std::print("plumber: unable to complete write back - ", response.result);
+
+      if (response)
+        std::print("plumber: writeback ", response.result, " bytes");
+
+      entry.node.unref();
+    }
+
+    platform::disable_interrupts();
+
+    scheduler::block();
+  }
+}
+
+pub fn spawn_plumber() -> void
+{
+  pagecache.plumber = thread::create(process::current, &cast<void fn(void mut *)>(plumber), null);
+
+  scheduler::enqueue(pagecache.plumber);
+}

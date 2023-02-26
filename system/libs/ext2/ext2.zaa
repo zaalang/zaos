@@ -1,0 +1,556 @@
+//
+// ext2
+//
+
+import std.string;
+
+pub const EXT2_SUPER_BLOCK_OFFSET = 1024;
+pub const EXT2_SUPER_BLOCK_MAGIC = 0xef53;
+pub const EXT2_ROOT_NODE = 2;
+pub const EXT2_NAME_LENGTH = 255;
+pub const EXT2_DIRECT_BLOCKS = 12;
+pub const EXT2_SHORT_SYMLINK_LENGTH = 60;
+
+pub using ext2_ino_t = u32;
+
+pub enum compat : u32
+{
+  directory_preallocation = 0x0001,
+  imagic_inodes = 0x0002,
+  has_journal = 0x0004,
+  ext_attr = 0x0008,
+  resize_inode = 0x0010,
+  directory_index = 0x0020,
+  sparse_super = 0x0200,
+
+  pub const fn ~(compat lhs) -> compat { return cast<compat>(~cast<u32>(lhs)); }
+  pub const fn &(compat lhs, compat rhs) -> compat { return cast<compat>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(compat lhs, compat rhs) -> compat { return cast<compat>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+pub enum incompat : u32
+{
+  compression = 0x0001,
+  file_type = 0x0002,
+  recover = 0x0004,
+  journal = 0x0008,
+  meta_group = 0x0010,
+  extents = 0x0040,
+  x64bit = 0x0080,
+  mmp = 0x0100,
+  flex_group = 0x0200,
+  ea_inode = 0x0400,
+  dir_data = 0x1000,
+  csum_seed = 0x2000,
+  largedir = 0x4000,
+  inline_data = 0x8000,
+  encrypt = 0x10000,
+
+  pub const fn ~(incompat lhs) -> incompat { return cast<incompat>(~cast<u32>(lhs)); }
+  pub const fn &(incompat lhs, incompat rhs) -> incompat { return cast<incompat>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(incompat lhs, incompat rhs) -> incompat { return cast<incompat>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+pub enum rocompat : u32
+{
+  sparse_super = 0x0001,
+  large_file = 0x0002,
+  btree_directory = 0x0004,
+  huge_file = 0x0008,
+  gdt_csum = 0x0010,
+  dir_nlink = 0x0020,
+  extra_isize = 0x0040,
+  quota = 0x0100,
+  bigalloc = 0x0200,
+  metadata_csum = 0x0400,
+  readonly = 0x1000,
+  project = 0x2000,
+
+  pub const fn ~(rocompat lhs) -> rocompat { return cast<rocompat>(~cast<u32>(lhs)); }
+  pub const fn &(rocompat lhs, rocompat rhs) -> rocompat { return cast<rocompat>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(rocompat lhs, rocompat rhs) -> rocompat { return cast<rocompat>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+#[packed]
+pub struct ext2_super_block
+{
+  pub u32 s_inodes;
+  pub u32 s_blocks;
+  pub u32 s_reserved_blocks;
+  pub u32 s_free_blocks;
+  pub u32 s_free_inodes;
+  pub u32 s_first_data_block;
+  pub u32 s_block_shift;
+  pub u32 s_fragment_shift;
+  pub u32 s_blocks_per_group;
+  pub u32 s_fragments_per_group;
+  pub u32 s_inodes_per_group;
+  pub u32 s_mount_time;
+  pub u32 s_write_time;
+  pub u16 s_mount_count;
+  pub u16 s_max_mount_count;
+  pub u16 s_magic;
+  pub u16 s_state;
+  pub u16 s_error_handling;
+  pub u16 s_minor_revision_level;
+  pub u32 s_last_check_time;
+  pub u32 s_check_interval;
+  pub u32 s_creator_os;
+  pub u32 s_revision_level;
+  pub u16 s_reserved_blocks_uid;
+  pub u16 s_reserved_blocks_gid;
+  pub u32 s_first_inode;
+  pub u16 s_inode_size;
+  pub u16 s_block_group;
+  pub compat s_compatible_features;
+  pub incompat s_incompatible_features;
+  pub rocompat s_readonly_features;
+  pub u8[16] s_uuid;
+  pub u8[16] s_name;
+  pub u8[64] s_last_mount_point;
+  pub u32 s_algorithm_usage_bitmap;
+  pub u8 s_preallocated_blocks;
+  pub u8 s_preallocated_directory_blocks;
+  pub u16 s_reserved_gdt_blocks;
+
+  // journaling ext3 support
+  pub u8[16] s_journal_uuid;
+  pub u32 s_journal_inode;
+  pub u32 s_journal_device;
+  pub u32 s_last_orphan;
+  pub u32[4] s_hash_seed;
+  pub u8 s_default_hash_version;
+  pub u8 s_reserved1;
+  pub u16 s_group_descriptor_size;
+  pub u32 s_default_mount_options;
+  pub u32 s_first_meta_block_group;
+  pub u32 s_fs_creation_time;
+  pub u32[17] s_journal_inode_backup;
+
+  // ext4 support
+  pub u32 s_blocks_high;
+  pub u32 s_reserved_blocks_high;
+  pub u32 s_free_blocks_high;
+  pub u16 s_min_inode_size;
+  pub u16 s_want_inode_size;
+  pub u32 s_flags;
+  pub u16 s_raid_stride;
+  pub u16 s_mmp_interval;
+  pub u64 s_mmp_block;
+  pub u32 s_raid_stripe_width;
+  pub u8 s_groups_per_flex_shift;
+  pub u8 s_checksum_type;
+  pub u16 s_reserved4;
+  pub u64 s_kb_written;
+  pub u32[60] s_reserved5;
+  pub u32 s_checksum_seed;
+  pub u32[98] s_reserved6;
+  pub u32 s_checksum;
+
+  pub fn is64bit(this&) -> bool
+  {
+    return this.s_incompatible_features & incompat::x64bit == incompat::x64bit;
+  }
+
+  pub fn block_shift(this&) -> int
+  {
+    return 10 + cast<int>(this.s_block_shift);
+  }
+
+  pub fn inodes(this&) -> u64
+  {
+    return cast<u64>(this.s_inodes);
+  }
+
+  pub fn free_inodes(this&) -> u64
+  {
+    return cast<u64>(this.s_free_inodes);
+  }
+
+  pub fn blocks(this&) -> u64
+  {
+    var blocks = cast<u64>(this.s_blocks);
+
+    if (this.is64bit)
+      blocks |= cast<u64>(this.s_blocks_high) << 32;
+
+    return blocks;
+  }
+
+  pub fn free_blocks(this&) -> u64
+  {
+    var blocks = cast<u64>(this.s_free_blocks);
+
+    if (this.is64bit)
+      blocks |= cast<u64>(this.s_free_blocks_high) << 32;
+
+    return blocks;
+  }
+
+  pub ext2_super_block() = default;
+  pub ~ext2_super_block() = default;
+}
+
+#[packed]
+pub struct ext2_group_descriptor
+{
+  pub u32 bg_block_bitmap;
+  pub u32 bg_inode_bitmap;
+  pub u32 bg_inode_table;
+  pub u16 bg_free_blocks;
+  pub u16 bg_free_inodes;
+  pub u16 bg_used_directories;
+  pub u16 bg_flags;
+  pub u32 bg_exclude_bitmap;
+  pub u16 bg_block_bitmap_csum;
+  pub u16 bg_inode_bitmap_csum;
+  pub u16 bg_unused_inodes;
+  pub u16 bg_checksum;
+
+  // ext4
+  pub u32 bg_block_bitmap_high;
+  pub u32 bg_inode_bitmap_high;
+  pub u32 bg_inode_table_high;
+  pub u16 bg_free_blocks_high;
+  pub u16 bg_free_inodes_high;
+  pub u16 bg_used_directories_high;
+  pub u16 bg_unused_inodes_high;
+  pub u32 bg_exclude_bitmap_high;
+  pub u16 bg_block_bitmap_csum_high;
+  pub u16 bg_inode_bitmap_csum_high;
+  pub u32 bg_reserved1;
+
+  pub ext2_group_descriptor() = default;
+  pub ~ext2_group_descriptor() = default;
+}
+
+pub fn get_free_inodes(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var freeinodes = cast<u64>(groupdesc.bg_free_inodes);
+
+  if (superblock.is64bit)
+    freeinodes |= cast<u64>(groupdesc.bg_free_inodes_high) << 32;
+
+  return freeinodes;
+}
+
+pub fn get_free_blocks(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var freeblocks = cast<u64>(groupdesc.bg_free_blocks);
+
+  if (superblock.is64bit)
+    freeblocks |= cast<u64>(groupdesc.bg_free_blocks_high) << 32;
+
+  return freeblocks;
+}
+
+pub fn get_used_directories(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var useddirectories = cast<u64>(groupdesc.bg_used_directories);
+
+  if (superblock.is64bit)
+    useddirectories |= cast<u64>(groupdesc.bg_used_directories_high) << 32;
+
+  return useddirectories;
+}
+
+pub fn get_inode_table(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var inodetable = cast<u64>(groupdesc.bg_inode_table);
+
+  if (superblock.is64bit)
+    inodetable |= cast<u64>(groupdesc.bg_inode_table_high) << 32;
+
+  return inodetable;
+}
+
+pub fn get_inode_bitmap(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var inodebitmap = cast<u64>(groupdesc.bg_inode_bitmap);
+
+  if (superblock.is64bit)
+    inodebitmap |= cast<u64>(groupdesc.bg_inode_bitmap_high) << 32;
+
+  return inodebitmap;
+}
+
+pub fn get_block_bitmap(ext2_super_block *superblock, ext2_group_descriptor *groupdesc) -> u64
+{
+  var blockbitmap = cast<u64>(groupdesc.bg_block_bitmap);
+
+  if (superblock.is64bit)
+    blockbitmap |= cast<u64>(groupdesc.bg_block_bitmap_high) << 32;
+
+  return blockbitmap;
+}
+
+pub fn consume_free_inodes(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_free_inodes = get_free_inodes(superblock, groupdesc) - count;
+
+  groupdesc.bg_free_inodes = cast<u16>(bg_free_inodes & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_free_inodes_high = cast<u16>(bg_free_inodes >> 16);
+
+  superblock.s_free_inodes = cast<u32>(superblock.free_inodes - count);
+}
+
+pub fn release_free_inodes(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_free_inodes = get_free_inodes(superblock, groupdesc) + count;
+
+  groupdesc.bg_free_inodes = cast<u16>(bg_free_inodes & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_free_inodes_high = cast<u16>(bg_free_inodes >> 16);
+
+  superblock.s_free_inodes = cast<u32>(superblock.free_inodes + count);
+}
+
+pub fn consume_free_blocks(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_free_blocks = get_free_blocks(superblock, groupdesc) - count;
+
+  groupdesc.bg_free_blocks = cast<u16>(bg_free_blocks & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_free_blocks_high = cast<u16>(bg_free_blocks >> 16);
+
+  var s_free_blocks = superblock.free_blocks - count;
+
+  superblock.s_free_blocks = cast<u32>(s_free_blocks & 0xffffffff);
+
+  if (superblock.is64bit)
+    superblock.s_free_blocks_high = cast<u32>(s_free_blocks >> 32);
+}
+
+pub fn release_free_blocks(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_free_blocks = get_free_blocks(superblock, groupdesc) + count;
+
+  groupdesc.bg_free_blocks = cast<u16>(bg_free_blocks & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_free_blocks_high = cast<u16>(bg_free_blocks >> 16);
+
+  var s_free_blocks = superblock.free_blocks + count;
+
+  superblock.s_free_blocks = cast<u32>(s_free_blocks & 0xffffffff);
+
+  if (superblock.is64bit)
+    superblock.s_free_blocks_high = cast<u32>(s_free_blocks >> 32);
+}
+
+pub fn consume_used_directories(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_used_directories = get_used_directories(superblock, groupdesc) + count;
+
+  groupdesc.bg_used_directories = cast<u16>(bg_used_directories & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_used_directories_high = cast<u16>(bg_used_directories >> 16);
+}
+
+pub fn release_used_directories(ext2_super_block mut *superblock, ext2_group_descriptor mut *groupdesc, u64 count) -> void
+{
+  var bg_used_directories = get_used_directories(superblock, groupdesc) - count;
+
+  groupdesc.bg_used_directories = cast<u16>(bg_used_directories & 0xffff);
+
+  if (superblock.is64bit)
+    groupdesc.bg_used_directories_high = cast<u16>(bg_used_directories >> 16);
+}
+
+pub const EXT2_IFMT = 0o00170000;   // type of file
+pub const EXT2_IFSOCK = 0o00140000; // socket
+pub const EXT2_IFLNK = 0o00120000;  // symbolic link
+pub const EXT2_IFREG = 0o00100000;  // regular
+pub const EXT2_IFBLK = 0o00060000;  // block special
+pub const EXT2_IFDIR = 0o00040000;  // directory
+pub const EXT2_IFCHR = 0o00020000;  // character special
+pub const EXT2_IFIFO = 0o00010000;  // fifo
+
+pub enum ext2_ftype
+{
+  unknown,
+  regular_file,
+  directory,
+  symbolic_link,
+}
+
+#[packed]
+pub struct ext2_inode
+{
+  pub u16 i_mode;
+  pub u16 i_uid;
+  pub u32 i_size;
+  pub u32 i_atime;
+  pub u32 i_ctime;
+  pub u32 i_mtime;
+  pub u32 i_dtime;
+  pub u16 i_gid;
+  pub u16 i_links;
+  pub u32 i_blocks;
+  pub u32 i_flags;
+  pub u32 i_version;
+  pub u32[15] i_contents;
+  pub u32 i_generation;
+  pub u32 i_file_access_control;
+  pub u32 i_directory_access_control;
+  pub u32 i_fragment;
+  pub u8 i_fragment_number;
+  pub u8 i_fragment_size;
+  pub u16 i_file_access_control_high;
+  pub u16 i_uid_high;
+  pub u16 i_gid_high;
+  pub u16 i_checksum;
+  pub u16 i_reserved1;
+
+  // extra attributes
+  pub u16 i_extra_size;
+  pub u16 i_checksum_high;
+  pub u32 i_ctime_extra;
+  pub u32 i_mtime_extra;
+  pub u32 i_atime_extra;
+  pub u32 i_crtime;
+  pub u32 i_crtime_extra;
+  pub u32 i_version_high;
+
+  pub fn isreg(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFREG; }
+  pub fn isdir(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFDIR; }
+  pub fn islnk(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFLNK; }
+
+  pub fn mode(this&) -> u16
+  {
+    return this.i_mode;
+  }
+
+  pub fn ftype(this&) -> ext2_ftype
+  {
+    switch (this.i_mode & EXT2_IFMT)
+    {
+      case EXT2_IFREG:
+        return ext2_ftype::regular_file;
+
+      case EXT2_IFDIR:
+        return ext2_ftype::directory;
+
+      case EXT2_IFLNK:
+        return ext2_ftype::symbolic_link;
+    }
+
+    return ext2_ftype::unknown;
+  }
+
+  pub fn size(this&) -> u64
+  {
+    var size = cast<u64>(this.i_size);
+
+    if (this.isreg)
+      size |= cast<u64>(this.i_directory_access_control) << 32;
+
+    return size;
+  }
+
+  pub fn size=(this mut &, u64 size) -> void
+  {
+    this.i_size = cast<u32>(size & 0xffffffff);
+
+    if (this.isreg)
+      this.i_directory_access_control = cast<u32>(size >> 32);
+  }
+
+  pub fn uid(this&) -> u32
+  {
+    return cast<u32>(this.i_uid) | cast<u32>(this.i_uid_high);
+  }
+
+  pub fn uid=(this mut &, u32 uid) -> void
+  {
+    this.i_uid = cast<u16>(uid & 0xffff);
+    this.i_uid_high = cast<u16>(uid >> 16);
+  }
+
+  pub fn gid(this&) -> u32
+  {
+    return cast<u32>(this.i_gid) | cast<u32>(this.i_gid_high);
+  }
+
+  pub fn gid=(this mut &, u32 gid) -> void
+  {
+    this.i_gid = cast<u16>(gid & 0xffff);
+    this.i_gid_high = cast<u16>(gid >> 16);
+  }
+
+  pub ext2_inode() = default;
+  pub ~ext2_inode() = default;
+}
+
+pub fn inode_block_usage(ext2_super_block *superblock, u32 blocks) -> u32
+{
+  import std.math;
+
+  var block_shift = superblock.block_shift;
+  var block_size = 1 << block_shift;
+
+  let k0 = EXT2_DIRECT_BLOCKS;
+  let k1 = k0 + block_size / sizeof<u32>;
+  let k2 = k1 + std::pow(block_size / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(block_size / sizeof<u32>, 3);
+
+  var last = blocks;
+
+  if (k0 < last)
+  {
+    blocks += 1;
+  }
+
+  if (k1 < last)
+  {
+    blocks += 1;
+    blocks += std::ceil_div(std::min(last, k2) - k1, k1 - k0);
+  }
+
+  if (k2 < last)
+  {
+    blocks += 1;
+    blocks += std::ceil_div(std::min(last, k3) - k2, k1 - k0);
+    blocks += std::ceil_div(std::min(last, k3) - k2, k2 - k1);
+  }
+
+  return blocks << (block_shift - 9);
+}
+
+#[packed]
+pub struct ext2_dir_entry
+{
+  pub u32 inode;
+  pub u16 rec_len;
+  pub u8 name_len;
+  pub u8 file_type;
+  pub u8[EXT2_NAME_LENGTH] file_name;
+
+  pub fn name(this&) -> std::string_view
+  {
+    return std::string_view(this.file_name.data, cast<usize>(this.name_len));
+  }
+
+  pub fn ftype(this&) -> ext2_ftype
+  {
+    return cast<ext2_ftype>(this.file_type);
+  }
+
+  pub fn ftype=(this mut &, ext2_ftype type) -> void
+  {
+    this.file_type = cast<u8>(type);
+  }
+
+  pub ext2_dir_entry() = default;
+  pub ~ext2_dir_entry() = default;
+}
+
+pub fn dentry_required_len(u8 name_len) -> u16
+{
+  return (sizeof<ext2_dir_entry> - EXT2_NAME_LENGTH + cast<u16>(name_len) + 3) & 0xfffc;
+}
