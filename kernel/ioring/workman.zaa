@@ -34,6 +34,8 @@ struct ring_queue
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
+    std::assert(!ring.next);
+
     *this.last = ring;
     this.last = &ring.next;
   }
@@ -78,6 +80,13 @@ struct work_manager
 
   worker[1] workers;
 
+  pub fn instance() -> work_manager mut &
+  {
+    static instance = #work_manager();
+
+    return &instance;
+  }
+
   work_manager() = default;
   work_manager(#work_manager&) = default;
   ~work_manager() = default;
@@ -85,9 +94,7 @@ struct work_manager
 
 pub fn workman() -> work_manager mut &
 {
-  static instance = #work_manager();
-
-  return &instance;
+  return &work_manager::instance;
 }
 
 pub fn enqueue(work_manager mut &workman, io_ring mut *ring) -> void
@@ -190,6 +197,8 @@ fn kworkd(worker mut *worker) -> void
 
           if (!*entry)
             entries.1 = entry;
+
+          ring.next = null;
         }
         else
         {
@@ -208,10 +217,8 @@ fn kworkd(worker mut *worker) -> void
 
     if (entries.0)
     {
-      for(var entry = &entries.0; *entry; entry = &entry.next)
+      for(var ring = entries.0; ring; ring = ring.next)
       {
-        var ring = *entry;
-
         if (ring.lock.try_lock)
         {
           for(var mut &ctx : ring.pending)

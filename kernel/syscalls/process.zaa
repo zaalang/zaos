@@ -35,6 +35,8 @@ struct attr
   const stderr = 2;
   const stdroot = 4;
   const stdcwd = 5;
+  const fn dupfd(i32 fd) -> i32 { return fd; }
+  const enddup = 255;
 
   i32 type;
   i32 value;
@@ -132,11 +134,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
   {
     switch (attr.type)
     {
-      case attr::stdin:
-      case attr::stdout:
-      case attr::stderr:
-      case attr::stdroot:
-      case attr::stdcwd:
+      case 0 ..= attr::enddup:
 
         var file = process::current.fd(attr.value);
 

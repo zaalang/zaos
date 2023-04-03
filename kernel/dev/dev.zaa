@@ -67,6 +67,13 @@ struct device_manager
 
   std::vector<node> nodes;
 
+  fn instance() -> device_manager mut &
+  {
+    static instance = #device_manager();
+
+    return &instance;
+  }
+
   device_manager() = default;
   device_manager(#device_manager&) = default;
   ~device_manager() = default;
@@ -74,9 +81,7 @@ struct device_manager
 
 fn devman() -> device_manager mut &
 {
-  static instance = #device_manager();
-
-  return &instance;
+  return &device_manager::instance;
 }
 
 fn register(device_manager mut &devman, device device) -> dev_t

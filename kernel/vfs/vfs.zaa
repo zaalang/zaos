@@ -22,6 +22,13 @@ struct virtual_file_system
   node_ptr root;
   std::vector<mount> mounts;
 
+  fn instance() -> virtual_file_system mut &
+  {
+    static instance = #virtual_file_system();
+
+    return &instance;
+  }
+
   virtual_file_system() = default;
   virtual_file_system(#virtual_file_system&) = default;
   ~virtual_file_system() = default;
@@ -29,9 +36,7 @@ struct virtual_file_system
 
 fn vfs() -> virtual_file_system mut &
 {
-  static instance = #virtual_file_system();
-
-  return &instance;
+  return &virtual_file_system::instance;
 }
 
 pub struct mount

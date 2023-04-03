@@ -32,7 +32,7 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
 {
   var i = this.host.begin;
 
-  if (offset != 0)
+  if (offset != 0 && length != 0)
   {
     for(; i != this.host.end && (*i).size <= offset; ++i)
       offset -= (*i).size;

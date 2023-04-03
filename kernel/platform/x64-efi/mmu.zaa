@@ -20,6 +20,14 @@ pub enum mflags
   keep,
 }
 
+pub enum mtype
+{
+  uncached,
+  write_back,
+  write_through,
+  write_combine,
+}
+
 pub enum protection
 {
   none,
@@ -31,10 +39,31 @@ pub enum protection
 pub struct page_table
 {
   uintptr pml4;
+  i32 refcnt;
 
   pub fn bool(this&) -> bool
   {
     return this.pml4 != 0;
+  }
+
+  pub fn ==(page_table lhs, page_table rhs) -> bool
+  {
+    return lhs.pml4 == rhs.pml4;
+  }
+
+  pub fn cnt(this mut &) -> i32
+  {
+    return std::atomic_load(&this.refcnt);
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> i32
+  {
+    return std::atomic_sub(&this.refcnt, 1);
   }
 
   page_table(uintptr cr3)
@@ -81,6 +110,7 @@ enum pdbits : u64
   accessed = 0x20,
   dirty = 0x40,
   large = 0x80,
+  pat = 0x80,
   global = 0x100,
   no_execute = 1 << 63,
 
@@ -212,6 +242,45 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
   }
 }
 
+pub fn set_memory_type(page_table mut &this, virtrange_t range, mtype mtype) -> void
+{
+  var addr = range.0;
+
+  while (addr < range.1)
+  {
+    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+
+    for(var i : pds(addr))
+    {
+      std::assert(pt[i] & pdbits::present != 0);
+
+      pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+    }
+
+    for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+    {
+      std::assert(pt[i] != 0);
+
+      switch (mtype)
+      {
+        case uncached:
+          pt[i] = (pt[i] & ~0x98) | pdbits::caching_disabled | pdbits::write_through;
+
+        case write_back:
+          pt[i] = (pt[i] & ~0x98);
+
+        case write_through:
+          pt[i] = (pt[i] & ~0x98) | pdbits::write_through;
+
+        case write_combine:
+          pt[i] = (pt[i] & ~0x98) | pdbits::pat;
+      }
+
+      addr += PAGE_SIZE;
+    }
+  }
+}
+
 pub fn unmap(page_table mut &this, virtrange_t range) -> void
 {
   var addr = range.0;
@@ -244,7 +313,7 @@ pub fn unmap(page_table mut &this, virtrange_t range) -> void
   //  cpu::flush_global_tlb();
 }
 
-pub fn unmap(page_table mut &this, virtrange_t range, void fn(physaddr_t) &callback) -> void
+pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, void fn(void mut *, virtaddr_t, physaddr_t) &callback) -> void
 {
   var addr = range.0;
 
@@ -277,7 +346,7 @@ pub fn unmap(page_table mut &this, virtrange_t range, void fn(physaddr_t) &callb
               if (cpu::rdcr3() == this.pml4)
                 cpu::invlpg(addr);
 
-              callback(page);
+              callback(data, addr, page);
             }
 
             addr += PAGE_SIZE;
@@ -297,7 +366,7 @@ pub fn unmap(page_table mut &this, virtrange_t range, void fn(physaddr_t) &callb
   //  cpu::flush_global_tlb();
 }
 
-pub fn dispose(page_table mut &this, void fn(physaddr_t) &callback) -> void
+pub fn dispose(page_table mut &this, void mut *data, void fn(void mut *, physaddr_t) &callback) -> void
 {
   var pml4 = cast<physaddr_t[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
@@ -322,19 +391,19 @@ pub fn dispose(page_table mut &this, void fn(physaddr_t) &callback) -> void
               for(var i = 0; i < 512; ++i)
                 std::assert(pt[i] == 0);
 
-              callback(pd[i] & ~0xfff);
+              callback(data, pd[i] & ~0xfff);
             }
           }
 
-          callback(pdp[j] & ~0xfff);
+          callback(data, pdp[j] & ~0xfff);
         }
       }
 
-      callback(pml4[k] & ~0xfff);
+      callback(data, pml4[k] & ~0xfff);
     }
   }
 
-  callback(this.pml4);
+  callback(data, this.pml4);
 
   this.pml4 = 0;
 }

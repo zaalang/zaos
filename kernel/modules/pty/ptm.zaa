@@ -88,7 +88,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   var count = 0;
   var result = chr::result::ok;
 
-  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+  buffer.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 
@@ -114,7 +114,7 @@ pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length)
   var count = 0;
   var result = chr::result::ok;
 
-  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+  buffer.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 

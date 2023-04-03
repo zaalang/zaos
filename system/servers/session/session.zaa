@@ -1,0 +1,189 @@
+//
+// sessiond
+//
+
+import std.stdio;
+import std.string : String;
+import std.flat_hash_map;
+import os.zaos.fcntl;
+import os.zaos.sched;
+import os.zaos.time;
+import zidl.types;
+import zidl.zaos_sys;
+import app.loop;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+struct service
+{
+  std::string path;
+
+  i32 pid;
+  zidl::channel channel;
+  app::loop::wait_t status_handler;
+  app::loop::wait_t channel_handler;
+
+  service() = default;
+  service(service&&) = default;
+  ~service() = default;
+}
+
+fn spawn(service mut &service) -> i32
+{
+  using os;
+
+  var argv = std::vector<os::arg>();
+  var envp = std::vector<os::arg>();
+  var attrs = std::vector<os::attr>();
+
+  var server_end = zidl::channel();
+  var client_end = zidl::channel();
+
+  if (var result = zidl::channel::create(&mut server_end, &mut client_end); result < 0)
+    return result;
+
+  argv.push_back(os::arg(service.path.data, service.path.len));
+  attrs.push_back(os::attr(attr::stdout, STDOUT_FILENO));
+  attrs.push_back(os::attr(attr::stdroot, STDROOT_FILENO));
+  attrs.push_back(os::attr(attr::dupfd(7), client_end.fd));
+
+  var pid = process_create(argv.data, argv.len, envp.data, envp.len, attrs.data, attrs.len, 0);
+
+  if (pid < 0)
+    return pid;
+
+  service.pid = pid;
+  service.channel = &move server_end;
+  service.status_handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(service_status_handler);
+  service.channel_handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(service_channel_handler);
+
+  std::print("sessiond service launched (", service.pid, ":", service.path, ")");
+
+  return 0;
+}
+
+fn wait(service mut &service) -> i32
+{
+  using os;
+
+  var rval = 0;
+  if (var result = wait(service.pid, &rval, 0); result < 0)
+    return result;
+
+  std::print("sessiond service exited (", service.pid, ":", service.path, ") - ", rval);
+
+  service.channel.close();
+  service.pid = 0;
+
+  return 0;
+}
+
+struct registry
+{
+  std::flat_hash_map<std::string, service mut *> services;
+
+  fn instance() -> registry mut &
+  {
+    static instance = #registry();
+
+    return &instance;
+  }
+
+  fn lookup(String &name) -> std::optional<service mut *>
+  {
+    return instance.services.get(name);
+  }
+
+  registry() = default;
+  registry(#registry&) = default;
+  ~registry() = default;
+}
+
+fn register(registry mut &registry, String &&uri, String &&path) -> service mut *
+{
+  var service = std::allocator::new<service>();
+
+  service.path = &&path;
+
+  registry.services.insert(&&uri, service);
+
+  return service;
+}
+
+fn service_status_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var service = cast<service mut *>(cast<uintptr>(wait) - offsetof(service::status_handler));
+
+  if (var result = service.wait(); result < 0)
+    std::panic("sessiond: service wait - ", cast<std::errc>(-result));
+
+  loop.cancel_wait(&service.channel_handler);
+  loop.cancel_wait(&service.status_handler);
+}
+
+fn service_channel_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var service = cast<service mut *>(cast<uintptr>(wait) - offsetof(service::channel_handler));
+
+  var result = zidl::recv<zidl::zaos_sys::service>(service.channel.fd, |msg, completer| {
+    switch (msg)
+    {
+      case connect_to_service[msg]:
+        connect_to_service(msg.uri, &move msg.endpoint);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+  });
+
+  if (!result)
+  {
+    service.channel.close();
+    loop.cancel_wait(&service.channel_handler);
+  }
+}
+
+fn connect_to_service(zidl::string_view uri, zidl::channel endpoint) -> void
+{
+  var fd = app::STDSYS_FILENO;
+
+  switch (registry::lookup(uri.cut('/').0))
+  {
+    case Some[service]:
+      fd = service.channel.fd;
+  }
+
+  zidl::send<zidl::zaos_sys::service::connect_to_service_request>(fd, uri, &move endpoint);
+}
+
+fn main() -> int
+{
+  var loop = app::loop();
+
+  if (var result = app::initialise(&mut loop); result < 0)
+    std::panic("unable to init loop - ", cast<std::errc>(-result));
+
+  registry::instance.register("zaos.winton", "/zaos/srv/winton");
+  registry::instance.register("zaos.baz", "/zaos/root/baz");
+
+  for(var mut &(uri, service) : registry::instance.services)
+  {
+    if (var result = service.spawn(); result < 0)
+      std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-result));
+
+    var evt = os::pollevt();
+    evt.id = service.pid;
+    evt.type = os::POLLTHREAD;
+    evt.mask = os::POLLIN;
+
+    if (var result = loop.begin_wait(evt, &service.status_handler); result < 0)
+      std::panic("sessiond: wait service - ", cast<std::errc>(-result));
+
+    if (var result = loop.begin_wait(service.channel, &service.channel_handler); result < 0)
+      std::panic("sessiond: wait service - ", cast<std::errc>(-result));
+  }
+
+  loop.run();
+
+  return 0;
+}

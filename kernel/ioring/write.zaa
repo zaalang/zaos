@@ -83,9 +83,11 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
 
       return cast<i32>(count);
 
-    case vfs::node::type::pipe:
+    case vfs::node::type::event:
+    case vfs::node::type::buffer:
+    case vfs::node::type::channel:
     case vfs::node::type::device:
-      return node.pipe_operations.write(node, iovec, 0, length);
+      return node.stream_operations.write(node, iovec, 0, length);
 
     else:
       return vfs::result::bad_descriptor;

@@ -117,6 +117,13 @@ struct devfs : pub vfs::file_system
   shared_mutex lock;
   vfs::node_ptr root;
 
+  fn instance() -> devfs mut * mut &
+  {
+    static instance = null<devfs mut *>;
+
+    return &instance;
+  }
+
   devfs()
     : super(vfs::file_system_operations())
   {
@@ -126,21 +133,14 @@ struct devfs : pub vfs::file_system
   ~devfs() = default;
 }
 
-fn instance() -> devfs mut * mut &
-{
-  static instance = null<devfs mut *>;
-
-  return &instance;
-}
-
 pub fn create(vfs::file_system_context &ctx = vfs::file_system_context()) -> devfs mut *
 {
-  if (!instance)
+  if (!devfs::instance)
   {
-    instance = std::allocator::new<devfs>();
+    devfs::instance = std::allocator::new<devfs>();
   }
 
-  return instance;
+  return devfs::instance;
 }
 
 fn find(devfs mut &devfs, vfs::node_ptr &path, String &name) -> vfs::node_ptr
@@ -200,7 +200,7 @@ fn mkpath(devfs mut &devfs, vfs::node_ptr base, String &path) -> vfs::node_ptr
 
 pub fn publish(dev::dev_t id, dev::device &device) -> void
 {
-  var mut &devfs = *instance;
+  var mut &devfs = *devfs::instance;
 
   var guard = std::lock_guard(&mut devfs.lock);
 
@@ -243,7 +243,7 @@ pub fn publish(dev::dev_t id, dev::device &device) -> void
 
 pub fn remove(dev::dev_t id, dev::device &device) -> void
 {
-  var mut &devfs = *instance;
+  var mut &devfs = *devfs::instance;
 
   var guard = std::lock_guard(&mut devfs.lock);
 

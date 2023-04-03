@@ -1,0 +1,118 @@
+//
+// zidl.encode
+//
+
+import zidl;
+import std.span : Span;
+
+pub struct encoder
+{
+  u8 mut *bytes_tail;
+  std::mutable_span<u8> bytes;
+
+  i32 mut *handles_tail;
+  std::mutable_span<i32> handles;
+
+  encoder(Span<u8> mut &bytes, Span<i32> mut &handles)
+    : bytes(bytes.data, bytes.len),
+      handles(handles.data, handles.len)
+  {
+    bytes_tail = bytes.data;
+    handles_tail = handles.data;
+  }
+
+  pub fn alloc(this mut &, usize size) -> u8 mut *
+  {
+    var data = this.bytes_tail;
+
+    this.bytes_tail += std::align_up(size, 8);
+
+    if (this.bytes.end < this.bytes_tail)
+      return null;
+
+    std::memset(data + size, 0, std::align_up(size, 8) - size);
+
+    return data;
+  }
+
+  pub fn submit(this mut &, i32 fd) -> bool
+  {
+    var handle = this.handles_tail;
+
+    this.handles_tail += 1;
+
+    if (this.handles.end < this.handles_tail)
+      return false;
+
+    *handle = fd;
+
+    return true;
+  }
+
+  pub ~encoder() = default;
+}
+
+pub fn encode(encoder mut &encoder, zidl::string_view str) -> void
+{
+  if (var data = encoder.alloc(str.len))
+  {
+    std::memcpy(data, str.data, str.len);
+  }
+}
+
+pub fn encode(encoder mut &encoder, zidl::channel &channel) -> void
+{
+  encoder.submit(channel.fd);
+}
+
+pub fn encode<T>(encoder mut &encoder, T &object) -> void
+{
+  using T;
+
+  encode(&mut encoder, object);
+}
+
+pub struct encode_result
+{
+  pub usize bytes_actual;
+  pub usize handles_actual;
+  pub zidl::errc error;
+
+  pub encode_result() = default;
+  pub encode_result(encode_result&) = default;
+  pub fn =(encode_result mut &, encode_result&) -> encode_result mut & = default;
+  pub ~encode_result() = default;
+}
+
+pub fn encode<zidl_message_t>(Span<u8> mut &bytes, Span<i32> mut &handles, zidl_message_t &msg) -> encode_result
+{
+  var result = encode_result();
+  var encoder = zidl::encoder(&mut bytes, &mut handles);
+
+  if (var header = encoder.alloc(sizeof<zidl::zidl_header_t>))
+  {
+    var header = cast<zidl::zidl_header_t mut *>(header);
+
+    header.magic = zidl::zidl_header_t::signature;
+    header.flags = 0;
+    header.ordinal = zidl_message_t::ordinal;
+  }
+
+  if (var inline = encoder.alloc(sizeof<zidl_message_t>))
+  {
+    std::memcpy(inline, &msg, sizeof(msg));
+  }
+
+  zidl_message_t::encode(&mut encoder, msg);
+
+  if (bytes.end < encoder.bytes_tail)
+    result.error = zidl::errc::exhausted_bytes_capacity;
+
+  if (handles.end < encoder.handles_tail)
+    result.error = zidl::errc::exhausted_handles_capacity;
+
+  result.bytes_actual = encoder.bytes_tail - bytes.data;
+  result.handles_actual = encoder.handles_tail - handles.data;
+
+  return result;
+}

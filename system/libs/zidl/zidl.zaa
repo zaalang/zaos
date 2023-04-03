@@ -1,0 +1,34 @@
+//
+// zidl
+//
+
+import std.vector;
+
+pub enum errc : u32
+{
+  internal_error = 1,
+  bad_message_length,
+  bad_header_signature,
+  bad_header_ordinal,
+  exhausted_bytes_capacity,
+  exhausted_handles_capacity,
+  insufficient_bytes_consumed,
+  insufficient_handles_consumed,
+  channel_operation_failed,
+  channel_closed,
+  bad_dispatch,
+
+  pub fn bool(errc code) -> bool
+  {
+    return cast<u32>(code) != 0;
+  }
+}
+
+pub struct zidl_header_t
+{
+  pub const signature = 0x36ea;
+
+  pub u16 magic;
+  pub u16 flags;
+  pub i32 ordinal;
+}

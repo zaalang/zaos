@@ -128,7 +128,7 @@ pub struct wait_queue
   }
 
   pub wait_queue() = default;
-  pub wait_queue(#wait_queue&) = default;
+  pub wait_queue(wait_queue&) = default;
   pub ~wait_queue() = default;
 
   waiter mut *waiters;

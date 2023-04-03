@@ -1,0 +1,539 @@
+//
+// zidl lexer
+//
+
+import std.stdio;
+import std.string : String;
+
+pub struct source_location
+{
+  pub int lineno;
+  pub int charpos;
+
+  source_location(int lineno, int charpos)
+    : lineno(lineno), charpos(charpos)
+  {
+  }
+
+  pub source_location() = default;
+  pub source_location(source_location&) = default;
+  pub fn =(source_location mut &, source_location &) -> source_location mut & = default;
+  pub ~source_location() = default;
+}
+
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, source_location &loc) throws -> void
+{
+  ctx.written += std::format_to(&mut os, "{}:{}", loc.lineno, loc.charpos);
+}
+
+pub struct source_text
+{
+  pub fn open(String &&path) throws -> source_text
+  {
+    var src = source_text();
+
+    var fin = std::file::open(path);
+
+    src.contents.resize(cast<usize>(fin.stat().size) + 1);
+
+    fin.read(src.contents.data, src.contents.len - 1);
+
+    src.contents.back = 0;
+    src.path = &&path;
+
+    return src;
+  }
+
+  pub fn path(this&) { return this.path; }
+
+  pub fn len(this&) -> usize { return this.contents.len; }
+
+  pub fn head(this&) -> u8 * { return this.contents.data; }
+  pub fn tail(this&) -> u8 * { return this.contents.data + this.contents.len; }
+
+  pub source_text() = default;
+  pub source_text(source_text &&) = default;
+  pub fn =(source_text mut &, source_text &&) -> source_text mut & = default;
+  pub ~source_text() = default;
+
+  std::string path;
+  std::string contents;
+}
+
+pub struct token
+{
+  pub enum type
+  {
+    unknown,
+
+    hash,
+    question,
+    l_square,
+    r_square,
+    l_paren,
+    r_paren,
+    l_brace,
+    r_brace,
+    period,
+    arrow,
+    colon,
+    equal,
+    comma,
+    semi,
+    char_constant,
+    string_literal,
+    numeric_constant,
+    identifier,
+    comment,
+    eof,
+
+    kw_true,
+    kw_false,
+    kw_const,
+    kw_library,
+    kw_protocol,
+  }
+
+  pub type type = type::unknown;
+  pub source_location loc;
+  pub std::string_view text;
+
+  pub token() = default;
+  pub token(token&) = default;
+  pub fn =(token mut &, token &) -> token mut & = default;
+  pub ~token() = default;
+}
+
+pub fn ==(token &lhs, token::type type) -> bool
+{
+  return lhs.type == type;
+}
+
+pub struct lex_cursor
+{
+  pub int lineno = 0;
+  pub usize linestart = 0;
+  pub usize position = 0;
+
+  pub lex_cursor() = default;
+  pub lex_cursor(lex_cursor&) = default;
+  pub fn =(lex_cursor mut &, lex_cursor &) -> lex_cursor mut & = default;
+  pub ~lex_cursor() = default;
+}
+
+fn is_eol(u8 ch) -> bool
+{
+  return ch == cast('\r') || ch == cast('\n');
+}
+
+fn is_whitespace(u8 ch) -> bool
+{
+  return ch == cast(' ') || ch == cast('\t');
+}
+
+fn is_alpha(u8 ch) -> bool
+{
+  return (ch >= cast('A') && ch <= cast('Z')) || (ch >= cast('a') && ch <= cast('z'));
+}
+
+fn is_digit(u8 ch) -> bool
+{
+  return (ch >= cast('0') && ch <= cast('9'));
+}
+
+fn is_char_body(u8 ch) -> bool
+{
+  return ch != cast('\r') && ch != cast('\n') && ch != cast('\t') && ch != 0;
+}
+
+fn is_string_body(u8 ch) -> bool
+{
+  return ch != cast('\r') && ch != cast('\n') && ch != cast('\t') && ch != 0;
+}
+
+fn is_integer_body(u8 ch) -> bool
+{
+  return is_digit(ch) || is_alpha(ch) || ch == cast('_');
+}
+
+fn is_identifier_body(u8 ch) -> bool
+{
+  return is_alpha(ch) || is_digit(ch) || ch == cast('_') || ch == cast('$') || ch == cast('!');
+}
+
+fn make_token(token::type type) -> token
+{
+  var tok = token();
+  tok.type = type;
+  tok.loc = source_location();
+
+  return tok;
+}
+
+fn make_token(token::type type, u8 *beg, u8 *end, lex_cursor &loc) -> token
+{
+  var tok = token();
+  tok.type = type;
+  tok.text = std::string_view(beg, end);
+  tok.loc = source_location(loc.lineno + 1, cast(loc.position - loc.linestart + 1));
+
+  return tok;
+}
+
+fn lex_comment(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail && *ptr == cast('/'));
+
+  while (*ptr != 0 && !is_eol(*ptr))
+    ++ptr;
+
+  tok = make_token(token::type::comment, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+fn lex_char_constant(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail && *ptr == cast('\''));
+
+  if (*ptr == cast('\''))
+    ++ptr;
+
+  while (*ptr != cast('\'') && is_char_body(*ptr))
+  {
+    if (*ptr == cast('\\') && *(ptr + 1) != 0)
+      ++ptr;
+
+    ++ptr;
+  }
+
+  if (*ptr == cast('\''))
+    ++ptr;
+
+  tok = make_token(token::type::char_constant, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+fn lex_string_literal(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail && *ptr == cast('"'));
+
+  if (*ptr == cast('"'))
+    ++ptr;
+
+  while (*ptr != cast('"') && is_string_body(*ptr))
+  {
+    if (*ptr == cast('\\') && *(ptr + 1) != 0)
+      ++ptr;
+
+    ++ptr;
+  }
+
+  if (*ptr == cast('"'))
+    ++ptr;
+
+  tok = make_token(token::type::string_literal, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+fn lex_numeric_constant(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail && is_digit(*ptr));
+
+  while (is_integer_body(*ptr))
+    ++ptr;
+
+  if (*ptr == cast('.') && is_digit(*(ptr + 1)) && !is_alpha(*(beg + 1)))
+  {
+    ++ptr;
+
+    while (is_integer_body(*ptr))
+      ++ptr;
+  }
+
+  if ((*ptr == cast('-') || *ptr == cast('+')) && (*(ptr - 1) == cast('e') || *(ptr - 1) == cast('E')) && (*(beg + 1) != cast('x') && *(beg + 1) != cast('X')))
+  {
+    ++ptr;
+
+    while (is_integer_body(*ptr))
+      ++ptr;
+  }
+
+  if ((*ptr == cast('-') || *ptr == cast('+')) && (*(ptr - 1) == cast('p') || *(ptr - 1) == cast('p')) && (*(beg + 1) != cast('x') && *(beg + 1) != cast('X')))
+  {
+    ++ptr;
+
+    while (is_integer_body(*ptr))
+      ++ptr;
+  }
+
+  tok = make_token(token::type::numeric_constant, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+fn lex_punctuators(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail);
+
+  var type = token::type();
+
+  switch (*ptr)
+  {
+    case '#':
+      ptr += 1;
+      type = token::type::hash;
+
+    case '?':
+      ptr += 1;
+      type = token::type::question;
+
+    case '[':
+      ptr += 1;
+      type = token::type::l_square;
+
+    case ']':
+      ptr += 1;
+      type = token::type::r_square;
+
+    case '(':
+      ptr += 1;
+      type = token::type::l_paren;
+
+    case ')':
+      ptr += 1;
+      type = token::type::r_paren;
+
+    case '{':
+      ptr += 1;
+      type = token::type::l_brace;
+
+    case '}':
+      ptr += 1;
+      type = token::type::r_brace;
+
+    case '.':
+      ptr += 1;
+      type = token::type::period;
+
+    case '-':
+      if (*(ptr + 1) == cast('>'))
+      {
+        ptr += 2;
+        type = token::type::arrow;
+      }
+      else
+      {
+        ptr += 1;
+      }
+
+    case ':':
+      ptr += 1;
+      type = token::type::colon;
+
+    case '=':
+      ptr += 1;
+      type = token::type::equal;
+
+    case ',':
+      ptr += 1;
+      type = token::type::comma;
+
+    case ';':
+      ptr += 1;
+      type = token::type::semi;
+
+    else:
+      ptr += 1;
+  }
+
+  tok = make_token(type, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+fn lex_identifier(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg;
+
+  std::assert(ptr >= src.head && ptr < src.tail && (is_alpha(*ptr) || *ptr == cast('_')));
+
+  while (is_identifier_body(*ptr))
+    ++ptr;
+
+  var type = token::type::identifier;
+  var identifier = std::string_view(beg, ptr);
+
+  switch (identifier[0])
+  {
+    case 'c':
+      if (identifier == "const")
+        type = token::type::kw_const;
+
+    case 'f':
+      if (identifier == "false")
+        type = token::type::kw_false;
+
+    case 'l':
+      if (identifier == "library")
+        type = token::type::kw_library;
+
+    case 'p':
+      if (identifier == "protocol")
+        type = token::type::kw_protocol;
+
+    case 't':
+      if (identifier == "true")
+        type = token::type::kw_true;
+  }
+
+  tok = make_token(type, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
+pub fn lex(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  while (true)
+  {
+    var ptr = src.head + cursor.position;
+
+    while (is_whitespace(*ptr))
+      ++ptr;
+
+    cursor.position = ptr - src.head;
+
+    if (*ptr == 0)
+    {
+      tok = make_token(token::type::eof);
+
+      return cursor;
+    }
+
+    if (*ptr == cast('/') && *(ptr + 1) == cast('/'))
+    {
+      cursor = lex_comment(src, cursor, &mut tok);
+
+      continue;
+    }
+
+    switch (*ptr)
+    {
+      case '\r':
+        if (*(ptr + 1) == cast('\n'))
+          ++ptr;
+        goto '\n';
+
+      case '\n':
+        ++ptr;
+        cursor.lineno += 1;
+        cursor.linestart = ptr - src.head();
+
+      case '\'':
+        return lex_char_constant(src, cursor, &mut tok);
+
+      case '"':
+        return lex_string_literal(src, cursor, &mut tok);
+
+      case '?':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '[': case ']':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '(': case ')':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '{': case '}':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '.':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '+': case '-': case '*': case '/': case '%':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '&': case '|': case '~': case '!': case '^': case '<': case '>': case '=':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case ':': case ',': case ';':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '0' ..= '9':
+        return lex_numeric_constant(src, cursor, &mut tok);
+
+      case 'a' ..= 'z':
+      case 'A' ..= 'Z':
+      case '_':
+        return lex_identifier(src, cursor, &mut tok);
+
+      case '#':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '$':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      else:
+        ptr += 1;
+        std::fprint(std::stderr, "warning: unknown character in lexer");
+    }
+
+    cursor.position = ptr - src.head;
+  }
+
+  return cursor;
+}
+
+pub fn dump_token(token &tok) -> void
+{
+  std::print(tok);
+}
+
+pub fn dump_tokens(source_text &src) -> void
+{
+  var tok = token();
+  var cursor = lex_cursor();
+
+  while (tok != token::type::eof)
+  {
+    cursor = lex(src, cursor, &mut tok);
+
+    dump_token(tok);
+  }
+}

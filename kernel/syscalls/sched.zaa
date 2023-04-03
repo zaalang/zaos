@@ -22,9 +22,6 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
   if (!thread)
     return vm::result::no_such_process;
 
-  if (thread.state == thread::state::invalid)
-    return vm::result::no_such_process;
-
   if (thread.id == thread.process.id && thread.process.parent != process::current)
     return vm::result::no_such_process;
 

@@ -1,0 +1,133 @@
+//
+// zidl.types
+//
+
+import std.string : String;
+import os.zaos.fcntl;
+import std.fmt;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct string_view
+{
+  pub usize len;
+  pub u8 *data;
+
+  pub string_view(String &str)
+    : data(str.data), len(str.len)
+  {
+  }
+
+  pub fn String(this &) -> std::string_view
+  {
+    return std::string_view(this.data, this.len);
+  }
+
+  pub string_view() = default;
+  pub string_view(string_view &that) = default;
+  pub fn =(this mut &, string_view &that) -> string_view mut & = default;
+  pub ~string_view() = default;
+}
+
+pub fn fmt<K, V>(std::OutputStream mut &os, std::fmt_context mut &ctx, string_view str) throws -> void
+{
+  std::fmt_to(&mut os, &mut ctx, std::string_view(str));
+}
+
+pub struct handle
+{
+  pub handle(i32 fd = ~0)
+    : fd(fd)
+  {
+  }
+
+  pub handle(handle &&other)
+    where __is_rvalue<typeof(other)>
+  {
+    std::swap(&mut fd, &mut other.fd);
+  }
+
+  pub fn =(handle mut &this, handle &&other) -> handle mut &
+    where __is_rvalue<typeof(other)>
+  {
+    this.close();
+
+    std::swap(&mut this.fd, &mut other.fd);
+
+    return &this;
+  }
+
+  pub fn fd(this&) -> i32
+  {
+    return this.fd;
+  }
+
+  pub fn bool(this&) -> bool
+  {
+    return this.fd != ~0;
+  }
+
+  pub fn ==(handle &lhs, handle &rhs) -> bool
+  {
+    return lhs.fd == rhs.fd;
+  }
+
+  pub fn release(this mut &) -> i32
+  {
+    var fd = this.fd;
+
+    this.fd = ~0;
+
+    return fd;
+  }
+
+  pub fn close(this mut &) -> void
+  {
+    if (this.fd != ~0)
+      os::close(&mut thread_ring, this.fd);
+
+    this.fd = ~0;
+  }
+
+  pub ~handle()
+  {
+    if (fd != ~0)
+      os::close(&mut thread_ring, this.fd);
+  }
+
+  i32 fd;
+}
+
+pub struct channel : pub handle
+{
+  pub fn create() throws -> (channel, channel)
+  {
+    var fds = [0, 0];
+    if (var result = os::channel_create(&mut thread_ring, &fds, 0); result < 0)
+      throw std::system_error(cast<std::errc>(-result));
+
+    return (channel(fds[0]), channel(fds[1]));
+  }
+
+  pub fn create(channel mut &lhs, channel mut &rhs) -> i32
+  {
+    var fds = [0, 0];
+    if (var result = os::channel_create(&mut thread_ring, &fds, 0); result < 0)
+      return result;
+
+    lhs = channel(fds[0]);
+    rhs = channel(fds[1]);
+
+    return 0;
+  }
+
+  pub channel(i32 fd = ~0)
+    : super(fd)
+  {
+  }
+
+  pub channel(channel &&) = default;
+  pub fn =(channel mut &, channel &&) -> channel mut & = default;
+  pub ~channel() = default;
+}
+

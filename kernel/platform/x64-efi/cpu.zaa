@@ -146,6 +146,7 @@ pub enum msr_index : u32
   apic_current_timer_count = 0x00000839,
   apic_timer_divide_config = 0x0000083e,
   apic_tsc_deadline = 0x000006e0,
+  pat = 0x277,
 }
 
 pub fn rdmsr(msr_index index) -> u64

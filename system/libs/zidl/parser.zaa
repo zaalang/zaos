@@ -1,0 +1,420 @@
+//
+// zidl parser
+//
+
+import std.stdio;
+import std.string : String;
+import zidl.diag : diag;
+import zidl.lexer : source_text, source_location, token, lex_cursor;
+
+pub struct ast
+{
+  pub std::string file;
+  pub std::string name;
+  pub std::vector<decl> decls;
+
+  pub ast() = default;
+  pub ast(ast&&) = default;
+  pub ~ast() = default;
+}
+
+pub struct constant
+{
+  pub std::string name;
+  pub std::string value;
+
+  pub constant() = default;
+  pub constant(constant&&) = default;
+  pub ~constant() = default;
+}
+
+pub struct protocol
+{
+  pub std::string name;
+  pub std::vector<decl> methods;
+
+  pub protocol() = default;
+  pub protocol(protocol&&) = default;
+  pub ~protocol() = default;
+}
+
+pub struct method
+{
+  pub enum type
+  {
+    oneway,
+    twoway,
+    event,
+  }
+
+  pub type type;
+  pub i32 ordinal;
+  pub std::string name;
+  pub std::vector<decl> parameters;
+  pub std::vector<decl> returns;
+
+  pub method() = default;
+  pub method(method&&) = default;
+  pub ~method() = default;
+}
+
+pub struct variable
+{
+  pub std::string name;
+  pub std::string type;
+  pub usize constraint;
+
+  pub variable() = default;
+  pub variable(variable&&) = default;
+  pub ~variable() = default;
+}
+
+pub union decl
+{
+  pub constant(constant),
+  pub protocol(protocol),
+  pub method(method),
+  pub variable(variable),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub decl() = default;
+  pub decl(decl&&) = default;
+  pub ~decl() = default;
+}
+
+struct parse_context
+{
+  token tok;
+  lex_cursor lexcursor;
+
+  diag mut *diag;
+  source_text text;
+
+  fn consume_token(this mut &ctx) -> void
+  {
+    ctx.lexcursor = lex(ctx.text, ctx.lexcursor, &mut ctx.tok);
+  }
+
+  fn consume_token(this mut &ctx, token::type expected) -> void
+  {
+    std::assert(ctx.tok == expected);
+
+    consume_token(&mut ctx);
+  }
+
+  fn try_consume_token(this mut &ctx, token::type expected) -> bool
+  {
+    if (ctx.tok == expected)
+    {
+      consume_token(&mut ctx);
+
+      return true;
+    }
+
+    return false;
+  }
+
+  fn consume_til(this mut &ctx, token::type type) -> void
+  {
+    while (ctx.tok != type && ctx.tok != token::type::eof)
+    {
+      consume_token(&mut ctx);
+    }
+  }
+
+  fn consume_til_resumable(this mut &ctx) -> void
+  {
+    while (true)
+    {
+      switch (ctx.tok.type)
+      {
+        case l_brace:
+          consume_til(&mut ctx, token::type::r_brace);
+          consume_token(&mut ctx);
+          return;
+
+        case l_square:
+          consume_til(&mut ctx, token::type::r_square);
+          consume_token(&mut ctx);
+
+        case l_paren:
+          consume_til(&mut ctx, token::type::r_paren);
+          consume_token(&mut ctx);
+
+        case semi:
+          consume_token(&mut ctx);
+          return;
+
+        case r_brace:
+          consume_token(&mut ctx);
+          return;
+
+        case eof:
+          return;
+
+        else:
+          consume_token(&mut ctx);
+      }
+    }
+  }
+
+  parse_context() = default;
+  ~parse_context() = default;
+}
+
+fn parse_qualified_name(parse_context &&ctx) -> std::string
+{
+  var loc = ctx.tok.loc;
+  var name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  while (ctx.try_consume_token(token::type::period))
+  {
+    name = std::string_view(name.data, name.len + ctx.tok.text.len + 1);
+
+    if (!ctx.try_consume_token(token::type::identifier))
+      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+  }
+
+  return name;
+}
+
+fn parse_const_declaration(parse_context &&ctx) -> decl
+{
+  var constant = constant();
+
+  ctx.consume_token(token::type::kw_const);
+
+  constant.name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (!ctx.try_consume_token(token::type::equal))
+    ctx.diag.error("expected equals", ctx.text, ctx.tok.loc);
+
+  constant.value = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::numeric_constant))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (!ctx.try_consume_token(token::type::semi))
+    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+
+  return decl::constant(&move constant);
+}
+
+fn parse_variable_declaration(parse_context &&ctx) -> decl
+{
+  var variable = variable();
+
+  variable.type = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (ctx.try_consume_token(token::type::colon))
+  {
+    std::sscan(ctx.tok.text, &mut variable.constraint);
+
+    if (!ctx.try_consume_token(token::type::numeric_constant))
+      ctx.diag.error("expected constraint", ctx.text, ctx.tok.loc);
+  }
+
+  variable.name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  return decl::variable(&move variable);
+}
+
+fn parse_method_declaration(parse_context &&ctx) -> decl
+{
+  var method = method();
+
+  switch (ctx.tok.type)
+  {
+    case identifier:
+
+      method.type = method::type::oneway;
+
+      method.name = ctx.tok.text;
+      method.ordinal = cast<i32>(std::hash()(method.name) & 0x7ffffff);
+
+      ctx.consume_token(token::type::identifier);
+
+      if (!ctx.try_consume_token(token::type::l_paren))
+        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+
+      while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
+      {
+        if (var decl = parse_variable_declaration(ctx); decl)
+        {
+          method.parameters.push_back(&move decl);
+        }
+
+        if (!ctx.try_consume_token(token::type::comma))
+          break;
+      }
+
+      if (!ctx.try_consume_token(token::type::r_paren))
+        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+
+      if (ctx.try_consume_token(token::type::arrow))
+      {
+        method.type = method::type::twoway;
+
+        if (!ctx.try_consume_token(token::type::l_paren))
+          ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+
+        while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
+        {
+          if (var decl = parse_variable_declaration(ctx); decl)
+          {
+            method.returns.push_back(&move decl);
+          }
+
+          if (!ctx.try_consume_token(token::type::comma))
+            break;
+        }
+
+        if (!ctx.try_consume_token(token::type::r_paren))
+          ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+      }
+
+    case arrow:
+
+      method.type = method::type::event;
+
+      ctx.consume_token(token::type::arrow);
+
+      method.name = ctx.tok.text;
+      method.ordinal = cast<i32>(std::hash()(method.name) & 0x7ffffff);
+
+      if (!ctx.try_consume_token(token::type::identifier))
+        ctx.diag.error("expected idendifier", ctx.text, ctx.tok.loc);
+
+      if (!ctx.try_consume_token(token::type::l_paren))
+        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+
+      while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
+      {
+        if (var decl = parse_variable_declaration(ctx); decl)
+        {
+          method.returns.push_back(&move decl);
+        }
+
+        if (!ctx.try_consume_token(token::type::comma))
+          break;
+      }
+
+      if (!ctx.try_consume_token(token::type::r_paren))
+        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+
+    else:
+      ctx.diag.error("expected method declaration", ctx.text, ctx.tok.loc);
+      ctx.consume_til_resumable();
+  }
+
+  if (ctx.try_consume_token(token::type::equal))
+  {
+    std::sscan(ctx.tok.text, &mut method.ordinal);
+
+    if (!ctx.try_consume_token(token::type::numeric_constant))
+      ctx.diag.error("expected ordinal", ctx.text, ctx.tok.loc);
+  }
+
+  if (!ctx.try_consume_token(token::type::semi))
+    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+
+  return decl::method(method);
+}
+
+fn parse_protocol_declaration(parse_context &&ctx) -> decl
+{
+  var protocol = protocol();
+
+  ctx.consume_token(token::type::kw_protocol);
+
+  protocol.name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (!ctx.try_consume_token(token::type::l_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
+  {
+    if (var decl = parse_method_declaration(ctx); decl)
+    {
+      protocol.methods.push_back(&move decl);
+    }
+  }
+
+  if (!ctx.try_consume_token(token::type::r_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  return decl::protocol(&move protocol);
+}
+
+fn parse_toplevel_declaration(parse_context &&ctx) -> decl
+{
+  var loc = ctx.tok.loc;
+
+  switch (ctx.tok.type)
+  {
+    case semi:
+      ctx.diag.warn("extra semi", ctx.text, ctx.tok.loc);
+      ctx.consume_token(token::type::semi);
+
+    case kw_const:
+      return parse_const_declaration(ctx);
+
+    case kw_protocol:
+      return parse_protocol_declaration(ctx);
+
+    else:
+      ctx.diag.error("expected toplevel declaration", ctx.text, ctx.tok.loc);
+      ctx.consume_til_resumable();
+  }
+
+  return decl();
+}
+
+pub fn parse(String &path, diag mut &diag) throws -> ast
+{
+  var ast = ast();
+
+  var ctx = parse_context();
+  ctx.diag = &diag;
+  ctx.text = source_text::open(path);
+  ctx.consume_token();
+
+  ast.file = path;
+
+  if (!ctx.try_consume_token(token::type::kw_library))
+    diag.error("expected library declaration", ctx.text, ctx.tok.loc);
+
+  ast.name = parse_qualified_name(ctx);
+
+  if (!ctx.try_consume_token(token::type::semi))
+    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+
+  while (ctx.tok != token::type::eof)
+  {
+    if (var decl = parse_toplevel_declaration(ctx); decl)
+    {
+      ast.decls.push_back(&move decl);
+    }
+  }
+
+  return ast;
+}

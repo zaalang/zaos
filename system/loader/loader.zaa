@@ -324,5 +324,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
 
   reloc(main, libs);
 
+std::printf("loader: {:#x}\n", main.base);
+
   return start;
 }

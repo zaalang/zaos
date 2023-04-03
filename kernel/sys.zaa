@@ -113,7 +113,7 @@ pub fn cmdline() -> std::string_view
   return std::string_view(sys.cmdline.data, sys.cmdline.len);
 }
 
-pub fn cmdline(String &name) -> std::string_view
+pub fn cmdline(String &name, String &default = "") -> std::string_view
 {
   for(var ch = sys.cmdline.begin, var end = sys.cmdline.end; ch != end; ++ch)
   {
@@ -130,7 +130,7 @@ pub fn cmdline(String &name) -> std::string_view
     }
   }
 
-  return std::string_view();
+  return default;
 }
 
 extern fn clk_gettime(u32 clockid) -> std::clk_result
@@ -258,8 +258,8 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
     if (i == cast(cpu::current))
       continue;
 
-    if (!sys.ipiqueue[i].push(&move std::delegate<void fn()>(callback)))
-      __relax();
+    while (!sys.ipiqueue[i].push(&move std::delegate<void fn()>(callback)))
+      ipi();
   }
 
   platform::broadcast_ipi_interrupt();

@@ -22,9 +22,12 @@ pub struct node
     symlink,
     volume,
     device,
-    pipe,
-    ring,
-    epoll,
+    ioring,
+    pollset,
+    event,
+    buffer,
+    channel,
+    //socket,
   }
 
   type type;
@@ -100,14 +103,14 @@ pub vtable node_volume_operations : node_file_operations
   pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result;
 }
 
-pub vtable node_pipe_operations : node_operations
+pub vtable node_stream_operations : node_operations
 {
   pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result;
   pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
   pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
 }
 
-pub vtable node_device_operations : node_pipe_operations
+pub vtable node_device_operations : node_stream_operations
 {
   pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result;
   pub fn mmap(vfs::node_ptr &node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result;
@@ -140,19 +143,34 @@ pub struct node_ptr : pub Rc<node>
     return (*this).type == node::type::volume;
   }
 
-  pub fn is_pipe(this&) -> bool
-  {
-    return (*this).type == node::type::pipe;
-  }
-
   pub fn is_device(this&) -> bool
   {
     return (*this).type == node::type::device;
   }
 
-  pub fn is_ring(this&) -> bool
+  pub fn is_ioring(this&) -> bool
   {
-    return (*this).type == node::type::ring;
+    return (*this).type == node::type::ioring;
+  }
+
+  pub fn is_pollset(this&) -> bool
+  {
+    return (*this).type == node::type::pollset;
+  }
+
+  pub fn is_event(this&) -> bool
+  {
+    return (*this).type == node::type::event;
+  }
+
+  pub fn is_buffer(this&) -> bool
+  {
+    return (*this).type == node::type::buffer;
+  }
+
+  pub fn is_channel(this&) -> bool
+  {
+    return (*this).type == node::type::channel;
   }
 
   pub fn node_operations(this&) -> node_operations *
@@ -188,11 +206,11 @@ pub struct node_ptr : pub Rc<node>
     return cast<node_volume_operations*>((*this).ops);
   }
 
-  pub fn pipe_operations(this&) -> node_pipe_operations *
+  pub fn stream_operations(this&) -> node_stream_operations *
   {
-    std::assert(is_pipe(this) || is_device(this));
+    std::assert(is_event(this) || is_buffer(this) || is_channel(this) || is_device(this));
 
-    return cast<node_pipe_operations*>((*this).ops);
+    return cast<node_stream_operations*>((*this).ops);
   }
 
   pub fn device_operations(this&) -> node_device_operations *

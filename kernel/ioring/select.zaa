@@ -3,7 +3,7 @@
 //
 
 import std.stdlib;
-import ioring : ioring_ctx, ioring_epoll;
+import ioring : io_ring, ioring_ctx, ioring_pollset;
 import vm : virtaddr;
 import io;
 import cpu;
@@ -70,15 +70,21 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
 
         switch (var &node = file.node; node.type)
         {
-          case vfs::node::type::pipe:
+          case vfs::node::type::event:
+          case vfs::node::type::buffer:
+          case vfs::node::type::channel:
           case vfs::node::type::device:
 
-            if (var result = node.pipe_operations.poll(node, readable.cb, writeable.cb); !result)
+            if (var result = node.stream_operations.poll(node, readable.cb, writeable.cb); !result)
               return result;
 
-          case vfs::node::type::epoll:
+          case vfs::node::type::pollset:
 
-            readable = cast<ioring_epoll mut &>(*node).readable;
+            readable = cast<ioring_pollset mut &>(*node).readable;
+
+          case vfs::node::type::ioring:
+
+            readable = cast<io_ring mut &>(*node).readable;
 
           else:
             return vfs::result::bad_descriptor;

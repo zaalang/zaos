@@ -21,6 +21,13 @@ pub struct heap_allocator
   usize blocksize;
   bitmap[16] blockmap;
 
+  fn instance() -> heap_allocator mut &
+  {
+    static instance = #heap_allocator();
+
+    return &instance;
+  }
+
   heap_allocator() = default;
   heap_allocator(#heap_allocator&) = default;
   ~heap_allocator() = default;
@@ -28,9 +35,7 @@ pub struct heap_allocator
 
 fn heap() -> heap_allocator mut &
 {
-  static instance = #heap_allocator();
-
-  return &instance;
+  return &heap_allocator::instance;
 }
 
 struct bitmap

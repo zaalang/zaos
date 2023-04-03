@@ -3,7 +3,7 @@
 //
 
 import std.stdlib;
-import ioring : ioring_ctx;
+import ioring : io_ring, ioring_ctx;
 import vm : virtaddr;
 import io;
 import cpu;
@@ -50,7 +50,7 @@ struct pollevt
   ~pollevt() = default;
 }
 
-pub struct ioring_epoll : pub vfs::node
+pub struct ioring_pollset : pub vfs::node
 {
   pub io::response readable;
 
@@ -72,27 +72,27 @@ pub struct ioring_epoll : pub vfs::node
   mutex lock;
   std::vector<event> events;
 
-  fn create() -> ioring_epoll mut *
+  fn create() -> ioring_pollset mut *
   {
-    return std::allocator::new<ioring_epoll>();
+    return std::allocator::new<ioring_pollset>();
   }
 
-  pub ioring_epoll() = default;
-  pub ~ioring_epoll() = default;
+  pub ioring_pollset() = default;
+  pub ~ioring_pollset() = default;
 }
 
-pub fn create_epoll(process mut *process) -> vfs::node_ptr
+pub fn create_pollset(process mut *process) -> vfs::node_ptr
 {
-  var epoll = ioring_epoll::create();
+  var pollset = ioring_pollset::create();
 
-  return vfs::node::new(epoll, vfs::node::type::epoll, &vfs::node_operations());
+  return vfs::node::new(pollset, vfs::node::type::pollset, &vfs::node_operations());
 }
 
-fn add(ioring_epoll mut &this, process mut *process, pollevt &evt) -> result
+fn add(ioring_pollset mut &this, process mut *process, pollevt &evt) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
-  var event = ioring_epoll::event();
+  var event = ioring_pollset::event();
 
   switch (evt.type)
   {
@@ -105,15 +105,21 @@ fn add(ioring_epoll mut &this, process mut *process, pollevt &evt) -> result
 
       switch (var &node = file.node; node.type)
       {
-        case vfs::node::type::pipe:
+        case vfs::node::type::event:
+        case vfs::node::type::buffer:
+        case vfs::node::type::channel:
         case vfs::node::type::device:
 
-          if (var result = node.pipe_operations.poll(node, event.readable.cb, event.writeable.cb); !result)
+          if (var result = node.stream_operations.poll(node, event.readable.cb, event.writeable.cb); !result)
             return result;
 
-        case vfs::node::type::epoll:
+        case vfs::node::type::pollset:
 
-          event.readable = cast<ioring_epoll mut &>(*node).readable;
+          event.readable = cast<ioring_pollset mut &>(*node).readable;
+
+        case vfs::node::type::ioring:
+
+          event.readable = cast<io_ring mut &>(*node).readable;
 
         else:
           return vfs::result::bad_descriptor;
@@ -148,7 +154,7 @@ fn add(ioring_epoll mut &this, process mut *process, pollevt &evt) -> result
   return ok;
 }
 
-fn remove(ioring_epoll mut &this, pollevt &evt) -> result
+fn remove(ioring_pollset mut &this, pollevt &evt) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
@@ -170,7 +176,7 @@ fn remove(ioring_epoll mut &this, pollevt &evt) -> result
   return ok;
 }
 
-fn clear(ioring_epoll mut &this) -> result
+fn clear(ioring_pollset mut &this) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
@@ -188,16 +194,16 @@ fn clear(ioring_epoll mut &this) -> result
   return ok;
 }
 
-pub fn trigger(ioring_epoll mut *epoll) -> void
+pub fn trigger(ioring_pollset mut *pollset) -> void
 {
-  io::complete(&mut epoll.readable.cb, 0);
+  io::complete(&mut pollset.readable.cb, 0);
 }
 
 pub fn sys_epoll_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> result
 {
-  var epoll = create_epoll(process::current);
+  var pollset = create_pollset(process::current);
 
-  return process::current.new_fd(vfs::file_descriptor::create(epoll));
+  return process::current.new_fd(vfs::file_descriptor::create(pollset));
 }
 
 pub fn sys_epoll_ctl(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 op, virtaddr evtbuf, u64 flags) -> result
@@ -207,7 +213,7 @@ pub fn sys_epoll_ctl(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 op, 
   if (!file)
     return vfs::result::bad_descriptor;
 
-  if (file.node.type != vfs::node::type::epoll)
+  if (file.node.type != vfs::node::type::pollset)
     return vfs::result::bad_descriptor;
 
   var evt = pollevt();
@@ -215,16 +221,16 @@ pub fn sys_epoll_ctl(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 op, 
   if (var result = vm::read_process_memory(process, evtbuf, &evt, sizeof<pollevt>); !result)
     return result;
 
-  var mut &epoll = cast<ioring_epoll mut &>(*file.node);
+  var mut &pollset = cast<ioring_pollset mut &>(*file.node);
 
   switch (op)
   {
     case op::add:
-      if (var result = epoll.add(process, evt); !result)
+      if (var result = pollset.add(process, evt); !result)
         return result;
 
     case op::remove:
-      if (var result = epoll.remove(evt); !result)
+      if (var result = pollset.remove(evt); !result)
         return result;
 
     else:
@@ -241,19 +247,19 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
   if (!file)
     return vfs::result::bad_descriptor;
 
-  if (file.node.type != vfs::node::type::epoll)
+  if (file.node.type != vfs::node::type::pollset)
     return vfs::result::bad_descriptor;
 
   var evts = std::vector<pollevt>();
 
-  var mut &epoll = cast<ioring_epoll mut &>(*file.node);
+  var mut &pollset = cast<ioring_pollset mut &>(*file.node);
 
-  var guard = std::lock_guard(&mut epoll.lock);
+  var guard = std::lock_guard(&mut pollset.lock);
 
-  io::reset(&mut epoll.readable.cb);
-  io::initiate(&mut epoll.readable.cb, 1);
+  io::reset(&mut pollset.readable.cb);
+  io::initiate(&mut pollset.readable.cb, 1);
 
-  for(var &event : epoll.events)
+  for(var mut &event : pollset.events)
   {
     var revents = 0;
 
@@ -267,7 +273,7 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
     {
       if (evts.len == n)
       {
-        io::complete(&mut epoll.readable.cb, 0);
+        io::complete(&mut pollset.readable.cb, 0);
 
         break;
       }
@@ -279,7 +285,7 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
   if (evts.len == 0)
   {
     ctx.wake_time = timeout;
-    ctx.blockers.push_back(epoll.readable);
+    ctx.blockers.push_back(pollset.readable);
 
     if (timeout != 0 && timeout < cpu::system_time)
       return 0;
@@ -295,9 +301,9 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
 
 fn destroy(vfs::node mut *node) -> void
 {
-  var epoll = cast<ioring_epoll mut *>(node);
+  var pollset = cast<ioring_pollset mut *>(node);
 
-  epoll.clear();
+  pollset.clear();
 
-  std::allocator::delete(epoll);
+  std::allocator::delete(pollset);
 }

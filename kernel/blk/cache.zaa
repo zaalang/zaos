@@ -86,9 +86,9 @@ pub struct cache_entry
     std::atomic_add(&this.refcnt, 1);
   }
 
-  pub fn unref(this mut &) -> i32
+  pub fn unref(this mut &) -> void
   {
-    return std::atomic_sub(&this.refcnt, 1);
+    std::atomic_sub(&this.refcnt, 1);
   }
 
   pub cache_entry()
@@ -159,8 +159,8 @@ pub struct block_ptr
 
   Rc<cache_entry> entry;
 
-  block_ptr(Rc<cache_entry> &&entry)
-    : entry(&&entry)
+  block_ptr(cache_entry mut *entry)
+    : entry(entry)
   {
   }
 
@@ -198,7 +198,7 @@ struct block_cache
     if (j == pagecache.entries.end)
       j = pagecache.entries.insert(key, cache_entry::create()).0;
 
-    return block_ptr(Rc(pagecache.entries[j].value));
+    return pagecache.entries[j].value;
   }
 
   fn purge(block_cache mut &pagecache, vfs::node *node) -> void
@@ -216,6 +216,13 @@ struct block_cache
     });
   }
 
+  fn instance() -> block_cache mut &
+  {
+    static instance = #block_cache();
+
+    return &instance;
+  }
+
   block_cache() = default;
   block_cache(#block_cache&) = default;
   ~block_cache() = default;
@@ -223,9 +230,7 @@ struct block_cache
 
 fn pagecache() -> block_cache mut &
 {
-  static instance = #block_cache();
-
-  return &instance;
+  return &block_cache::instance;
 }
 
 pub fn fetch(vfs::node_ptr node, u64 offset) -> block_ptr
@@ -266,6 +271,7 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
 
   if (std::atomic_or(&block.entry.dirty, dirty) == 0)
   {
+    block.entry.ref();
     block.entry.node.ref();
 
     while (true)
@@ -297,8 +303,9 @@ fn plumber(void*) -> void
 
     scheduler::sleep_until(cpu::system_time + 1_000_000_000);
 
-    for(var entry = std::atomic_xchg(&pagecache.drain, null); entry; entry = entry.next)
+    for(var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
     {
+      var next = entry.next;
       var node = vfs::node_ptr(entry.node);
       var dirty = std::atomic_xchg(&entry.dirty, 0);
       var response = io::response();
@@ -331,7 +338,10 @@ fn plumber(void*) -> void
       if (response)
         std::print("plumber: writeback ", response.result, " bytes");
 
-      entry.node.unref();
+      entry.unref();
+      node.unref();
+
+      entry = next;
     }
 
     platform::disable_interrupts();

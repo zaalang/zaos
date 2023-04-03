@@ -36,7 +36,7 @@ extern fn sys_ioring_enter(i32 fd, u32 to_submit, u32 min_complete, u64 flags) -
   if (!file)
     return vfs::result::bad_descriptor;
 
-  if (!file.node.is_ring)
+  if (!file.node.is_ioring)
     return vfs::result::bad_descriptor;
 
   if (to_submit != 0)
@@ -45,7 +45,7 @@ extern fn sys_ioring_enter(i32 fd, u32 to_submit, u32 min_complete, u64 flags) -
       return ioring::result::device_busy;
   }
 
-  if (min_complete != 0)
+  if (to_submit == 0 || min_complete != 0)
   {
     if (ioring::wait(file.node, min_complete) < min_complete)
       return ioring::result::interrupted;

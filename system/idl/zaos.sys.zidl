@@ -1,0 +1,14 @@
+//
+// zaos.sys
+//
+
+library zaos.sys;
+
+protocol service
+{
+  -> terminate();
+  -> detach();
+
+  connect_to_service(string uri, channel endpoint);
+}
+

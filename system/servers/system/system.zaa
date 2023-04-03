@@ -1,0 +1,37 @@
+//
+// systemd
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import os.zaos.sched;
+import os.zaos.mman;
+import os.zaos.time;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn main() -> int
+{
+  std::print("system daemon started");
+
+  using os;
+
+  var argv = std::vector<os::arg>();
+  var envp = std::vector<os::arg>();
+  var attrs = std::vector<os::attr>();
+
+  argv.push_back(os::arg("/zaos/srv/session"));
+  attrs.push_back(os::attr(os::attr::stdout, STDOUT_FILENO));
+  attrs.push_back(os::attr(os::attr::stdroot, STDROOT_FILENO));
+
+  var pid = os::process_create(argv.data, argv.len, envp.data, envp.len, attrs.data, attrs.len, 0);
+
+  if (pid < 0)
+    return pid;
+
+  var rval = 0;
+  if (os::wait(pid, &rval, 0) < 0)
+    std::panic("wait error");
+
+  std::panic("system terminated");
+}

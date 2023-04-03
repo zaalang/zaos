@@ -12,7 +12,6 @@ import io;
 import platform;
 import mutex as _ : mutex;
 import process as _ : process;
-import waitqueue as _ : wait_queue;
 import slab : slab_allocator, slab_cache;
 import scheduler : run_queue;
 import support.rc : Rc;
@@ -84,14 +83,28 @@ pub struct thread
 
   pub fn find(thread::id id) -> Rc<thread>
   {
-    var guard = std::lock_guard(&mut threadman.lock);
+    var irqs = std::lock_guard(&mut cpu::irqlock);
+    var guard = std::lock_shared_guard(&mut threadman.lock);
 
     var j = threadman.threads.find(id);
 
     if (j == threadman.threads.end)
       return null;
 
-    return threadman.threads[j].value;
+    var thread = threadman.threads[j].value;
+
+    while (true)
+    {
+      var refcnt = std::volatile_load(&thread.refcnt);
+
+      if (refcnt == 0)
+        return null;
+
+      if (std::atomic_cmpxchg_weak(&thread.refcnt, refcnt, refcnt + 1))
+        break;
+    }
+
+    return Rc::adopt(thread);
   }
 
   fn allocator()
@@ -137,6 +150,7 @@ pub struct thread
     platform::task_transition(&mut current.task, entry, sp);
   }
 
+  #[noreturn]
   pub fn exit(i32 rval) -> void
   {
     platform::disable_interrupts();
@@ -167,13 +181,27 @@ pub struct thread
 
 struct thread_manager
 {
-  mutex lock;
+  std::shared_spin_lock lock;
 
   thread::id nextid;
   std::flat_hash_map<thread::id, thread mut *> threads;
 
   thread mut *undertaker;
   thread mut *graveyard;
+
+  fn instance()
+  {
+    static instance = #thread_manager();
+
+    return &instance;
+  }
+
+  fn threadcache(thread_manager mut &)
+  {
+    static thread_local cache = #slab_cache<thread>();
+
+    return &cache;
+  }
 
   thread_manager() = default;
   thread_manager(#thread_manager&) = default;
@@ -182,23 +210,14 @@ struct thread_manager
 
 fn threadman()
 {
-  static instance = #thread_manager();
-
-  return &instance;
-}
-
-fn threadcache(thread_manager mut &)
-{
-  static thread_local cache = #slab_cache<thread>();
-
-  return &cache;
+  return &thread_manager::instance;
 }
 
 fn allocate(thread_manager mut &threadman) -> thread mut *
 {
   var thread = thread::allocator.allocate();
 
-  var guard = std::lock_guard(&mut threadman.lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut threadman.lock);
 
   while (true)
   {
@@ -232,7 +251,7 @@ pub fn create_zero_task(process mut *process, void fn(void mut *) *entry, void m
 
   initialise(thread);
 
-  thread.id = ++threadman.nextid;
+  thread.id = 0;
   thread.entry = entry;
   thread.parameter = parameter;
   thread.process = process;
@@ -245,7 +264,7 @@ pub fn create_zero_task(process mut *process, void fn(void mut *) *entry, void m
 
 fn initialise(thread mut *this) -> void
 {
-  this.state = thread::state::invalid;
+  this.state = thread::state::ready;
   this.priority = thread::priority::idle;
   this.quantum_used_time = 0;
   this.wait_status = 0;
@@ -253,7 +272,7 @@ fn initialise(thread mut *this) -> void
   this.pinned = null;
   this.next = null;
   this.cpu_time = 0;
-  this.refcnt = 2;
+  std::atomic_add(&this.refcnt, 2);
 
   io::reset(&mut this.rval.cb);
   io::initiate(&mut this.rval.cb, 1);
@@ -263,6 +282,8 @@ fn initialise(thread mut *this) -> void
 
 fn destroy(thread mut *thread) -> void
 {
+  std::print("[thread:", thread.id, "] done");
+
   thread.process.remove_thread(thread);
 
   thread.state = thread::state::dead;
@@ -278,8 +299,10 @@ fn undertaker(void*) -> void
   {
     scheduler::prepare_to_block();
 
-    for(var thread = std::atomic_xchg(&threadman.graveyard, null); thread; thread = thread.next)
+    for(var thread = std::atomic_xchg(&threadman.graveyard, null); thread; )
     {
+      var next = thread.next;
+
       sys::runqueue(thread.cpu).lock.lock();
       sys::runqueue(thread.cpu).lock.unlock();
 
@@ -297,6 +320,8 @@ fn undertaker(void*) -> void
       thread.unref();
 
       platform::disable_interrupts();
+
+      thread = next;
     }
 
     scheduler::block();

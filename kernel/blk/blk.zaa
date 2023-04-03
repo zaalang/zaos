@@ -110,6 +110,13 @@ struct blkdev_manager
 
   thread mut *kblockd;
 
+  fn instance() -> blkdev_manager mut &
+  {
+    static instance = #blkdev_manager();
+
+    return &instance;
+  }
+
   blkdev_manager() = default;
   blkdev_manager(#blkdev_manager&) = default;
   ~blkdev_manager() = default;
@@ -117,9 +124,7 @@ struct blkdev_manager
 
 fn blkman() -> blkdev_manager mut &
 {
-  static instance = #blkdev_manager();
-
-  return &instance;
+  return &blkdev_manager::instance;
 }
 
 pub fn enqueue(request mut *rq) -> void
@@ -184,7 +189,7 @@ pub fn read(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buff
   rq.length = length;
   rq.cb = cb;
 
-  buffer.foreach_region_in(offset, length, fn [rq](var &region) {
+  buffer.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 
@@ -200,7 +205,7 @@ pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buf
   rq.length = length;
   rq.cb = cb;
 
-  buffer.foreach_region_in(offset, length, fn [rq](var &region) {
+  buffer.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 

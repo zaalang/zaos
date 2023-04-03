@@ -25,9 +25,11 @@ pub enum result : i32
   no_space_remaining = -28,
   readonly_file_system = -30,
   too_many_links = -31,
+  broken_pipe = -32,
   argument_out_of_domain = -33,
   name_too_long = -36,
   directory_not_empty = -39,
+  value_too_large = -75,
   not_supported = -95,
 
   pub fn bool(result code) -> bool

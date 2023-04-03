@@ -27,6 +27,10 @@ import ioring.link;
 import ioring.symlink;
 import ioring.unlink;
 import ioring.epoll;
+import ioring.event;
+import ioring.buffer;
+import ioring.channel;
+import ioring.close;
 import ioring.workman;
 
 pub enum ioring_ops
@@ -48,6 +52,12 @@ pub enum ioring_ops
   pub const epoll_create = 0x10;
   pub const epoll_ctl = 0x11;
   pub const epoll_wait = 0x12;
+  pub const event_create = 0x13;
+  pub const buffer_create = 0x14;
+  pub const channel_create = 0x15;
+  pub const channel_read = 0x16;
+  pub const channel_write = 0x17;
+  pub const channel_call = 0x18;
 }
 
 pub enum ioring_flags
@@ -168,7 +178,9 @@ pub struct io_ring : pub vfs::node
 
   pub io_ring mut *next;
 
-  u8[16] reserved;
+  pub io::response readable;
+
+  u8[8] reserved;
 
   fn allocator()
   {
@@ -207,7 +219,7 @@ pub fn create_ioring(process mut *process) -> vfs::node_ptr
 {
   var ring = io_ring::create(process);
 
-  return vfs::node::new(ring, vfs::node::type::ring, &vfs::node_operations());
+  return vfs::node::new(ring, vfs::node::type::ioring, &vfs::node_operations());
 }
 
 pub fn setup_ioring(vfs::node_ptr &ring, virtrange buffer) -> result
@@ -238,6 +250,8 @@ pub fn setup_ioring(vfs::node_ptr &ring, virtrange buffer) -> result
   header.cq_tail = 0;
   header.cq_mask = cast(this.cq_mask);
   header.cq_offset = cast(this.cq_base);
+
+  io::initiate(&mut this.readable.cb, 1);
 
   return ok;
 }
@@ -299,6 +313,24 @@ pub fn execute(io_ring mut &this, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
       case ioring_ops::epoll_wait:
         ctx.status = sys_epoll_wait(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
 
+      case ioring_ops::event_create:
+        ctx.status = sys_event_create(this.process, &mut ctx, cast(sqe.args[0]), cast(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::buffer_create:
+        ctx.status = sys_buffer_create(this.process, &mut ctx, virtaddr(sqe.args[0]), cast(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::channel_create:
+        ctx.status = sys_channel_create(this.process, &mut ctx, virtaddr(sqe.args[0]), cast(sqe.args[1]));
+
+      case ioring_ops::channel_read:
+        ctx.status = sys_channel_read(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), virtaddr(sqe.args[2]), virtaddr(sqe.args[3]), virtaddr(sqe.args[4]));
+
+      case ioring_ops::channel_write:
+        ctx.status = sys_channel_write(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0xffffffff), virtaddr(sqe.args[2]));
+
+      case ioring_ops::channel_call:
+        ctx.status = sys_channel_call(this.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), virtaddr(sqe.args[2]), virtaddr(sqe.args[3]), virtaddr(sqe.args[4]));
+
       else:
         ctx.status = result::not_supported;
     }
@@ -352,6 +384,9 @@ pub fn retire(io_ring mut &this, ioring_sqe &sqe, result status) -> result
     std::panic("bad_cqe_write");
 
   std::atomic_store(&header.cq_tail, next);
+
+  if (!this.readable.ready)
+    io::complete(&mut this.readable.cb, 0);
 
   this.waiters.notify_all();
 
@@ -431,7 +466,15 @@ pub fn wait(vfs::node_ptr &ring, u32 min_complete) -> u32
     var completed = std::sub_with_borrow(header.cq_tail, header.cq_head).0;
 
     if (completed >= min_complete)
+    {
+      if (completed == min_complete)
+      {
+        io::reset(&mut this.readable.cb);
+        io::initiate(&mut this.readable.cb, 1);
+      }
+
       return completed;
+    }
 
     this.waiters.wait(&mut this.lock);
   }

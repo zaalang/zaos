@@ -5,6 +5,7 @@
 import std.stdlib;
 import vm : virtaddr;
 import vfs;
+import buffer;
 import ioring;
 import result as _ : result;
 import process as _ : process;
@@ -97,7 +98,11 @@ extern fn sys_mmap(i32 fd, virtaddr mmvsbuf, usize n, virtaddr addrbuf, u64 flag
           if (var result = file.node.device_operations.mmap(file.node, vm::virtrange(addr + mm.base, mm.length), mm.offset, protection, usage); !result)
             return result;
 
-        case vfs::node::type::ring:
+        case vfs::node::type::buffer:
+          if (var result = buffer::mmap(file.node, &mut addr, mm.length, mm.offset, protection, usage); !result)
+            return result;
+
+        case vfs::node::type::ioring:
           if (var result = ioring::mmap(file.node, &mut addr, mm.length, mm.offset, protection, usage); !result)
             return result;
 

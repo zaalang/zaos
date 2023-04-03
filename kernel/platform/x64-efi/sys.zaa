@@ -60,7 +60,7 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
     if (!madt)
       efi::panic(SystemTable, "bad_acpi_madt");
 
-    bootinfo.apic_base = cast<acpi::madt*>(madt).local_apic_address;
+    bootinfo.apic_address = cast<acpi::madt*>(madt).local_apic_address;
 
     var apic = cast<acpi::apic*>(cast<uintptr>(madt) + sizeof<acpi::madt>);
     var end = cast<acpi::apic*>(cast<uintptr>(madt) + cast<usize>(madt.length));
@@ -83,9 +83,9 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
 
           var io_apic = cast<acpi::io_apic*>(apic);
 
-          if (bootinfo.ioapic_base == 0)
+          if (bootinfo.ioapic_address == 0)
           {
-            bootinfo.ioapic_base = io_apic.io_apic_address;
+            bootinfo.ioapic_address = io_apic.apic_address;
             bootinfo.ioapic_interrupt_base = io_apic.interrupt_base;
           }
       }
@@ -410,9 +410,14 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   cpu::wrmsr(cpu::msr_index::lstar, cast<u64>(extern(syscall_entry))); // syscall
   cpu::wrmsr(cpu::msr_index::fmask, 0x47fff); // mask syscall flags
 
+  // pat
+
+  cpu::wrmsr(cpu::msr_index::pat, cpu::rdmsr(cpu::msr_index::pat) & ~0x700000000 | 0x100000000);
+
   // apic
 
-  cpu::wrmsr(cpu::msr_index::apic_base, cpu::rdmsr(cpu::msr_index::apic_base) | 0x400); // x2apic enable
+  if (var apic_base = cpu::rdmsr(cpu::msr_index::apic_base); apic_base & 0x400 == 0)
+    cpu::wrmsr(cpu::msr_index::apic_base, apic_base | 0x400); // x2apic enable
 
   cpu::wrmsr(cpu::msr_index::apic_spurious_intr_vector, cpu::rdmsr(cpu::msr_index::apic_spurious_intr_vector) & 0xffffff00 | 0x1ff); // apic spurious interrupt vector
 

@@ -12,6 +12,7 @@ import vm.iovec;
 import vfs.node;
 import blk;
 import process as _ : process;
+import sys;
 import cpu;
 import scheduler;
 import platform;
@@ -28,6 +29,13 @@ struct memory_manager
   page_allocator pageallocator;
   slab_allocator<region> regionallocator;
 
+  fn instance() -> memory_manager mut &
+  {
+    static instance = #memory_manager();
+
+    return &instance;
+  }
+
   memory_manager() = default;
   memory_manager(#memory_manager&) = default;
   ~memory_manager() = default;
@@ -35,9 +43,7 @@ struct memory_manager
 
 fn mm() -> memory_manager mut &
 {
-  static instance = #memory_manager();
-
-  return &instance;
+  return &memory_manager::instance;
 }
 
 fn pagecache(memory_manager mut &)
@@ -321,6 +327,25 @@ pub fn create_backed_region(virtrange range, vfs::node_ptr &node, u64 offset, pr
   return create_backed_region(&mut addressspace(range.addr), range, node, offset, prot, use);
 }
 
+pub fn set_memory_type(page_table mut &pagetable, address_space mut &space, virtrange range, mtype mtype) -> vm::result
+{
+  var region = lock_region(&mut space, range.addr);
+
+  if (!region)
+    return bad_address;
+
+  pagetable.set_memory_type(range, mtype);
+
+  region.unlock();
+
+  return ok;
+}
+
+pub fn set_memory_type(virtrange range, mtype mtype) -> vm::result
+{
+  return set_memory_type(&mut platform::pagetable, &mut addressspace(range.addr), range, mtype);
+}
+
 fn mprotect(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot) -> vm::result
 {
   var region = lock_region(&mut space, range.addr);
@@ -361,6 +386,12 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   if (!region)
     return bad_address;
 
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+
+    space.remove(region);
+  }
+
   if (region.is_foreign)
   {
     pagetable.unmap(region.range);
@@ -368,18 +399,49 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
 
   if (!region.is_foreign)
   {
-    pagetable.unmap(region.range, fn(platform::physaddr_t phys) {
+    var pages = null<page mut *>();
+
+    var irqs = platform::disable_interrupts();
+
+    pagetable.unmap(region.range, &pages, fn(void mut *pages, platform::virtaddr_t addr, platform::physaddr_t phys) {
+      var mut &pages = *cast<page mut * mut *>(pages);
       var page = mm.pageallocator.page_from_address(phys);
 
       if (page.unref() == 1)
-        release_physical_page(page);
+      {
+        page.next = pages;
+        pages = page;
+      }
     });
-  }
 
-  {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
+    if (pagetable.cnt > 1)
+    {
+      var rendezvous = cast<i32>(sys::cpu_count);
 
-    space.remove(region);
+      sys::broadcast_ipi_message(fn[pagetable, rendezvous]() -> void {
+
+        if (platform::pagetable == pagetable)
+          platform::flush_user_tlb();
+
+        std::atomic_sub(&rendezvous, 1);
+      });
+
+      platform::restore_interrupts(irqs);
+
+      while (std::volatile_load(&rendezvous) != 1)
+        __relax();
+    }
+
+    platform::restore_interrupts(irqs);
+
+    for(var page = pages; page; )
+    {
+      var next = page.next;
+
+      release_physical_page(page);
+
+      page = next;
+    }
   }
 
   region.offset = 0;
@@ -554,6 +616,9 @@ pub fn write_process_memory(process mut *process, virtaddr dst, void *src, usize
 {
   var iovec = vm::iovec();
 
+  if (dst == 0 && length == 0)
+    return ok;
+
   if (var result = lock(process, virtrange(dst, length), vm::protection::readwrite, &mut iovec); !result)
     return result;
 
@@ -566,6 +631,9 @@ pub fn write_process_memory(process mut *process, virtaddr dst, void *src, usize
 pub fn write_process_memory(virtaddr dst, void *src, usize length) -> vm::result
 {
   var status = result::ok;
+
+  if (dst == 0 && length == 0)
+    return ok;
 
   var region = lock_region(&mut process::current.userspace, dst);
 

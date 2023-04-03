@@ -39,8 +39,8 @@ pub struct BootInfo
   pub physaddr_t fb_base_address;
 
   pub physaddr_t acpi_root;
-  pub u32 apic_base;
-  pub u32 ioapic_base;
+  pub u32 apic_address;
+  pub u32 ioapic_address;
   pub u32 ioapic_interrupt_base;
   pub u8[MAX_CPU_COUNT] apic_ids;
 

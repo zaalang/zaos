@@ -47,7 +47,7 @@ pub fn initialise(BootInfo mut &bootinfo)
 
   for(var cpu = 1; cpu < bootinfo.cpu_count; ++cpu)
   {
-    var apic = cast<uintptr>(bootinfo.apic_base);
+    var apic = cast<uintptr>(bootinfo.apic_address);
     var apic_id = cast<u32>(bootinfo.apic_ids[cpu]);
 
     var stack = cast<uintptr mut *>(stack_base - cast<usize>(apic_id * stack_size));

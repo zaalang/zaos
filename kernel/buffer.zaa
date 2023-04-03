@@ -1,0 +1,319 @@
+//
+// buffer
+//
+
+import std.stdio;
+import vm : virtaddr;
+import io;
+import vfs;
+import heap;
+import mutex as _ : mutex;
+import process as _ : process;
+import support.rc : Rc;
+
+const PIPE_BUF = 512;
+
+struct endpoint : pub vfs::node
+{
+  buffer mut *buffer;
+
+  io::response readable;
+  io::response writeable;
+
+  pub endpoint() = default;
+  pub ~endpoint() = default;
+}
+
+pub struct buffer
+{
+  mutex lock;
+
+  endpoint inlet;
+  endpoint outlet;
+
+  usize len;
+  usize head;
+  u8 mut *data;
+  usize capacity;
+
+  vm::virtrange allocation;
+
+  fn create() -> buffer mut *
+  {
+    return std::allocator::new<buffer>();
+  }
+
+  fn has_reader(this &) -> bool
+  {
+    return this.outlet.buffer;
+  }
+
+  fn has_writer(this &) -> bool
+  {
+    return this.inlet.buffer;
+  }
+
+  pub fn open_read_node(this mut &) -> vfs::node_ptr
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    if (this.has_reader)
+      return &this.outlet;
+
+    this.ref();
+    this.outlet.buffer = &this;
+
+    if (this.has_writer)
+    {
+      io::complete(&mut this.inlet.writeable.cb, 0);
+    }
+
+    if (this.len == 0)
+      io::initiate(&mut this.outlet.readable.cb, 1);
+
+    io::initiate(&mut this.outlet.writeable.cb, 1);
+
+    return vfs::node::new(&this.outlet, vfs::node::type::buffer, &vfs::node_stream_operations());
+  }
+
+  pub fn open_write_node(this mut &) -> vfs::node_ptr
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    if (this.has_writer)
+      return &this.inlet;
+
+    this.ref();
+    this.inlet.buffer = &this;
+
+    if (!this.has_reader)
+    {
+      io::initiate(&mut this.inlet.writeable.cb, 1);
+    }
+
+    io::initiate(&mut this.inlet.readable.cb, 1);
+
+    return vfs::node::new(&this.inlet, vfs::node::type::buffer, &vfs::node_stream_operations());
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub buffer() = default;
+  pub ~buffer() = default;
+}
+
+fn spans(buffer &buffer)
+{
+  var spans = [ std::span<u8>(); 2 ];
+
+  spans[0] = std::span(buffer.data + buffer.head, std::min(buffer.len, buffer.capacity - buffer.head));
+  spans[1] = std::span(buffer.data, buffer.len - spans[0].len);
+
+  return spans;
+}
+
+fn append(buffer mut &buffer, u8 *bytes, usize count) -> void
+{
+  var index = (buffer.head + buffer.len) % buffer.capacity;
+
+  std::memcpy(buffer.data + index, bytes, std::min(count, buffer.capacity - buffer.head));
+
+  if (var n = buffer.capacity - buffer.head; n < count)
+    std::memcpy(buffer.data, bytes + n, count - n);
+
+  buffer.len += count;
+}
+
+fn erase(buffer mut &buffer, usize count) -> void
+{
+  buffer.len -= count;
+  buffer.head = (buffer.head + count) % buffer.capacity;
+}
+
+pub fn create_buffer(process mut *process) -> Rc<buffer>
+{
+  return buffer::create();
+}
+
+pub fn setup_buffer(Rc<buffer> mut &buffer, usize size) -> vfs::result
+{
+  buffer.allocation = heap::mmap(size);
+
+  if (buffer.allocation.size == 0)
+    return cast(vm::result::out_of_memory);
+
+  buffer.data = cast<u8 mut *>(buffer.allocation.addr.ptr);
+  buffer.capacity = size;
+
+  return ok;
+}
+
+pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+{
+  return ok;
+}
+
+pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  var buffer = cast<endpoint mut &>(*node).buffer;
+
+  stat.size = cast(buffer.capacity);
+
+  return ok;
+}
+
+pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+{
+  var buffer = cast<endpoint mut &>(*node).buffer;
+  var mut &endpoint = cast<endpoint mut &>(*node);
+
+  readable = endpoint.readable.cb;
+  writeable = endpoint.writeable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var pipe = cast<endpoint mut &>(*node).buffer;
+
+  var guard = std::lock_guard(&mut pipe.lock);
+
+  var count = usize(0);
+  var remaining = std::min(pipe.len, length);
+
+  for(var span : pipe.spans)
+  {
+    var bytes = std::min(remaining, span.len);
+
+    if (var result = vm::memcpy(buffer, offset, span.data, bytes); !result)
+      return cast(result);
+
+    count += bytes;
+    offset += bytes;
+    remaining -= bytes;
+  }
+
+  if (count == 0 && pipe.has_writer)
+    return would_block;
+
+  if (count == 0)
+    return cast(0);
+
+  pipe.erase(count);
+
+  if (pipe.len == 0)
+    io::initiate(&mut pipe.outlet.readable.cb, 1);
+
+  if (pipe.len + count == pipe.capacity)
+    io::complete(&mut pipe.inlet.writeable.cb, 0);
+
+  return cast(count);
+}
+
+pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var pipe = cast<endpoint mut &>(*node).buffer;
+
+  var guard = std::lock_guard(&mut pipe.lock);
+
+  var count = usize(0);
+  var result = vfs::result::ok;
+
+  if (!pipe.has_reader)
+    result = vfs::result::broken_pipe;
+
+  if (length < PIPE_BUF && pipe.capacity - pipe.len < length)
+    result = vfs::result::would_block;
+
+  buffer.foreach_region_in(offset, length, |region| {
+    if (!result)
+      return;
+
+    var bytes = std::min(pipe.capacity - pipe.len, region.size);
+
+    pipe.append(cast<u8*>(region.addr.ptr), bytes);
+
+    if (bytes != region.size)
+      result = vfs::result::would_block;
+
+    count += bytes;
+  });
+
+  if (count == 0)
+    return result;
+
+  if (pipe.len == count)
+    io::complete(&mut pipe.outlet.readable.cb, 0);
+
+  if (pipe.len == pipe.capacity)
+    io::initiate(&mut pipe.inlet.writeable.cb, 1);
+
+  return cast(count);
+}
+
+pub fn mmap(vfs::node_ptr &node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+{
+  var buffer = cast<endpoint mut &>(*node).buffer;
+  var mut &endpoint = cast<endpoint mut &>(*node);
+
+  if (offset != 0)
+    return invalid_argument;
+
+  if (length != buffer.allocation.size)
+    return invalid_argument;
+
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(buffer.allocation, vm::protection::readwrite, &mut iovec); !result)
+    return cast(result);
+
+  if (var result = vm::create_physical_region(vm::virtrange(addr, length), iovec.host, prot, use); !result)
+    return cast(result);
+
+  return ok;
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var buffer = cast<endpoint mut &>(*node).buffer;
+  var endpoint = cast<endpoint mut *>(node);
+
+  buffer.lock.lock();
+
+  if (!buffer.outlet.readable.ready)
+    io::complete(&mut buffer.outlet.readable.cb, 0);
+
+  if (!buffer.inlet.writeable.ready)
+    io::complete(&mut buffer.inlet.writeable.cb, 0);
+
+  endpoint.buffer = null;
+
+  buffer.lock.unlock();
+
+  buffer.unref();
+}
+
+fn destroy(buffer mut *buffer) -> void
+{
+  if (buffer.allocation.size != 0)
+    heap::munmap(buffer.allocation);
+
+  std::allocator::delete(buffer);
+}

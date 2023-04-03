@@ -51,6 +51,9 @@ io.zaa\
 input.zaa\
 result.zaa\
 kprint.zaa\
+event.zaa\
+buffer.zaa\
+channel.zaa\
 vfs/vfs.zaa\
 vfs/fs.zaa\
 vfs/node.zaa\
@@ -112,6 +115,10 @@ ioring/link.zaa\
 ioring/symlink.zaa\
 ioring/unlink.zaa\
 ioring/epoll.zaa\
+ioring/event.zaa\
+ioring/buffer.zaa\
+ioring/channel.zaa\
+ioring/close.zaa\
 platform/platform.zaa\
 platform/x64-efi/cpu.zaa\
 platform/x64-efi/mmu.zaa\

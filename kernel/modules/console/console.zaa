@@ -60,8 +60,10 @@ pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length)
 
 pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
 {
-  buffer.foreach_region_in(offset, length, fn (var &region) {
-    dmesg(cast(region.addr.ptr), region.size);
+  var mut &this = cast<console mut &>(dev);
+
+  buffer.foreach_region_in(offset, length, |region| {
+    std::puts(std::string_view(cast(region.addr.ptr), region.size));
   });
 
   return cast(length);
@@ -72,28 +74,11 @@ pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protectio
   return not_supported;
 }
 
-extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
-
 extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
 {
-  var result = std::fd_result();
+extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
 
-  for(var i = 0; i < n; ++i)
-  {
-    result.length += dmesg((iovs + i).data, (iovs + i).len);
-  }
-
-  return result;
-}
-
-pub fn dmesg(u8 *data, usize len) -> usize
-{
-  var iovs = std::ciovec(void);
-  iovs.data = data;
-  iovs.len = len;
-  dbgln(1, &iovs, 1);
-
-  return len;
+  return dbgln(1, iovs, n);
 }
 
 pub fn initialise() -> void

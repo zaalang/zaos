@@ -1,0 +1,597 @@
+//
+// zidl compiler
+//
+
+import std.stdio;
+import std.vector;
+import std.hash;
+import std.box;
+import std.env;
+import zidl.diag;
+import zidl.types;
+import zidl.parser;
+
+struct builtin_type
+{
+  std::string_literal name;
+  usize size;
+  usize align;
+
+  builtin_type(std::string_literal name, usize size, usize align)
+    : name(name), size(size), align(align)
+  {
+  }
+
+  builtin_type(builtin_type&&) = default;
+  ~builtin_type() = default;
+}
+
+struct string_type
+{
+  usize constraint;
+
+  string_type(usize constraint)
+    : constraint(constraint)
+  {
+  }
+
+  string_type(string_type&&) = default;
+  ~string_type() = default;
+}
+
+struct channel_type
+{
+  usize constraint;
+
+  channel_type(usize constraint)
+    : constraint(constraint)
+  {
+  }
+
+  channel_type(channel_type&&) = default;
+  ~channel_type() = default;
+}
+
+struct array_type
+{
+  type *type;
+  usize constraint;
+
+  array_type(type *type, usize constraint)
+    : type(type), constraint(constraint)
+  {
+  }
+
+  array_type(array_type&&) = default;
+  ~array_type() = default;
+}
+
+struct tag_type
+{
+  std::string name;
+  std::vector<type*> fields;
+
+  tag_type() = default;
+  tag_type(tag_type&&) = default;
+  ~tag_type() = default;
+}
+
+union type
+{
+  builtin(builtin_type),
+  string(string_type),
+  channel(channel_type),
+  array(array_type),
+  tag(tag_type),
+
+  type() = default;
+  type(type&&) = default;
+  ~type() = default;
+}
+
+struct context
+{
+  std::file fout;
+  zidl::diag mut *diag;
+
+  std::vector<std::box<type>> typetable;
+
+  fn initialise(context mut &ctx, zidl::diag mut *diag) -> void
+  {
+    ctx.diag = diag;
+
+    ctx.typetable.push_back(type::builtin("i8", sizeof<i8>, alignof<i8>));
+    ctx.typetable.push_back(type::builtin("i16", sizeof<i16>, alignof<i16>));
+    ctx.typetable.push_back(type::builtin("i32", sizeof<i32>, alignof<i32>));
+    ctx.typetable.push_back(type::builtin("i64", sizeof<i64>, alignof<i64>));
+    ctx.typetable.push_back(type::builtin("u8", sizeof<u8>, alignof<u8>));
+    ctx.typetable.push_back(type::builtin("u16", sizeof<u16>, alignof<u16>));
+    ctx.typetable.push_back(type::builtin("u32", sizeof<u32>, alignof<u32>));
+    ctx.typetable.push_back(type::builtin("u64", sizeof<u64>, alignof<u64>));
+    ctx.typetable.push_back(type::builtin("f32", sizeof<f32>, alignof<f32>));
+    ctx.typetable.push_back(type::builtin("f64", sizeof<f64>, alignof<f64>));
+    ctx.typetable.push_back(type::builtin("bool", sizeof<bool>, alignof<bool>));
+    ctx.typetable.push_back(type::builtin("char", sizeof<char>, alignof<char>));
+  }
+
+  context() = default;
+  ~context() = default;
+}
+
+fn resolve_type(context &&ctx, zidl::variable &variable) -> type *
+{
+  for(var &type : ctx.typetable)
+  {
+    switch (*type)
+    {
+      case builtin[builtin]:
+        if (variable.type == builtin.name)
+          return &*type;
+
+      case string[string]:
+        if (variable.type == "string" && string.constraint == variable.constraint)
+          return &*type;
+
+      case channel[channel]:
+        if (variable.type == "channel" && channel.constraint == variable.constraint)
+          return &*type;
+    }
+  }
+
+  if (variable.type == "string")
+  {
+    return &*ctx.typetable.emplace(ctx.typetable.end, type::string(variable.constraint));
+  }
+
+  if (variable.type == "channel")
+  {
+    return &*ctx.typetable.emplace(ctx.typetable.end, type::channel(variable.constraint));
+  }
+
+  ctx.diag.error(std::format("unknown type - {}", variable.type));
+
+  return null;
+}
+
+fn sizeof_type(type *type) -> usize
+{
+  switch (*type)
+  {
+    case builtin[builtin]:
+      return builtin.size;
+
+    case string:
+      return sizeof<zidl::string_view>;
+
+    case channel:
+      return sizeof<zidl::channel>;
+  }
+
+  std::panic("unknown sizeof type");
+}
+
+fn alignof_type(type *type) -> usize
+{
+  switch (*type)
+  {
+    case builtin[builtin]:
+      return builtin.align;
+
+    case string:
+      return alignof<zidl::string_view>;
+
+    case channel:
+      return alignof<zidl::channel>;
+  }
+
+  std::panic("unknown alignof type");
+}
+
+fn zidl_typename(type *type) -> std::string_view
+{
+  switch (*type)
+  {
+    case builtin[builtin]:
+      return builtin.name;
+
+    case string:
+      return "zidl::string_view";
+
+    case channel:
+      return "zidl::channel";
+  }
+
+  std::panic("unknown zidl type");
+}
+
+fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
+{
+  var size = 0;
+  var data = 0;
+
+  size += std::align_up(sizeof<zidl::zidl_header_t>, 8);
+
+  for(var &variable : variables)
+  {
+    switch (variable)
+    {
+      case variable[variable]:
+
+        if (var type = resolve_type(ctx, variable))
+          size = std::align_up(size, alignof_type(type)) + sizeof_type(type);
+
+        if (variable.type == "string")
+          data += std::align_up(std::max(variable.constraint, 64), 8);
+
+      else:
+        std::panic("unhandled variable decl");
+    }
+  }
+
+  size = std::align_up(size, 8);
+
+  return size + data;
+}
+
+fn max_request_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
+{
+  var size = 0;
+
+  for(var &method : methods)
+  {
+    switch (method)
+    {
+      case method[method]:
+
+        size += max_message_size(ctx, method.parameters);
+
+      else:
+        std::panic("unhandled method decl");
+    }
+  }
+
+  return size;
+}
+
+fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
+{
+  var size = 0;
+
+  for(var &method : methods)
+  {
+    switch (method)
+    {
+      case method[method]:
+
+        size += max_message_size(ctx, method.returns);
+
+      else:
+        std::panic("unhandled method decl");
+    }
+  }
+
+  return size;
+}
+
+fn codegen_fields(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+{
+  for(var &variable : variables)
+  {
+    switch (variable)
+    {
+      case variable[variable]:
+
+        if (var type = resolve_type(ctx, variable))
+          std::fprintf(ctx.fout, "      pub {} {};\n", zidl_typename(type), variable.name);
+
+      else:
+        std::panic("unhandled parameter decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "\n");
+}
+
+fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+{
+  std::fprintf(ctx.fout, "      pub this(");
+
+  for(var &variable : variables)
+  {
+    if (&variable != &variables.front)
+      std::fprintf(ctx.fout, ", ");
+
+    switch (variable)
+    {
+      case variable[variable]:
+
+        if (var type = resolve_type(ctx, variable))
+        {
+          switch (*type)
+          {
+            case builtin:
+            case string:
+            case array:
+              std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
+
+            case channel:
+              std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
+
+            case tag:
+              std::fprintf(ctx.fout, "{} &{}", zidl_typename(type), variable.name);
+          }
+        }
+
+      else:
+        std::panic("unhandled parameter decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, ")\n");
+
+  if (!variables.empty)
+  {
+    std::fprintf(ctx.fout, "        : ");
+
+    for(var &variable : variables)
+    {
+      if (&variable != &variables.front)
+        std::fprintf(ctx.fout, ", ");
+
+      switch (variable)
+      {
+        case variable[variable]:
+
+          if (var type = resolve_type(ctx, variable))
+          {
+            switch (*type)
+            {
+              case builtin:
+              case string:
+              case array:
+                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
+
+              case channel:
+                std::fprintf(ctx.fout, "{}(&move {})", variable.name, variable.name);
+
+              case tag:
+                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
+            }
+          }
+
+        else:
+          std::panic("unhandled parameter decl");
+      }
+    }
+
+    std::fprintf(ctx.fout, "\n");
+  }
+
+  std::fprintf(ctx.fout, "      {{\n");
+  std::fprintf(ctx.fout, "      }}\n");
+  std::fprintf(ctx.fout, "      \n");
+}
+
+fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+{
+  std::fprintf(ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
+  std::fprintf(ctx.fout, "      {{\n");
+
+  for(var &variable : variables)
+  {
+    switch (variable)
+    {
+      case variable[variable]:
+
+        if (var type = resolve_type(ctx, variable))
+        {
+          switch (*type)
+          {
+            case string:
+            case channel:
+              std::fprintf(ctx.fout, "        zidl::encode(&mut encoder, value.{});\n", variable.name);
+          }
+        }
+
+      else:
+        std::panic("unhandled parameter decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "      }}\n");
+  std::fprintf(ctx.fout, "      \n");
+}
+
+fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+{
+  std::fprintf(ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
+  std::fprintf(ctx.fout, "      {{\n");
+
+  for(var &variable : variables)
+  {
+    switch (variable)
+    {
+      case variable[variable]:
+
+        if (var type = resolve_type(ctx, variable))
+        {
+          switch (*type)
+          {
+            case string:
+            case channel:
+              std::fprintf(ctx.fout, "        zidl::decode(&mut decoder, &mut value.{});\n", variable.name);
+          }
+        }
+
+      else:
+        std::panic("unhandled parameter decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "      }}\n");
+  std::fprintf(ctx.fout, "      \n");
+}
+
+fn codegen_method(context &&ctx, zidl::method &method) throws -> void
+{
+  if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
+  {
+    std::fprintf(ctx.fout, "    pub struct {}_request\n", method.name);
+    std::fprintf(ctx.fout, "    {{\n");
+    std::fprintf(ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x10101010) & 0x7ffffff);
+    std::fprintf(ctx.fout, "      pub const max_message_size = {};\n", max_message_size(ctx, method.parameters));
+    std::fprintf(ctx.fout, "      \n");
+
+    codegen_fields(ctx, method.parameters);
+    codegen_constructor(ctx, method.parameters);
+    codegen_encode(ctx, method.parameters);
+    codegen_decode(ctx, method.parameters);
+
+    std::fprintf(ctx.fout, "      pub ~this() = default;\n");
+    std::fprintf(ctx.fout, "    }}\n");
+    std::fprintf(ctx.fout, "\n");
+  }
+
+  if (method.type == zidl::method::type::twoway || method.type == zidl::method::type::event)
+  {
+    std::fprintf(ctx.fout, "    pub struct {}_response\n", method.name);
+    std::fprintf(ctx.fout, "    {{\n");
+    std::fprintf(ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x92be81) & 0x7ffffff);
+    std::fprintf(ctx.fout, "      pub const max_message_size = {};\n", max_message_size(ctx, method.returns));
+    std::fprintf(ctx.fout, "      \n");
+
+    codegen_fields(ctx, method.returns);
+    codegen_constructor(ctx, method.returns);
+    codegen_encode(ctx, method.returns);
+    codegen_decode(ctx, method.returns);
+
+    std::fprintf(ctx.fout, "      pub ~this() = default;\n");
+    std::fprintf(ctx.fout, "    }}\n");
+    std::fprintf(ctx.fout, "\n");
+  }
+}
+
+fn codegen_dispatch(context &&ctx, zidl::protocol &protocol) throws -> void
+{
+  std::fprintf(ctx.fout, "    pub union dispatch_t\n");
+  std::fprintf(ctx.fout, "    {{\n");
+
+  for(var &method : protocol.methods)
+  {
+    switch (method)
+    {
+      case method[method]:
+
+        if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
+          std::fprintf(ctx.fout, "      pub {}({}_request mut &),\n", method.name, method.name);
+
+        if (method.type == zidl::method::type::event)
+          std::fprintf(ctx.fout, "      pub {}({}_response mut &),\n", method.name, method.name);
+
+      else:
+        std::panic("unhandled protocol decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "      \n");
+  std::fprintf(ctx.fout, "      pub ~this() = default;\n");
+  std::fprintf(ctx.fout, "    }}\n");
+  std::fprintf(ctx.fout, "\n");
+}
+
+fn codegen_messages(context &&ctx, zidl::protocol &protocol) throws -> void
+{
+  for(var &method : protocol.methods)
+  {
+    switch (method)
+    {
+      case method[method]:
+        codegen_method(ctx, method);
+
+      else:
+        std::panic("unhandled protocol decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "\n");
+}
+
+fn codegen_protocol(context &&ctx, zidl::protocol &protocol) throws -> void
+{
+  std::fprintf(ctx.fout, "  pub struct {}\n", protocol.name);
+  std::fprintf(ctx.fout, "  {{\n");
+  std::fprintf(ctx.fout, "    pub const max_request_size = {};\n", max_request_size(ctx, protocol.methods));
+  std::fprintf(ctx.fout, "    pub const max_response_size = {};\n", max_response_size(ctx, protocol.methods));
+  std::fprintf(ctx.fout, "    \n");
+
+  codegen_dispatch(ctx, protocol);
+  codegen_messages(ctx, protocol);
+
+  std::fprintf(ctx.fout, "  }}\n");
+  std::fprintf(ctx.fout, "\n");
+}
+
+fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throws -> void
+{
+  var ctx = context();
+  ctx.initialise(&diag);
+
+  ctx.fout = std::file::create(outfile);
+
+  std::fprintf(ctx.fout, "//\n// auto generated - do not modify\n//\n\n");
+  std::fprintf(ctx.fout, "import zidl.types;\n");
+  std::fprintf(ctx.fout, "import zidl.protocol;\n");
+  std::fprintf(ctx.fout, "\n");
+
+  std::fprintf(ctx.fout, "pub struct {}\n", ast.name.gsub(".", "_"));
+  std::fprintf(ctx.fout, "{{\n");
+
+  for(var &decl : ast.decls)
+  {
+    switch (decl)
+    {
+      case protocol[protocol]:
+        codegen_protocol(ctx, protocol);
+
+      else:
+        std::panic("unhandled ast decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "}}\n");
+}
+
+fn main
+{
+  var diag = zidl::diag("zidlc");
+
+  if (std::env::args.len != 4 || std::env::args[1] != "-o")
+  {
+    std::fprint(std::stderr, "useage: zidlc -o <output> <input>");
+
+    std::exit(1);
+  }
+
+  var input = std::env::args[3];
+  var outfile = std::env::args[2];
+
+  try
+  {
+    var ast = zidl::parse(input, &mut diag);
+
+    if (diag.has_errored)
+    {
+      std::fprintf(std::stderr, "{}", diag);
+
+      std::exit(1);
+    }
+
+    codegen(ast, outfile, &mut diag);
+
+    std::fprintf(std::stderr, "{}", diag);
+  }
+  catch(std::error e)
+  {
+    std::panic("compiler error - ", e);
+  }
+}

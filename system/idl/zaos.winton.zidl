@@ -1,0 +1,11 @@
+//
+// zaos.winton
+//
+
+library zaos.winton;
+
+protocol compositor
+{
+  create_surface(i32 x, i32 y, i32 width, i32 height) -> (bool success);
+}
+

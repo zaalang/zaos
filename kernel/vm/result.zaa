@@ -8,6 +8,7 @@ pub enum result : i32
   not_permitted = -1,
   no_such_process = -10,
   would_block = -11,
+  out_of_memory = -12,
   bad_address = -14,
   invalid_argument = -22,
   not_supported = -95,

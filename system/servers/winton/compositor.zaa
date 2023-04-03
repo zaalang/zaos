@@ -1,0 +1,71 @@
+//
+// compositor
+//
+
+import std.stdlib;
+import std.box;
+import app.loop;
+import zidl.zaos_winton;
+
+struct client
+{
+  zidl::channel channel;
+  app::loop::wait_t handler;
+
+  client() = default;
+  client(client&&) = default;
+  ~client() = default;
+}
+
+pub struct compositor
+{
+  std::vector<std::box<client>> clients;
+
+
+  compositor() = default;
+  pub ~compositor() = default;
+}
+
+pub fn create() -> compositor
+{
+  return compositor();
+}
+
+pub fn initialise(compositor mut &compositor) -> i32
+{
+  return 0;
+}
+
+pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel channel) -> void
+{
+  std::print("winton compositor: accept connection");
+
+  var mut &client = compositor.clients.push_back();
+
+  client.channel = &move channel;
+  client.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+
+  app::loop::current.begin_wait(client.channel, &client.handler);
+}
+
+pub fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var client = cast<client mut *>(cast<uintptr>(wait) - offsetof(client::handler));
+
+  var result = zidl::recv<zidl::zaos_winton::compositor>(client.channel.fd, |msg, completer| {
+    switch (msg)
+    {
+      case create_surface[msg]:
+        std::print(msg);
+        completer.reply<zidl::zaos_winton::compositor::create_surface_response>(true);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+  });
+
+  if (!result)
+  {
+    std::panic("winton compositor: client error - ", result);
+  }
+}

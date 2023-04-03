@@ -1,0 +1,241 @@
+//
+// zidl.protocol
+//
+
+import std.vector;
+import std.span : Span;
+import os.zaos.fcntl;
+import zidl.encode;
+import zidl.decode;
+import zidl.types;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub enum result : i32
+{
+  pub fn bool(result code) -> bool
+  {
+    return cast<i32>(code) >= 0;
+  }
+
+  pub fn ==(result code, zidl::errc error) -> bool
+  {
+    return cast<i32>(code) == -cast<i32>(error);
+  }
+
+  pub fn result(zidl::errc error) -> result
+  {
+    return cast(-cast<i32>(error));
+  }
+
+  pub fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
+}
+
+pub fn ordinal(u8 *bytes, usize nbytes) -> i32
+{
+  var header = cast<zidl::zidl_header_t*>(bytes);
+
+  if (nbytes < sizeof<zidl::zidl_header_t>)
+    return -cast<i32>(zidl::errc::bad_message_length);
+
+  if (header.magic != zidl::zidl_header_t::signature)
+    return -cast<i32>(zidl::errc::bad_header_signature);
+
+  return header.ordinal;
+}
+
+pub fn send<zidl_message_t>(i32 fd, var && ...args) -> result
+{
+  var bytes = std::vector<u8, N:512>::with_uninitialised_size(zidl_message_t::max_message_size);
+  var handles = std::vector<i32, N:64>::with_uninitialised_size(64);
+
+  var msg = zidl_message_t(&&args...);
+  var encode = zidl::encode(&mut bytes, &mut handles, msg);
+
+  if (encode.error)
+    return encode.error;
+
+  var request = os::cmsg();
+  request.bytes = bytes.data;
+  request.nbytes = encode.bytes_actual;
+  request.fds = handles.data;
+  request.nfds = encode.handles_actual;
+
+  if (var result = os::channel_write(&mut thread_ring, fd, 0, &request); result < 0)
+    return zidl::errc::channel_operation_failed;
+
+  return 0;
+}
+
+pub fn call<zidl_request_t, zidl_response_t, Callback>(i32 fd, var && ...args, Callback &&callback) -> result
+{
+  var bytes = std::vector<u8, N:512>::with_uninitialised_size(std::max(zidl_request_t::max_message_size, zidl_response_t::max_message_size));
+  var handles = std::vector<i32, N:64>::with_uninitialised_size(64);
+
+  var msg = zidl_request_t(&&args...);
+  var encode = zidl::encode(&mut bytes, &mut handles, msg);
+
+  if (encode.error)
+    return encode.error;
+
+  var request = os::cmsg();
+  request.bytes = bytes.data;
+  request.nbytes = encode.bytes_actual;
+  request.fds = handles.data;
+  request.nfds = encode.handles_actual;
+
+  var response = os::msg();
+  response.bytes = bytes.data;
+  response.nbytes = bytes.len;
+  response.fds = handles.data;
+  response.nfds = handles.len;
+
+  var inbytes = 0;
+  var infds = 0;
+
+  if (var result = os::channel_call(&mut thread_ring, fd, &request, &response, &inbytes, &infds); result <= 0)
+  {
+    if (result == 0)
+      return zidl::errc::channel_closed;
+
+    return zidl::errc::channel_operation_failed;
+  }
+
+  switch (zidl::ordinal(bytes.data, inbytes))
+  {
+    case zidl_response_t::ordinal:
+
+      var recv = null<zidl_response_t mut *>();
+      var decode = zidl::decode(&mut bytes[0 .. inbytes], &mut handles[0 .. infds], &mut recv);
+
+      if (decode.error)
+        goto else;
+
+      callback(&move (*recv)...);
+
+      zidl_response_t::~this(&mut *recv);
+
+    else:
+
+      for(var i = 0; i < infds; ++i)
+        os::close(&mut thread_ring, handles[i]);
+
+      return zidl::errc::bad_dispatch;
+  }
+
+  return 0;
+}
+
+pub struct completer
+{
+  i32 fd;
+  i32 txid;
+  std::mutable_span<u8> bytes;
+  std::mutable_span<i32> handles;
+
+  result status;
+
+  pub fn reply<zidl_message_t>(this mut &, var && ...args) -> result
+  {
+    var msg = zidl_message_t(&&args...);
+    var encode = zidl::encode(&mut this.bytes, &mut this.handles, msg);
+
+    if (encode.error)
+      return (this.status = result(encode.error));
+
+    var response = os::cmsg();
+    response.bytes = this.bytes.data;
+    response.nbytes = encode.bytes_actual;
+    response.fds = this.handles.data;
+    response.nfds = encode.handles_actual;
+
+    if (var result = os::channel_write(&mut thread_ring, this.fd, this.txid, &response); result < 0)
+      return (this.status = result(zidl::errc::channel_operation_failed));
+
+    return 0;
+  }
+
+  pub fn raise(this mut &, zidl::errc error) -> void
+  {
+    this.status = result(error);
+  }
+
+  completer(i32 fd, i32 txid, Span<u8> mut &bytes, Span<i32> mut &handles)
+    : fd(fd),
+      txid(txid),
+      bytes(bytes.data, bytes.len),
+      handles(handles.data, handles.len)
+  {
+  }
+
+  ~completer() = default;
+}
+
+pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
+{
+  var bytes = std::vector<u8, N:512>::with_uninitialised_size(std::max(zidl_protocol_t::max_request_size, zidl_protocol_t::max_response_size));
+  var handles = std::vector<i32, N:64>::with_uninitialised_size(64);
+
+  var request = os::msg();
+  request.bytes = bytes.data;
+  request.nbytes = bytes.len;
+  request.fds = handles.data;
+  request.nfds = handles.len;
+
+  var response = os::cmsg();
+  response.bytes = bytes.data;
+  response.fds = handles.data;
+
+  var txid = 0;
+  var inbytes = 0;
+  var infds = 0;
+
+  if (var result = os::channel_read(&mut thread_ring, fd, &txid, &request, &inbytes, &infds); result <= 0)
+  {
+    if (result == 0)
+      return zidl::errc::channel_closed;
+
+    return zidl::errc::channel_operation_failed;
+  }
+
+  var completer = completer(fd, txid, &mut bytes, &mut handles);
+
+  switch (zidl::ordinal(bytes.data, inbytes))
+  {
+    #{
+      #for(const decl : std::meta::fields_of($zidl_protocol_t::dispatch_t))
+      {
+        if (std::meta::name_of(decl) == "kind")
+          continue;
+
+        var msgtype = std::meta::remove_reference($zidl_protocol_t::dispatch_t::#decl);
+
+        -> {
+          case $(msgtype)::ordinal:
+
+            var recv = null<$(msgtype) mut *>();
+            var decode = zidl::decode(&mut bytes[0 ..  inbytes], &mut handles[0 .. infds], &mut recv);
+
+            if (decode.error)
+              goto else;
+
+            callback(&mut zidl_protocol_t::dispatch_t::$(decl)(&*recv), &mut completer);
+
+            $(msgtype)::~this(&mut *recv);
+        }
+      }
+    }
+
+    else:
+
+      for(var i = 0; i < infds; ++i)
+        os::close(&mut thread_ring, handles[i]);
+
+      return zidl::errc::bad_dispatch;
+  }
+
+  return completer.status;
+}

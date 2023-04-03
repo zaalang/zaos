@@ -56,17 +56,12 @@ fn kernel_main(void*) -> void
   video::initialise();
   console::initialise();
 
-  bootstrap_file_system();
+  bootstrap_filesystem();
 
-  var init = create_process(process::current, "coco");
-  process_push_cmdline(init, [ std::string_view("/zaos/srv/coco") ]);
-  init.new_fd(1, vfs::file_descriptor::create(vfs::lookup(vfs::root, "/dev/console")));
-  init.new_fd(4, vfs::file_descriptor::create(vfs::root));
-  process_push_ioring(init, 256);
-  process_start(init, thread::priority::normal);
+  launch_init();
 }
 
-fn bootstrap_file_system() -> void
+fn bootstrap_filesystem() -> void
 {
   import ext2fs;
 
@@ -102,4 +97,20 @@ fn bootstrap_file_system() -> void
 
   vfs::mkdir(vfs::root, "zaos", 0, 0, 0o755);
   vfs::mount(vfs::lookup(vfs::root, "zaos"), ext2fs::create(ctx));
+}
+
+fn launch_init() -> void
+{
+  var srv = sys::cmdline("init", default: "/zaos/srv/coco");
+
+  var init = create_process(process::current, vfs::basename(srv));
+
+  process_push_cmdline(init, [ srv ]);
+
+  init.new_fd(1, vfs::file_descriptor::create(vfs::lookup(vfs::root, "/dev/console")));
+  init.new_fd(4, vfs::file_descriptor::create(vfs::root));
+
+  process_push_ioring(init, 256);
+
+  process_start(init, thread::priority::normal);
 }

@@ -1,0 +1,25 @@
+//
+// event
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import event : create_event, setup_event;
+import process as _ : process;
+import result as _ : result;
+
+enum flags
+{
+}
+
+pub fn sys_event_create(process mut *process, ioring_ctx mut &ctx, u64 value, u64 maxvalue, u64 flags) -> result
+{
+  var event = create_event(process::current);
+
+  if (var result = setup_event(event, value, maxvalue); !result)
+    return cast(result);
+
+  return process::current.new_fd(vfs::file_descriptor::create(event));
+}

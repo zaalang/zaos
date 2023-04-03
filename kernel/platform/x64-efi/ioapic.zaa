@@ -17,6 +17,13 @@ struct interrupt_controller
 
   u64[4] allocated;
 
+  fn instance() -> interrupt_controller mut &
+  {
+    static instance = #interrupt_controller();
+
+    return &instance;
+  }
+
   interrupt_controller() = default;
   interrupt_controller(#interrupt_controller&) = default;
   ~interrupt_controller() = default;
@@ -24,9 +31,7 @@ struct interrupt_controller
 
 fn ic() -> interrupt_controller mut &
 {
-  static instance = #interrupt_controller();
-
-  return &instance;
+  return &interrupt_controller::instance;
 }
 
 fn ioapic_read(uintptr base, u32 register) -> u32
@@ -64,7 +69,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
 
   disable_legacy_pic();
 
-  ic.ioapic = cast<uintptr>(bootinfo.ioapic_base);
+  ic.ioapic = cast<uintptr>(bootinfo.ioapic_address);
   ic.interrupt_base = bootinfo.ioapic_interrupt_base;
   ic.interrupt_count = (ioapic_read(ic.ioapic, 0x1) >> 16) & 0xff + 1;
 

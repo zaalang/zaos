@@ -22,6 +22,14 @@ pub struct Rc<T> : pub T mut *
       this.ref();
   }
 
+  pub fn adopt(T mut *inner) -> Rc
+  {
+    var rc = Rc();
+    rc.super = inner;
+
+    return rc;
+  }
+
   pub fn =(Rc mut &lhs, Rc &&rhs) -> Rc mut &
   {
     if (lhs.super != rhs.super)

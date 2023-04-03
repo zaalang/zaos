@@ -1,0 +1,256 @@
+//
+// channel
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import io;
+import vfs;
+import channel : create_channel;
+import process as _ : process;
+import result as _ : result;
+
+enum flags
+{
+}
+
+struct msg
+{
+  virtaddr bytes;
+  usize nbytes;
+  virtaddr fds;
+  usize nfds;
+
+  msg() = default;
+  msg(msg&) = default;
+  ~msg() = default;
+}
+
+pub fn sys_channel_create(process mut *process, ioring_ctx mut &ctx, virtaddr fdsbuf, u64 flags) -> result
+{
+  var channel = create_channel(process::current);
+
+  var fds = [0, 0];
+
+  fds[0] = process::current.new_fd(vfs::file_descriptor::create(channel.open_node0));
+  fds[1] = process::current.new_fd(vfs::file_descriptor::create(channel.open_node1));
+
+  if (var result = vm::write_process_memory(process, fdsbuf, fds.data, fds.len * sizeof<i32>); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn sys_channel_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr sidbuf, virtaddr outbuf, virtaddr outbytes, virtaddr outfds) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::channel)
+    return vfs::result::bad_descriptor;
+
+  var sid = i32();
+  var bytes = std::vector<u8>();
+  var fds = std::vector<vfs::fd>();
+
+  if (var result = channel::read(file.node, &mut sid, &mut bytes, &mut fds); !result)
+    return result;
+
+  var buffer = msg(void);
+
+  if (var result = vm::read_process_memory(process, outbuf, &buffer, sizeof<msg>); !result)
+    return result;
+
+  if (buffer.nbytes < bytes.len)
+    return vm::result::overflow;
+
+  if (var result = vm::write_process_memory(process, buffer.bytes, bytes.data, bytes.len); !result)
+    return result;
+
+  buffer.nbytes = bytes.len;
+
+  if (buffer.nfds < fds.len)
+    return vm::result::overflow;
+
+  var fdvec = std::vector<i32>::with_size(fds.len);
+
+  for(var i = 0; i < fdvec.len; ++i)
+  {
+    fdvec[i] = process.new_fd(fds[i]);
+  }
+
+  if (var result = vm::write_process_memory(process, buffer.fds, fdvec.data, fdvec.len * sizeof<i32>); !result)
+    return result;
+
+  buffer.nfds = fdvec.len;
+
+  if (var result = vm::write_process_memory(process, sidbuf, &sid, sizeof(sid)); !result)
+    return result;
+
+  if (var result = vm::write_process_memory(process, outbytes, &buffer.nbytes, sizeof(buffer.nbytes)); !result)
+    return result;
+
+  if (var result = vm::write_process_memory(process, outfds, &buffer.nfds, sizeof(buffer.nfds)); !result)
+    return result;
+
+  if (bytes.len == 0)
+    return cast(0);
+
+  return cast(1);
+}
+
+pub fn sys_channel_write(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 sid, virtaddr msgbuf) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::channel)
+    return vfs::result::bad_descriptor;
+
+  var msg = msg(void);
+
+  if (var result = vm::read_process_memory(process, msgbuf, &msg, sizeof<msg>); !result)
+    return result;
+
+  if (msg.nbytes > 65_536)
+    return invalid_argument;
+
+  if (msg.nfds > 64)
+    return invalid_argument;
+
+  var bytes = std::vector<u8>::with_uninitialised_size(msg.nbytes);
+
+  if (var result = vm::read_process_memory(process, msg.bytes, bytes.data, bytes.len); !result)
+    return result;
+
+  var fdvec = std::vector<i32>::with_size(msg.nfds);
+
+  if (var result = vm::read_process_memory(process, msg.fds, fdvec.data, fdvec.len * sizeof<i32>); !result)
+    return result;
+
+  var fds = std::vector<vfs::fd>::with_size(fdvec.len);
+
+  for(var i = 0; i < fds.len; ++i)
+  {
+    fds[i] = process.fd(fdvec[i]);
+
+    if (!fds[i])
+      return vfs::result::bad_descriptor;
+  }
+
+  if (var result = channel::write(file.node, sid, &move bytes, &move fds); !result)
+    return result;
+
+  return cast(1);
+}
+
+pub fn sys_channel_call(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr msgbuf, virtaddr outbuf, virtaddr outbytes, virtaddr outfds) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::channel)
+    return vfs::result::bad_descriptor;
+
+  if (ctx.state[0] == 0)
+  {
+    var msg = msg(void);
+
+    if (var result = vm::read_process_memory(process, msgbuf, &msg, sizeof<msg>); !result)
+      return result;
+
+    if (msg.nbytes > 65_536)
+      return invalid_argument;
+
+    if (msg.nfds > 64)
+      return invalid_argument;
+
+    var bytes = std::vector<u8>::with_uninitialised_size(msg.nbytes);
+
+    if (var result = vm::read_process_memory(process, msg.bytes, bytes.data, bytes.len); !result)
+      return result;
+
+    var fdvec = std::vector<i32>::with_size(msg.nfds);
+
+    if (var result = vm::read_process_memory(process, msg.fds, fdvec.data, fdvec.len * sizeof<i32>); !result)
+      return result;
+
+    var fds = std::vector<vfs::fd>::with_size(fdvec.len);
+
+    for(var i = 0; i < fds.len; ++i)
+    {
+      fds[i] = process.fd(fdvec[i]);
+
+      if (!fds[i])
+        return vfs::result::bad_descriptor;
+    }
+
+    var sid = channel::begin_transaction(file.node, &move bytes, &move fds);
+
+    if (!sid)
+      return sid;
+
+    ctx.state[0] = cast(sid);
+  }
+
+  var bytes = std::vector<u8>();
+  var fds = std::vector<vfs::fd>();
+
+  var response = channel::query_transaction(file.node, cast<i32>(ctx.state[0]), &mut bytes, &mut fds);
+
+  if (!response.ready)
+  {
+    ctx.blockers.push_back(response);
+
+    return ioring::result::should_block;
+  }
+
+  if (!response)
+    return response.result;
+
+  var buffer = msg(void);
+
+  if (var result = vm::read_process_memory(process, outbuf, &buffer, sizeof<msg>); !result)
+    return result;
+
+  if (buffer.nbytes < bytes.len)
+    return vm::result::overflow;
+
+  if (var result = vm::write_process_memory(process, buffer.bytes, bytes.data, bytes.len); !result)
+    return result;
+
+  buffer.nbytes = bytes.len;
+
+  if (buffer.nfds < fds.len)
+    return vm::result::overflow;
+
+  var fdvec = std::vector<i32>::with_size(fds.len);
+
+  for(var i = 0; i < fdvec.len; ++i)
+  {
+    fdvec[i] = process.new_fd(fds[i]);
+  }
+
+  if (var result = vm::write_process_memory(process, buffer.fds, fdvec.data, fdvec.len * sizeof<i32>); !result)
+    return result;
+
+  buffer.nfds = fdvec.len;
+
+  if (var result = vm::write_process_memory(process, outbytes, &buffer.nbytes, sizeof(buffer.nbytes)); !result)
+    return result;
+
+  if (var result = vm::write_process_memory(process, outfds, &buffer.nfds, sizeof(buffer.nfds)); !result)
+    return result;
+
+  if (bytes.len == 0)
+    return cast(0);
+
+  return cast(1);
+}

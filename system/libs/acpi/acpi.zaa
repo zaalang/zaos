@@ -56,8 +56,8 @@ pub enum madt_type
   io_sapic = 6,
   local_sapic = 7,
   platform_interrupt_source = 8,
-  processor_local_x2_apic_nmi = 9,
-  local_x2_apic_nmi = 0xa,
+  local_x2apic = 9,
+  local_x2apic_nmi = 10,
 }
 
 #[packed]
@@ -82,17 +82,115 @@ pub struct io_apic
 {
   pub u8 type;
   pub u8 length;
-  pub u8 io_apic_id;
-  pub u8 reserved;
-  pub u32 io_apic_address;
+  pub u8 apic_id;
+  pub u8[1] reserved;
+  pub u32 apic_address;
   pub u32 interrupt_base;
+}
+
+#[packed]
+pub struct interrupt_source_override
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 bus;
+  pub u8 source;
+  pub u32 interrupt;
+  pub u16 flags;
+}
+
+#[packed]
+pub struct nmi_source
+{
+  pub u8 type;
+  pub u8 length;
+  pub u16 flags;
+  pub u32 interrupt;
+}
+
+#[packed]
+pub struct local_apic_nmi
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 processor_id;
+  pub u16 flags;
+  pub u8 local_interrupt;
+}
+
+#[packed]
+pub struct local_apic_address_override
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8[2] reserved;
+  pub u64 apic_address;
+}
+
+#[packed]
+pub struct io_sapic
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 apic_id;
+  pub u8[1] reserved;
+  pub u32 interrupt_base;
+  pub u64 sapic_address;
+}
+
+#[packed]
+pub struct local_sapic
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8 processor_id;
+  pub u8 sapic_id;
+  pub u8 sapic_eid;
+  pub u8[3] reserved;
+  pub u32 flags;
+}
+
+#[packed]
+pub struct platform_interrupt_source
+{
+  pub u8 type;
+  pub u8 length;
+  pub u16 flags;
+  pub u8 interrupt_type;
+  pub u8 processor_id;
+  pub u8 processor_eid;
+  pub u8 sapic_vector;
+  pub u32 interrupt;
+  pub u32 interrupt_flags;
+}
+
+#[packed]
+pub struct local_x2apic
+{
+  pub u8 type;
+  pub u8 length;
+  pub u8[2] reserved;
+  pub u32 apic_id;
+  pub u32 flags;
+  pub u32 uid;
+}
+
+#[packed]
+pub struct local_x2apic_nmi
+{
+  pub u8 type;
+  pub u8 length;
+  pub u16 flags;
+  pub u32 processor_uid;
+  pub u8 local_interrupt;
+  pub u8[3] reserved;
 }
 
 #[packed]
 pub struct mcfg
 {
   pub descriptor_header header;
-  pub u64 reserved;
+  pub u8[8] reserved;
 }
 
 #[packed]
@@ -102,7 +200,7 @@ pub struct mcfg_entry
   pub u16 seg_group;
   pub u8 bus_start;
   pub u8 bus_end;
-  pub u32 reserved;
+  pub u8[4] reserved;
 }
 
 pub enum acpi_result

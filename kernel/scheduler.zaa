@@ -75,6 +75,7 @@ pub struct run_queue
 
     var prev = null<thread mut *>;
     var insertpos = &this.waiting_head(priority);
+
     while (*insertpos && insertpos.wait_timeout < timeout)
     {
       prev = *insertpos;
@@ -224,7 +225,7 @@ extern fn thread_main(thread mut *thread) -> void
 
   thread.entry(thread.parameter);
 
-  thread::exit(0);
+  thread::exit(-32);
 }
 
 extern fn timer_deadline() -> void
@@ -307,7 +308,11 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
     std::assert(rsp > cast<uintptr>(current_thread) && rsp <= cast<uintptr>(current_thread) + sizeof<thread>);
 
     if (next_thread.process != current_thread.process)
+    {
+      next_thread.process.pagetable.ref();
+      current_thread.process.pagetable.unref();
       next_thread.process.pagetable.activate();
+    }
 
     cpu::switch_current_thread(next_thread);
     platform::task_switch(&mut current_thread.task, next_thread.task);
@@ -485,7 +490,7 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
   }
 }
 
-pub fn bury(thread mut *undertaker, thread mut * mut &graveyard)
+pub fn bury(thread mut *undertaker, thread mut * mut &graveyard) -> void
 {
   var mut &runqueue = cpu::runqueue;
   var current_thread = cpu::current_thread;
@@ -522,6 +527,9 @@ pub fn start() -> void
 
   while (!idle_thread.process)
     idle_thread.process = std::atomic_load(&colonel);
+
+  idle_thread.process.pagetable.ref();
+  idle_thread.process.pagetable.activate();
 
   runqueue.lock.lock();
 

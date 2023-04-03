@@ -1,0 +1,23 @@
+//
+// abz
+//
+
+import std.stdio;
+import std.env;
+import chrono;
+import os.zaos.fcntl;
+import os.zaos.mman;
+import os.zaos.sched;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn main() -> int
+{
+  std::print("bar");
+  std::print(std::env::args);
+  std::print(std::env::vars);
+
+  std::print("bar done");
+
+  return 9;
+}

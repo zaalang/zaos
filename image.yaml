@@ -55,11 +55,20 @@ image:
         - md:
             dest: /srv
         - cp:
-            src: build/system/servers/systemd/systemd
-            dest: /srv/systemd
+            src: build/system/servers/system/system
+            dest: /srv/system
+        - cp:
+            src: build/system/servers/session/session
+            dest: /srv/session
+        - cp:
+            src: build/system/servers/winton/winton
+            dest: /srv/winton
         - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco
+        - cp:
+            src: build/system/apps/bar/bar
+            dest: /root/bar
         - cp:
             src: build/system/apps/baz/baz
             dest: /root/baz

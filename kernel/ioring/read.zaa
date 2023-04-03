@@ -90,9 +90,11 @@ pub fn sys_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buff
     case vfs::node::type::directory:
       return node.directory_operations.readdir(node, &mut file.readcursor, iovec, 0, length);
 
-    case vfs::node::type::pipe:
+    case vfs::node::type::event:
+    case vfs::node::type::buffer:
+    case vfs::node::type::channel:
     case vfs::node::type::device:
-      return node.pipe_operations.read(node, iovec, 0, length);
+      return node.stream_operations.read(node, iovec, 0, length);
 
     else:
       return vfs::result::bad_descriptor;

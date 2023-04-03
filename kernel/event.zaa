@@ -1,0 +1,136 @@
+//
+// event
+//
+
+import std.stdio;
+import vm : virtaddr;
+import io;
+import vfs;
+import cpu;
+import mutex as _ : mutex;
+import process as _ : process;
+import support.rc : Rc;
+
+pub struct event : pub vfs::node
+{
+  std::spin_lock lock;
+
+  u64 value;
+  u64 maxvalue;
+  io::response readable;
+  io::response writeable;
+
+  fn create() -> event mut *
+  {
+    return std::allocator::new<event>();
+  }
+
+  pub event() = default;
+  pub ~event() = default;
+}
+
+pub fn create_event(process mut *process) -> vfs::node_ptr
+{
+  var event = event::create();
+
+  return vfs::node::new(event, vfs::node::type::event, &vfs::node_stream_operations());
+}
+
+pub fn setup_event(vfs::node_ptr &event, u64 value, u64 maxvalue) -> vfs::result
+{
+  var mut &this = cast<event mut &>(*event);
+
+  this.value = value;
+  this.maxvalue = maxvalue;
+
+  if (value == 0)
+    io::initiate(&mut this.readable.cb, 1);
+
+  if (value == maxvalue)
+    io::initiate(&mut this.writeable.cb, 1);
+
+  return ok;
+}
+
+pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+{
+  return ok;
+}
+
+pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  return ok;
+}
+
+pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+{
+  var mut &this = cast<event mut &>(*node);
+
+  readable = this.readable.cb;
+  writeable = this.writeable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<event mut &>(*node);
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  if (this.value == 0)
+    return would_block;
+
+  if (var result = vm::memcpy(buffer, offset, &this.value, 8); !result)
+    return cast(result);
+
+  this.value -= 1;
+
+  if (this.value == 0)
+    io::initiate(&mut this.readable.cb, 1);
+
+  if (this.value == this.maxvalue)
+    io::complete(&mut this.writeable.cb, 0);
+
+  return cast(8);
+}
+
+pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<event mut &>(*node);
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+
+  var addend = 0;
+
+  if (var result = vm::memcpy(&addend, buffer, offset, 8); !result)
+    return cast(result);
+
+  if (addend > this.maxvalue)
+    return invalid_argument;
+
+  if (this.value > this.maxvalue - addend)
+    return would_block;
+
+  this.value += addend;
+
+  if (this.value == addend)
+    io::complete(&mut this.readable.cb, 0);
+
+  if (this.value == this.maxvalue)
+    io::initiate(&mut this.writeable.cb, 1);
+
+  return cast(8);
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var event = cast<event mut *>(node);
+
+  std::allocator::delete(event);
+}

@@ -1,0 +1,33 @@
+//
+// buffer
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import buffer : create_buffer, setup_buffer;
+import process as _ : process;
+import result as _ : result;
+
+enum flags
+{
+}
+
+pub fn sys_buffer_create(process mut *process, ioring_ctx mut &ctx, virtaddr fdsbuf, usize size, u64 flags) -> result
+{
+  var buffer = create_buffer(process::current);
+
+  if (var result = setup_buffer(&mut buffer, size); !result)
+    return cast(result);
+
+  var fds = [0, 0];
+
+  fds[0] = process::current.new_fd(vfs::file_descriptor::create(buffer.open_read_node));
+  fds[1] = process::current.new_fd(vfs::file_descriptor::create(buffer.open_write_node));
+
+  if (var result = vm::write_process_memory(process, fdsbuf, fds.data, fds.len * sizeof<i32>); !result)
+    return result;
+
+  return ok;
+}

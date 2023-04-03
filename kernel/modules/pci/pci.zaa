@@ -92,6 +92,13 @@ struct pci_manager
 {
   std::vector<device> devices;
 
+  fn instance()
+  {
+    static instance = #pci_manager();
+
+    return &instance;
+  }
+
   pci_manager() = default;
   pci_manager(#pci_manager&) = default;
   ~pci_manager() = default;
@@ -99,9 +106,7 @@ struct pci_manager
 
 fn pci()
 {
-  static instance = #pci_manager();
-
-  return &instance;
+  return &pci_manager::instance;
 }
 
 pub fn devices() -> std::span<device>

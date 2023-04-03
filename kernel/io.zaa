@@ -8,7 +8,7 @@ import sys;
 import cpu;
 import platform;
 import scheduler;
-import ioring : ioring_epoll;
+import ioring : ioring_pollset;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import slab : slab_allocator;
@@ -43,6 +43,13 @@ struct interrupt_manager
 
   vector[256] vectors;
 
+  fn instance()
+  {
+    static instance = #interrupt_manager();
+
+    return &instance;
+  }
+
   interrupt_manager() = default;
   interrupt_manager(#interrupt_manager&) = default;
   ~interrupt_manager() = default;
@@ -50,9 +57,7 @@ struct interrupt_manager
 
 fn intman()
 {
-  static instance = #interrupt_manager();
-
-  return &instance;
+  return &interrupt_manager::instance;
 }
 
 pub fn allocate_vectors(usize count) -> (u8, u8)
@@ -131,7 +136,7 @@ pub struct iocb
 
   std::spin_lock lock;
   wait_queue waiters;
-  std::vector<ioring_epoll mut *> pollsets;
+  std::vector<ioring_pollset mut *> pollsets;
 
   u8[0] reserved;
 
@@ -204,7 +209,7 @@ pub struct response
   }
 
   pub response(var result = i32(0))
-    : cb(Rc<iocb>(iocb::create()))
+    : cb(iocb::create())
   {
     (*cb).result = cast(result);
     (*cb).outstanding = 0;
@@ -235,18 +240,41 @@ pub fn wait_until(response mut &rq, u64 timeout) -> bool
   return (*rq.cb).waiters.wait_until((*rq.cb).lock, timeout);
 }
 
-pub fn add_notify(Rc<iocb> mut &cb, ioring_epoll mut *pollset) -> void
+pub fn add_notify(Rc<iocb> mut &cb, ioring_pollset mut *pollset) -> void
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+  for(;;)
+  {
+    var tmp = std::vector<ioring_pollset mut *>::with_size((*cb).pollsets.len + 1);
 
-  (*cb).pollsets.push_back(pollset);
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+
+      if (tmp.len != (*cb).pollsets.len + 1)
+        continue;
+
+      std::memcpy(tmp.data, (*cb).pollsets.data, (*cb).pollsets.len * sizeof<ioring_pollset mut *>);
+
+      std::swap(&mut (*cb).pollsets, &mut tmp);
+
+      (*cb).pollsets.back = pollset;
+
+      break;
+    }
+  }
 }
 
-pub fn remove_notify(Rc<iocb> mut &cb, ioring_epoll *pollset) -> void
+pub fn remove_notify(Rc<iocb> mut &cb, ioring_pollset *pollset) -> void
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+  var tmp = std::vector<ioring_pollset mut *>();
 
-  (*cb).pollsets.erase(pollset);
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+
+    (*cb).pollsets.erase(pollset);
+
+    if ((*cb).pollsets.empty)
+      std::swap(&mut (*cb).pollsets, &mut tmp);
+  }
 }
 
 pub fn initiate(Rc<iocb> mut &cb, usize count) -> void

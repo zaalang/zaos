@@ -120,6 +120,9 @@ pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protectio
   if (var result = vm::create_physical_region(range, framebuffer, prot, vm::usage::shared | vm::usage::foreign); !result)
     return cast(result);
 
+  if (var result = vm::set_memory_type(range, vm::mtype::write_combine); !result)
+    return cast(result);
+
   return ok;
 }
 

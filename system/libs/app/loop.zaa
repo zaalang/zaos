@@ -1,0 +1,291 @@
+//
+// app.loop
+//
+
+import std.stdio;
+import std.string : String;
+import std.flat_hash_map;
+import os.zaos.fcntl;
+import os.zaos.sched;
+import os.zaos.time;
+import zidl.zaos_sys;
+
+pub const STDSYS_FILENO = 7;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub enum options
+{
+  make_default = 0x1,               // set as thread default loop
+  manage_system_service = 0x2,      // manage the app system service connection
+
+  pub const fn bool(options lhs) -> bool { return cast<isize>(lhs) != 0; }
+
+  pub const fn ~(options lhs) -> options { return cast<options>(~cast<isize>(lhs)); }
+  pub const fn |(options lhs, options rhs) -> options { return cast<options>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  pub const fn &(options lhs, options rhs) -> options { return cast<options>(cast<isize>(lhs) & cast<isize>(rhs)); }
+}
+
+struct pollset
+{
+  i32 fd;
+  usize head;
+  usize count;
+  os::pollevt[32] events;
+
+  fn create(this mut &pollset) -> i32
+  {
+    pollset.fd = os::epoll_create(&mut thread_ring, 0);
+
+    if (pollset.fd < 0)
+      return pollset.fd;
+
+    return 0;
+  }
+
+  fn add(this mut &pollset, os::pollevt &evt) -> i32
+  {
+    if (var result = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_ADD, &evt, 0); result < 0)
+      return result;
+
+    return 0;
+  }
+
+  fn remove(this mut &pollset, os::pollevt &evt) -> i32
+  {
+    if (var result = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_DEL, &evt, 0); result < 0)
+      return result;
+
+    for(var i = pollset.head; i < pollset.head + pollset.count; ++i)
+    {
+      if (pollset.events[i].id == evt.id)
+        pollset.events[i].user_data = 0;
+    }
+
+    return 0;
+  }
+
+  fn wait(this mut &pollset, u64 timeout) -> i32
+  {
+    var result = os::epoll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
+
+    if (result < 0)
+      return result;
+
+    pollset.count += cast(result);
+
+    return result;
+  }
+
+  fn pop(this mut &pollset, os::pollevt mut &evt) -> bool
+  {
+    if (pollset.count == 0)
+      return false;
+
+    evt = pollset.events[pollset.head];
+
+    pollset.head += 1;
+    pollset.count -= 1;
+
+    if (pollset.count == 0)
+      pollset.head = 0;
+
+    return true;
+  }
+
+  fn destroy(this mut &pollset) -> i32
+  {
+    if (pollset.fd != 0)
+    {
+      os::close(&mut thread_ring, pollset.fd);
+    }
+
+    return 0;
+  }
+
+  pollset() = default;
+  ~pollset() = default;
+}
+
+fn thread_default_loop() -> loop mut * mut &
+{
+  static thread_local default_loop = null<loop mut *>();
+
+  return &default_loop;
+}
+
+pub struct loop
+{
+  pub enum state
+  {
+    invalid,
+    runnable,
+    quitting,
+    shutdown,
+  }
+
+  pub struct wait_t
+  {
+    i32 id;
+
+    pub void fn(loop mut &, wait_t mut *) *callback;
+
+    pub wait_t() = default;
+    pub ~wait_t() = default;
+  }
+
+  pub fn current() -> loop mut *
+  {
+    return thread_default_loop;
+  }
+
+  pub fn begin_wait(this mut &loop, os::pollevt evt, wait_t mut *handler) -> i32
+  {
+    handler.id = evt.id;
+    evt.user_data = cast(handler);
+
+    loop.pollset.add(evt);
+
+    return 0;
+  }
+
+  pub fn begin_wait(this mut &loop, zidl::channel &channel, wait_t mut *handler) -> i32
+  {
+    var evt = os::pollevt();
+    evt.id = channel.fd;
+    evt.type = os::POLLFD;
+    evt.mask = os::POLLIN;
+
+    return begin_wait(&mut loop, evt, handler);
+  }
+
+  pub fn cancel_wait(this mut &loop, wait_t mut *handler) -> i32
+  {
+    var evt = os::pollevt();
+    evt.id = handler.id;
+
+    loop.pollset.remove(evt);
+
+    return 0;
+  }
+
+  pub fn quit(this mut &loop) -> void
+  {
+    if (loop.state == loop::state::runnable)
+      loop.state = loop::state::quitting;
+  }
+
+  pub loop()
+  {
+  }
+
+  pub ~loop()
+  {
+    pollset.destroy();
+
+    if (thread_default_loop == &this)
+      thread_default_loop = null;
+
+    state = loop::state::shutdown;
+  }
+
+  pub void fn(loop mut &, zidl::string_view, zidl::channel) *connect_handler;
+
+  state state;
+  pollset pollset;
+  wait_t system_service_handler;
+}
+
+pub fn initialise(loop mut &loop, options flags = options::make_default | options::manage_system_service) -> i32
+{
+  if (var result = pollset::create(&mut loop.pollset); result < 0)
+    return result;
+
+  if (flags & options::make_default)
+    thread_default_loop = &loop;
+
+  if (flags & options::manage_system_service)
+  {
+    var evt = os::pollevt();
+    evt.id = STDSYS_FILENO;
+    evt.type = os::POLLFD;
+    evt.mask = os::POLLIN;
+
+    loop.system_service_handler.callback = &cast<void fn(loop mut &, loop::wait_t mut *)>(system_service_handler);
+
+    loop.begin_wait(evt, &loop.system_service_handler);
+  }
+
+  loop.state = loop::state::runnable;
+
+  return 0;
+}
+
+pub fn run(loop mut &loop) -> i32
+{
+  while (loop.state == loop::state::runnable)
+  {
+    if (var result = loop.pollset.wait(0); result < 0)
+      std::panic("pollset wait - ", cast<std::errc>(-result));
+
+    var evt = os::pollevt();
+
+    while (loop.pollset.pop(&mut evt))
+    {
+      if (var waiter = cast<loop::wait_t mut *>(evt.user_data))
+        waiter.callback(&mut loop, waiter);
+    }
+  }
+
+  return 0;
+}
+
+pub fn system_service_handler(loop mut &loop, loop::wait_t mut *wait) -> void
+{
+  var result = zidl::recv<zidl::zaos_sys::service>(STDSYS_FILENO, |msg, completer| {
+    switch (msg)
+    {
+      case terminate:
+        loop.quit();
+
+      case detach:
+        loop.cancel_wait(wait);
+
+      case connect_to_service[msg]:
+        if (loop.connect_handler)
+          loop.connect_handler(&mut loop, msg.uri, &move msg.endpoint);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+  });
+
+  if (!result)
+  {
+    loop.quit();
+  }
+}
+
+pub fn connect_to_service(String &uri) throws -> zidl::channel
+{
+  var (server_end, client_end) = zidl::channel::create();
+
+  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(uri), &move server_end); !result)
+    throw std::system_error(std::errc::broken_pipe);
+
+  return &move client_end;
+}
+
+pub fn connect_to_service(String &service, zidl::channel mut &client_end) -> i32
+{
+  var server_end = zidl::channel();
+
+  if (var result = zidl::channel::create(&mut server_end, &mut client_end); result < 0)
+    return result;
+
+  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(service), &move server_end); !result)
+    return -cast<i32>(std::errc::broken_pipe);
+
+  return 0;
+}
+

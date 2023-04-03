@@ -62,7 +62,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[40] reserved;
+  u8[32] reserved;
 
   pub fn current() -> process mut *
   {
@@ -98,7 +98,20 @@ pub struct process
     if (j == procman.processes.end)
       return null;
 
-    return procman.processes[j].value;
+    var process = procman.processes[j].value;
+
+    while (true)
+    {
+      var refcnt = std::volatile_load(&process.refcnt);
+
+      if (refcnt == 0)
+        return null;
+
+      if (std::atomic_cmpxchg_weak(&process.refcnt, refcnt, refcnt + 1))
+        break;
+    }
+
+    return Rc::adopt(process);
   }
 
   pub fn enumerate(var &&callback) -> void
@@ -118,14 +131,9 @@ pub struct process
     return &allocator;
   }
 
-  fn create(String &&name) -> process mut *
+  fn create() -> process mut *
   {
-    var process = allocator.allocate();
-
-    process.name = &&name;
-    process.fds.resize(16);
-
-    return process;
+    return allocator.allocate();
   }
 
   pub fn add_thread(this mut &, thread mut *thread) -> void
@@ -203,6 +211,9 @@ pub struct process
   {
     var guard = std::lock_guard(&mut this.lock);
 
+    if (this.fds.len <= cast<usize>(fd))
+      this.fds.resize(cast<usize>(fd) + 1);
+
     this.fds[cast<usize>(fd)] = &move newfd;
 
     return fd;
@@ -222,6 +233,7 @@ pub struct process
     return base;
   }
 
+  #[noreturn]
   pub fn exit(i32 rval) -> void
   {
     var process = current();
@@ -270,6 +282,13 @@ struct process_manager
     procman.processes.erase(process.id);
   }
 
+  fn instance()
+  {
+    static instance = #process_manager();
+
+    return &instance;
+  }
+
   process_manager() = default;
   process_manager(#process_manager&) = default;
   ~process_manager() = default;
@@ -277,23 +296,22 @@ struct process_manager
 
 fn procman()
 {
-  static instance = #process_manager();
-
-  return &instance;
+  return &process_manager::instance;
 }
 
 pub fn colonel()
 {
-  return &procman.colonel;
+  return &process_manager::instance.colonel;
 }
 
 pub fn create_kernel_process(void fn(void mut *) *entry, void mut *parameter) -> process mut *
 {
   std::print("create kernel process");
 
-  var process = process::create("kernel");
+  var process = process::create();
   var kernelmain = create_zero_task(process, entry, parameter);
 
+  process.name = "kernel";
   process.threads = kernelmain;
   process.state = process::state::running;
   process.pagetable = platform::pagetable;
@@ -313,9 +331,10 @@ fn process_main(void *args) -> void
 
 pub fn create_process(process mut *parent, String &&name) -> process mut *
 {
-  var process = process::create(&&name);
+  var process = process::create();
   var mainthread = thread::create(process, &cast<void fn(void mut *)>(process_main), null);
 
+  process.name = &&name;
   process.id = mainthread.id;
 
   process.pagetable.new(fn() -> platform::physaddr_t {
@@ -331,6 +350,8 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
   process.sp = mainthread.userstack.addr + mainthread.userstack.size;
 
   process.heaptop = vm::virtaddr(0x100000);
+
+  process.fds.resize(16);
 
   {
     var guard = std::lock_guard(&mut parent.lock, &mut process.lock);
@@ -407,6 +428,8 @@ fn destroy(process mut *process) -> void
 {
   std::assert(!process.threads);
   std::assert(!process.children);
+
+  std::print("[process:", process.id, "] done");
 
   {
     var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
@@ -546,9 +569,20 @@ pub fn teardown(process mut *process) -> void
     vm::munmap(process, region.range);
   });
 
-  process.pagetable.dispose(fn(platform::physaddr_t phys) {
+  process.pagetable.dispose(null, fn(void mut *, platform::physaddr_t phys) {
     vm::release_physical_pages(vm::physrange(phys, PAGE_SIZE));
   });
 
-  process.state = process::state::dead;
+  {
+    var guard = std::lock_guard(&mut process.lock);
+
+    for(var child = process.children; child; child = child.sibling)
+    {
+      var guard = std::lock_guard(&mut child.lock);
+
+      for(var thread = child.threads; thread; thread = thread.sibling)
+        if (thread.id == child.id)
+          thread.detach();
+    }
+  }
 }

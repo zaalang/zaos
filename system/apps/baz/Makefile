@@ -7,6 +7,7 @@ TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
 
 SRCS=\
 baz.zaa\
+$(BUILDROOT)/system/generated/zidl/zaos_sys.zaa\
 
 default: $(BUILD)/baz
 

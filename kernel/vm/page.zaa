@@ -13,6 +13,7 @@ pub const PAGE_SHIFT = std::ctz(PAGE_SIZE);
 pub const PAGE_MASK = PAGE_SIZE - 1;
 
 pub using mflags = platform::mflags;
+pub using mtype = platform::mtype;
 pub using protection = platform::protection;
 pub using page_table = platform::page_table;
 
@@ -261,15 +262,22 @@ pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &rang
 pub struct page
 {
   pub u64 flags;
+  pub page mut *next;
   pub i32 refcnt;
   u8[28] reserved;
 
-  pub fn ref(this mut &) -> void { std::atomic_add(&this.refcnt, 1); }
-  pub fn unref(this mut &) -> i32 { return std::atomic_sub(&this.refcnt, 1); }
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> i32
+  {
+    return std::atomic_sub(&this.refcnt, 1);
+  }
 
   u8 order;
-  pub page mut *nextfree;
-  pub page mut * mut *prevfree;
+  page mut * mut *prevfree;
 
   page() = default;
   ~page() = default;
@@ -298,9 +306,9 @@ pub struct page_cache
     if (!page)
       return null;
 
-    this.head = page.nextfree;
+    this.head = page.next;
 
-    page.nextfree = null;
+    page.next = null;
 
     return page;
   }
@@ -309,7 +317,7 @@ pub struct page_cache
   {
     var guard = std::lock_guard(&mut cpu::irqlock);
 
-    page.nextfree = this.head;
+    page.next = this.head;
 
     this.head = page;
   }
@@ -354,12 +362,12 @@ fn take(page_allocator mut &this, usize order, page mut *page) -> page mut *
 {
   std::assert(order == cast(page.order));
 
-  *page.prevfree = page.nextfree;
+  *page.prevfree = page.next;
 
-  if (page.nextfree)
-    page.nextfree.prevfree = page.prevfree;
+  if (page.next)
+    page.next.prevfree = page.prevfree;
 
-  page.nextfree = null;
+  page.next = null;
   page.prevfree = null;
 
   return page;
@@ -375,11 +383,11 @@ fn release(page_allocator mut &this, usize order, page mut *page) -> page mut *
   std::assert(((page - this.pages.data) << PAGE_SHIFT) & ((PAGE_SIZE << order) - 1) == 0);
 
   page.order = cast(order);
-  page.nextfree = this.freelist[order];
+  page.next = this.freelist[order];
   page.prevfree = &this.freelist[order];
 
   if (this.freelist[order])
-    this.freelist[order].prevfree = &page.nextfree;
+    this.freelist[order].prevfree = &page.next;
 
   this.freelist[order] = page;
 
@@ -558,7 +566,7 @@ pub fn dump_free_pages(page_allocator &this)
     var count = 0;
     var capacity = 0;
 
-    for(var entry = this.freelist[i]; entry; entry = entry.nextfree)
+    for(var entry = this.freelist[i]; entry; entry = entry.next)
     {
       count += 1;
       capacity += PAGE_SIZE << i;

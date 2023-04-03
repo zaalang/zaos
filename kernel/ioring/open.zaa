@@ -1,5 +1,5 @@
 //
-// open/close
+// open
 //
 
 import std.stdlib;
@@ -111,16 +111,4 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr p
   }
 
   return process.new_fd(fd);
-}
-
-pub fn sys_close(process mut *process, ioring_ctx mut &ctx, i32 fd) -> result
-{
-  var file = process.fd(fd);
-
-  if (!file)
-    return vfs::result::bad_descriptor;
-
-  process.free_fd(fd);
-
-  return 0;
 }

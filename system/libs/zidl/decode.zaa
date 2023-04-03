@@ -1,0 +1,116 @@
+//
+// zidl.decode
+//
+
+import zidl;
+import std.span : Span;
+
+pub struct decoder
+{
+  u8 mut *bytes_head;
+  std::mutable_span<u8> bytes;
+
+  i32 mut *handles_head;
+  std::mutable_span<i32> handles;
+
+  decoder(Span<u8> mut &bytes, Span<i32> mut &handles)
+    : bytes(bytes.data, bytes.len),
+      handles(handles.data, handles.len)
+  {
+    bytes_head = bytes.data;
+    handles_head = handles.data;
+  }
+
+  pub fn consume(this mut &, usize size) -> u8 mut *
+  {
+    var data = this.bytes_head;
+
+    this.bytes_head += std::align_up(size, 8);
+
+    if (this.bytes.end < this.bytes_head)
+      return null;
+
+    return data;
+  }
+
+  pub fn claim(this mut &, i32 mut &fd) -> bool
+  {
+    var handle = this.handles_head;
+
+    this.handles_head += 1;
+
+    if (this.handles.end < this.handles_head)
+      return false;
+
+    fd = *handle;
+
+    return true;
+  }
+
+  pub ~decoder() = default;
+}
+
+pub fn decode(decoder mut &decoder, zidl::string_view mut &str) -> void
+{
+  if (var data = decoder.consume(str.len))
+  {
+    str.data = data;
+  }
+}
+
+pub fn decode(decoder mut &decoder, zidl::channel mut &channel) -> void
+{
+  var fd = ~0;
+  decoder.claim(&mut fd);
+
+  new<zidl::channel>(&channel)(fd);
+}
+
+pub fn decode<T>(decoder mut &decoder, T mut &object) -> void
+{
+  using T;
+
+  decode(&mut decoder, object);
+}
+
+pub struct decode_result
+{
+  pub zidl::errc error;
+
+  pub decode_result() = default;
+  pub decode_result(decode_result&) = default;
+  pub fn =(decode_result mut &, decode_result&) -> decode_result mut & = default;
+  pub ~decode_result() = default;
+}
+
+pub fn decode<zidl_message_t>(Span<u8> mut &bytes, Span<i32> mut &handles, zidl_message_t mut * mut &msg) -> decode_result
+{
+  var result = decode_result();
+  var decoder = zidl::decoder(&mut bytes, &mut handles);
+
+  if (var header = decoder.consume(sizeof<zidl::zidl_header_t>))
+  {
+    var header = cast<zidl::zidl_header_t*>(header);
+
+    if (header.magic != zidl::zidl_header_t::signature)
+      result.error = zidl::errc::bad_header_signature;
+
+    if (header.ordinal != zidl_message_t::ordinal)
+      result.error = zidl::errc::bad_header_ordinal;
+  }
+
+  if (var inline = decoder.consume(sizeof<zidl_message_t>))
+  {
+    msg = cast<zidl_message_t mut *>(inline);
+
+    zidl_message_t::decode(&mut decoder, &mut *msg);
+  }
+
+  if (!result.error && decoder.bytes_head != bytes.end)
+    result.error = zidl::errc::insufficient_bytes_consumed;
+
+  if (!result.error && decoder.handles_head != handles.end)
+    result.error = zidl::errc::insufficient_handles_consumed;
+
+  return result;
+}

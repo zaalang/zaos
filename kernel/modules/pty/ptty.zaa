@@ -613,7 +613,7 @@ pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length
   var count = 0;
   var result = chr::result::ok;
 
-  buffer.foreach_region_in(offset, length, fn [this, result, count](var &region) {
+  buffer.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 
