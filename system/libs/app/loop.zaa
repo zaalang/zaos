@@ -127,11 +127,26 @@ pub struct loop
   pub struct wait_t
   {
     i32 id;
+    u16 type;
+    u16 mask;
 
     pub void fn(loop mut &, wait_t mut *) *callback;
 
     pub wait_t() = default;
     pub ~wait_t() = default;
+  }
+
+  pub struct timeout_t
+  {
+    pub u64 deadline;
+
+    pub void fn(loop mut &, timeout_t mut *) *callback;
+
+    timeout_t mut *next;
+    timeout_t mut *prev;
+
+    pub timeout_t() = default;
+    pub ~timeout_t() = default;
   }
 
   pub fn current() -> loop mut *
@@ -142,9 +157,12 @@ pub struct loop
   pub fn begin_wait(this mut &loop, os::pollevt evt, wait_t mut *handler) -> i32
   {
     handler.id = evt.id;
+    handler.type = evt.type;
+    handler.mask = evt.mask;
     evt.user_data = cast(handler);
 
-    loop.pollset.add(evt);
+    if (var result = loop.pollset.add(evt); result < 0)
+      return result;
 
     return 0;
   }
@@ -156,15 +174,52 @@ pub struct loop
     evt.type = os::POLLFD;
     evt.mask = os::POLLIN;
 
-    return begin_wait(&mut loop, evt, handler);
+    if (var result = begin_wait(&mut loop, evt, handler); result < 0)
+      return result;
+
+    return 0;
   }
 
   pub fn cancel_wait(this mut &loop, wait_t mut *handler) -> i32
   {
     var evt = os::pollevt();
     evt.id = handler.id;
+    evt.type = handler.type;
+    evt.mask = handler.mask;
 
     loop.pollset.remove(evt);
+
+    return 0;
+  }
+
+  pub fn begin_timeout(this mut &loop, timeout_t mut *handler) -> i32
+  {
+    if (handler.prev != null || handler.next != null || handler.deadline == 0)
+      return -22;
+
+    var insertpos = loop.timeouts.prev;
+
+    while (insertpos != &loop.timeouts && insertpos.deadline >= handler.deadline)
+      insertpos = insertpos.prev;
+
+    handler.prev = insertpos;
+    handler.next = insertpos.next;
+    insertpos.next.prev = handler;
+    insertpos.next = handler;
+
+    return 0;
+  }
+
+  pub fn cancel_timeout(this mut &loop, timeout_t mut *handler) -> i32
+  {
+    if (handler.prev)
+      handler.prev.next = handler.next;
+
+    if (handler.next)
+      handler.next.prev = handler.prev;
+
+    handler.next = null;
+    handler.prev = null;
 
     return 0;
   }
@@ -177,6 +232,7 @@ pub struct loop
 
   pub loop()
   {
+    timeouts.next = timeouts.prev = &timeouts;
   }
 
   pub ~loop()
@@ -193,6 +249,7 @@ pub struct loop
 
   state state;
   pollset pollset;
+  timeout_t timeouts;
   wait_t system_service_handler;
 }
 
@@ -221,20 +278,41 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
   return 0;
 }
 
+pub fn dispatch(loop mut &loop, u64 deadline = 0) -> i32
+{
+  if (var result = loop.pollset.wait(deadline); result < 0)
+    std::panic("pollset wait - ", cast<std::errc>(-result));
+
+  var evt = os::pollevt();
+
+  while (loop.pollset.pop(&mut evt))
+  {
+    if (var waiter = cast<loop::wait_t mut *>(evt.user_data))
+      waiter.callback(&mut loop, waiter);
+  }
+
+  var now = os::timespec(void);
+  if (var result = os::clock_time(os::clock::monotonic, &now); result < 0)
+    std::panic("clock time - ", cast<std::errc>(-result));
+
+  while (loop.timeouts.next != &loop.timeouts && loop.timeouts.next.deadline < now)
+  {
+    if (var waiter = loop.timeouts.next)
+    {
+      loop.cancel_timeout(waiter);
+
+      waiter.callback(&mut loop, waiter);
+    }
+  }
+
+  return 0;
+}
+
 pub fn run(loop mut &loop) -> i32
 {
   while (loop.state == loop::state::runnable)
   {
-    if (var result = loop.pollset.wait(0); result < 0)
-      std::panic("pollset wait - ", cast<std::errc>(-result));
-
-    var evt = os::pollevt();
-
-    while (loop.pollset.pop(&mut evt))
-    {
-      if (var waiter = cast<loop::wait_t mut *>(evt.user_data))
-        waiter.callback(&mut loop, waiter);
-    }
+    dispatch(&mut loop, loop.timeouts.next.deadline);
   }
 
   return 0;

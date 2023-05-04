@@ -34,11 +34,11 @@ pub fn cat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmd
   if (fd < 0)
     return fd;
 
-  var buf = typename u8[4096](void);
+  var buffer = [u8(0); 4096];
 
   for(;;)
   {
-    var bytes = read(&mut thread_ring, fd, buf.data, buf.len);
+    var bytes = read(&mut thread_ring, fd, buffer.data, buffer.len);
 
     if (bytes <= 0)
     {
@@ -47,6 +47,6 @@ pub fn cat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmd
       return bytes;
     }
 
-    terminal.write(std::string_view(buf.data, cast<usize>(bytes)));
+    terminal.write(std::string_view(buffer.data, cast<usize>(bytes)));
   }
 }

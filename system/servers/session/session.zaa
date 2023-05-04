@@ -138,8 +138,8 @@ fn service_channel_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> 
 
   if (!result)
   {
+    loop.cancel_wait(wait);
     service.channel.close();
-    loop.cancel_wait(&service.channel_handler);
   }
 }
 
@@ -165,6 +165,9 @@ fn main() -> int
 
   registry::instance.register("zaos.winton", "/zaos/srv/winton");
   registry::instance.register("zaos.baz", "/zaos/root/baz");
+  registry::instance.register("zaos.rings", "/zaos/root/rings");
+  registry::instance.register("zaos.triangle", "/zaos/root/triangle");
+  //registry::instance.register("zaos.bar", "/zaos/root/bar");
 
   for(var mut &(uri, service) : registry::instance.services)
   {

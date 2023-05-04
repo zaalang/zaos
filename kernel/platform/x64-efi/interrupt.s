@@ -30,26 +30,26 @@
 
             .align 64
 isr_table:
-            isr.dispatch 0 divide_by_zero_handler
+            isr.dispatch 0 unhandled_exception_handler
             isr.dispatch 1 fatal_exception_handler
             isr.dispatch 2 nmi_handler
-            isr.dispatch 3 break_handler
-            isr.dispatch 4 fatal_exception_handler
-            isr.dispatch 5 fatal_exception_handler
-            isr.dispatch 6 fatal_exception_handler
+            isr.dispatch 3 breakpoint_handler
+            isr.dispatch 4 unhandled_exception_handler
+            isr.dispatch 5 unhandled_exception_handler
+            isr.dispatch 6 unhandled_exception_handler
             isr.dispatch 7 fatal_exception_handler
             isr.dispatch 8 double_fault_handler errorcode
             isr.dispatch 9 fatal_exception_handler
-            isr.dispatch 10 general_protection_fault_handler errorcode
-            isr.dispatch 11 general_protection_fault_handler errorcode
-            isr.dispatch 12 general_protection_fault_handler errorcode
+            isr.dispatch 10 fatal_exception_handler errorcode
+            isr.dispatch 11 fatal_exception_handler errorcode
+            isr.dispatch 12 stack_fault_handler errorcode
             isr.dispatch 13 general_protection_fault_handler errorcode
             isr.dispatch 14 page_fault_handler errorcode
             isr.dispatch 15 fatal_exception_handler
-            isr.dispatch 16 fatal_exception_handler
-            isr.dispatch 17 alignment_check_exception_handler errorcode
+            isr.dispatch 16 unhandled_exception_handler
+            isr.dispatch 17 unhandled_exception_handler errorcode
             isr.dispatch 18 machine_check_exception_handler
-            isr.dispatch 19 fatal_exception_handler
+            isr.dispatch 19 unhandled_exception_handler
             isr.dispatch 20 fatal_exception_handler
 
             .rept 11

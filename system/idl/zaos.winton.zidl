@@ -4,8 +4,105 @@
 
 library zaos.winton;
 
+enum errc
+{
+  already_exists = 17,
+  descriptor_error = 18,
+  invalid_buffer_size = 21,
+  buffer_size_overflow = 22,
+  invalid_surface = 23,
+  invalid_buffer = 24,
+  invalid_cursor = 25,
+  not_configured = 30,
+  invalid_serial = 31,
+}
+
+enum format
+{
+  B8G8R8X8 = 0, // 32-bit rgb little endian
+  B8G8R8A8 = 1, // 32-bit rgba pre-multiplied little endian
+}
+
+enum state
+{
+  minimised = 1,
+  maximised = 2,
+  fullscreen = 4,
+  activated = 8,
+}
+
+enum tether
+{
+  top = 1,
+  bottom = 2,
+  left = 4,
+  right = 8,
+  top_left = 5,
+  bottom_left = 6,
+  top_right = 9,
+  bottom_right = 10,
+}
+
+enum cursor
+{
+  none = 0,
+  arrow = 1,
+  resize_top = 2,
+  resize_left = 3,
+  resize_bottom = 4,
+  resize_right = 5,
+  resize_top_left = 6,
+  resize_top_right = 7,
+  resize_bottom_left = 8,
+  resize_bottom_right = 9,
+}
+
 protocol compositor
 {
-  create_surface(i32 x, i32 y, i32 width, i32 height) -> (bool success);
+  create_surface(u32 id);
+
+  create_buffer(u32 id, buffer handle, u32 offset, i32 width, i32 height, i32 stride, format format);
+
+  surface_destroy(u32 surface_id);
+  surface_attach(u32 surface_id, u32 buffer_id);
+  surface_damage(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
+  surface_commit(u32 surface_id, bool callback);
+  ->surface_callback(u32 surface_id, u64 time);
+
+  buffer_resize(u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, format format);
+  buffer_destroy(u32 buffer_id);
+  -> buffer_release(u32 buffer_id);
+
+  create_window(u32 surface_id);
+  create_popup(u32 surface_id, u32 parent_id);
+
+  ->configure_window(u32 surface_id, i32 width, i32 height, state state);
+  ->configure_popup(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
+  ->configure(u32 serial, u32 surface_id);
+  acknowledge(u32 serial);
+
+  -> pointer_enter(u32 serial, u32 surface_id, i32 x, i32 y);
+  -> pointer_leave(u32 serial, u32 surface_id);
+  -> pointer_motion(u32 surface_id, u64 time, i32 x, i32 y);
+  -> pointer_button(u32 surface_id, u64 time, u32 button, u32 state);
+  -> pointer_wheel(u32 surface_id, u64 time, i32 dx, i32 dy);
+
+  -> keyboard_enter(u32 serial, u32 surface_id);
+  -> keyboard_leave(u32 serial, u32 surface_id);
+  -> keyboard_key(u32 surface_id, u64 time, u32 key, u32 state, char sym);
+
+  set_cursor(u32 serial, u32 surface_id, i32 hotspot_x, i32 hotspot_y);
+  set_standard_cursor(u32 serial, u32 surface_id, cursor cursor);
+
+  set_minimised(u32 surface_id);
+  set_maximised(u32 surface_id);
+  set_fullscreen(u32 surface_id);
+  unset_maximised(u32 surface_id);
+  unset_fullscreen(u32 surface_id);
+
+  move(u32 serial, u32 surface_id);
+  resize(u32 serial, u32 surface_id, tether tether);
+
+  -> error(u32 id, errc code);
 }
 

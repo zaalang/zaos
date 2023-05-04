@@ -16,6 +16,8 @@ $(BUILD)/fd.zaa.o\
 $(BUILD)/mem.zaa.o\
 $(BUILD)/clock.zaa.o\
 $(BUILD)/env.zaa.o\
+$(BUILD)/ceil.zaa.o\
+$(BUILD)/floor.zaa.o\
 $(BUILD)/exit.zaa.o\
 
 default: $(BUILD)/libzrt.a

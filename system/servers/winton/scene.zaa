@@ -1,0 +1,353 @@
+//
+// scene
+//
+
+import std.vector;
+import std.box;
+import math : transform, bound, vec2, vec4;
+import zidl.zaos_winton;
+
+pub struct layer
+{
+  pub std::vector<std::box<node>> children;
+
+  pub layer() = default;
+  pub layer(layer&&) = default;
+  pub ~layer() = default;
+}
+
+pub struct window
+{
+  void *surface;
+
+  pub struct state
+  {
+    pub i32 width;
+    pub i32 height;
+    pub i32 min_width;
+    pub i32 min_height;
+    pub i32 max_width;
+    pub i32 max_height;
+    pub zidl::zaos_winton::state flags;
+
+    pub fn is_minimised(this&) -> bool
+    {
+      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::minimised) == cast<i32>(zidl::zaos_winton::state::minimised);
+    }
+
+    pub fn is_maximised(this&) -> bool
+    {
+      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::maximised) == cast<i32>(zidl::zaos_winton::state::maximised);
+    }
+
+    pub fn is_fullscreen(this&) -> bool
+    {
+      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::fullscreen) == cast<i32>(zidl::zaos_winton::state::fullscreen);
+    }
+
+    pub state() = default;
+    pub state(state&&) = default;
+    pub fn =(state mut &, state &) -> state mut & = default;
+    pub ~state() = default;
+  }
+
+  pub state state;
+  pub transform local;
+  pub transform world;
+
+  pub node *parent;
+
+  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.state.width), cast(this.state.height))); }
+
+  window() = default;
+  window(window&&) = default;
+  pub ~window() = default;
+}
+
+pub struct cursor
+{
+  void *surface;
+
+  pub i32 width;
+  pub i32 height;
+
+  pub f32 hotspot_x;
+  pub f32 hotspot_y;
+
+  pub transform world;
+
+  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
+
+  cursor() = default;
+  cursor(cursor&&) = default;
+  pub ~cursor() = default;
+}
+
+pub union node
+{
+  pub layer(layer),
+  pub window(window),
+  pub cursor(cursor),
+
+  pub fn surface(this&) -> void *
+  {
+    switch (this)
+    {
+      case window[window]:
+        return window.surface;
+
+      case cursor[cursor]:
+        return cursor.surface;
+
+      else:
+        std::panic();
+    }
+  }
+
+  pub fn transform(this&) -> transform
+  {
+    switch (this)
+    {
+      case layer:
+        return transform::identity();
+
+      case window[window]:
+        return window.world;
+
+      case cursor[cursor]:
+        return cursor.world;
+
+      else:
+        std::panic();
+    }
+  }
+
+  node() = default;
+  pub node(node&&) = default;
+  pub ~node() = default;
+}
+
+pub struct scene
+{
+  pub enum layers
+  {
+    desktop = 0,
+    below = 1,
+    normal = 2,
+    panel = 3,
+    above = 4,
+    notification = 5,
+    cursor = 6,
+
+    const count = 7;
+  }
+
+  std::vector<node> layers;
+
+  fn layer(this &&, layers n)
+  {
+    return &this.layers[cast<usize>(n)].layer;
+  }
+
+  pub scene() = default;
+  pub scene(scene&&) = default;
+  pub ~scene() = default;
+}
+
+pub fn initialise(scene mut &scene) -> i32
+{
+  scene.layers.reserve(scene::layers::count);
+
+  for(var i = 0; i < scene::layers::count; ++i)
+    scene.layers.push_back(node::layer());
+
+  return 0;
+}
+
+fn remove(scene mut &scene, node *parent, node *node) -> std::box<node>
+{
+  switch (*parent)
+  {
+    case layer[var mut &layer = cast<layer mut &>(parent.layer)]:
+      if (var j = layer.children.find_if(|k| &*k == node); j != layer.children.end)
+        return layer.children.take_erase(j);
+  }
+
+  std::panic("node not found in remove");
+}
+
+fn insert(scene mut &scene, node *parent, std::box<node> &&node) -> node *
+{
+  switch (*parent)
+  {
+    case layer[var mut &layer = cast<layer mut &>(parent.layer)]:
+      return &*layer.children.push_back(&&node);
+  }
+
+  return null;
+}
+
+fn insert(scene mut &scene, scene::layers layer, node &&node) -> node *
+{
+  return &*scene.layer(layer).children.push_back(&&node);
+}
+
+pub fn create_window(scene mut &scene, void *surface, scene::layers layer) -> node *
+{
+  var window = window();
+
+  window.surface = surface;
+  window.local = transform::identity();
+  window.parent = &scene.layers[cast<usize>(layer)];
+
+  return scene.insert(layer, node::window(window));
+}
+
+pub fn create_cursor(scene mut &scene, void *surface, vec2 position, i32 hotspot_x, i32 hotspot_y) -> node *
+{
+  var cursor = cursor();
+
+  cursor.surface = surface;
+  cursor.hotspot_x = cast(hotspot_x);
+  cursor.hotspot_y = cast(hotspot_y);
+  cursor.world = transform::translation(position.x - cursor.hotspot_x, position.y - cursor.hotspot_y, 0.0);
+
+  return scene.insert(scene::layers::cursor, node::cursor(cursor));
+}
+
+pub fn set(scene mut &scene, window &window, window::state &state) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.state = state;
+}
+
+pub fn set(scene mut &scene, window &window, transform &local) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.local = local;
+}
+
+pub fn set(scene mut &scene, cursor &cursor, i32 width, i32 height) -> void
+{
+  var mut &cursor = cast<cursor mut &>(cursor);
+
+  cursor.width = width;
+  cursor.height = height;
+}
+
+pub fn set(scene mut &scene, cursor &cursor, vec2 &position) -> void
+{
+  var mut &cursor = cast<cursor mut &>(cursor);
+
+  cursor.world = transform::translation(position.x - cursor.hotspot_x, position.y - cursor.hotspot_y, 0.0);
+}
+
+fn update(scene mut &scene, node mut &node, float dt) -> void
+{
+  switch (node)
+  {
+    case layer[layer]:
+      for(var mut &node : layer.children)
+        update(&mut scene, &mut *node, dt);
+
+    case window[window]:
+      window.world = window.local;
+  }
+}
+
+pub fn update(scene mut &scene, float dt) -> void
+{
+  for(var mut &node : scene.layers)
+  {
+    update(&mut scene, &mut node, dt);
+  }
+}
+
+fn pick(scene &scene, node &node, vec2 position) -> (node *, vec2)
+{
+  switch (node)
+  {
+    case layer[layer]:
+      rof(var &node : layer.children)
+      {
+        if (var result = pick(scene, *node, position); result.0)
+          return result;
+      }
+
+    case window[window]:
+      if (!window.state.is_minimised && contains(window.world * window.bound, position))
+      {
+        var xy = project(inverse(window.world), position);
+
+        if (contains(window.bound, xy))
+          return (&node, xy);
+      }
+  }
+
+  return (null, vec2());
+}
+
+pub fn pick(scene &scene, vec2 position) -> (node *, vec2)
+{
+  rof(var &node : scene.layers)
+  {
+    if (var result = pick(scene, node, position); result.0)
+      return result;
+  }
+
+  return (null, vec2());
+}
+
+pub fn raise(scene mut &scene, node *node) -> void
+{
+  switch (*node)
+  {
+    case window[window]:
+      insert(&mut scene, window.parent, remove(&mut scene, window.parent, node));
+  }
+}
+
+pub fn erase(scene mut &scene, node *node) -> void
+{
+  switch (*node)
+  {
+    case window[window]:
+      remove(&mut scene, window.parent, node);
+
+    case cursor[cursor]:
+      scene.layer(scene::layers::cursor).children.erase_if(|k| &*k == node);
+  }
+}
+
+fn build(scene &scene, node &node, std::vector<node*> mut &view_list) -> void
+{
+  switch (node)
+  {
+    case layer[layer]:
+      for(var &node : layer.children)
+      {
+        build(scene, *node, &mut view_list);
+      }
+
+    case window[window]:
+      if (!window.state.is_minimised)
+        view_list.push_back(&node);
+
+    case cursor:
+      view_list.push_back(&node);
+  }
+}
+
+pub fn build_view_list(scene &scene) -> std::vector<node*>
+{
+  var view_list = std::vector<node*>();
+
+  for(var &node : scene.layers)
+  {
+    build(scene, node, &mut view_list);
+  }
+
+  return view_list;
+}

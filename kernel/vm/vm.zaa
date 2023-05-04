@@ -11,6 +11,7 @@ import vm.result;
 import vm.iovec;
 import vfs.node;
 import blk;
+import thread as _ : thread;
 import process as _ : process;
 import sys;
 import cpu;
@@ -759,7 +760,12 @@ extern fn page_fault(virtaddr addr, bool write, bool fetch, bool user) -> void
 
   if (status != result::ok)
   {
-    std::panic("page fault: ", cast<i32>(status), " ", addr);
+    std::print(*thread::current, "page fault: ", status, " at ", addr);
+
+    if (!user)
+      std::panic("unhandled page fault in kernel space");
+
+    process::exit(cast<i32>(status));
   }
 }
 

@@ -2,7 +2,7 @@
 // input keys
 //
 
-pub enum Key
+pub enum Key : u8
 {
   Backspace = 0x8,
   Tab = 0x9,

@@ -69,7 +69,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
     var files = std::vector<std::string>();
 
-    var buffer = typename u8[4096](void);
+    var buffer = [u8(0); 4096];
 
     for(;;)
     {

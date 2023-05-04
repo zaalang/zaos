@@ -1,0 +1,72 @@
+//
+// theme
+//
+
+import std.stdio;
+import std.string : String;
+import compositor;
+import xcursor;
+
+pub struct cursor
+{
+  pub i32 hotspot_x;
+  pub i32 hotspot_y;
+  pub compositor::sprite sprite;
+
+  pub cursor() = default;
+  pub cursor(cursor&&) = default;
+  pub fn =(cursor mut &, cursor &&) -> cursor mut & = default;
+  pub ~cursor() = default;
+}
+
+pub struct theme
+{
+  pub cursor[10] cursors;
+
+  pub theme() = default;
+  pub theme(theme&&) = default;
+  pub ~theme() = default;
+}
+
+pub fn create() -> theme
+{
+  return theme();
+}
+
+fn load_cursor(String &path, u32 size) -> cursor
+{
+  var cursor = cursor();
+
+  try
+  {
+    var xcursor = xcursor::cursor::load(path);
+
+    var pixels = xcursor.lookup(24);
+
+    cursor.hotspot_x = cast(pixels.hotspot_x);
+    cursor.hotspot_y = cast(pixels.hotspot_y);
+    cursor.sprite = compositor::create_sprite(cast(pixels.width), cast(pixels.height), cast(pixels.width * 4), cast(pixels.data.data), cast(1));
+
+  }
+  catch (std::error e)
+  {
+    std::print("winton: failed to load cursor ", path, " - ", e);
+  }
+
+  return cursor;
+}
+
+pub fn initialise(theme mut &theme) -> i32
+{
+  theme.cursors[1] = load_cursor("/zaos/data/left_ptr", 24);
+  theme.cursors[2] = load_cursor("/zaos/data/top_side", 24);
+  theme.cursors[3] = load_cursor("/zaos/data/left_side", 24);
+  theme.cursors[4] = load_cursor("/zaos/data/bottom_side", 24);
+  theme.cursors[5] = load_cursor("/zaos/data/right_side", 24);
+  theme.cursors[6] = load_cursor("/zaos/data/top_left_corner", 24);
+  theme.cursors[7] = load_cursor("/zaos/data/top_right_corner", 24);
+  theme.cursors[8] = load_cursor("/zaos/data/bottom_left_corner", 24);
+  theme.cursors[9] = load_cursor("/zaos/data/bottom_right_corner", 24);
+
+  return 0;
+}

@@ -52,6 +52,33 @@ image:
         - cp:
             src: data/us.keymap
             dest: /data/us.keymap
+        - cp:
+            src: data/left_ptr
+            dest: /data/left_ptr
+        - cp:
+            src: data/top_left_corner
+            dest: /data/top_left_corner
+        - cp:
+            src: data/top_side
+            dest: /data/top_side
+        - cp:
+            src: data/top_right_corner
+            dest: /data/top_right_corner
+        - cp:
+            src: data/right_side
+            dest: /data/right_side
+        - cp:
+            src: data/bottom_right_corner
+            dest: /data/bottom_right_corner
+        - cp:
+            src: data/bottom_side
+            dest: /data/bottom_side
+        - cp:
+            src: data/bottom_left_corner
+            dest: /data/bottom_left_corner
+        - cp:
+            src: data/left_side
+            dest: /data/left_side
         - md:
             dest: /srv
         - cp:
@@ -72,6 +99,12 @@ image:
         - cp:
             src: build/system/apps/baz/baz
             dest: /root/baz
+        - cp:
+            src: build/system/apps/rings/rings
+            dest: /root/rings
+        - cp:
+            src: build/system/apps/triangle/triangle
+            dest: /root/triangle
         - cp:
             src: build/system/apps/breakout/breakout
             dest: /root/breakout

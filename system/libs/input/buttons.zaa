@@ -1,0 +1,12 @@
+//
+// input buttons
+//
+
+pub enum Button : u32
+{
+  Primary = 0x1,
+  Secondary = 0x2,
+  Middle = 0x4,
+  Backward = 0x8,
+  Forward = 0x10,
+}

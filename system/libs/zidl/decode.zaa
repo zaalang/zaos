@@ -66,6 +66,14 @@ pub fn decode(decoder mut &decoder, zidl::channel mut &channel) -> void
   new<zidl::channel>(&channel)(fd);
 }
 
+pub fn decode(decoder mut &decoder, zidl::buffer mut &buffer) -> void
+{
+  var fd = ~0;
+  decoder.claim(&mut fd);
+
+  new<zidl::buffer>(&buffer)(fd);
+}
+
 pub fn decode<T>(decoder mut &decoder, T mut &object) -> void
 {
   using T;

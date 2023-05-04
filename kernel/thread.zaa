@@ -179,6 +179,11 @@ pub struct thread
   pub ~thread() = default;
 }
 
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, thread &thread) throws -> void
+{
+  ctx.written += std::print_to(&mut os, "[process:", thread.process.id, "(", thread.process.name, "),thread:", thread.id, "] ");
+}
+
 struct thread_manager
 {
   std::shared_spin_lock lock;
@@ -282,7 +287,7 @@ fn initialise(thread mut *this) -> void
 
 fn destroy(thread mut *thread) -> void
 {
-  std::print("[thread:", thread.id, "] done");
+  std::print(*thread, "done");
 
   thread.process.remove_thread(thread);
 

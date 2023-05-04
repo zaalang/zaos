@@ -131,3 +131,36 @@ pub struct channel : pub handle
   pub ~channel() = default;
 }
 
+pub struct buffer : pub handle
+{
+  pub fn create(usize size) throws -> (buffer, buffer)
+  {
+    var fds = [0, 0];
+    if (var result = os::buffer_create(&mut thread_ring, &fds, size, 0); result < 0)
+      throw std::system_error(cast<std::errc>(-result));
+
+    return (buffer(fds[0]), buffer(fds[1]));
+  }
+
+  pub fn create(buffer mut &lhs, buffer mut &rhs, usize size) -> i32
+  {
+    var fds = [0, 0];
+    if (var result = os::buffer_create(&mut thread_ring, &fds, size, 0); result < 0)
+      return result;
+
+    lhs = buffer(fds[0]);
+    rhs = buffer(fds[1]);
+
+    return 0;
+  }
+
+  pub buffer(i32 fd = ~0)
+    : super(fd)
+  {
+  }
+
+  pub buffer(buffer &&) = default;
+  pub fn =(buffer mut &, buffer &&) -> buffer mut & = default;
+  pub ~buffer() = default;
+}
+

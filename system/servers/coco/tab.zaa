@@ -36,10 +36,10 @@ pub struct completer : pub readline::completer
       if (dir < 0)
         std::print("tab: error opening dir: ", base, " - ", std::errc(cast(-dir)));
 
+      var buffer = [u8(0); 4096];
+
       while (dir >= 0)
       {
-        var buffer = typename u8[4096](void);
-
         var dirres = read(&mut thread_ring, dir, buffer.data, buffer.len);
 
         if (dirres <= 0)

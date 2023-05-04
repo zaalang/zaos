@@ -92,6 +92,9 @@ fn add(ioring_pollset mut &this, process mut *process, pollevt &evt) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
+  if (var j = std::find_if(this.events, |event| event.id == evt.id && event.type == evt.type); j != this.events.end)
+    return vfs::result::already_exists;
+
   var event = ioring_pollset::event();
 
   switch (evt.type)
@@ -158,7 +161,7 @@ fn remove(ioring_pollset mut &this, pollevt &evt) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
-  var j = std::find_if(this.events, |event| event.id == evt.id);
+  var j = std::find_if(this.events, |event| event.id == evt.id && event.type == evt.type);
 
   if (j == this.events.end)
     return vfs::result::not_found;

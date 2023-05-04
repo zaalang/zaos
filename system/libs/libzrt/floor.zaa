@@ -1,0 +1,74 @@
+//
+// floor
+//
+
+const toint = 1.0 / 2.2204460492503131e-16;
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// floorf /////////////////////////////////////////////
+extern "C" fn floorf(f32 x) -> f32
+{
+  var i = bit_cast<u32>(x);
+
+  var e = cast<int>(i >> 23) & 0xff - 0x7f;
+
+  if (e < 0)
+  {
+    if ((i >> 31) == 0)
+      return 0.0;
+
+    if ((i << 1) != 0)
+      return -1.0;
+
+    return -0.0;
+  }
+
+  if (e >= 23)
+    return x;
+
+  var m = 0x007fffff >> e;
+
+  if ((i & m) == 0)
+    return x;
+
+  if ((i >> 31) != 0)
+    i += m;
+
+  i &= ~m;
+
+  return bit_cast<f32>(i);
+}
+
+//|///////////////////// floor //////////////////////////////////////////////
+extern "C" fn floor(f64 x) -> f64
+{
+  var i = bit_cast<u64>(x);
+
+  var e = cast<int>(i >> 52) & 0x7ff;
+
+  if (e >= 0x3ff + 52 || x == 0.0)
+    return x;
+
+  var y = 0.0;
+
+  if ((i >> 63) != 0)
+    y = x - toint + toint - x;
+  else
+    y = x + toint - toint - x;
+
+  if (e <= 0x3ff - 1)
+    return (i >> 63) != 0 ? -1.0 : 0.0;
+
+  if (y > 0.0)
+    return x + y - 1.0;
+
+  return x + y;
+}

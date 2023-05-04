@@ -1,0 +1,72 @@
+//
+// device
+//
+
+import input.keys : Key;
+import input.buttons : Button;
+
+pub enum type : u16
+{
+  syn = 0,
+  key = 1,
+  rel = 2,
+  abs = 3,
+  msc = 4,
+}
+
+pub enum syn
+{
+  pub const report = 0;
+  pub const config = 1;
+  pub const dropped = 3;
+}
+
+pub enum axis
+{
+  pub const x = 0;
+  pub const y = 1;
+  pub const z = 2;
+  pub const rx = 3;
+  pub const ry = 4;
+  pub const rz = 5;
+  pub const wheel = 8;
+}
+
+pub enum button
+{
+  pub const btn_0 = 0x100;
+  pub const btn_1 = 0x101;
+  pub const btn_2 = 0x102;
+  pub const btn_3 = 0x103;
+  pub const btn_4 = 0x104;
+  pub const btn_5 = 0x105;
+  pub const btn_6 = 0x106;
+  pub const btn_7 = 0x107;
+  pub const btn_8 = 0x108;
+  pub const btn_9 = 0x109;
+
+  pub const left = 0x110;
+  pub const right = 0x111;
+  pub const middle = 0x112;
+  pub const side = 0x113;
+  pub const extra = 0x114;
+  pub const forward = 0x115;
+  pub const back = 0x116;
+  pub const task = 0x117;
+}
+
+pub struct mouse
+{
+  pub Button[32] buttons;
+
+  pub mouse()
+  {
+    buttons[button::left - 0x100] = Button::Primary;
+    buttons[button::right - 0x100] = Button::Secondary;
+    buttons[button::middle - 0x100] = Button::Middle;
+  }
+
+  pub mouse(mouse&) = default;
+  pub fn =(mouse mut &, mouse &&) -> mouse mut & = default;
+  pub ~mouse() = default;
+}

@@ -338,25 +338,25 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
 
   var isr_table = extern(isr_table);
 
-  idt_set_system_gate(&mut idt, 0, isr_table + 0*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 0, isr_table + 0*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 1, isr_table + 1*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 2, isr_table + 2*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 3, isr_table + 3*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 4, isr_table + 4*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 5, isr_table + 5*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 6, isr_table + 6*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 4, isr_table + 4*64, cpu::selector::code0, 0);
+  idt_set_system_gate(&mut idt, 5, isr_table + 5*64, cpu::selector::code0, 0);
+  idt_set_system_gate(&mut idt, 6, isr_table + 6*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 7, isr_table + 7*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 8, isr_table + 8*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 9, isr_table + 9*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 10, isr_table + 10*64, cpu::selector::code0, 1);
   idt_set_system_gate(&mut idt, 11, isr_table + 11*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 12, isr_table + 12*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 13, isr_table + 13*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 12, isr_table + 12*64, cpu::selector::code0, 0);
+  idt_set_system_gate(&mut idt, 13, isr_table + 13*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 14, isr_table + 14*64, cpu::selector::code0, 0);
-  idt_set_system_gate(&mut idt, 16, isr_table + 16*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 17, isr_table + 17*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 16, isr_table + 16*64, cpu::selector::code0, 0);
+  idt_set_system_gate(&mut idt, 17, isr_table + 17*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 18, isr_table + 18*64, cpu::selector::code0, 1);
-  idt_set_system_gate(&mut idt, 19, isr_table + 19*64, cpu::selector::code0, 1);
+  idt_set_system_gate(&mut idt, 19, isr_table + 19*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 20, isr_table + 20*64, cpu::selector::code0, 1);
 
   for(var i = 32; i < 250; ++i)

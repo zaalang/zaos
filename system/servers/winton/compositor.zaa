@@ -3,36 +3,219 @@
 //
 
 import std.stdlib;
+import std.flat_hash_map;
 import std.box;
+import std.arc;
 import app.loop;
+import seat;
+import theme;
+import scene;
+import display;
+import math : vec2, vec4, bound, transform;
+import input.driver;
+import os.zaos.mman;
 import zidl.zaos_winton;
+
+using winton = zidl::zaos_winton;
+
+extern fn thread_ring() -> os::ioring mut &;
 
 struct client
 {
+  compositor mut *compositor;
+
   zidl::channel channel;
   app::loop::wait_t handler;
 
+  std::flat_hash_map<u32, std::box<surface>> surfaces;
+  std::flat_hash_map<u32, std::arc<buffer>> buffers;
+
+  u32 serial = 1;
+
+  ~client()
+  {
+    destroy(&this);
+  }
+
   client() = default;
-  client(client&&) = default;
-  ~client() = default;
+}
+
+struct surface
+{
+  u32 id;
+  client mut *client;
+
+  std::optional<std::arc<buffer>> active;
+  std::optional<std::arc<buffer>> pending;
+
+  bound damage;
+  bound pending_damage;
+
+  bool callback;
+
+  scene::node *node;
+
+  u32 configure_serial;
+  scene::window::state configure_state;
+
+  scene::window::state pending_state;
+  scene::window::state incomming_state;
+  winton::tether resize_tether;
+
+  transform restore_local;
+  scene::window::state restore_state;
+
+  enum state
+  {
+    mapped = 0x1,
+
+    pub const fn ~(state lhs) -> state { return cast<state>(~cast<isize>(lhs)); }
+    pub const fn &(state lhs, state rhs) -> state { return cast<state>(cast<isize>(lhs) & cast<isize>(rhs)); }
+    pub const fn |(state lhs, state rhs) -> state { return cast<state>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  state state;
+
+  ~surface()
+  {
+    destroy(&this);
+  }
+
+  surface() = default;
+}
+
+struct buffer
+{
+  u32 id;
+
+  i32 width;
+  i32 height;
+  usize offset;
+  usize stride;
+  winton::format format;
+
+  usize size;
+  u8 mut *data;
+
+  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
+
+  ~buffer()
+  {
+    destroy(&this);
+  }
+
+  buffer() = default;
+}
+
+pub struct sprite
+{
+  std::arc<buffer> buffer;
+
+  pub sprite() = default;
+  pub sprite(sprite&&) = default;
+  pub fn =(sprite mut &, sprite &&) -> sprite mut & = default;
+  pub ~sprite() = default;
+}
+
+struct pointer
+{
+  vec2 position;
+  scene::node *focus;
+
+  surface mut *surface;
+
+  u32 focus_serial;
+  u32 pressed_count;
+
+  bool dirty_focus;
+
+  enum grab
+  {
+    none,
+    move,
+    resize,
+  }
+
+  grab grab_op;
+  vec2 grab_pos;
+  vec2 grab_offset;
+  bound grab_bound;
+
+  pointer() = default;
+  ~pointer() = default;
+}
+
+struct keyboard
+{
+  scene::node *focus;
+
+  surface mut *surface;
+
+  u32 focus_serial;
+
+  keyboard() = default;
+  ~keyboard() = default;
 }
 
 pub struct compositor
 {
+  seat::seat mut &seat;
+  display::display mut &display;
+
+  compositor(seat::seat mut &seat, display::display mut &display)
+    : seat(&seat), display(&display)
+  {
+  }
+
+  enum status
+  {
+    scheduled = 0x1,
+
+    pub const fn ~(status lhs) -> status { return cast<status>(~cast<isize>(lhs)); }
+    pub const fn &(status lhs, status rhs) -> status { return cast<status>(cast<isize>(lhs) & cast<isize>(rhs)); }
+    pub const fn |(status lhs, status rhs) -> status { return cast<status>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  status status;
+
+  pointer pointer;
+  keyboard keyboard;
+
+  bound damage;
+  scene::scene scene;
+  theme::theme theme;
+
   std::vector<std::box<client>> clients;
 
+  app::loop::timeout_t redraw_handler;
 
-  compositor() = default;
   pub ~compositor() = default;
 }
 
-pub fn create() -> compositor
+pub fn create(seat::seat mut &seat, display::display mut &display) -> compositor
 {
-  return compositor();
+  return compositor(&mut seat, &mut display);
 }
 
 pub fn initialise(compositor mut &compositor) -> i32
 {
+  if (var result = theme::initialise(&mut compositor.theme); result < 0)
+    return result;
+
+  if (var result = scene::initialise(&mut compositor.scene); result < 0)
+    return result;
+
+  compositor.pointer.position.x = cast(compositor.display.width / 2);
+  compositor.pointer.position.y = cast(compositor.display.height / 2);
+
+  var now = os::timespec(void);
+  os::clock_time(os::clock::monotonic, &now);
+
+  compositor.redraw_handler.deadline = now;
+  compositor.redraw_handler.callback = &cast<void fn(app::loop mut &, app::loop::timeout_t mut *)>(redraw_handler);
+
+  compositor.seat.on_event = |event| input_handler(&compositor, event);
+
   return 0;
 }
 
@@ -42,30 +225,1176 @@ pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel c
 
   var mut &client = compositor.clients.push_back();
 
+  client.compositor = &compositor;
+
   client.channel = &move channel;
   client.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
 
   app::loop::current.begin_wait(client.channel, &client.handler);
 }
 
-pub fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+pub fn create_sprite(i32 width, i32 height, i32 stride, u8 *data, winton::format format) -> sprite
+{
+  var sprite = sprite();
+
+  sprite.buffer.width = width;
+  sprite.buffer.height = height;
+  sprite.buffer.stride = cast(stride);
+  sprite.buffer.format = format;
+  sprite.buffer.size = cast<usize>(height * stride);
+  sprite.buffer.data = cast<u8 mut *>(std::allocator().allocate(sprite.buffer.size, 16));
+
+  std::memcpy(sprite.buffer.data, data, sprite.buffer.size);
+
+  return sprite;
+}
+
+pub fn sprite_destroy(sprite mut &sprite) -> void
+{
+  std::allocator().free(sprite.buffer.data, sprite.buffer.size);
+
+  sprite.buffer.data = null;
+  sprite.buffer.size = 0;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+
+  pub fn bool(result code) -> bool
+  {
+    return cast<i32>(code) >= 0;
+  }
+
+  pub fn ==(result code, winton::errc error) -> bool
+  {
+    return cast<i32>(code) == -cast<i32>(error);
+  }
+
+  pub fn result(winton::errc error) -> result
+  {
+    return cast(-cast<i32>(error));
+  }
+
+  pub fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
+}
+
+fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
 {
   var client = cast<client mut *>(cast<uintptr>(wait) - offsetof(client::handler));
 
-  var result = zidl::recv<zidl::zaos_winton::compositor>(client.channel.fd, |msg, completer| {
+  var result = zidl::recv<winton::compositor>(client.channel, |msg, completer| {
+
+    var result = result::ok;
+
     switch (msg)
     {
       case create_surface[msg]:
-        std::print(msg);
-        completer.reply<zidl::zaos_winton::compositor::create_surface_response>(true);
+        result = create_surface(client, msg.id);
+
+      case create_buffer[msg]:
+        result = create_buffer(client, msg.id, &move msg.handle, msg.offset, msg.width, msg.height, msg.stride, msg.format);
+
+      case surface_attach[msg]:
+        result = surface_attach(client, msg.surface_id, msg.buffer_id);
+
+      case surface_damage[msg]:
+        result = surface_damage(client, msg.surface_id, msg.x, msg.y, msg.width, msg.height);
+
+      case surface_commit[msg]:
+        result = surface_commit(client, msg.surface_id, msg.callback);
+
+      case surface_destroy[msg]:
+        result = surface_destroy(client, msg.surface_id);
+
+      case buffer_resize[msg]:
+        result = buffer_resize(client, msg.buffer_id, msg.offset, msg.width, msg.height, msg.stride, msg.format);
+
+      case buffer_destroy[msg]:
+        result = buffer_destroy(client, msg.buffer_id);
+
+      case create_window[msg]:
+        result = create_window(client, msg.surface_id);
+
+      case create_popup[msg]:
+        result = create_popup(client, msg.surface_id, msg.parent_id);
+
+      case acknowledge[msg]:
+        result = acknowledge(client, msg.serial);
+
+      case set_cursor[msg]:
+        result = set_cursor(client, msg.serial, msg.surface_id, msg.hotspot_x, msg.hotspot_y);
+
+      case set_standard_cursor[msg]:
+        result = set_standard_cursor(client, msg.serial, msg.surface_id, msg.cursor);
+
+      case set_minimised[msg]:
+        result = set_minimised(client, msg.surface_id);
+
+      case set_maximised[msg]:
+        result = set_maximised(client, msg.surface_id);
+
+      case set_fullscreen[msg]:
+        result = set_fullscreen(client, msg.surface_id);
+
+      case unset_maximised[msg]:
+        result = unset_maximised(client, msg.surface_id);
+
+      case unset_fullscreen[msg]:
+        result = unset_fullscreen(client, msg.surface_id);
+
+      case move[msg]:
+        result = move(client, msg.serial, msg.surface_id);
+
+      case resize[msg]:
+        result = resize(client, msg.serial, msg.surface_id, msg.tether);
 
       else:
+        std::print(msg);
         completer.raise(zidl::errc::bad_dispatch);
+    }
+
+    if (!result)
+    {
+      std::print("winton compositor: client error - ", cast<winton::errc>(-cast<i32>(result)));
+
+      zidl::send<winton::compositor::error_response>(client.channel, 0, cast<winton::errc>(-cast<i32>(result)));
     }
   });
 
   if (!result)
   {
-    std::panic("winton compositor: client error - ", result);
+    std::print("winton compositor: client error - ", cast<zidl::errc>(-cast<i32>(result)));
+
+    disconnect_client(client.compositor, client);
+  }
+}
+
+fn create_surface(client mut *client, u32 id) -> result
+{
+  if (client.surfaces.contains(id))
+    return winton::errc::already_exists;
+
+  var mut &surface = client.surfaces.emplace(id);
+
+  surface.id = id;
+  surface.client = client;
+
+  return 0;
+}
+
+fn create_buffer(client mut *client, u32 id, zidl::buffer handle, u32 offset, i32 width, i32 height, i32 stride, winton::format format) -> result
+{
+  if (client.buffers.contains(id))
+    return winton::errc::already_exists;
+
+  var stat = os::stat();
+  if (var result = os::stat(&mut thread_ring, handle.fd, &stat, 0x7f); result < 0)
+    return winton::errc::descriptor_error;
+
+  if (width <= 0 || height <= 0 || stride < width)
+    return winton::errc::invalid_buffer_size;
+
+  if (stat.size < cast<u64>(offset) + cast<u64>(height) * cast<u64>(stride))
+    return winton::errc::buffer_size_overflow;
+
+  var mmvec = os::mmvec();
+  mmvec.offset = 0;
+  mmvec.length = cast(stat.size);
+  mmvec.flags = 0;
+  mmvec.prot = os::prot::readonly;
+
+  var addr = null<u8 mut *>();
+  if (var result = os::mmap(handle.fd, &mmvec, 1, &addr, 0); result < 0)
+    return winton::errc::descriptor_error;
+
+  var mut &buffer = client.buffers.emplace(id);
+
+  buffer.id = id;
+  buffer.width = width;
+  buffer.height = height;
+  buffer.offset = cast(offset);
+  buffer.stride = cast(stride);
+  buffer.format = format;
+  buffer.size = mmvec.length;
+  buffer.data = addr;
+
+  return 0;
+}
+
+fn surface_attach(client mut *client, u32 surface_id, u32 buffer_id) -> result
+{
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      surface.pending = client.buffers.get(buffer_id);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn surface_damage(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
+{
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      surface.pending_damage = expand(surface.pending_damage, bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height))));
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (surface.active)
+      {
+        release(client, &*surface.active.unwrap);
+
+        surface.active.clear();
+      }
+
+      if (surface.pending)
+      {
+        surface.pending_state.width = surface.pending.value.width;
+        surface.pending_state.height = surface.pending.value.height;
+        surface.damage = expand(surface.damage, clamp(surface.pending_damage, surface.pending.value.bound));
+        surface.pending_damage.clear();
+
+        std::swap(&mut surface.active, &mut surface.pending);
+      }
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      switch (*surface.node)
+      {
+        case window[window]:
+          if (window.state.flags != surface.pending_state.flags)
+          {
+            if (surface.pending_state.is_maximised || surface.pending_state.is_fullscreen)
+              compositor.scene.set(window, transform::translation(0.0, 0.0, 0.0));
+
+            if (!surface.pending_state.is_maximised && window.state.is_maximised)
+              compositor.scene.set(window, surface.restore_local);
+
+            if (!surface.pending_state.is_fullscreen && window.state.is_fullscreen)
+              compositor.scene.set(window, surface.restore_local);
+
+            if (surface.pending_state.is_minimised)
+              keyboard_activate(compositor, null);
+
+            surface.resize_tether = cast(0);
+          }
+
+          if (window.state.width != surface.pending_state.width || window.state.height != surface.pending_state.height || window.state.flags != surface.pending_state.flags)
+          {
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::left) != 0)
+              compositor.scene.set(window, window.local * transform::translation(cast(window.state.width - surface.pending_state.width), 0.0, 0.0));
+
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::top) != 0)
+              compositor.scene.set(window, window.local * transform::translation(0.0, cast(window.state.height - surface.pending_state.height), 0.0));
+
+            if (!window.bound.empty)
+              compositor.damage = expand(compositor.damage, window.world * window.bound);
+
+            compositor.pointer.dirty_focus = true;
+          }
+
+          compositor.scene.set(window, surface.pending_state);
+
+        case cursor[cursor]:
+          if (cursor.width != surface.pending_state.width || cursor.height != surface.pending_state.height)
+            compositor.damage = expand(compositor.damage, cursor.world * cursor.bound);
+
+          compositor.scene.set(cursor, surface.pending_state.width, surface.pending_state.height);
+      }
+
+      if (surface.state & surface::state::mapped != surface::state::mapped)
+        configure(client, &**surface);
+
+      surface.callback = callback;
+
+      if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
+        schedule_redraw(compositor, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn surface_destroy(client mut *client, u32 surface_id) -> result
+{
+  var j = client.surfaces.find(surface_id);
+
+  if (j == client.surfaces.end)
+    return winton::errc::invalid_surface;
+
+  client.surfaces.erase(j);
+
+  return 0;
+}
+
+fn buffer_resize(client mut *client, u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, winton::format format) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.buffers.get(buffer_id))
+  {
+    case Some[buffer]:
+
+      if (width <= 0 || height <= 0 || stride < width)
+        return winton::errc::invalid_buffer_size;
+
+      if (buffer.size < cast<usize>(offset) + cast<usize>(height) * cast<usize>(stride))
+        return winton::errc::buffer_size_overflow;
+
+      buffer.width = width;
+      buffer.height = height;
+      buffer.offset = cast(offset);
+      buffer.stride = cast(stride);
+      buffer.format = format;
+
+    else:
+      return winton::errc::invalid_buffer;
+  }
+
+  return 0;
+}
+
+fn buffer_destroy(client mut *client, u32 buffer_id) -> result
+{
+  var j = client.buffers.find(buffer_id);
+
+  if (j == client.buffers.end)
+    return winton::errc::invalid_buffer;
+
+  client.buffers.erase(j);
+
+  return 0;
+}
+
+fn create_window(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (surface.node)
+        return winton::errc::invalid_surface;
+
+      surface.node = compositor.scene.create_window(&**surface, scene::scene::layers::normal);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn create_popup(client mut *client, u32 surface_id, u32 parent_id) -> result
+{
+
+  return 0;
+}
+
+fn configure(client mut *client, surface mut *surface) -> result
+{
+  var serial = client.serial = std::add_with_carry(client.serial, 1).0;
+
+  switch (*surface.node)
+  {
+    case window[window]:
+      surface.configure_serial = serial;
+      surface.configure_state = surface.incomming_state;
+
+      zidl::send<winton::compositor::configure_window_response>(client.channel, surface.id, surface.configure_state.width, surface.configure_state.height, surface.configure_state.flags);
+  }
+
+  zidl::send<winton::compositor::configure_response>(client.channel, serial, surface.id);
+
+  return 0;
+}
+
+fn acknowledge(client mut *client, u32 serial) -> result
+{
+  var compositor = client.compositor;
+
+  for(var mut &(id, surface) : client.surfaces)
+  {
+    if (surface.configure_serial != serial)
+      continue;
+
+    surface.pending_state.flags = surface.configure_state.flags;
+
+    if (surface.state & surface::state::mapped != surface::state::mapped)
+    {
+      switch (*surface.node)
+      {
+        case window[window]:
+          compositor.scene.set(window, transform::translation(100.0, 100.0, 0.0));
+      }
+
+      keyboard_activate(compositor, surface.node);
+
+      surface.state |= surface::state::mapped;
+    }
+  }
+
+  return 0;
+}
+
+fn release(client mut *client, buffer mut *buffer) -> result
+{
+  if (buffer.id != 0)
+  {
+    zidl::send<winton::compositor::buffer_release_response>(client.channel, buffer.id);
+  }
+
+  return 0;
+}
+
+fn callback(client mut *client, surface mut *surface, u64 time) -> result
+{
+  zidl::send<winton::compositor::surface_callback_response>(client.channel, surface.id, time);
+
+  surface.callback = false;
+
+  return 0;
+}
+
+fn pointer_enter(client mut *client, surface mut *surface, vec2 position) -> result
+{
+  var serial = client.serial = std::add_with_carry(client.serial, 1).0;
+
+  zidl::send<winton::compositor::pointer_enter_response>(client.channel, serial, surface.id, cast<i32>(position.x + 0.5), cast<i32>(position.y + 0.5));
+
+  client.compositor.pointer.focus_serial = serial;
+
+  return 0;
+}
+
+fn pointer_leave(client mut *client, surface mut *surface) -> result
+{
+  var serial = client.serial = std::add_with_carry(client.serial, 1).0;
+
+  zidl::send<winton::compositor::pointer_leave_response>(client.channel, serial, surface.id);
+
+  return 0;
+}
+
+fn pointer_motion(client mut *client, surface mut *surface, u64 time, vec2 position) -> result
+{
+  zidl::send<winton::compositor::pointer_motion_response>(client.channel, surface.id, time, cast<i32>(position.x + 0.5), cast<i32>(position.y + 0.5));
+
+  return 0;
+}
+
+fn pointer_button(client mut *client, surface mut *surface, u64 time, u32 button, u32 state) -> result
+{
+  zidl::send<winton::compositor::pointer_button_response>(client.channel, surface.id, time, button, state);
+
+  return 0;
+}
+
+fn pointer_wheel(client mut *client, surface mut *surface, u64 time, f32 dx, f32 dy) -> result
+{
+  zidl::send<winton::compositor::pointer_wheel_response>(client.channel, surface.id, time, cast<i32>(dx), cast<i32>(dy));
+
+  return 0;
+}
+
+fn keyboard_enter(client mut *client, surface mut *surface) -> result
+{
+  var serial = client.serial = std::add_with_carry(client.serial, 1).0;
+
+  zidl::send<winton::compositor::keyboard_enter_response>(client.channel, serial, surface.id);
+
+  client.compositor.keyboard.focus_serial = serial;
+
+  surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::activated));
+
+  configure(client, surface);
+
+  return 0;
+}
+
+fn keyboard_leave(client mut *client, surface mut *surface) -> result
+{
+  var serial = client.serial = std::add_with_carry(client.serial, 1).0;
+
+  zidl::send<winton::compositor::keyboard_leave_response>(client.channel, serial, surface.id);
+
+  surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::activated));
+
+  configure(client, surface);
+
+  return 0;
+}
+
+fn keyboard_key(client mut *client, surface mut *surface, u64 time, u32 key, u32 state, char sym) -> result
+{
+  zidl::send<winton::compositor::keyboard_key_response>(client.channel, surface.id, time, key, state, sym);
+
+  return 0;
+}
+
+fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32 hotspot_y) -> result
+{
+  var compositor = client.compositor;
+
+  if (serial != compositor.pointer.focus_serial)
+    return winton::errc::invalid_serial;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (surface.node)
+      {
+        if (&**surface != compositor.pointer.surface)
+          return winton::errc::invalid_surface;
+
+        // todo: update hotspot
+        // invalidate old and new
+
+        return 0;
+      }
+
+      if (compositor.pointer.surface)
+        destroy(compositor.pointer.surface);
+
+      surface.node = compositor.scene.create_cursor(&**surface, compositor.pointer.position, hotspot_x, hotspot_y);
+
+      surface.state |= surface::state::mapped;
+
+      compositor.pointer.surface = &**surface;
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::cursor cursor) -> result
+{
+  var compositor = client.compositor;
+
+  if (serial != compositor.pointer.focus_serial)
+    return winton::errc::invalid_serial;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (surface.node)
+      {
+        if (&**surface != compositor.pointer.surface)
+          return winton::errc::invalid_surface;
+      }
+
+      if (compositor.pointer.surface)
+        destroy(compositor.pointer.surface);
+
+      switch (cursor)
+      {
+        case none:
+        case arrow:
+        case resize_top:
+        case resize_left:
+        case resize_bottom:
+        case resize_right:
+        case resize_top_left:
+        case resize_top_right:
+        case resize_bottom_left:
+        case resize_bottom_right:
+          var &cursor = compositor.theme.cursors[cast(cursor)];
+
+          surface.node = compositor.scene.create_cursor(&**surface, compositor.pointer.position, cursor.hotspot_x, cursor.hotspot_y);
+
+          surface.pending = cursor.sprite.buffer;
+          surface.pending_damage = bound::max();
+
+        else:
+          return winton::errc::invalid_cursor;
+      }
+
+      surface.state |= surface::state::mapped;
+
+      compositor.pointer.surface = &**surface;
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_minimised(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::minimised));
+
+      configure(client, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_maximised(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.restore_local = surface.node.transform;
+      surface.restore_state = surface.pending_state;
+      surface.incomming_state.width = compositor.display.width;
+      surface.incomming_state.height = compositor.display.height;
+      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::maximised));
+
+      configure(client, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_fullscreen(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.restore_local = surface.node.transform;
+      surface.restore_state = surface.pending_state;
+      surface.incomming_state.width = compositor.display.width;
+      surface.incomming_state.height = compositor.display.height;
+      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::fullscreen));
+
+      configure(client, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn unset_maximised(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      if (!surface.incomming_state.is_maximised)
+        return 0;
+
+      surface.incomming_state.width = surface.restore_state.width;
+      surface.incomming_state.height = surface.restore_state.height;
+      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::maximised));
+
+      configure(client, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn unset_fullscreen(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      if (!surface.incomming_state.is_fullscreen)
+        return 0;
+
+      surface.incomming_state.width = surface.restore_state.width;
+      surface.incomming_state.height = surface.restore_state.height;
+      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::fullscreen));
+
+      configure(client, &**surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+  return 0;
+}
+
+fn move(client mut *client, u32 serial, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  if (serial != compositor.pointer.focus_serial)
+    return winton::errc::invalid_serial;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      if (surface.node != compositor.pointer.focus)
+        return 0;
+
+      if (compositor.pointer.pressed_count == 0)
+        return 0;
+
+      if (compositor.pointer.grab_op != pointer::grab::none)
+        return 0;
+
+      compositor.pointer.grab_op = pointer::grab::move;
+      compositor.pointer.grab_offset = project(inverse(surface.node.transform), compositor.pointer.grab_pos);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether) -> result
+{
+  var compositor = client.compositor;
+
+  if (serial != compositor.pointer.focus_serial)
+    return winton::errc::invalid_serial;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      if (surface.node != compositor.pointer.focus)
+        return 0;
+
+      if (compositor.pointer.pressed_count == 0)
+        return 0;
+
+      if (compositor.pointer.grab_op != pointer::grab::none)
+        return 0;
+
+      compositor.pointer.grab_op = pointer::grab::resize;
+      compositor.pointer.grab_bound = surface.active.value.bound;
+      surface.resize_tether = tether;
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn destroy(buffer mut *buffer) -> void
+{
+  if (buffer.data)
+    os::munmap(buffer.data, buffer.size);
+}
+
+fn destroy(surface mut *surface) -> void
+{
+  var compositor = surface.client.compositor;
+
+  if (surface.node)
+  {
+    switch (*surface.node)
+    {
+      case window[window]:
+        compositor.damage = expand(compositor.damage, window.world * window.bound);
+
+      case cursor[cursor]:
+        compositor.damage = expand(compositor.damage, cursor.world * cursor.bound);
+    }
+
+    compositor.scene.erase(surface.node);
+
+    if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
+      schedule_redraw(compositor, surface);
+
+    compositor.pointer.dirty_focus = true;
+  }
+
+  if (compositor.keyboard.focus == surface.node)
+    compositor.keyboard.focus = null;
+
+  if (compositor.pointer.focus == surface.node)
+    compositor.pointer.focus = null;
+
+  if (compositor.pointer.surface == surface)
+    compositor.pointer.surface = null;
+
+  surface.node = null;
+  surface.active.clear();
+  surface.pending.clear();
+  surface.callback = false;
+  surface.pending_state = scene::window::state();
+  surface.incomming_state = scene::window::state();
+  surface.state = cast(0);
+}
+
+fn destroy(client mut *client) -> void
+{
+  app::loop::current.cancel_wait(&client.handler);
+}
+
+fn disconnect_client(compositor mut *compositor, client mut *client) -> void
+{
+  compositor.clients.erase_if(|k| &*k == client);
+}
+
+fn schedule_redraw(compositor mut *compositor, surface mut *surface) -> void
+{
+  std::assert(compositor.status & compositor::status::scheduled != compositor::status::scheduled);
+
+  var now = os::timespec(void);
+  os::clock_time(os::clock::monotonic, &now);
+
+  if (compositor.redraw_handler.deadline < now)
+    compositor.redraw_handler.deadline = now;
+
+  app::loop::current.begin_timeout(&compositor.redraw_handler);
+
+  compositor.status |= compositor::status::scheduled;
+}
+
+fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> void
+{
+  var compositor = cast<compositor mut *>(cast<uintptr>(timeout) - offsetof(compositor::redraw_handler));
+
+  var now = os::timespec(void);
+  os::clock_time(os::clock::monotonic, &now);
+
+  compositor.scene.update(1.0/60.0);
+
+  if (compositor.pointer.dirty_focus)
+    pointer_motion(compositor, now, compositor.pointer.position);
+
+  var mut &display = compositor.display;
+
+  var view_list = compositor.scene.build_view_list();
+
+  for(var node : view_list)
+  {
+    var surface = cast<surface mut *>(node.surface);
+
+    if (surface.callback)
+      callback(surface.client, surface, now);
+
+    compositor.damage = expand(compositor.damage, node.transform * surface.damage);
+  }
+
+  if (!compositor.damage.empty)
+    display.fill(cast(std::floor(compositor.damage.low(0))), cast(std::floor(compositor.damage.low(1))), cast(std::ceil(compositor.damage.high(0))), cast(std::ceil(compositor.damage.high(1))), 0xff336698);
+
+  for(var node : view_list)
+  {
+    var surface = cast<surface mut *>(node.surface);
+
+    switch (surface.active)
+    {
+      case Some[buffer]:
+        var transform = node.transform;
+        var translation = transform.translation;
+
+        //display.blit(compositor.damage, transform, buffer.width, buffer.height, buffer.stride, buffer.data + buffer.offset, cast(buffer.format));
+        display.blit(compositor.damage, translation, buffer.width, buffer.height, buffer.stride, buffer.data + buffer.offset, cast(buffer.format));
+    }
+
+    surface.damage.clear();
+  }
+
+  compositor.damage.clear();
+
+  display.swap();
+
+  timeout.deadline += display.dt;
+  compositor.status &= ~compositor::status::scheduled;
+}
+
+fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
+{
+  var mut &pointer = compositor.pointer;
+
+  var oldpos = pointer.position;
+
+  pointer.position = clamp(&move position, compositor.display.bound);
+
+  if (pointer.pressed_count == 0)
+  {
+    var (node, xy) = compositor.scene.pick(pointer.position);
+
+    if (pointer.focus != node)
+    {
+      if (pointer.focus)
+      {
+        var surface = cast<surface mut *>(pointer.focus.surface);
+
+        pointer_leave(surface.client, surface);
+
+        if (pointer.surface)
+          destroy(pointer.surface);
+      }
+
+      pointer.focus = node;
+
+      if (pointer.focus)
+      {
+        var surface = cast<surface mut *>(pointer.focus.surface);
+
+        pointer_enter(surface.client, surface, xy);
+      }
+    }
+  }
+
+  if (pointer.focus)
+  {
+    var surface = cast<surface mut *>(pointer.focus.surface);
+
+    switch (pointer.grab_op)
+    {
+      case move:
+        switch (*pointer.focus)
+        {
+          case window[window]:
+            var dp = project(inverse(window.parent.transform * window.local), pointer.position) - pointer.grab_offset;
+
+            compositor.scene.set(window, window.local * transform::translation(dp.x, dp.y, 0.0));
+
+            compositor.damage = expand(compositor.damage, window.world * window.bound);
+            compositor.damage = expand(compositor.damage, window.parent.transform * window.local * window.bound);
+
+            if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
+              schedule_redraw(compositor, surface);
+        }
+
+      case resize:
+        switch (*pointer.focus)
+        {
+          case window[window]:
+            var dp = project(inverse(window.world), pointer.position) - project(inverse(window.world), pointer.grab_pos);
+
+            surface.incomming_state.width = cast(pointer.grab_bound.high(0));
+            surface.incomming_state.height = cast(pointer.grab_bound.high(1));
+
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::left) != 0)
+              surface.incomming_state.width -= cast(dp.x);
+
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::right) != 0)
+              surface.incomming_state.width += cast(dp.x);
+
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::top) != 0)
+              surface.incomming_state.height -= cast(dp.y);
+
+            if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::bottom) != 0)
+              surface.incomming_state.height += cast(dp.y);
+
+            if (surface.incomming_state.width < 1)
+              surface.incomming_state.width = 1;
+
+            if (window.state.min_width != 0 && surface.incomming_state.width < window.state.min_width)
+              surface.incomming_state.width = window.state.min_width;
+
+            if (window.state.max_width != 0 && surface.incomming_state.width > window.state.max_width)
+              surface.incomming_state.width = window.state.max_width;
+
+            if (surface.incomming_state.height < 1)
+              surface.incomming_state.height = 1;
+
+            if (window.state.min_height != 0 && surface.incomming_state.height < window.state.min_height)
+              surface.incomming_state.height = window.state.min_height;
+
+            if (window.state.max_height != 0 && surface.incomming_state.height > window.state.max_height)
+              surface.incomming_state.height = window.state.max_height;
+
+            configure(surface.client, surface);
+        }
+
+      else:
+        pointer_motion(surface.client, surface, time, project(inverse(surface.node.transform), pointer.position));
+    }
+  }
+
+  if (pointer.surface && pointer.surface.node)
+  {
+    var &cursor = pointer.surface.node.cursor;
+
+    compositor.scene.set(cursor, pointer.position);
+
+    compositor.damage = expand(compositor.damage, transform::translation(oldpos.x - cursor.hotspot_x, oldpos.y - cursor.hotspot_y, 0.0) * cursor.bound);
+    compositor.damage = expand(compositor.damage, transform::translation(pointer.position.x - cursor.hotspot_x, pointer.position.y - cursor.hotspot_y, 0.0) * cursor.bound);
+
+    if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
+      schedule_redraw(compositor, pointer.surface);
+  }
+
+  pointer.dirty_focus = false;
+}
+
+fn pointer_button(compositor mut *compositor, u64 time, u32 button, u32 state) -> void
+{
+  var mut &pointer = compositor.pointer;
+  var mut &keyboard = compositor.keyboard;
+
+  switch (state)
+  {
+    case input::button_state::pressed:
+      pointer.pressed_count += 1;
+
+      if (pointer.pressed_count == 1)
+        pointer.grab_pos = pointer.position;
+
+    case input::button_state::released:
+      pointer.pressed_count -= 1;
+
+      if (pointer.pressed_count == 0)
+        pointer.grab_op = pointer::grab::none;
+  }
+
+  if (pointer.focus)
+  {
+    var surface = cast<surface mut *>(pointer.focus.surface);
+
+    if (keyboard.focus != pointer.focus)
+      keyboard_activate(compositor, pointer.focus);
+
+    pointer_button(surface.client, surface, time, button, state);
+  }
+
+  if (pointer.pressed_count == 0)
+  {
+    pointer_motion(compositor, time, pointer.position);
+  }
+}
+
+fn pointer_wheel(compositor mut *compositor, u64 time, f32 dx, f32 dy) -> void
+{
+  var mut &pointer = compositor.pointer;
+
+  if (pointer.focus)
+  {
+    var surface = cast<surface mut *>(pointer.focus.surface);
+
+    pointer_wheel(surface.client, surface, time, dx, dy);
+  }
+}
+
+fn keyboard_key(compositor mut *compositor, u64 time, u32 key, u32 state, char sym) -> void
+{
+  var mut &keyboard = compositor.keyboard;
+
+  if (keyboard.focus)
+  {
+    var surface = cast<surface mut *>(keyboard.focus.surface);
+
+    keyboard_key(surface.client, surface, time, key, state, sym);
+  }
+}
+
+fn keyboard_activate(compositor mut *compositor, scene::node *node) -> void
+{
+  var mut &keyboard = compositor.keyboard;
+
+  if (keyboard.focus != node)
+  {
+    if (keyboard.focus)
+    {
+      var surface = cast<surface mut *>(keyboard.focus.surface);
+
+      keyboard_leave(surface.client, surface);
+    }
+
+    keyboard.focus = node;
+
+    if (keyboard.focus)
+    {
+      var surface = cast<surface mut *>(keyboard.focus.surface);
+
+      compositor.scene.raise(keyboard.focus);
+
+      compositor.damage = expand(compositor.damage, compositor.display.bound);
+
+      if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
+        schedule_redraw(compositor, surface);
+
+      keyboard_enter(surface.client, surface);
+    }
+  }
+}
+
+fn input_handler(compositor mut *compositor, input::event &event) -> void
+{
+  switch (event)
+  {
+    case keyboard_key[evt]:
+      keyboard_key(compositor, evt.time, cast(evt.key), cast(evt.state), evt.sym);
+
+    case pointer_motion[evt]:
+      pointer_motion(compositor, evt.time, vec2(compositor.pointer.position.x + cast(evt.dx), compositor.pointer.position.y - cast(evt.dy)));
+
+    case pointer_button[evt]:
+      pointer_button(compositor, evt.time, cast(evt.button), cast(evt.state));
+
+    case pointer_wheel[evt]:
+      pointer_wheel(compositor, evt.time, cast(evt.dx), cast(evt.dy));
   }
 }

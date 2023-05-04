@@ -1,0 +1,307 @@
+//
+// math
+//
+
+import std.math;
+import std.optional;
+
+pub struct vec2
+{
+  pub f32 x;
+  pub f32 y;
+
+  pub fn ==(vec2 &lhs, vec2 &rhs) -> bool = default;
+  pub fn <=>(vec2 &lhs, vec2 &rhs) -> int = default;
+
+  pub vec2(f32 x, f32 y)
+    : x(x), y(y)
+  {
+  }
+
+  pub vec2() = default;
+  pub vec2(vec2&) = default;
+  pub fn =(vec2 mut &, vec2 &) -> vec2 mut & = default;
+  pub ~vec2() = default;
+}
+
+pub struct vec3
+{
+  pub f32 x;
+  pub f32 y;
+  pub f32 z;
+
+  pub fn ==(vec3 &lhs, vec3 &rhs) -> bool = default;
+  pub fn <=>(vec3 &lhs, vec3 &rhs) -> int = default;
+
+  pub vec3(f32 x, f32 y, f32 z)
+    : x(x), y(y), z(z)
+  {
+  }
+
+  pub vec3() = default;
+  pub vec3(vec3&) = default;
+  pub fn =(vec3 mut &, vec3 &) -> vec3 mut & = default;
+  pub ~vec3() = default;
+}
+
+pub struct vec4
+{
+  pub f32 x;
+  pub f32 y;
+  pub f32 z;
+  pub f32 w;
+
+  pub fn ==(vec4 &lhs, vec4 &rhs) -> bool = default;
+  pub fn <=>(vec4 &lhs, vec4 &rhs) -> int = default;
+
+  pub vec4(f32 x, f32 y, f32 z, f32 w)
+    : x(x), y(y), z(z), w(w)
+  {
+  }
+
+  pub vec4() = default;
+  pub vec4(vec4&) = default;
+  pub fn =(vec4 mut &, vec4 &) -> vec4 mut & = default;
+  pub ~vec4() = default;
+}
+
+pub struct transform
+{
+  f32[4][4] data;
+
+  pub fn identity() -> transform
+  {
+    return [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+  }
+
+  pub fn scale(f32 sx, f32 sy, f32 sz) -> transform
+  {
+    return [[<f32>: sx, 0.0, 0.0, 0.0], [<f32>: 0.0, sy, 0.0, 0.0], [<f32>: 0.0, 0.0, sz, 0.0], [<f32>: 0.0, 0.0, 0.0, 1.0]];
+  }
+
+  pub fn translation(f32 dx, f32 dy, f32 dz) -> transform
+  {
+    return [[<f32>: 1.0, 0.0, 0.0, dx], [<f32>: 0.0, 1.0, 0.0, dy], [<f32>: 0.0, 0.0, 1.0, dz], [<f32>: 0.0, 0.0, 0.0, 1.0]];
+  }
+
+  pub fn rotation(f32 cos, f32 sin) -> transform
+  {
+    return [[<f32>: cos, -sin, 0.0, 0.0], [<f32>: sin, cos, 0.0, 0.0], [<f32>: 0.0, 0.0, 1.0, 0.0], [<f32>: 0.0, 0.0, 0.0, 1.0]];
+  }
+
+  pub transform(f32[4][4] &data)
+    : data(data)
+  {
+  }
+
+  pub fn [](this &&, usize i, usize j)
+  {
+    return &this.data[i][j];
+  }
+
+  pub fn translation(this&) -> vec3
+  {
+    return vec3(this[0, 3], this[1, 3], this[2, 3]);
+  }
+
+  pub fn ==(transform &lhs, transform &rhs) -> bool = default;
+
+  pub transform() = default;
+  pub transform(transform&) = default;
+  pub fn =(transform mut &, transform &) -> transform mut & = default;
+  pub ~transform() = default;
+}
+
+pub fn *(transform &lhs, transform &rhs) -> transform
+{
+  var result = transform(void);
+
+  for(var i = 0; i < 4; ++i)
+  {
+    for(var j = 0; j < 4; ++j)
+    {
+      result[i, j] = 0.0;
+
+      for(var p = 0; p < 4; ++p)
+        result[i, j] += lhs[i, p] * rhs[p, j];
+    }
+  }
+
+  return result;
+}
+
+pub fn abs(transform &m) -> transform
+{
+  var result = transform(void);
+
+  for(var i = 0; i < 4; ++i)
+    for(var j = 0; j < 4; ++j)
+      result[i, j] = std::abs(m[i, j]);
+
+  return result;
+}
+
+pub fn inverse(transform &m) -> transform
+{
+  var result = transform(void);
+
+  result[0, 0] =  m[1, 1]*m[2, 2]*m[3, 3] - m[1, 1]*m[3, 2]*m[2, 3] - m[1, 2]*m[2, 1]*m[3, 3] + m[1, 2]*m[3, 1]*m[2, 3] + m[1, 3]*m[2, 1]*m[3, 2] - m[1, 3]*m[3, 1]*m[2, 2];
+  result[0, 1] = -m[0, 1]*m[2, 2]*m[3, 3] + m[0, 1]*m[3, 2]*m[2, 3] + m[0, 2]*m[2, 1]*m[3, 3] - m[0, 2]*m[3, 1]*m[2, 3] - m[0, 3]*m[2, 1]*m[3, 2] + m[0, 3]*m[3, 1]*m[2, 2];
+  result[0, 2] =  m[0, 1]*m[1, 2]*m[3, 3] - m[0, 1]*m[3, 2]*m[1, 3] - m[0, 2]*m[1, 1]*m[3, 3] + m[0, 2]*m[3, 1]*m[1, 3] + m[0, 3]*m[1, 1]*m[3, 2] - m[0, 3]*m[3, 1]*m[1, 2];
+  result[0, 3] = -m[0, 1]*m[1, 2]*m[2, 3] + m[0, 1]*m[2, 2]*m[1, 3] + m[0, 2]*m[1, 1]*m[2, 3] - m[0, 2]*m[2, 1]*m[1, 3] - m[0, 3]*m[1, 1]*m[2, 2] + m[0, 3]*m[2, 1]*m[1, 2];
+  result[1, 0] = -m[1, 0]*m[2, 2]*m[3, 3] + m[1, 0]*m[3, 2]*m[2, 3] + m[1, 2]*m[2, 0]*m[3, 3] - m[1, 2]*m[3, 0]*m[2, 3] - m[1, 3]*m[2, 0]*m[3, 2] + m[1, 3]*m[3, 0]*m[2, 2];
+  result[1, 1] =  m[0, 0]*m[2, 2]*m[3, 3] - m[0, 0]*m[3, 2]*m[2, 3] - m[0, 2]*m[2, 0]*m[3, 3] + m[0, 2]*m[3, 0]*m[2, 3] + m[0, 3]*m[2, 0]*m[3, 2] - m[0, 3]*m[3, 0]*m[2, 2];
+  result[1, 2] = -m[0, 0]*m[1, 2]*m[3, 3] + m[0, 0]*m[3, 2]*m[1, 3] + m[0, 2]*m[1, 0]*m[3, 3] - m[0, 2]*m[3, 0]*m[1, 3] - m[0, 3]*m[1, 0]*m[3, 2] + m[0, 3]*m[3, 0]*m[1, 2];
+  result[1, 3] =  m[0, 0]*m[1, 2]*m[2, 3] - m[0, 0]*m[2, 2]*m[1, 3] - m[0, 2]*m[1, 0]*m[2, 3] + m[0, 2]*m[2, 0]*m[1, 3] + m[0, 3]*m[1, 0]*m[2, 2] - m[0, 3]*m[2, 0]*m[1, 2];
+  result[2, 0] =  m[1, 0]*m[2, 1]*m[3, 3] - m[1, 0]*m[3, 1]*m[2, 3] - m[1, 1]*m[2, 0]*m[3, 3] + m[1, 1]*m[3, 0]*m[2, 3] + m[1, 3]*m[2, 0]*m[3, 1] - m[1, 3]*m[3, 0]*m[2, 1];
+  result[2, 1] = -m[0, 0]*m[2, 1]*m[3, 3] + m[0, 0]*m[3, 1]*m[2, 3] + m[0, 1]*m[2, 0]*m[3, 3] - m[0, 1]*m[3, 0]*m[2, 3] - m[0, 3]*m[2, 0]*m[3, 1] + m[0, 3]*m[3, 0]*m[2, 1];
+  result[2, 2] =  m[0, 0]*m[1, 1]*m[3, 3] - m[0, 0]*m[3, 1]*m[1, 3] - m[0, 1]*m[1, 0]*m[3, 3] + m[0, 1]*m[3, 0]*m[1, 3] + m[0, 3]*m[1, 0]*m[3, 1] - m[0, 3]*m[3, 0]*m[1, 1];
+  result[2, 3] = -m[0, 0]*m[1, 1]*m[2, 3] + m[0, 0]*m[2, 1]*m[1, 3] + m[0, 1]*m[1, 0]*m[2, 3] - m[0, 1]*m[2, 0]*m[1, 3] - m[0, 3]*m[1, 0]*m[2, 1] + m[0, 3]*m[2, 0]*m[1, 1];
+  result[3, 0] = -m[1, 0]*m[2, 1]*m[3, 2] + m[1, 0]*m[3, 1]*m[2, 2] + m[1, 1]*m[2, 0]*m[3, 2] - m[1, 1]*m[3, 0]*m[2, 2] - m[1, 2]*m[2, 0]*m[3, 1] + m[1, 2]*m[3, 0]*m[2, 1];
+  result[3, 1] =  m[0, 0]*m[2, 1]*m[3, 2] - m[0, 0]*m[3, 1]*m[2, 2] - m[0, 1]*m[2, 0]*m[3, 2] + m[0, 1]*m[3, 0]*m[2, 2] + m[0, 2]*m[2, 0]*m[3, 1] - m[0, 2]*m[3, 0]*m[2, 1];
+  result[3, 2] = -m[0, 0]*m[1, 1]*m[3, 2] + m[0, 0]*m[3, 1]*m[1, 2] + m[0, 1]*m[1, 0]*m[3, 2] - m[0, 1]*m[3, 0]*m[1, 2] - m[0, 2]*m[1, 0]*m[3, 1] + m[0, 2]*m[3, 0]*m[1, 1];
+  result[3, 3] =  m[0, 0]*m[1, 1]*m[2, 2] - m[0, 0]*m[2, 1]*m[1, 2] - m[0, 1]*m[1, 0]*m[2, 2] + m[0, 1]*m[2, 0]*m[1, 2] + m[0, 2]*m[1, 0]*m[2, 1] - m[0, 2]*m[2, 0]*m[1, 1];
+
+  var determinant = 1.0 / (m[0, 0]*result[0, 0] + m[1, 0]*result[0, 1] + m[2, 0]*result[0, 2] + m[3, 0]*result[0, 3]);
+
+  for(var i = 0; i < 4; ++i)
+    for(var j = 0; j < 4; ++j)
+      result[i, j] *= determinant;
+
+  return result;
+}
+
+pub fn *(transform &m, vec4 &v) -> vec4
+{
+  var result = vec4(void);
+
+  result.x = m[0, 0] * v.x + m[0, 1] * v.y + m[0, 2] * v.z + m[0, 3] * v.w;
+  result.y = m[1, 0] * v.x + m[1, 1] * v.y + m[1, 2] * v.z + m[1, 3] * v.w;
+  result.z = m[2, 0] * v.x + m[2, 1] * v.y + m[2, 2] * v.z + m[2, 3] * v.w;
+  result.w = m[3, 0] * v.x + m[3, 1] * v.y + m[3, 2] * v.z + m[3, 3] * v.w;
+
+  return result;
+}
+
+pub fn project(transform &m, vec3 &v, f32 w = 1.0) -> vec2
+{
+  var pt = m * vec4(v.x, v.y, v.z, w);
+
+  return vec2(pt.x / pt.w, pt.y / pt.w);
+}
+
+pub fn project(transform &m, vec2 &v, f32 w = 1.0) -> vec2
+{
+  return project(m, vec3(v.x, v.y, 0.0), w);
+}
+
+pub fn -(vec2 &u, vec2 &v) -> vec2
+{
+  return vec2(u.x - v.x, u.y - v.y);
+}
+
+pub struct bound
+{
+  f32[2] lo;
+  f32[2] hi;
+
+  pub fn min() -> bound
+  {
+    return bound([3.40282347e+38, 3.40282347e+38], [-3.40282347e+38, -3.40282347e+38]);
+  }
+
+  pub fn max() -> bound
+  {
+    return bound([-3.40282347e+38, -3.40282347e+38], [3.40282347e+38, 3.40282347e+38]);
+  }
+
+  pub fn from(vec2 lo, vec2 hi) -> bound
+  {
+    return bound([lo.x, lo.y], [hi.x, hi.y]);
+  }
+
+  pub fn centre(this&, usize axis) -> f32 { return (this.lo[axis] + this.hi[axis])/2.0; }
+  pub fn halfdim(this&, usize axis) -> f32 { return (this.hi[axis] - this.lo[axis])/2.0; }
+
+  pub fn low(this&, usize axis) -> f32 { return this.lo[axis]; }
+  pub fn high(this&, usize axis) -> f32 { return this.hi[axis]; }
+
+  pub fn ==(bound &lhs, bound &rhs) -> bool = default;
+  pub fn <=>(bound &lhs, bound &rhs) -> int = default;
+
+  pub bound(f32[2] &lo, f32[2] &hi)
+    : lo(lo), hi(hi)
+  {
+  }
+
+  pub bound() = default;
+  pub bound(bound&) = default;
+  pub fn =(bound mut &, bound &) -> bound mut & = default;
+  pub ~bound() = default;
+}
+
+pub fn clear(bound mut &b) -> void
+{
+  b = bound::min;
+}
+
+pub fn grow(bound &b, f32 radius) -> bound
+{
+  return bound([b.lo[0] - radius, b.lo[1] - radius], [b.hi[0] + radius, b.hi[1] + radius]);
+}
+
+pub fn expand(bound &b1, bound &b2) -> bound
+{
+  return bound([std::min(b1.lo[0], b2.lo[0]), std::min(b1.lo[1], b2.lo[1])], [std::max(b1.hi[0], b2.hi[0]), std::max(b1.hi[1], b2.hi[1])]);
+}
+
+pub fn expand(bound &b, vec2 &v) -> bound
+{
+  return bound([std::min(b.lo[0], v.x), std::min(b.lo[1], v.y)], [std::max(b.hi[0], v.x), std::max(b.hi[1], v.y)]);
+}
+
+pub fn empty(bound &b) -> bool
+{
+  return (b.hi[0] <= b.lo[0] || b.hi[1] <= b.lo[1]);
+}
+
+pub fn intersects(bound &b1, bound &b2) -> bool
+{
+  return (b1.lo[0] <= b2.hi[0] && b1.hi[0] >= b2.lo[0]) && (b1.lo[1] <= b2.hi[1] && b1.hi[1] >= b2.lo[1]);
+}
+
+pub fn intersection(bound &b1, bound &b2) -> std::optional<bound>
+{
+  if (!intersects(b1, b2))
+    return None;
+
+  return bound([std::max(b1.lo[0], b2.lo[0]), std::max(b1.lo[1], b2.lo[1])], [std::min(b1.hi[0], b2.hi[0]), std::min(b1.hi[1], b2.hi[1])]);
+}
+
+pub fn contains(bound &b, vec2 &v) -> bool
+{
+  return (b.lo[0] <= v.x && v.x <= b.hi[0]) && (b.lo[1] <= v.y && v.y <= b.hi[1]);
+}
+
+pub fn contains(bound &b1, bound &b2) -> bool
+{
+  return (b2.lo[0] >= b1.lo[0] && b2.hi[0] <= b1.hi[0]) && (b2.lo[1] >= b1.lo[1] && b2.hi[1] <= b1.hi[1]);
+}
+
+pub fn clamp(vec2 &v, bound &b) -> vec2
+{
+  return vec2(std::clamp(v.x, b.lo[0], b.hi[0]), std::clamp(v.y, b.lo[1], b.hi[1]));
+}
+
+pub fn clamp(bound &b1, bound &b2) -> bound
+{
+  return bound([std::max(b1.lo[0], b2.lo[0]), std::max(b1.lo[1], b2.lo[1])], [std::min(b1.hi[0], b2.hi[0]), std::min(b1.hi[1], b2.hi[1])]);
+}
+
+pub fn *(transform &m, bound &b) -> bound
+{
+  var centre = m * vec4((b.lo[0] + b.hi[0])/2.0, (b.lo[1] + b.hi[1])/2.0, 0.0, 1.0);
+  var halfdim = abs(m) * vec4((b.hi[0] - b.lo[0])/2.0, (b.hi[1] - b.lo[1])/2.0, 0.0, 0.0);
+
+  return bound([centre.x - halfdim.x, centre.y - halfdim.y], [centre.x + halfdim.x, centre.y + halfdim.y]);
+}

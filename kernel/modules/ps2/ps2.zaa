@@ -405,7 +405,7 @@ fn mouse_handler(port mut *port, u8 data) -> void
     {
       evt.type = input::type::rel;
       evt.code = input::axis::y;
-      evt.value = (port.packet[0] & 0x20 != 0) ? cast<i32>(port.packet[2]) : cast<i32>(port.packet[2]) - 0x100;
+      evt.value = (port.packet[0] & 0x20 != 0) ? cast<i32>(port.packet[2]) - 0x100 : cast<i32>(port.packet[2]);
 
       add_event(port, evt);
     }
@@ -413,8 +413,17 @@ fn mouse_handler(port mut *port, u8 data) -> void
     if (port.packet[3] != 0)
     {
       evt.type = input::type::rel;
-      evt.code = input::axis::z;
+      evt.code = input::axis::wheel;
       evt.value = (port.packet[3] & 0x8 != 0) ? cast<i32>(port.packet[3] & 0x7) : cast<i32>(port.packet[3] & 0x7) - 0x8;
+
+      add_event(port, evt);
+    }
+
+    if (port.packet[1] != 0 || port.packet[2] != 0 || port.packet[3] != 0)
+    {
+      evt.type = input::type::syn;
+      evt.code = input::syn::report;
+      evt.value = 0;
 
       add_event(port, evt);
     }

@@ -48,11 +48,11 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
     return fout;
   }
 
+  var buffer = [u8(0); 4096];
+
   for(;;)
   {
-    var buf = typename u8[4096](void);
-
-    var srcres = read(&mut thread_ring, fin, buf.data, buf.len);
+    var srcres = read(&mut thread_ring, fin, buffer.data, buffer.len);
 
     if (srcres <= 0)
     {
@@ -62,7 +62,7 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
       break;
     }
 
-    for(var data = buf.data, var len = cast<usize>(srcres); len != 0; )
+    for(var data = buffer.data, var len = cast<usize>(srcres); len != 0; )
     {
       var dstres = write(&mut thread_ring, fout, data, len);
 

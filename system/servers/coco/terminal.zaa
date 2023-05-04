@@ -182,21 +182,22 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
   if (var result = os::clock_time(os::clock::monotonic, &sp); result < 0)
     return result;
 
+  var buffer = [u8(0); 4096];
+
   while (true)
   {
-    var buf = typename u8[4096](void);
-    var bytes = pty.read_master(buf.data, buf.len);
+    var bytes = pty.read_master(buffer.data, buffer.len);
 
     if (bytes > 0)
     {
-      terminal.screen.write(buf.data, cast(bytes));
+      terminal.screen.write(buffer.data, cast(bytes));
     }
 
     driver.dispatch();
 
     while (driver.has_events)
     {
-      switch (driver.get_event)
+      switch (driver.next_event)
       {
         case keyboard_key[kv]:
 
@@ -309,7 +310,7 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
 
     var pollset = [
       os::pollevt(pty.master, os::POLLFD, os::POLLIN, 0),
-      os::pollevt(driver.get_fd, os::POLLFD, os::POLLIN, 0)
+      os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0)
     ];
 
     os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8);

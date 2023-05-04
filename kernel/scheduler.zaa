@@ -221,7 +221,7 @@ extern fn thread_main(thread mut *thread) -> void
   cpu::current_thread.tick_start_time = cpu::tsc;
   platform::enable_interrupts();
 
-  std::print("[thread:", thread.id, "] started");
+  std::print(*thread, "started");
 
   thread.entry(thread.parameter);
 
@@ -339,6 +339,8 @@ fn rebalance(run_queue mut &runqueue) -> void
 
   if (1 < busiest.len && runqueue.len < 3*busiest.len/4)
   {
+    std::assert(busiest != &runqueue);
+
     for(var mut &queue : sys::runqueues)
     {
       if (&queue == &runqueue || &queue == busiest)

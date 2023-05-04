@@ -5,6 +5,7 @@
 import std.stdio;
 import std.function;
 import app.loop;
+import seat;
 import display;
 import compositor;
 import zidl.zaos_sys;
@@ -52,13 +53,17 @@ fn main()
   if (var result = initialise(&mut service); result < 0)
     std::panic("winton: unable to initialise - ", cast<std::errc>(-result));
 
+  var seat = seat::create();
+  if (var result = seat::initialise(&mut seat); result < 0)
+    std::print("winton: failed to initialise input - ", cast<std::errc>(-result));
+
   var display = display::create();
   if (var result = display::initialise(&mut display); result < 0)
     std::print("winton: failed to initialise display - ", cast<std::errc>(-result));
 
   display.fill(0, 0, display.width, display.height, 0xff336698);
 
-  var compositor = compositor::create();
+  var compositor = compositor::create(&mut seat, &mut display);
   if (var result = compositor::initialise(&mut compositor); result < 0)
     std::print("winton: failed to initialise compositor - ", cast<std::errc>(-result));
 

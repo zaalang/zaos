@@ -9,6 +9,7 @@ import sys;
 import bootinfo : BootInfo;
 
 extern fn page_fault(uintptr addr, bool write, bool fetch, bool user) -> void;
+extern fn unhandled_exception(uintptr addr, cpu::exception type, bool user) -> void;
 extern fn io_dispatch(u8 irq) -> void;
 extern fn timer_deadline() -> void;
 extern fn ipi() -> void;
@@ -53,19 +54,13 @@ pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, interrupt_frame
   ctx.written += std::format_to(&mut os, "interrupt_frame {{ rip: {}, cs: {}, rflags: {}, rsp: {}, ss: {} }}", cast<void*>(frame.rip), frame.cs, frame.rflags, cast<void*>(frame.rsp), frame.ss);
 }
 
-extern fn divide_by_zero_handler(interrupt_frame &frame, u8 irq) -> void
-{
-  std::print(frame);
-  std::panic("divide-by-zero: ", cast<void*>(frame.rip));
-}
-
 extern fn nmi_handler(interrupt_frame &frame, u8 irq) -> void
 {
   std::print(frame);
   std::panic("nmi: ", cast<void*>(frame.rip));
 }
 
-extern fn break_handler(interrupt_frame &frame, u8 irq) -> void
+extern fn breakpoint_handler(interrupt_frame &frame, u8 irq) -> void
 {
   std::print("Break: ", cast<void*>(frame.rip));
 }
@@ -97,27 +92,64 @@ extern fn page_fault_handler(interrupt_frame &frame, u8 irq, fault errorcode) ->
   cpu::wrgsbase(gs);
 }
 
-extern fn fatal_exception_handler(interrupt_frame &frame, u8 irq) -> void
+extern fn stack_fault_handler(interrupt_frame &frame, u8 irq) -> void
 {
-  std::print(frame);
-  std::panic("fatal-exception: ", irq, " ", cast<void*>(frame.rip));
+  unhandled_exception_handler(frame, irq);
 }
 
 extern fn general_protection_fault_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
 {
-  std::print(frame);
-  std::panic("general-protection-fault: ", cast<void*>(frame.rip), " ", errorcode);
-}
-
-extern fn alignment_check_exception_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
-{
-  std::print(frame);
-  std::panic("alignment-check-exception: ", cast<void*>(frame.rip), " ", errorcode);
+  unhandled_exception_handler(frame, irq);
 }
 
 extern fn machine_check_exception_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
 {
   std::panic("machine-check-exception");
+}
+
+extern fn unhandled_exception_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  var gs = cpu::gsbase();
+  cpu::wrgsbase(sys::rsp0());
+  cpu::enable_interrupts();
+
+  switch (irq)
+  {
+    case 0:
+      unhandled_exception(frame.rip, cpu::exception::division_error_exception, is_user_frame(frame));
+
+    case 4:
+      unhandled_exception(frame.rip, cpu::exception::overflow_exception, is_user_frame(frame));
+
+    case 5:
+      unhandled_exception(frame.rip, cpu::exception::bounds_check_exception, is_user_frame(frame));
+
+    case 6:
+      unhandled_exception(frame.rip, cpu::exception::invalid_opcode_exception, is_user_frame(frame));
+
+    case 12:
+      unhandled_exception(frame.rip, cpu::exception::stack_segment_fault, is_user_frame(frame));
+
+    case 13:
+      unhandled_exception(frame.rip, cpu::exception::general_protection_fault, is_user_frame(frame));
+
+    case 16:
+      unhandled_exception(frame.rip, cpu::exception::floating_point_exception, is_user_frame(frame));
+
+    case 17:
+      unhandled_exception(frame.rip, cpu::exception::alignment_check_exception, is_user_frame(frame));
+
+    case 19:
+      unhandled_exception(frame.rip, cpu::exception::floating_point_exception, is_user_frame(frame));
+
+    else:
+      std::panic("fatal-exception: ", irq, " ", cast<void*>(frame.rip));
+  }
+}
+
+extern fn fatal_exception_handler(interrupt_frame &frame, u8 irq) -> void
+{
+  std::panic("fatal-exception: ", irq, " ", cast<void*>(frame.rip));
 }
 
 extern fn apic_timer_interrupt_handler(interrupt_frame &frame, u8 irq) -> void

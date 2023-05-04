@@ -4,6 +4,23 @@
 
 import std.tuple;
 
+pub enum exception
+{
+  invalid_exception,
+  division_error_exception,
+  non_maskable_interrupt,
+  overflow_exception,
+  bounds_check_exception,
+  invalid_opcode_exception,
+  stack_segment_fault,
+  general_protection_fault,
+  floating_point_exception,
+  alignment_check_exception,
+  machine_check_exception,
+  //breakpoint_trap,
+  //debug_trap,
+}
+
 pub fn in8(u16 port) -> u8
 {
   return cast<u8>(__asm("in al, $1", "={ax},N{dx}", port) & 0xFF);

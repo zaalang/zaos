@@ -20,8 +20,8 @@ struct endpoint : pub vfs::node
   io::response readable;
   io::response writeable;
 
-  pub endpoint() = default;
-  pub ~endpoint() = default;
+  endpoint() = default;
+  ~endpoint() = default;
 }
 
 pub struct buffer

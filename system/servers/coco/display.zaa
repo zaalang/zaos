@@ -107,11 +107,11 @@ pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> 
 
   var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
 
-  for(var j = y0; j < y1; ++j)
+  for(var y = y0; y < y1; ++y)
   {
     var dst = dstrow + x0;
 
-    for(var i = x0; i < x1; ++i)
+    for(var x = x0; x < x1; ++x)
       *dst++ = color;
 
     dstrow += display.si.pitch/4;
@@ -146,20 +146,20 @@ pub fn blit(display mut &display, int x, int y, bitmap &bitmap, u32 fgcolor, u32
   var srcrow = bitmap.bits + j0 * bitmap.stride;
   var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
 
-  for(var j = y0; j < y1; ++j)
+  for(var y = y0; y < y1; ++y)
   {
     var src = srcrow + (i0 >> 3);
     var dst = dstrow + x0;
 
-    for(var i = x0; i < x1; )
+    for(var x = x0; x < x1; )
     {
-      var value = *src++ << ((i - x0 + i0) & 7);
+      var value = *src++ << ((x - x0 + i0) & 7);
 
-      for(var k = (i - x0 + i0) & 7; k <= (i - x0 + i0 + 8) & 7; ++k)
+      for(var k = (x - x0 + i0) & 7; k <= (x - x0 + i0 + 8) & 7; ++k)
       {
         *dst++ = cast(value & 0x80 != 0) * fgcolor + cast(value & 0x80 == 0) * bgcolor;
 
-        if (++i == x1)
+        if (++x == x1)
           break;
 
         value <<= 1;

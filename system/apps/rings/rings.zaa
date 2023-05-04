@@ -1,0 +1,214 @@
+//
+// rings
+//
+
+import std.stdio;
+import std.env;
+import chrono;
+import app.loop;
+import os.zaos.mman;
+import os.zaos.fcntl;
+import zidl.zaos_sys;
+import zidl.zaos_winton;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+struct buffer
+{
+  u32 id;
+
+  i32 width;
+  i32 height;
+  usize size;
+  usize stride;
+  u8 mut *data;
+
+  buffer() = default;
+  buffer(buffer&) = default;
+  fn =(buffer mut &, buffer &) -> buffer mut & = default;
+  ~buffer() = default;
+}
+
+struct application
+{
+  usize frame;
+  buffer[2] buffer;
+  u32 focus_serial;
+
+  zidl::channel endpoint;
+  app::loop::wait_t handler;
+
+  fn connect(this mut &) throws -> void
+  {
+    this.endpoint = app::connect_to_service("zaos.winton/compositor");
+    this.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
+
+    app::loop::current.begin_wait(this.endpoint, &this.handler);
+  }
+
+  fn create_window(this mut &, u32 id) -> void
+  {
+    zidl::send<zidl::zaos_winton::compositor::create_surface_request>(this.endpoint, id);
+    zidl::send<zidl::zaos_winton::compositor::create_window_request>(this.endpoint, id);
+  }
+
+  fn create_buffer(this mut &, u32 id, i32 width, i32 height, zidl::zaos_winton::format format) throws -> buffer
+  {
+    var (client_end, server_end) = zidl::buffer::create(cast<usize>(width * height * 4));
+
+    zidl::send<zidl::zaos_winton::compositor::create_buffer_request>(this.endpoint, id, &move server_end, 0, width, height, 4*width, format);
+
+    var mmvec = os::mmvec();
+    mmvec.offset = 0;
+    mmvec.length = cast<usize>(width * height * 4);
+    mmvec.flags = 0;
+    mmvec.prot = os::prot::readwrite;
+
+    var addr = null<u8 mut *>();
+    if (var result = os::mmap(client_end.fd, &mmvec, 1, &addr, 0); result < 0)
+      throw std::system_error(cast<std::errc>(-result));
+
+    var buffer = buffer();
+    buffer.id = id;
+    buffer.width = width;
+    buffer.height = height;
+    buffer.size = mmvec.length;
+    buffer.stride = cast(width*4);
+    buffer.data = addr;
+
+    return buffer;
+  }
+
+  fn surface_attach(this mut &, u32 surface_id, u32 buffer_id) -> void
+  {
+    zidl::send<zidl::zaos_winton::compositor::surface_attach_request>(this.endpoint, surface_id, buffer_id);
+  }
+
+  fn surface_damage(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+    zidl::send<zidl::zaos_winton::compositor::surface_damage_request>(this.endpoint, surface_id, x, y, width, height);
+  }
+
+  fn surface_commit(this mut &, u32 surface_id, bool callback = false) -> void
+  {
+    zidl::send<zidl::zaos_winton::compositor::surface_commit_request>(this.endpoint, surface_id, callback);
+  }
+
+  pub fn message_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+  {
+    var this = cast<application mut *>(cast<uintptr>(wait) - offsetof(application::handler));
+
+    var result = zidl::recv<zidl::zaos_winton::compositor>(this.endpoint, |msg, completer| {
+
+      switch (msg)
+      {
+        case surface_callback[msg]:
+          this.callback(msg.surface_id, msg.time);
+
+        case configure[msg]:
+          zidl::send<zidl::zaos_winton::compositor::acknowledge_request>(this.endpoint, msg.serial);
+
+          this.surface_commit(msg.surface_id, callback: true);
+
+        case pointer_enter[msg]:
+          this.focus_serial = msg.serial;
+
+        case pointer_button[msg]:
+          zidl::send<zidl::zaos_winton::compositor::move_request>(this.endpoint, this.focus_serial, msg.surface_id);
+
+        case error[msg]:
+          std::print("error response - ", msg.code);
+      }
+    });
+
+    if (!result)
+    {
+      std::print("client error - ", cast<zidl::errc>(-cast<i32>(result)));
+
+      loop.cancel_wait(wait);
+      this.endpoint.close();
+    }
+  }
+
+  fn callback(this mut &, u32 surface_id, u64 time)
+  {
+    var mut &buffer = this.buffer[this.frame & 1];
+
+    paint(buffer.data, 20, buffer.width, buffer.height, cast(time / 1_000_000));
+
+    this.surface_attach(1, buffer.id);
+    this.surface_damage(1, 0, 0, buffer.width, buffer.height);
+    this.surface_commit(1, callback: true);
+
+    this.frame += 1;
+  }
+
+  fn paint(void mut *image, i32 padding, i32 width, i32 height, u32 time) -> void
+  {
+    let halfh = padding + (height - padding * 2) / 2;
+    let halfw = padding + (width  - padding * 2) / 2;
+
+    var or = (halfw < halfh ? halfw : halfh) - 8;
+    var ir = or - 32;
+
+    for (var y = padding; y < height - padding; ++y)
+    {
+      var row = cast<u32 mut *>(image) + cast<usize>(y * width);
+
+      for (var x = padding; x < width - padding; ++x)
+      {
+        var y2 = (y - halfh) * (y - halfh);
+        var r2 = (x - halfw) * (x - halfw) + y2;
+
+        var v = 0;
+
+        if (r2 < ir*ir)
+          v = (cast(r2) / 32 + time / 64) * 0x0080401;
+        else if (r2 < or*or)
+          v = (cast(y) + time / 32) * 0x0080401;
+        else
+          v = (cast(x) + time / 16) * 0x0080401;
+
+        v &= 0x00ffffff;
+
+        if (std::abs(x - y) > 6 && std::abs(x + y - height) > 6)
+          v |= 0xff000000;
+
+        *(row + cast(x)) = v;
+      }
+    }
+  }
+
+  application() = default;
+  ~application() = default;
+}
+
+fn main() -> int
+{
+  var loop = app::loop();
+
+  if (var result = app::initialise(&mut loop); result < 0)
+    std::panic("unable to init loop - ", cast<std::errc>(-result));
+
+  try
+  {
+    var application = application();
+
+    application.connect();
+
+    application.create_window(1);
+
+    application.buffer[0] = application.create_buffer(1, 250, 250, zidl::zaos_winton::format::B8G8R8X8);
+    application.buffer[1] = application.create_buffer(2, 250, 250, zidl::zaos_winton::format::B8G8R8X8);
+
+    application.surface_commit(1);
+
+    loop.run();
+  }
+  catch(std::error e)
+  {
+    std::print("error - ", e);
+  }
+
+  return 0;
+}

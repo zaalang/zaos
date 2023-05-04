@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import math : transform, bound, vec2, vec3, vec4;
 import os.zaos.mman;
 import os.zaos.fcntl;
 
@@ -30,9 +31,13 @@ pub struct display
 {
   screeninfo si;
   std::mutable_span<u8> fb;
+  std::vector<u8> back_buffer;
+
+  pub fn dt(this&) -> u64 { return 1_000_000_000/60; }
 
   pub fn width(this&) { return cast<int>(this.si.width); }
   pub fn height(this&) { return cast<int>(this.si.height); }
+  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.si.width), cast(this.si.height))); }
 
   display() = default;
   pub ~display() = default;
@@ -83,6 +88,8 @@ pub fn initialise(display mut &display) -> i32
 
   std::memset(display.fb.data, 0, display.fb.len);
 
+  display.back_buffer.resize(display.fb.len);
+
   close(&mut thread_ring, fd);
 
   return 0;
@@ -105,13 +112,13 @@ pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> 
   var x1 = std::min(cast<usize>(x1), display.si.width);
   var y1 = std::min(cast<usize>(y1), display.si.height);
 
-  var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
+  var dstrow = cast<u32 mut *>(display.back_buffer.data + y0 * display.si.pitch);
 
-  for(var j = y0; j < y1; ++j)
+  for(var y = y0; y < y1; ++y)
   {
     var dst = dstrow + x0;
 
-    for(var i = x0; i < x1; ++i)
+    for(var x = x0; x < x1; ++x)
       *dst++ = color;
 
     dstrow += display.si.pitch/4;
@@ -120,55 +127,125 @@ pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> 
   return 0;
 }
 
-pub fn blit(display mut &display, int x, int y, bitmap &bitmap, u32 fgcolor, u32 bgcolor) -> i32
+fn premultipy(u32 rgba, u32 alpha) -> u32
 {
-  if (!bitmap.bits)
+  // https://arxiv.org/pdf/2202.02864.pdf
+
+  var agrb = cast<u64>(alpha) * ((cast<u64>(rgba) | (cast<u64>(rgba) << 24)) & 0x00ff00ff00ff00ff);
+
+  agrb += 0x80008000800080;
+  agrb += (agrb >> 8) & 0x00ff00ff00ff00ff;
+  agrb >>= 8;
+
+  return cast<u32>((agrb & 0x00ff00ff) | ((agrb >> 24) & 0xff00ff00));
+}
+
+pub fn blit(display mut &display, bound &clip, vec3 translation, int width, int height, usize stride, u8 *bits, int format) -> i32
+{
+  if (!bits)
     return -22;
 
-  if (bitmap.width <= 0 || bitmap.height <= 0)
+  if (width <= 0 || height <= 0)
     return -22;
 
-  var x0 = cast<usize>(std::max(x, 0));
-  var y0 = cast<usize>(std::max(y, 0));
-
-  if (x0 >= display.si.width || x + bitmap.width < 0)
+  if (!intersects(clip, display.bound))
     return 0;
 
-  if (y0 >= display.si.height || y + bitmap.height < 0)
+  var rect = clamp(clamp(bound::from(vec2(translation.x, translation.y), vec2(translation.x + cast(width), translation.y + cast(height))), clip), display.bound);
+
+  if (rect.empty)
     return 0;
 
-  var i0 = cast<usize>(std::max(x, 0) - x);
-  var j0 = cast<usize>(std::max(y, 0) - y);
+  var x0 = cast<usize>(std::floor(rect.low(0)));
+  var y0 = cast<usize>(std::floor(rect.low(1)));
 
-  var x1 = std::min(cast<usize>(x + bitmap.width), display.si.width);
-  var y1 = std::min(cast<usize>(y + bitmap.height), display.si.height);
+  var i0 = cast<usize>(std::floor(rect.low(0)) - translation.x);
+  var j0 = cast<usize>(std::floor(rect.low(1)) - translation.y);
 
-  var srcrow = bitmap.bits + j0 * bitmap.stride;
-  var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
+  var x1 = cast<usize>(std::floor(rect.high(0)));
+  var y1 = cast<usize>(std::floor(rect.high(1)));
 
-  for(var j = y0; j < y1; ++j)
+  var srcrow = bits + j0 * stride;
+  var dstrow = cast<u32 mut *>(display.back_buffer.data + y0 * display.si.pitch);
+
+  for(var y = y0; y < y1; ++y)
   {
-    var src = srcrow + (i0 >> 3);
+    var src = cast<u32*>(srcrow) + i0;
     var dst = dstrow + x0;
 
-    for(var i = x0; i < x1; )
+    switch (format)
     {
-      var value = *src++ << ((i - x0 + i0) & 7);
+      case 0:
+        for(var x = x0; x < x1; ++x)
+          *dst++ = *src++;
 
-      for(var k = (i - x0 + i0) & 7; k <= (i - x0 + i0 + 8) & 7; ++k)
-      {
-        *dst++ = cast(value & 0x80 != 0) * fgcolor + cast(value & 0x80 == 0) * bgcolor;
-
-        if (++i == x1)
-          break;
-
-        value <<= 1;
-      }
+      case 1:
+        for(var x = x0; x < x1; ++x, ++src, ++dst)
+          *dst = std::add_with_carry(*src, premultipy(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
     }
 
-    srcrow += bitmap.stride;
+    srcrow += stride;
     dstrow += display.si.pitch/4;
   }
+
+  return 0;
+}
+
+pub fn blit(display mut &display, bound &clip, transform &transform, int width, int height, usize stride, u8 *bits, int format) -> i32
+{
+  if (!bits)
+    return -22;
+
+  if (width <= 0 || height <= 0)
+    return -22;
+
+  if (!intersects(clip, display.bound))
+    return 0;
+
+  var rect = clamp(clamp(transform * bound::from(vec2(0.0, 0.0), vec2(cast(width), cast(height))), clip), display.bound);
+
+  if (rect.empty)
+    return 0;
+
+  var x0 = std::floor(rect.low(0));
+  var y0 = std::floor(rect.low(1));
+
+  var x1 = std::ceil(rect.high(0));
+  var y1 = std::ceil(rect.high(1));
+
+  var inverse = inverse(transform);
+
+  for(var y = y0; y < y1; ++y)
+  {
+    var dstrow = cast<u32 mut *>(display.back_buffer.data + cast(y) * display.si.pitch);
+
+    for(var x = x0; x < x1; ++x)
+    {
+      var pt = project(inverse, vec2(x, y));
+
+      if (pt.x >= 0.0 && pt.x < cast(width) && pt.y >= 0.0 && pt.y < cast(height))
+      {
+        var dst = dstrow + cast(x);
+        var src = cast<u32*>(bits + cast(pt.y) * stride) + cast(pt.x);
+
+        switch (format)
+        {
+          case 0:
+            *dst = *src;
+
+          case 1:
+            *dst = std::add_with_carry(*src, premultipy(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+pub fn swap(display mut &display) -> i32
+{
+  std::memcpy(display.fb.data, display.back_buffer.data, display.back_buffer.len);
 
   return 0;
 }

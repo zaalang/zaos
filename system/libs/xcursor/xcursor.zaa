@@ -1,0 +1,157 @@
+//
+// xcursor
+//
+
+import std.vector;
+import std.string : String;
+
+const XCURSOR_MAGIC = 0x72756358;
+const XCURSOR_COMMENT_TYPE = 0xfffe0001;
+const XCURSOR_IMAGE_TYPE = 0xfffd0002;
+
+#[packed]
+struct XcursorFileHeader
+{
+  u32 magic;    // magic number
+  u32 header;   // byte length of header
+  u32 version;  // file version number
+  u32 ntoc;     // number of toc entries
+}
+
+#[packed]
+struct XcursorFileToc
+{
+  u32 type;     // chunk type
+  u32 subtype;  // subtype (size for images)
+  u32 position; // absolute position in file
+}
+
+#[packed]
+struct XcursorChunkHeader
+{
+  u32 header;   // bytes in chunk header
+  u32 type;     // chunk type
+  u32 subtype;  // chunk subtype (size for images)
+  u32 version;  // version of this type
+}
+
+#[packed]
+struct XcursorComment
+{
+  XcursorChunkHeader header;
+  u32 length;
+}
+
+#[packed]
+struct XcursorImage
+{
+  XcursorChunkHeader header;
+  u32 width;    // actual width
+  u32 height;   // actual height
+  u32 xhot;     // hot spot x (must be inside image)
+  u32 yhot;     // hot spot y (must be inside image)
+  u32 delay;    // animation delay to next frame (ms)
+}
+
+pub struct cursor
+{
+  pub fn load(String &path) throws -> cursor
+  {
+    var bytes = std::readfile_to_vector(path);
+
+    if (bytes.len < sizeof<XcursorFileHeader>)
+      throw std::system_error(std::errc::format_error);
+
+    var header = cast<XcursorFileHeader*>(bytes.data);
+
+    if (header.magic != XCURSOR_MAGIC)
+      throw std::system_error(std::errc::format_error);
+
+    if (bytes.len < sizeof<XcursorFileHeader> + cast(header.ntoc) * sizeof<XcursorFileToc>)
+      throw std::system_error(std::errc::format_error);
+
+    for(var i = 0; i < header.ntoc; ++i)
+    {
+      var entry = cast<XcursorFileToc*>(header + 1) + cast(i);
+
+      switch (entry.type)
+      {
+        case XCURSOR_IMAGE_TYPE:
+
+          var position = cast<usize>(entry.position);
+
+          if (bytes.len < position + sizeof<XcursorImage>)
+            throw std::system_error(std::errc::format_error);
+
+          var image = cast<XcursorImage*>(bytes.data + position);
+
+          if (bytes.len < position + sizeof<XcursorImage> + cast<usize>(image.width) * cast<usize>(image.height) * sizeof<u32>)
+            throw std::system_error(std::errc::format_error);
+      }
+    }
+
+    return cursor(&move bytes);
+  }
+
+  pub struct pixels
+  {
+    pub u32 width;
+    pub u32 height;
+    pub u32 hotspot_x;
+    pub u32 hotspot_y;
+    pub u32 delay;
+    pub std::span<u32> data;
+
+    pub pixels() = default;
+    pub pixels(pixels&) = default;
+    pub fn =(pixels mut &, pixels &) -> pixels mut & = default;
+    pub ~pixels() = default;
+  }
+
+  #[lifetime(depend(this))]
+  pub fn lookup(this&, u32 size) -> pixels
+  {
+    var header = cast<XcursorFileHeader*>(this.bytes.data);
+
+    var position = 0;
+    for(var i = 0; i < header.ntoc; ++i)
+    {
+      var entry = cast<XcursorFileToc*>(header + 1) + cast(i);
+
+      switch (entry.type)
+      {
+        case XCURSOR_IMAGE_TYPE:
+          if (entry.subtype == size)
+            position = cast<usize>(entry.position);
+      }
+    }
+
+    var result = pixels();
+
+    if (position != 0)
+    {
+      var image = cast<XcursorImage*>(this.bytes.data + position);
+
+      result.width = image.width;
+      result.height = image.height;
+      result.hotspot_x = image.xhot;
+      result.hotspot_y = image.yhot;
+      result.delay = image.delay;
+      result.data = std::span(cast<u32*>(image + 1), cast<usize>(image.width) * cast<usize>(image.height) * sizeof<u32>);
+    }
+
+    return result;
+  }
+
+  std::vector<u8> bytes;
+
+  cursor(std::vector<u8> &&bytes)
+    : bytes(&&bytes)
+  {
+  }
+
+  pub cursor() = default;
+  pub cursor(cursor&&) = default;
+  pub fn =(cursor mut &, cursor &&) -> cursor mut & = default;
+  pub ~cursor() = default;
+}

@@ -260,6 +260,11 @@ pub struct process
   pub ~process() = default;
 }
 
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, process &process) throws -> void
+{
+  ctx.written += std::print_to(&mut os, "[process:", process.id, "(", process.name, ")] ");
+}
+
 struct process_manager
 {
   mutex lock;
@@ -416,7 +421,7 @@ pub fn process_push_ioring(process mut *process, usize size) -> i32
 
 pub fn process_start(process mut *process, thread::priority priority) -> process::id
 {
-  std::print("[process:", process.id, "] started");
+  std::print(*process, "started");
 
   for(var thread = process.threads; thread; thread = thread.sibling)
     scheduler::enqueue(thread, priority);
@@ -429,7 +434,7 @@ fn destroy(process mut *process) -> void
   std::assert(!process.threads);
   std::assert(!process.children);
 
-  std::print("[process:", process.id, "] done");
+  std::print(*process, "done");
 
   {
     var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
@@ -585,4 +590,35 @@ pub fn teardown(process mut *process) -> void
           thread.detach();
     }
   }
+}
+
+extern fn unhandled_exception(vm::virtaddr addr, platform::exception type, bool user) -> void
+{
+  std::print(*thread::current, "unhandled exception: ", type, " at ", addr);
+
+  platform::disable_memory_protect();
+
+  var rbp = cast<uintptr*>(__asm("mov $0, rbp", "=r"));
+
+  for(var i = 0; i < 32; ++i)
+  {
+    if (!rbp)
+      break;
+
+    var ret = *(rbp + 1);
+
+    if (ret >= extern(_BASE))
+      std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
+    else
+      std::print(cast<void*>(ret));
+
+    rbp = cast<uintptr*>(*rbp);
+  }
+
+  platform::enable_memory_protect();
+
+  if (!user)
+    std::panic("unhandled exception in kernel space");
+
+  process::exit(-5);
 }

@@ -3,7 +3,10 @@
 //
 
 import input;
-import input.keymap : Key, keymap;
+import input.keymap : keymap;
+import input.device : mouse;
+import input.keys : Key;
+import input.buttons : Button;
 import os.zaos.time;
 import os.zaos.fcntl;
 import std.vector;
@@ -30,6 +33,7 @@ pub struct device
 pub union config
 {
   pub keymap(keymap),
+  pub mouse(mouse),
 
   config() = default;
   fn =(config mut &, config &&) -> config mut & = default;
@@ -41,6 +45,9 @@ pub union event
   pub device_added(device*),
   pub device_removed(device*),
   pub keyboard_key(key_event),
+  pub pointer_motion(pointer_event),
+  pub pointer_button(pointer_event),
+  pub pointer_wheel(pointer_event),
 
   pub event(event&&) = default;
   pub fn =(event mut &, event &&) -> event mut & = default;
@@ -49,8 +56,8 @@ pub union event
 
 pub enum key_state
 {
-  pressed,
-  released,
+  pressed = 1,
+  released = 0,
 }
 
 pub struct key_event
@@ -69,6 +76,34 @@ pub struct key_event
   ~key_event() = default;
 }
 
+pub enum button_state
+{
+  pressed = 1,
+  released = 0,
+}
+
+pub struct pointer_event
+{
+  pub u64 time;
+  pub f64 dx;
+  pub f64 dy;
+  pub Button button;
+  pub button_state state;
+
+  pointer_event(u64 time, f64 dx, f64 dy)
+    : time(time), dx(dx), dy(dy)
+  {
+  }
+
+  pointer_event(u64 time, Button button, button_state state)
+    : time(time), button(button), state(state)
+  {
+  }
+
+  pointer_event(pointer_event&) = default;
+  ~pointer_event() = default;
+}
+
 pub struct driver
 {
   i32 fd;
@@ -78,6 +113,7 @@ pub struct driver
   std::circular_buffer<event> events;
 
   u8[256] key_state;
+  f64[9] motion;
 
   pub driver() = default;
   pub ~driver() = default;
@@ -143,6 +179,15 @@ pub fn add_device(driver mut &driver, String &&path, keymap &keymap) -> device *
   return device;
 }
 
+pub fn add_device(driver mut &driver, String &&path, mouse &mouse) -> device *
+{
+  var device = driver.add_device(&&path);
+
+  device.config = config::mouse(mouse);
+
+  return device;
+}
+
 pub fn dispatch(driver mut &driver) -> i32
 {
   struct input_event
@@ -176,10 +221,25 @@ pub fn dispatch(driver mut &driver) -> i32
     {
       switch (input.type)
       {
-        case 0: // syn
-          ;
+        case input::type::syn:
 
-        case 1: // key
+          switch (device.config)
+          {
+            case mouse[config]:
+
+              if (input.code == input::syn::report)
+              {
+                if (driver.motion[0] != 0.0 || driver.motion[1] != 0.0)
+                  driver.post_event(event::pointer_motion(input.time, driver.motion[0], driver.motion[1]));
+
+                if (driver.motion[8] != 0.0)
+                  driver.post_event(event::pointer_wheel(input.time, 0.0, driver.motion[8]));
+
+                driver.motion[0] = driver.motion[1] = driver.motion[8] = 0.0;
+              }
+          }
+
+        case input::type::key:
 
           switch (input.value)
           {
@@ -198,6 +258,18 @@ pub fn dispatch(driver mut &driver) -> i32
 
                   if (driver.key_state[cast(key)] == 0)
                     driver.post_event(event::keyboard_key(input.time, key, key_state::released));
+
+                case mouse[config]:
+
+                  var key = config.buttons[cast(input.code - 0x100)];
+
+                  if (driver.key_state[cast(key)] == 0)
+                    continue;
+
+                  driver.key_state[cast(key)] -= 1;
+
+                  if (driver.key_state[cast(key)] == 0)
+                    driver.post_event(event::pointer_button(input.time, key, button_state::released));
               }
 
             case 1: // pressed
@@ -224,10 +296,31 @@ pub fn dispatch(driver mut &driver) -> i32
 
                   if (driver.key_state[cast(key)] == 1)
                     driver.post_event(event::keyboard_key(input.time, key, key_state::pressed, sym));
+
+                case mouse[config]:
+
+                  var key = config.buttons[cast(input.code - 0x100)];
+
+                  driver.key_state[cast(key)] += 1;
+
+                  if (driver.key_state[cast(key)] == 1)
+                    driver.post_event(event::pointer_button(input.time, key, button_state::pressed));
               }
           }
 
-        case 4: // msc
+        case input::type::rel:
+
+          switch (device.config)
+          {
+            case mouse[config]:
+
+              driver.motion[cast(input.code)] = cast<f64>(input.value);
+          }
+
+        case input::type::abs:
+          ;
+
+        case input::type::msc:
           ;
 
         else:
@@ -239,7 +332,7 @@ pub fn dispatch(driver mut &driver) -> i32
   return 0;
 }
 
-pub fn get_fd(driver mut &driver) -> i32
+pub fn fd(driver mut &driver) -> i32
 {
   return driver.fd;
 }
@@ -249,7 +342,7 @@ pub fn has_events(driver mut &driver) -> bool
   return !driver.events.empty;
 }
 
-pub fn get_event(driver mut &driver) -> event
+pub fn next_event(driver mut &driver) -> event
 {
   return driver.pop_event();
 }

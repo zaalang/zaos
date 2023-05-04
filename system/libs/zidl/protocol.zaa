@@ -47,7 +47,8 @@ pub fn ordinal(u8 *bytes, usize nbytes) -> i32
   return header.ordinal;
 }
 
-pub fn send<zidl_message_t>(i32 fd, var && ...args) -> result
+pub fn send<zidl_message_t, Args>(i32 fd, Args && ...args) -> result
+  match (Args args) { zidl_message_t(&move args...); }
 {
   var bytes = std::vector<u8, N:512>::with_uninitialised_size(zidl_message_t::max_message_size);
   var handles = std::vector<i32, N:64>::with_uninitialised_size(64);
@@ -70,7 +71,14 @@ pub fn send<zidl_message_t>(i32 fd, var && ...args) -> result
   return 0;
 }
 
-pub fn call<zidl_request_t, zidl_response_t, Callback>(i32 fd, var && ...args, Callback &&callback) -> result
+pub fn send<zidl_message_t, Args>(zidl::channel &channel, Args && ...args) -> result
+  match (Args args) { zidl_message_t(&move args...); }
+{
+  return send<zidl_message_t>(channel.fd, &&args...);
+}
+
+pub fn call<zidl_request_t, zidl_response_t, Args, Callback>(i32 fd, Args && ...args, Callback &&callback) -> result
+  match (Args args) { zidl_request_t(&move args...); }
 {
   var bytes = std::vector<u8, N:512>::with_uninitialised_size(std::max(zidl_request_t::max_message_size, zidl_response_t::max_message_size));
   var handles = std::vector<i32, N:64>::with_uninitialised_size(64);
@@ -127,6 +135,12 @@ pub fn call<zidl_request_t, zidl_response_t, Callback>(i32 fd, var && ...args, C
   }
 
   return 0;
+}
+
+pub fn call<zidl_request_t, zidl_response_t, Args, Callback>(zidl::channel &channel, Args && ...args, Callback &&callback) -> result
+  match (Args args) { zidl_request_t(&move args...); }
+{
+  return call<zidl_request_t, zidl_response_t>(channel.fd, &&args..., &&callback);
 }
 
 pub struct completer
@@ -238,4 +252,9 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
   }
 
   return completer.status;
+}
+
+pub fn recv<zidl_protocol_t, Callback>(zidl::channel &channel, Callback &&callback) -> result
+{
+  return recv<zidl_protocol_t>(channel.fd, &&callback);
 }

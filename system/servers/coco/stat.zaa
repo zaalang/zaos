@@ -46,7 +46,7 @@ pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cm
 
   if (stat.ftype == os::ftype::symbolic_link)
   {
-    var buffer = typename u8[4096](void);
+    var buffer = [u8(0); 4096];
 
     var linkres = read(&mut thread_ring, fd, buffer.data, buffer.len);
 

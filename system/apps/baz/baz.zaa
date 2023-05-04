@@ -1,16 +1,58 @@
 //
-// abz
+// baz
 //
 
 import std.stdio;
-import std.env;
-import chrono;
 import app.loop;
-import os.zaos.fcntl;
-import zidl.zaos_sys;
-import zidl.zaos_winton;
+import winton;
 
-extern fn thread_ring() -> os::ioring mut &;
+struct test : pub winton::window
+{
+  pub fn create(winton::display &&display, winton::window::flags flags) throws -> test
+  {
+    return test(winton::window::create(display, flags, winton::iwindow()));
+  }
+
+  pub fn button_event(this mut &, winton::input &input) override -> void
+  {
+    std::print(input);
+  }
+
+  pub fn key_event(this mut &, winton::input &input) override -> void
+  {
+    std::print(input);
+
+    if (input.last_key == 122 && input.key_state[cast(input.last_key)] == 0)
+      this.set_fullscreen(!this.is_fullscreen);
+  }
+
+  pub fn paint_event(this mut &, winton::buffer mut &buffer) override -> void
+  {
+    var rect = this.interior;
+
+    for(var y = rect.y; y < rect.y + rect.height; ++y)
+    {
+      var row = cast<u32 mut *>(buffer.data + cast<usize>(buffer.offset) + cast(y) * cast<usize>(buffer.stride));
+
+      for(var x = rect.x; x < rect.x + rect.width; ++x)
+      {
+        *(row + cast(x)) = 0xffffffff;
+      }
+    }
+  }
+
+  pub fn close_event(this mut &) override -> void
+  {
+    this.destroy();
+  }
+
+  test(winton::window &&window)
+    : super(&move window)
+  {
+  }
+
+  ~test() = default;
+}
 
 fn main() -> int
 {
@@ -21,11 +63,11 @@ fn main() -> int
 
   try
   {
-    var endpoint = app::connect_to_service("zaos.winton/compositor");
+    var display = winton::display::create();
 
-    zidl::call<zidl::zaos_winton::compositor::create_surface_request, zidl::zaos_winton::compositor::create_surface_response>(endpoint.fd, 11, 22, 33, 44, callback: |success| {
-      std::print("ok - ", success);
-    });
+    var window = test::create(display, winton::window::flags::close_button | winton::window::flags::minimise_button | winton::window::flags::maximise_button);
+
+    window.schedule_resize(300, 300);
 
     loop.run();
   }

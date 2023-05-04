@@ -45,11 +45,15 @@ pub fn cpu_count() -> usize
 
 pub fn runqueue(int cpu) -> run_queue mut &
 {
+  std::assert(platform::interrupts_disabled);
+
   return &sys.runqueues[cast(cpu)];
 }
 
 pub fn runqueues() -> std::mutable_span<run_queue>
 {
+  std::assert(platform::interrupts_disabled);
+
   return std::mutable_span(sys.runqueues.data, sys.cpu_count);
 }
 

@@ -20,8 +20,6 @@ extern fn exit(u32) -> void
 
     if (ret >= extern(_BASE))
       std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
-    else if (ret >= 0x1D0000)
-      std::print(cast<void*>(ret), "  ", cast<void*>(ret - 0x1D0000));
     else
       std::print(cast<void*>(ret));
 

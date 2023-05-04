@@ -60,9 +60,9 @@ pub fn encode(encoder mut &encoder, zidl::string_view str) -> void
   }
 }
 
-pub fn encode(encoder mut &encoder, zidl::channel &channel) -> void
+pub fn encode(encoder mut &encoder, zidl::handle &handle) -> void
 {
-  encoder.submit(channel.fd);
+  encoder.submit(handle.fd);
 }
 
 pub fn encode<T>(encoder mut &encoder, T &object) -> void
