@@ -83,12 +83,19 @@ isr_common:
 
             call rcx                      # call handler
 
-            cli
-            pop r11
             test byte ptr [rbp + 32], 0x3 # if from user
             jz 1f
+            mov r11, [fs:tss@tpoff + 4]   # rsp0
+            test qword ptr [r11], 0x2     # killed ?
+            jz 1f
+            call terminate
+
+ 1:         cli
+            pop r11
+            test byte ptr [rbp + 32], 0x3 # if from user
+            jz 2f
             wrfsbase r11                  # restore fs
- 1:         pop rax
+ 2:         pop rax
             pop r8
             pop r9
             pop r10

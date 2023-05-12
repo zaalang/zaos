@@ -134,7 +134,7 @@ struct application
   {
     var mut &buffer = this.buffer[this.frame & 1];
 
-    paint(buffer.data, buffer.width, buffer.height, cast(time / 1_000_000));
+    paint(buffer.data, buffer.width, buffer.height, time / 1_000_000);
 
     this.surface_attach(1, buffer.id);
     this.surface_damage(1, 0, 0, buffer.width, buffer.height);
@@ -143,7 +143,7 @@ struct application
     this.frame += 1;
   }
 
-  fn paint(void mut *image, i32 width, i32 height, u32 time) -> void
+  fn paint(void mut *image, i32 width, i32 height, u64 time) -> void
   {
     fn lerp(float lower, float upper, float alpha) -> float
     {
@@ -185,7 +185,6 @@ struct application
           *(row + cast(x)) = 0xff000000 | (cast<u32>(255.0 * r) << 16) | (cast<u32>(255.0 * g) << 8) | (cast<u32>(255.0 * b) << 0);
         }
       }
-
     }
   }
 

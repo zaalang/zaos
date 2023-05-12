@@ -23,7 +23,7 @@ enum format
   B8G8R8A8 = 1, // 32-bit rgba pre-multiplied little endian
 }
 
-enum state
+bits state
 {
   minimised = 1,
   maximised = 2,
@@ -57,6 +57,14 @@ enum cursor
   resize_bottom_right = 9,
 }
 
+struct uuid
+{
+  u32 data1;
+  u16 data2;
+  u16 data3;
+  u8[8] data4;
+}
+
 protocol compositor
 {
   create_surface(u32 id);
@@ -67,7 +75,7 @@ protocol compositor
   surface_attach(u32 surface_id, u32 buffer_id);
   surface_damage(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
   surface_commit(u32 surface_id, bool callback);
-  ->surface_callback(u32 surface_id, u64 time);
+  -> surface_callback(u32 surface_id, u64 time);
 
   buffer_resize(u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, format format);
   buffer_destroy(u32 buffer_id);
@@ -76,9 +84,11 @@ protocol compositor
   create_window(u32 surface_id);
   create_popup(u32 surface_id, u32 parent_id);
 
-  ->configure_window(u32 surface_id, i32 width, i32 height, state state);
-  ->configure_popup(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
-  ->configure(u32 serial, u32 surface_id);
+  -> surface(u32 surface_id, uuid uuid);
+
+  -> configure_window(u32 surface_id, i32 width, i32 height, state state);
+  -> configure_popup(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
+  -> configure(u32 serial, u32 surface_id);
   acknowledge(u32 serial);
 
   -> pointer_enter(u32 serial, u32 surface_id, i32 x, i32 y);
@@ -106,3 +116,9 @@ protocol compositor
   -> error(u32 id, errc code);
 }
 
+protocol shell
+{
+  create_desktop(uuid surface_id);
+
+  -> error(u32 id, errc code);
+}

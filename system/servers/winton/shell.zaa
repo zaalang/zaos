@@ -1,0 +1,82 @@
+//
+// shell
+//
+
+import std.stdlib;
+import app.loop;
+import compositor;
+import zidl.zaos_winton;
+
+using winton = zidl::zaos_winton;
+
+pub struct shell
+{
+  compositor::compositor mut &compositor;
+
+  zidl::channel channel;
+  app::loop::wait_t handler;
+
+  shell(compositor::compositor mut &compositor)
+    : compositor(&compositor)
+  {
+  }
+
+  pub ~shell() = default;
+}
+
+pub fn create(compositor::compositor mut &compositor) -> shell
+{
+  return shell(&mut compositor);
+}
+
+pub fn initialise(shell mut &shell) -> i32
+{
+  return 0;
+}
+
+pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) -> void
+{
+  if (shell.channel)
+    return;
+
+  std::print("winton shell: accept connection");
+
+  shell.channel = &move channel;
+  shell.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+
+  app::loop::current.begin_wait(shell.channel, &shell.handler);
+}
+
+fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var shell = cast<shell mut *>(cast<uintptr>(wait) - offsetof(shell::handler));
+
+  var result = zidl::recv<winton::shell>(shell.channel, |msg, completer| {
+
+    var result = compositor::result::ok;
+
+    switch (msg)
+    {
+      case create_desktop[msg]:
+        result = shell.compositor.create_desktop(msg.surface_id);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+
+    if (!result)
+    {
+      std::print("winton shell: client error - ", cast<winton::errc>(-cast<i32>(result)));
+
+      zidl::send<winton::shell::error_response>(shell.channel, 0, cast<winton::errc>(-cast<i32>(result)));
+    }
+  });
+
+  if (!result)
+  {
+    std::print("winton compositor: client error - ", cast<zidl::errc>(-cast<i32>(result)));
+
+    app::loop::current.cancel_wait(&shell.handler);
+    shell.channel.close();
+  }
+}

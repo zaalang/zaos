@@ -177,6 +177,9 @@ struct connection
 
       switch (msg)
       {
+        case surface[msg]:
+          ;
+
         case configure_window[msg]:
           switch (connection.surfaces.get(msg.surface_id))
           {
@@ -649,22 +652,22 @@ pub struct window : pub std::box<surface>
 
   pub fn is_active(this&) -> bool
   {
-    return cast<i32>(this.state.state) & cast<i32>(winton::state::activated) != 0;
+    return this.state.state & winton::state::activated == winton::state::activated;
   }
 
   pub fn is_minimised(this&) -> bool
   {
-    return cast<i32>(this.state.state) & cast<i32>(winton::state::minimised) != 0;
+    return this.state.state & winton::state::minimised == winton::state::minimised;
   }
 
   pub fn is_maximised(this&) -> bool
   {
-    return cast<i32>(this.state.state) & cast<i32>(winton::state::maximised) != 0;
+    return this.state.state & winton::state::maximised == winton::state::maximised;
   }
 
   pub fn is_fullscreen(this&) -> bool
   {
-    return cast<i32>(this.state.state) & cast<i32>(winton::state::fullscreen) != 0;
+    return this.state.state & winton::state::fullscreen == winton::state::fullscreen;
   }
 
   pub fn set_cursor(this mut &, winton::cursor cursor) -> void

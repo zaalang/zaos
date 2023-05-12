@@ -369,6 +369,7 @@ fn rebalance(run_queue mut &runqueue) -> void
   runqueue.last_balance = cpu::tsc;
 }
 
+#[noinline]
 pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority::normal) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -383,6 +384,7 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
   platform::task_fork(&mut thread.task, extern(thread_main), thread);
 }
 
+#[noinline]
 pub fn sleep_yield() -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -395,6 +397,7 @@ pub fn sleep_yield() -> void
   reschedule(thread::state::ready);
 }
 
+#[noinline]
 pub fn sleep_until(u64 timeout) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -410,6 +413,7 @@ pub fn sleep_until(u64 timeout) -> void
   reschedule(thread::state::waiting, adopt_lock: true);
 }
 
+#[noinline]
 pub fn prepare_to_block() -> void
 {
   var mut &runqueue = cpu::runqueue;
@@ -418,6 +422,7 @@ pub fn prepare_to_block() -> void
   std::atomic_store(&current_thread.wait_status, 1);
 }
 
+#[noinline]
 pub fn block() -> i32
 {
   var mut &runqueue = cpu::runqueue;
@@ -440,6 +445,7 @@ pub fn block() -> i32
   return std::volatile_load(&current_thread.wait_status);
 }
 
+#[noinline]
 pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
 {
   lock.unlock();
@@ -471,6 +477,7 @@ pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
   return std::volatile_load(&current_thread.wait_status);
 }
 
+#[noinline]
 pub fn unblock(thread mut *thread, i32 status = 0) -> void
 {
   std::assert(status <= 0);
@@ -492,6 +499,7 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
   }
 }
 
+#[noinline]
 pub fn bury(thread mut *undertaker, thread mut * mut &graveyard) -> void
 {
   var mut &runqueue = cpu::runqueue;
@@ -514,6 +522,7 @@ pub fn bury(thread mut *undertaker, thread mut * mut &graveyard) -> void
   std::panic("dead ringer!");
 }
 
+#[noinline]
 pub fn start() -> void
 {
   var idle_thread = new<thread>(__alloca(sizeof<thread>, 64));

@@ -134,7 +134,7 @@ struct application
   {
     var mut &buffer = this.buffer[this.frame & 1];
 
-    paint(buffer.data, 20, buffer.width, buffer.height, cast(time / 1_000_000));
+    paint(buffer.data, 20, buffer.width, buffer.height, cast((time / 1_000_000) & 0x3fff));
 
     this.surface_attach(1, buffer.id);
     this.surface_damage(1, 0, 0, buffer.width, buffer.height);

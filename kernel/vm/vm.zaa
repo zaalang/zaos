@@ -120,6 +120,8 @@ pub fn is_kernel_address(virtaddr addr) -> bool
 
 pub fn allocate_physical_page() -> page mut *
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   if (var page = mm.pagecache.get())
     return page;
 
@@ -138,6 +140,8 @@ pub fn allocate_physical_page() -> page mut *
 
 pub fn release_physical_page(page mut *page) -> void
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   mm.pagecache.put(page);
 }
 
@@ -239,6 +243,8 @@ fn lock_region(address_space mut &space, virtaddr addr) -> region mut *
 
 pub fn create_anonymous_region(address_space mut &space, virtrange range, protection prot, usage use) -> vm::result
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   var region = mm.regioncache.get();
 
   if (!region)
@@ -264,6 +270,8 @@ pub fn create_anonymous_region(virtrange range, protection prot, usage use) -> v
 
 pub fn create_physical_region(address_space mut &space, virtrange range, std::vector<physrange> &physical, protection prot, usage use) -> vm::result
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   var region = mm.regioncache.get();
 
   if (!region)
@@ -303,6 +311,8 @@ pub fn create_physical_region(virtrange range, std::vector<physrange> &physical,
 
 pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node_ptr &node, u64 offset, protection prot, usage use) -> vm::result
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   var region = mm.regioncache.get();
 
   if (!region)
@@ -387,6 +397,8 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   if (!region)
     return bad_address;
 
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
 
@@ -401,8 +413,6 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   if (!region.is_foreign)
   {
     var pages = null<page mut *>();
-
-    var irqs = platform::disable_interrupts();
 
     pagetable.unmap(region.range, &pages, fn(void mut *pages, platform::virtaddr_t addr, platform::physaddr_t phys) {
       var mut &pages = *cast<page mut * mut *>(pages);
@@ -427,13 +437,13 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
         std::atomic_sub(&rendezvous, 1);
       });
 
-      platform::restore_interrupts(irqs);
+      platform::enable_interrupts();
 
       while (std::volatile_load(&rendezvous) != 1)
         __relax();
-    }
 
-    platform::restore_interrupts(irqs);
+      platform::disable_interrupts();
+    }
 
     for(var page = pages; page; )
     {
@@ -771,6 +781,8 @@ extern fn page_fault(virtaddr addr, bool write, bool fetch, bool user) -> void
 
 pub fn reap() -> void
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   while (var page = null<page mut *>(); page = mm.pagecache.get(); page)
   {
     mm.pageallocator.release(std::mutable_span(page, 1));

@@ -110,7 +110,7 @@ pub struct slab_cache<T>
 {
   pub fn get(this mut &) -> T mut *
   {
-    var guard = std::lock_guard(&mut cpu::irqlock);
+    std::assert(cpu::interrupts_disabled);
 
     var entry = this.head;
 
@@ -126,7 +126,7 @@ pub struct slab_cache<T>
 
   pub fn put(this mut &, T mut *item) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock);
+    std::assert(cpu::interrupts_disabled);
 
     var entry = cast<slab_allocator<T>::kmem_slab_entry mut *>(item);
 
@@ -137,7 +137,9 @@ pub struct slab_cache<T>
 
   pub fn siphon(this mut &, slab_allocator<T> mut &slab) -> T mut *
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut slab.lock);
+    std::assert(cpu::interrupts_disabled);
+
+    var guard = std::lock_guard(&mut slab.lock);
 
     if (!slab.slabs || !slab.slabs.firstfree)
       slab_allocator<T>::kmem_cache_grow(&mut slab);
@@ -172,7 +174,9 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
   using kmem_slab = slab_allocator<T>::kmem_slab;
   using kmem_slab_entry = slab_allocator<T>::kmem_slab_entry;
 
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+  std::assert(cpu::interrupts_disabled);
+
+  var guard = std::lock_guard(&mut this.lock);
 
   if (!this.slabs)
     return;

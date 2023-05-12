@@ -299,7 +299,7 @@ pub struct page_cache
 {
   pub fn get(this mut &) -> page mut *
   {
-    var guard = std::lock_guard(&mut cpu::irqlock);
+    std::assert(cpu::interrupts_disabled);
 
     var page = this.head;
 
@@ -315,7 +315,7 @@ pub struct page_cache
 
   pub fn put(this mut &, page mut *page) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock);
+    std::assert(cpu::interrupts_disabled);
 
     page.next = this.head;
 

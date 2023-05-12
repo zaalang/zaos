@@ -45,6 +45,8 @@ struct surface
   u32 id;
   client mut *client;
 
+  winton::uuid uuid;
+
   std::optional<std::arc<buffer>> active;
   std::optional<std::arc<buffer>> pending;
 
@@ -353,7 +355,6 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
         result = resize(client, msg.serial, msg.surface_id, msg.tether);
 
       else:
-        std::print(msg);
         completer.raise(zidl::errc::bad_dispatch);
     }
 
@@ -382,6 +383,16 @@ fn create_surface(client mut *client, u32 id) -> result
 
   surface.id = id;
   surface.client = client;
+
+  var now = os::timespec(void);
+  os::clock_time(os::clock::monotonic, &now);
+
+  surface.uuid.data1 = cast(now & 0xffffffff);
+  surface.uuid.data2 = cast((now >> 32) & 0xffff);
+  surface.uuid.data3 = cast((now >> 48) & 0xffff);
+  surface.uuid.data4 = [ 0xb4, 0x8b, 0xb7, 0x4c, 0x9d, 0x84, 0x85, 0xb8 ];
+
+  zidl::send<winton::compositor::surface_response>(client.channel, surface.id, surface.uuid);
 
   return 0;
 }
@@ -732,7 +743,7 @@ fn keyboard_enter(client mut *client, surface mut *surface) -> result
 
   client.compositor.keyboard.focus_serial = serial;
 
-  surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::activated));
+  surface.incomming_state.flags |= winton::state::activated;
 
   configure(client, surface);
 
@@ -745,7 +756,7 @@ fn keyboard_leave(client mut *client, surface mut *surface) -> result
 
   zidl::send<winton::compositor::keyboard_leave_response>(client.channel, serial, surface.id);
 
-  surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::activated));
+  surface.incomming_state.flags &= ~winton::state::activated;
 
   configure(client, surface);
 
@@ -764,7 +775,7 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return winton::errc::invalid_serial;
+    return 0;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -802,7 +813,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return winton::errc::invalid_serial;
+    return 0;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -862,7 +873,7 @@ fn set_minimised(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
-      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::minimised));
+      surface.incomming_state.flags |= winton::state::minimised;
 
       configure(client, &**surface);
 
@@ -888,7 +899,7 @@ fn set_maximised(client mut *client, u32 surface_id) -> result
       surface.restore_state = surface.pending_state;
       surface.incomming_state.width = compositor.display.width;
       surface.incomming_state.height = compositor.display.height;
-      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::maximised));
+      surface.incomming_state.flags |= winton::state::maximised;
 
       configure(client, &**surface);
 
@@ -914,7 +925,7 @@ fn set_fullscreen(client mut *client, u32 surface_id) -> result
       surface.restore_state = surface.pending_state;
       surface.incomming_state.width = compositor.display.width;
       surface.incomming_state.height = compositor.display.height;
-      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) | cast<i32>(winton::state::fullscreen));
+      surface.incomming_state.flags |= winton::state::fullscreen;
 
       configure(client, &**surface);
 
@@ -941,7 +952,7 @@ fn unset_maximised(client mut *client, u32 surface_id) -> result
 
       surface.incomming_state.width = surface.restore_state.width;
       surface.incomming_state.height = surface.restore_state.height;
-      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::maximised));
+      surface.incomming_state.flags &= ~winton::state::maximised;
 
       configure(client, &**surface);
 
@@ -968,7 +979,7 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
 
       surface.incomming_state.width = surface.restore_state.width;
       surface.incomming_state.height = surface.restore_state.height;
-      surface.incomming_state.flags = cast(cast<i32>(surface.incomming_state.flags) & ~cast<i32>(winton::state::fullscreen));
+      surface.incomming_state.flags &= ~winton::state::fullscreen;
 
       configure(client, &**surface);
 
@@ -983,7 +994,7 @@ fn move(client mut *client, u32 serial, u32 surface_id) -> result
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return winton::errc::invalid_serial;
+    return 0;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -1016,7 +1027,7 @@ fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether)
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return winton::errc::invalid_serial;
+    return 0;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -1142,9 +1153,6 @@ fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> voi
 
     compositor.damage = expand(compositor.damage, node.transform * surface.damage);
   }
-
-  if (!compositor.damage.empty)
-    display.fill(cast(std::floor(compositor.damage.low(0))), cast(std::floor(compositor.damage.low(1))), cast(std::ceil(compositor.damage.high(0))), cast(std::ceil(compositor.damage.high(1))), 0xff336698);
 
   for(var node : view_list)
   {
@@ -1397,4 +1405,27 @@ fn input_handler(compositor mut *compositor, input::event &event) -> void
     case pointer_wheel[evt]:
       pointer_wheel(compositor, evt.time, cast(evt.dx), cast(evt.dy));
   }
+}
+
+pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> result
+{
+  for(var mut &client : compositor.clients)
+  {
+    for(var mut &(id, surface) : client.surfaces)
+    {
+      if (surface_id == surface.uuid)
+      {
+        if (surface.node)
+          return winton::errc::invalid_surface;
+
+        surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::desktop);
+
+        surface.incomming_state.width = compositor.display.width;
+        surface.incomming_state.height = compositor.display.height;
+        surface.incomming_state.flags |= winton::state::fullscreen;
+      }
+    }
+  }
+
+  return ok;
 }

@@ -154,3 +154,15 @@ extern fn sys_process_exit(i32 rval) -> void
 {
   process::exit(rval);
 }
+
+extern fn sys_process_kill(i32 id) -> result
+{
+  var thread = thread::find(id);
+
+  if (!thread)
+    return vm::result::no_such_process;
+
+  thread.process.terminate();
+
+  return 0;
+}

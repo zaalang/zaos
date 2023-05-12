@@ -76,7 +76,7 @@ pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protectio
 
 extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
 {
-extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
+  extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
 
   return dbgln(1, iovs, n);
 }

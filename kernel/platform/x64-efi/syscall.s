@@ -10,7 +10,7 @@
             .global syscall_entry
 
             .section .data
-            .set SYSCALL_COUNT, 18
+            .set SYSCALL_COUNT, 19
 systable:   .quad sys_thread_exit
             .quad sys_process_exit
             .quad sys_get_pagesize
@@ -27,6 +27,7 @@ systable:   .quad sys_thread_exit
             .quad sys_get_gid
             .quad sys_get_egid
             .quad sys_process_create_wrapper
+            .quad sys_process_kill
             .quad sys_thread_create
             .quad sys_wait
             #.quad syscall_7_wrapper
@@ -89,7 +90,12 @@ bad_syscall:
             jmp unknown_syscall
 
 syscall_return:
-            cli
+            mov r11, [fs:tss@tpoff + 4]   # rsp0
+            test qword ptr [r11], 0x2     # killed ?
+            jz 1f
+            call terminate
+
+ 1:         cli
             pop r11
             wrgsbase r11                  # restore gs
             pop r11

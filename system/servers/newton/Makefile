@@ -2,29 +2,24 @@
 
 include ../../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/servers/winton
+BUILD:=$(BUILDROOT)/system/servers/newton
 TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
 
 SRCS=\
-winton.zaa\
-seat.zaa\
-display.zaa\
-compositor.zaa\
-scene.zaa\
-theme.zaa\
+newton.zaa\
 shell.zaa\
-math.zaa\
+desktop.zaa\
 $(BUILDROOT)/system/generated/zidl/zaos_sys.zaa\
 $(BUILDROOT)/system/generated/zidl/zaos_winton.zaa\
 
-default: $(BUILD)/winton
+default: $(BUILD)/newton
 
-$(BUILD)/winton: $(SRCS)
+$(BUILD)/newton: $(SRCS)
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ winton.zaa
+	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ newton.zaa
 
 clean:
-	rm -f $(BUILD)/winton $(BUILD)/*.o
+	rm -f $(BUILD)/newton $(BUILD)/*.o
 
 

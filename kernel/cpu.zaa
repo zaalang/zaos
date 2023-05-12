@@ -52,6 +52,11 @@ pub fn irqlock() -> irq_lock
   return irq_lock();
 }
 
+pub fn interrupts_disabled() -> bool
+{
+  return platform::interrupts_disabled;
+}
+
 pub fn current() -> int
 {
   return self.id;

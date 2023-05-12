@@ -91,6 +91,9 @@ image:
             src: build/system/servers/winton/winton
             dest: /srv/winton
         - cp:
+            src: build/system/servers/newton/newton
+            dest: /srv/newton
+        - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco
         - cp:

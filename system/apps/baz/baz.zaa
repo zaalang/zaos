@@ -16,6 +16,10 @@ struct test : pub winton::window
   pub fn button_event(this mut &, winton::input &input) override -> void
   {
     std::print(input);
+
+    import os.zaos.sched;
+    if (input.button_state[1] == 1)
+      os::process_kill(11);
   }
 
   pub fn key_event(this mut &, winton::input &input) override -> void

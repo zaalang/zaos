@@ -5,10 +5,11 @@
 import std.stdio;
 import std.function;
 import app.loop;
+import zidl.zaos_sys;
 import seat;
 import display;
 import compositor;
-import zidl.zaos_sys;
+import shell;
 
 struct service
 {
@@ -61,14 +62,20 @@ fn main()
   if (var result = display::initialise(&mut display); result < 0)
     std::print("winton: failed to initialise display - ", cast<std::errc>(-result));
 
-  display.fill(0, 0, display.width, display.height, 0xff336698);
-
   var compositor = compositor::create(&mut seat, &mut display);
   if (var result = compositor::initialise(&mut compositor); result < 0)
     std::print("winton: failed to initialise compositor - ", cast<std::errc>(-result));
 
   service.on_connect.insert("compositor", |uri, channel| {
     compositor.accept(uri, &move channel);
+  });
+
+  var shell = shell::create(&mut compositor);
+  if (var result = shell::initialise(&mut shell); result < 0)
+    std::print("winton: failed to initialise shell - ", cast<std::errc>(-result));
+
+  service.on_connect.insert("shell", |uri, channel| {
+    shell.accept(uri, &move channel);
   });
 
   service.run();

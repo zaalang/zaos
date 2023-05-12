@@ -33,6 +33,7 @@
               .global __vdso_get_gid
               .global __vdso_get_egid
               .global __vdso_process_create
+              .global __vdso_process_kill
               .global __vdso_thread_create
               .global __vdso_wait
 
@@ -147,12 +148,17 @@ __vdso_process_create: # arg *argv, usize argc, arg *envp, usize envc, attr *att
               pop rbp
               ret
 
-__vdso_thread_create: # void *entry, void *parameter, u64 flags
+__vdso_process_kill: # pid
               mov rax, 16
               syscall
               ret
 
-__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
+__vdso_thread_create: # void *entry, void *parameter, u64 flags
               mov rax, 17
+              syscall
+              ret
+
+__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
+              mov rax, 18
               syscall
               ret

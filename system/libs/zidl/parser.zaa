@@ -69,6 +69,16 @@ pub struct variable
   pub ~variable() = default;
 }
 
+pub struct bits
+{
+  pub std::string name;
+  pub std::vector<decl> constants;
+
+  pub bits() = default;
+  pub bits(bits&&) = default;
+  pub ~bits() = default;
+}
+
 pub struct enumerator
 {
   pub std::string name;
@@ -79,13 +89,25 @@ pub struct enumerator
   pub ~enumerator() = default;
 }
 
+pub struct structure
+{
+  pub std::string name;
+  pub std::vector<decl> fields;
+
+  pub structure() = default;
+  pub structure(structure&&) = default;
+  pub ~structure() = default;
+}
+
 pub union decl
 {
   pub constant(constant),
+  pub variable(variable),
+  pub bits(bits),
+  pub enumerator(enumerator),
+  pub structure(structure),
   pub protocol(protocol),
   pub method(method),
-  pub variable(variable),
-  pub enumerator(enumerator),
 
   pub fn bool(this &) -> bool
   {
@@ -229,6 +251,19 @@ fn parse_variable_declaration(parse_context &&ctx) -> decl
 
   if (!ctx.try_consume_token(token::type::identifier))
     ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (ctx.try_consume_token(token::type::l_square))
+  {
+    variable.type += '[';
+    variable.type += ctx.tok.text;
+    variable.type += ']';
+
+    if (!ctx.try_consume_token(token::type::numeric_constant))
+      ctx.diag.error("expected array size", ctx.text, ctx.tok.loc);
+
+    if (!ctx.try_consume_token(token::type::r_square))
+      ctx.diag.error("expected bracket", ctx.text, ctx.tok.loc);
+  }
 
   if (ctx.try_consume_token(token::type::colon))
   {
@@ -376,6 +411,49 @@ fn parse_protocol_declaration(parse_context &&ctx) -> decl
   return decl::protocol(&move protocol);
 }
 
+fn parse_bits_declaration(parse_context &&ctx) -> decl
+{
+  var bits = bits();
+
+  ctx.consume_token(token::type::kw_bits);
+
+  bits.name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (!ctx.try_consume_token(token::type::l_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
+  {
+    var constant = constant();
+
+    constant.name = ctx.tok.text;
+
+    if (!ctx.try_consume_token(token::type::identifier))
+      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+    if (!ctx.try_consume_token(token::type::equal))
+      ctx.diag.error("expected equals", ctx.text, ctx.tok.loc);
+
+    constant.value = ctx.tok.text;
+
+    if (!ctx.try_consume_token(token::type::numeric_constant))
+      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+    bits.constants.push_back(&move decl::constant(&move constant));
+
+    if (!ctx.try_consume_token(token::type::comma))
+      break;
+  }
+
+  if (!ctx.try_consume_token(token::type::r_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  return decl::bits(&move bits);
+}
+
 fn parse_enum_declaration(parse_context &&ctx) -> decl
 {
   var enumerator = enumerator();
@@ -419,6 +497,37 @@ fn parse_enum_declaration(parse_context &&ctx) -> decl
   return decl::enumerator(&move enumerator);
 }
 
+fn parse_struct_declaration(parse_context &&ctx) -> decl
+{
+  var structure = structure();
+
+  ctx.consume_token(token::type::kw_struct);
+
+  structure.name = ctx.tok.text;
+
+  if (!ctx.try_consume_token(token::type::identifier))
+    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+
+  if (!ctx.try_consume_token(token::type::l_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
+  {
+    if (var decl = parse_variable_declaration(ctx); decl)
+    {
+      structure.fields.push_back(&move decl);
+    }
+
+    if (!ctx.try_consume_token(token::type::semi))
+      break;
+  }
+
+  if (!ctx.try_consume_token(token::type::r_brace))
+    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+
+  return decl::structure(&move structure);
+}
+
 fn parse_toplevel_declaration(parse_context &&ctx) -> decl
 {
   var loc = ctx.tok.loc;
@@ -435,8 +544,14 @@ fn parse_toplevel_declaration(parse_context &&ctx) -> decl
     case kw_protocol:
       return parse_protocol_declaration(ctx);
 
+    case kw_bits:
+      return parse_bits_declaration(ctx);
+
     case kw_enum:
       return parse_enum_declaration(ctx);
+
+    case kw_struct:
+      return parse_struct_declaration(ctx);
 
     else:
       ctx.diag.error("expected toplevel declaration", ctx.text, ctx.tok.loc);

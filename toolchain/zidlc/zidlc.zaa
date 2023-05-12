@@ -4,6 +4,7 @@
 
 import std.stdio;
 import std.vector;
+import std.string : String;
 import std.hash;
 import std.box;
 import std.env;
@@ -26,26 +27,15 @@ struct builtin_type
   ~builtin_type() = default;
 }
 
-struct string_type
-{
-  usize constraint;
-
-  string_type(usize constraint)
-    : constraint(constraint)
-  {
-  }
-
-  string_type(string_type&&) = default;
-  ~string_type() = default;
-}
-
 struct array_type
 {
-  type *type;
-  usize constraint;
+  std::string name;
 
-  array_type(type *type, usize constraint)
-    : type(type), constraint(constraint)
+  type *type;
+  usize size;
+
+  array_type(String &&name, type *type, usize size)
+    : name(&&name), type(type), size(size)
   {
   }
 
@@ -58,7 +48,7 @@ struct tag_type
   std::string name;
   std::vector<type*> fields;
 
-  tag_type(std::string &&name, std::vector<type*> &&fields)
+  tag_type(String &&name, std::vector<type*> &&fields)
     : name(&&name), fields(&&fields)
   {
   }
@@ -70,9 +60,9 @@ struct tag_type
 union type
 {
   builtin(builtin_type),
-  string(string_type),
   array(array_type),
   tag(tag_type),
+  string,
   channel,
   buffer,
 
@@ -106,6 +96,7 @@ struct context
     ctx.typetable.push_back(type::builtin("f64", sizeof<f64>, alignof<f64>));
     ctx.typetable.push_back(type::builtin("bool", sizeof<bool>, alignof<bool>));
     ctx.typetable.push_back(type::builtin("char", sizeof<char>, alignof<char>));
+    ctx.typetable.push_back(type::string());
     ctx.typetable.push_back(type::channel());
     ctx.typetable.push_back(type::buffer());
 
@@ -116,42 +107,57 @@ struct context
   ~context() = default;
 }
 
-fn resolve_type(context &&ctx, zidl::variable &variable) -> type *
+fn resolve_type(context &&ctx, std::string_view name) -> type *
 {
   for(var &type : ctx.typetable)
   {
     switch (*type)
     {
       case builtin[builtin]:
-        if (variable.type == builtin.name)
+        if (name == builtin.name)
           return &*type;
 
-      case string[string]:
-        if (variable.type == "string" && string.constraint == variable.constraint)
+      case array[array]:
+        if (name == array.name)
           return &*type;
 
       case tag[tag]:
-        if (variable.type == tag.name)
+        if (name == tag.name)
+          return &*type;
+
+      case string[string]:
+        if (name == "string")
           return &*type;
 
       case channel:
-        if (variable.type == "channel")
+        if (name == "channel")
           return &*type;
 
       case buffer:
-        if (variable.type == "buffer")
+        if (name == "buffer")
           return &*type;
     }
   }
 
-  if (variable.type == "string")
+  if (var j = name.find_first('['); j != name.end)
   {
-    return &*ctx.typetable.emplace(ctx.typetable.end, type::string(variable.constraint));
+    if (var type = resolve_type(ctx, name[name.begin .. j]))
+    {
+      var size = usize(0);
+      std::sscan(name[j + 1 .. name.end - 1], &mut size);
+
+      return &*ctx.typetable.emplace(ctx.typetable.end, type::array(name, type, size));
+    }
   }
 
-  ctx.diag.error(std::format("unknown type - {}", variable.type));
+  ctx.diag.error(std::format("unknown type - {}", name));
 
   return null;
+}
+
+fn resolve_type(context &&ctx, std::string &name) -> type *
+{
+  return resolve_type(ctx, std::string_view(name));
 }
 
 fn sizeof_tag_type(tag_type *tagtype) -> usize
@@ -180,6 +186,9 @@ fn sizeof_type(type *type) -> usize
 
     case string:
       return sizeof<zidl::string_view>;
+
+    case array[array]:
+      return sizeof_type(array.type) * array.size;
 
     case tag[tag]:
       return sizeof_tag_type(&tag);
@@ -213,11 +222,14 @@ fn alignof_type(type *type) -> usize
     case builtin[builtin]:
       return builtin.align;
 
-    case string:
-      return alignof<zidl::string_view>;
+    case array[array]:
+      return alignof_type(array.type);
 
     case tag[tag]:
       return alignof_tag_type(&tag);
+
+    case string:
+      return alignof<zidl::string_view>;
 
     case channel:
       return alignof<zidl::channel>;
@@ -236,11 +248,14 @@ fn zidl_typename(type *type) -> std::string_view
     case builtin[builtin]:
       return builtin.name;
 
-    case string:
-      return "zidl::string_view";
+    case array[array]:
+      return array.name;
 
     case tag[tag]:
       return tag.name;
+
+    case string:
+      return "zidl::string_view";
 
     case channel:
       return "zidl::channel";
@@ -265,11 +280,10 @@ fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable))
+        if (var type = resolve_type(ctx, variable.type))
           size = std::align_up(size, alignof_type(type)) + sizeof_type(type);
 
-        if (variable.type == "string")
-          data += std::align_up(std::max(variable.constraint, 64), 8);
+        data += std::align_up(std::max(variable.constraint, 64), 8);
 
       else:
         std::panic("unhandled variable decl");
@@ -329,7 +343,7 @@ fn codegen_fields(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable))
+        if (var type = resolve_type(ctx, variable.type))
           std::fprintf(ctx.fout, "      pub {} {};\n", zidl_typename(type), variable.name);
 
       else:
@@ -353,21 +367,23 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable))
+        if (var type = resolve_type(ctx, variable.type))
         {
           switch (*type)
           {
             case builtin:
-            case string:
-            case array:
               std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
 
+            case array:
+              std::fprintf(ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
+
+            case tag:
+              std::fprintf(ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
+
+            case string:
             case channel:
             case buffer:
               std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
-
-            case tag:
-              std::fprintf(ctx.fout, "{} &{}", zidl_typename(type), variable.name);
           }
         }
 
@@ -391,21 +407,25 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
       {
         case variable[variable]:
 
-          if (var type = resolve_type(ctx, variable))
+          if (var type = resolve_type(ctx, variable.type))
           {
             switch (*type)
             {
               case builtin:
-              case string:
+                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
+
               case array:
+                std::fprintf(ctx.fout, "{}(&&{})", variable.name, variable.name);
+
+              case tag:
+                std::fprintf(ctx.fout, "{}(&&{})", variable.name, variable.name);
+
+              case string:
                 std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
 
               case channel:
               case buffer:
                 std::fprintf(ctx.fout, "{}(&move {})", variable.name, variable.name);
-
-              case tag:
-                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
             }
           }
 
@@ -433,7 +453,7 @@ fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable))
+        if (var type = resolve_type(ctx, variable.type))
         {
           switch (*type)
           {
@@ -464,7 +484,7 @@ fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable))
+        if (var type = resolve_type(ctx, variable.type))
         {
           switch (*type)
           {
@@ -588,6 +608,36 @@ fn codegen_constant(context &&ctx, zidl::constant &constant) throws -> void
   std::fprintf(ctx.fout, "  pub const {} = {};\n\n", constant.name, constant.value);
 }
 
+fn codegen_bits(context &&ctx, zidl::bits &bits) throws -> void
+{
+  std::fprintf(ctx.fout, "  pub enum {} : u32\n", bits.name);
+  std::fprintf(ctx.fout, "  {{\n");
+
+  for(var &constant : bits.constants)
+  {
+    switch (constant)
+    {
+      case constant[constant]:
+        std::fprintf(ctx.fout, "    {} = {},\n", constant.name, constant.value);
+
+      else:
+        std::panic("unhandled bits decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "    \n");
+  std::fprintf(ctx.fout, "    pub const fn bool({} lhs) -> bool {{ return cast<u32>(lhs) != 0; }}\n", bits.name);
+  std::fprintf(ctx.fout, "    \n");
+  std::fprintf(ctx.fout, "    pub const fn ~({} lhs) -> {} {{ return cast(~cast<u32>(lhs)); }}\n", bits.name, bits.name);
+  std::fprintf(ctx.fout, "    pub const fn &({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) & cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+  std::fprintf(ctx.fout, "    pub const fn |({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) | cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+
+  std::fprintf(ctx.fout, "  }}\n");
+  std::fprintf(ctx.fout, "\n");
+
+  ctx.typetable.push_back(type::tag(bits.name, std::vector::from([ctx.i32type])));
+}
+
 fn codegen_enumerator(context &&ctx, zidl::enumerator &enumerator) throws -> void
 {
   std::fprintf(ctx.fout, "  pub enum {} : i32\n", enumerator.name);
@@ -609,6 +659,50 @@ fn codegen_enumerator(context &&ctx, zidl::enumerator &enumerator) throws -> voi
   std::fprintf(ctx.fout, "\n");
 
   ctx.typetable.push_back(type::tag(enumerator.name, std::vector::from([ctx.i32type])));
+}
+
+fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
+{
+  std::fprintf(ctx.fout, "  pub struct {}\n", structure.name);
+  std::fprintf(ctx.fout, "  {{\n");
+
+  for(var &field : structure.fields)
+  {
+    switch (field)
+    {
+      case variable[field]:
+        std::fprintf(ctx.fout, "    pub {} {};\n", field.type, field.name);
+
+      else:
+        std::panic("unhandled struct decl");
+    }
+  }
+
+  std::fprintf(ctx.fout, "    \n");
+  std::fprintf(ctx.fout, "    pub {}() = default;\n", structure.name);
+  std::fprintf(ctx.fout, "    pub {}({}&&) = default;\n", structure.name, structure.name);
+  std::fprintf(ctx.fout, "    pub fn =({} mut &, {} &&) -> {} mut & = default;\n", structure.name, structure.name, structure.name);
+  std::fprintf(ctx.fout, "    pub fn ==({} &, {} &) -> bool = default;\n", structure.name, structure.name);
+  std::fprintf(ctx.fout, "    pub ~{}() = default;\n", structure.name);
+  std::fprintf(ctx.fout, "  }}\n");
+  std::fprintf(ctx.fout, "\n");
+
+  var fields = std::vector<type*>();
+
+  for(var &field : structure.fields)
+  {
+    switch (field)
+    {
+      case variable[field]:
+        if (var type = resolve_type(ctx, field.type))
+          fields.push_back(type);
+
+      else:
+        std::panic("unhandled struct decl");
+    }
+  }
+
+  ctx.typetable.push_back(type::tag(structure.name, fields));
 }
 
 fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throws -> void
@@ -633,8 +727,14 @@ fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throw
       case constant[constant]:
         codegen_constant(ctx, constant);
 
+      case bits[bits]:
+        codegen_bits(ctx, bits);
+
       case enumerator[enumerator]:
         codegen_enumerator(ctx, enumerator);
+
+      case structure[structure]:
+        codegen_structure(ctx, structure);
 
       case protocol[protocol]:
         codegen_protocol(ctx, protocol);

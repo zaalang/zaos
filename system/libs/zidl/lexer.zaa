@@ -93,6 +93,8 @@ pub struct token
     kw_library,
     kw_protocol,
     kw_enum,
+    kw_bits,
+    kw_struct,
   }
 
   pub type type = type::unknown;
@@ -401,6 +403,10 @@ fn lex_identifier(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cu
 
   switch (identifier[0])
   {
+    case 'b':
+      if (identifier == "bits")
+        type = token::type::kw_bits;
+
     case 'c':
       if (identifier == "const")
         type = token::type::kw_const;
@@ -420,6 +426,10 @@ fn lex_identifier(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cu
     case 'p':
       if (identifier == "protocol")
         type = token::type::kw_protocol;
+
+    case 's':
+      if (identifier == "struct")
+        type = token::type::kw_struct;
 
     case 't':
       if (identifier == "true")

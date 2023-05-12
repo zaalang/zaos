@@ -116,6 +116,8 @@ pub struct thread
 
   pub fn create(process mut *process, void fn(void mut *) *entry, void mut *parameter) -> thread mut *
   {
+    var guard = std::lock_guard(&mut cpu::irqlock);
+
     var thread = threadman.threadcache.get();
 
     if (!thread)
@@ -139,7 +141,7 @@ pub struct thread
       thread.unref();
   }
 
-  pub fn kill(thread mut &thread) -> void
+  pub fn terminate(thread mut &thread) -> void
   {
     thread.task.set(platform::task::flags::killed);
   }
@@ -287,6 +289,8 @@ fn initialise(thread mut *this) -> void
 
 fn destroy(thread mut *thread) -> void
 {
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
   std::print(*thread, "done");
 
   thread.process.remove_thread(thread);
@@ -338,4 +342,42 @@ pub fn spawn_undertaker() -> void
   threadman.undertaker = thread::create(process::current, &cast<void fn(void mut *)>(undertaker), null);
 
   scheduler::enqueue(threadman.undertaker, thread::priority::high);
+}
+
+extern fn unhandled_exception(vm::virtaddr addr, platform::exception type, bool user) -> void
+{
+  std::print(*thread::current, "unhandled exception: ", type, " at ", addr);
+
+  platform::disable_memory_protect();
+
+  var rbp = cast<uintptr*>(__asm("mov $0, rbp", "=r"));
+
+  for(var i = 0; i < 32; ++i)
+  {
+    if (!rbp)
+      break;
+
+    var ret = *(rbp + 1);
+
+    if (ret >= extern(_BASE))
+      std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
+    else
+      std::print(cast<void*>(ret));
+
+    rbp = cast<uintptr*>(*rbp);
+  }
+
+  platform::enable_memory_protect();
+
+  if (!user)
+    std::panic("unhandled exception in kernel space");
+
+  process::exit(-5);
+}
+
+extern fn terminate() -> void
+{
+  std::print(*thread::current, "killed by signal");
+
+  thread::exit(-4);
 }

@@ -6,7 +6,7 @@ import std.alloc;
 import std.span;
 import vfs;
 import blk.cache;
-import std.memory : memcpy, memset;
+import std.memory;
 import ext2 : ext2_ino_t, ext2_super_block, ext2_group_descriptor, ext2_inode, ext2_dir_entry, ext2_ftype;
 import mutex as _ : mutex;
 import chrono;
@@ -730,6 +730,9 @@ fn alloc_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> m
     if (var result = this.alloc(dev, &mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
       return result;
 
+    for(var j = last - k; j < table0.len; ++j)
+      table0[j] = 0;
+
     block0.commit(table0.data, 1 << block_shift);
   }
 
@@ -753,6 +756,9 @@ fn alloc_double_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span
     if (var result = this.alloc_indirect(dev, &mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
+    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table1.len; ++j)
+      table1[j] = 0;
+
     block1.commit(table1.data, 1 << block_shift);
   }
 
@@ -775,6 +781,9 @@ fn alloc_triple_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span
 
     if (var result = this.alloc_double_indirect(dev, &mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
+
+    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table2.len; ++j)
+      table2[j] = 0;
 
     block2.commit(table2.data, 1 << block_shift);
   }
@@ -846,7 +855,7 @@ struct entry_result
 
   pub fn set_name(this mut &, std::string_view name) -> void
   {
-    memcpy(this.ptr.file_name.data, name.data, name.len);
+    std::memcpy(this.ptr.file_name.data, name.data, name.len);
 
     this.ptr.name_len = cast(name.len);
   }
@@ -1005,7 +1014,7 @@ pub fn create(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
   if (!inode.result)
     return inode.result;
 
-  memset(inode.ptr, 0, sizeof<ext2_inode>);
+  std::memset(inode.ptr, 0, sizeof<ext2_inode>);
 
   inode.ptr.uid = uid;
   inode.ptr.gid = gid;
@@ -1043,7 +1052,7 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
   if (!inode.result)
     return inode.result;
 
-  memset(inode.ptr, 0, sizeof<ext2_inode>);
+  std::memset(inode.ptr, 0, sizeof<ext2_inode>);
 
   inode.ptr.uid = uid;
   inode.ptr.gid = gid;
@@ -1055,7 +1064,7 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
 
   if (target.len < EXT2_SHORT_SYMLINK_LENGTH)
   {
-    memcpy(inode.ptr.i_contents.data, target.data, target.len);
+    std::memcpy(inode.ptr.i_contents.data, target.data, target.len);
   }
   else
   {
@@ -1076,7 +1085,7 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
 
       var bytes = std::min(block.length, target.len - position);
 
-      memcpy(block.ptr, target.data + position, bytes);
+      std::memcpy(block.ptr, target.data + position, bytes);
 
       block.commit(block.ptr, bytes);
 
@@ -1114,7 +1123,7 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
   if (!inode.result)
     return inode.result;
 
-  memset(inode.ptr, 0, sizeof<ext2_inode>);
+  std::memset(inode.ptr, 0, sizeof<ext2_inode>);
 
   inode.ptr.uid = uid;
   inode.ptr.gid = gid;

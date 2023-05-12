@@ -3,7 +3,7 @@
 //
 
 import std.span;
-import std.memory : memcpy, memset;
+import std.memory;
 import ext2 : ext2_ino_t, ext2_super_block, ext2_group_descriptor, ext2_inode, ext2_dir_entry, ext2_ftype;
 import chrono;
 
@@ -564,6 +564,9 @@ fn alloc_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, 
 
     if (var result = this.alloc(&mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
       return result;
+
+    for(var j = last - k; j < table0.len; ++j)
+      table0[j] = 0;
   }
 
   return ok;
@@ -580,6 +583,9 @@ fn alloc_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usi
 
     if (var result = this.alloc_indirect(&mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
+
+    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table1.len; ++j)
+      table1[j] = 0;
   }
 
   return ok;
@@ -596,6 +602,9 @@ fn alloc_triple_indirect(image mut &this, std::mutable_span<u32> mut &table, usi
 
     if (var result = this.alloc_double_indirect(&mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
+
+    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table2.len; ++j)
+      table2[j] = 0;
   }
 
   return ok;
@@ -656,7 +665,7 @@ fn set_type(ext2_dir_entry mut &entry, ext2_ftype type) -> void
 
 fn set_name(ext2_dir_entry mut &entry, std::string_view name) -> void
 {
-  memcpy(entry.file_name.data, name.data, name.len);
+  std::memcpy(entry.file_name.data, name.data, name.len);
 
   entry.name_len = cast(name.len);
 }
@@ -844,7 +853,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u32 uid
 
   var inode = cast<ext2_inode mut *>(lookup_inode(this, ino));
 
-  memset(inode, 0, sizeof<ext2_inode>);
+  std::memset(inode, 0, sizeof<ext2_inode>);
 
   inode.uid = uid;
   inode.gid = gid;
@@ -882,7 +891,7 @@ pub fn expand(image mut &this, image::inode mut &fd, u64 size) -> result
 
     if (var result = this.grow(entry, (size - 1) >> block_shift + 1); !result)
     {
-      this.recover(entry, (entry.size - 1) >> block_shift + 1);
+      this.recover(entry, std::ceil_div(entry.size, 1 << block_shift));
 
       return result;
     }
@@ -938,7 +947,7 @@ pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> re
 
     var bytes = std::min(block.len - cast(fd.cursor & block_mask), len - i);
 
-    memcpy(cast<u8 mut *>(block.data + cast(fd.cursor & block_mask)), cast<u8*>(data) + i, bytes);
+    std::memcpy(cast<u8 mut *>(block.data + cast(fd.cursor & block_mask)), cast<u8*>(data) + i, bytes);
 
     fd.cursor += cast(bytes);
 
@@ -1025,7 +1034,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
 
   var inode = cast<ext2_inode mut *>(lookup_inode(this, ino));
 
-  memset(inode, 0, sizeof<ext2_inode>);
+  std::memset(inode, 0, sizeof<ext2_inode>);
 
   inode.uid = uid;
   inode.gid = gid;

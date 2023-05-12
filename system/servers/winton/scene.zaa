@@ -32,17 +32,17 @@ pub struct window
 
     pub fn is_minimised(this&) -> bool
     {
-      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::minimised) == cast<i32>(zidl::zaos_winton::state::minimised);
+      return this.flags & zidl::zaos_winton::state::minimised == zidl::zaos_winton::state::minimised;
     }
 
     pub fn is_maximised(this&) -> bool
     {
-      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::maximised) == cast<i32>(zidl::zaos_winton::state::maximised);
+      return this.flags & zidl::zaos_winton::state::maximised == zidl::zaos_winton::state::maximised;
     }
 
     pub fn is_fullscreen(this&) -> bool
     {
-      return cast<i32>(this.flags) & cast<i32>(zidl::zaos_winton::state::fullscreen) == cast<i32>(zidl::zaos_winton::state::fullscreen);
+      return this.flags & zidl::zaos_winton::state::fullscreen == zidl::zaos_winton::state::fullscreen;
     }
 
     pub state() = default;

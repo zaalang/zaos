@@ -523,6 +523,18 @@ fn destroy(vfs::node mut *node) -> void
 {
   var ring = cast<io_ring mut *>(node);
 
+  for(;;)
+  {
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut ring.lock);
+
+    if (ring.pending.len == 1 && ring.pending.back.entries.empty)
+      break;
+
+    workman.wake_from_stall();
+
+    ring.waiters.wait(&mut ring.lock);
+  }
+
   vm::unlock(ring.region.host);
   ring.region.host.clear();
   ring.region.length = 0;

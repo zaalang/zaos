@@ -10,6 +10,7 @@ import bootinfo : BootInfo;
 
 extern fn page_fault(uintptr addr, bool write, bool fetch, bool user) -> void;
 extern fn unhandled_exception(uintptr addr, cpu::exception type, bool user) -> void;
+extern fn terminate() -> void;
 extern fn io_dispatch(u8 irq) -> void;
 extern fn timer_deadline() -> void;
 extern fn ipi() -> void;
