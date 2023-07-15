@@ -67,71 +67,73 @@ pub struct partdev : pub blk::blkdev
     this.block_count = cast(part.end_block - part.start_block + 1);
   }
 
+  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+  {
+    var &this = cast<partdev&>(dev);
+
+    switch (query)
+    {
+      case device_path:
+        result = this.device.query(query);
+
+      case device_part:
+        result = std::format("{}", this.partition.guid);
+
+      case device_uuid:
+        result = std::format("{}", this.partition.guid);
+    }
+
+    return ok;
+  }
+
+  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<partdev mut &>(dev);
+
+    request.position += this.partition.start_block << dev.block_shift;
+
+    if (var result = this.device.enqueue(request); !result)
+    {
+      request.position -= this.partition.start_block << dev.block_shift;
+
+      return cast<blk::result>(result);
+    }
+
+    return ok;
+  }
+
+  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<partdev mut &>(dev);
+
+    if (var result = this.device.cancel(request); !result)
+      return cast<blk::result>(result);
+
+    return ok;
+  }
+
   pub ~partdev() = default;
 
   partition partition;
   blk::blkdev_ptr device;
 }
 
-pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
-{
-  var &this = cast<partdev&>(dev);
-
-  switch(query)
-  {
-    case device_path:
-      result = this.device.query(query);
-
-    case device_part:
-      result = std::format("{}", this.partition.guid);
-
-    case device_uuid:
-      result = std::format("{}", this.partition.guid);
-  }
-
-  return ok;
-}
-
-pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
-{
-  return not_supported;
-}
-
-pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
-{
-  var mut &this = cast<partdev mut &>(dev);
-
-  request.position += this.partition.start_block << dev.block_shift;
-
-  if (var result = this.device.enqueue(request); !result)
-  {
-    request.position -= this.partition.start_block << dev.block_shift;
-
-    return cast<blk::result>(result);
-  }
-
-  return ok;
-}
-
-pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
-{
-  var mut &this = cast<partdev mut &>(dev);
-
-  if (var result = this.device.cancel(request); !result)
-    return cast<blk::result>(result);
-
-  return ok;
-}
-
 pub fn scan_for_partitions(blk::blkdev_ptr &dev) -> void
 {
   var partitions = gpt::detect(dev);
 
-  for(var &part : partitions)
+  for (var &part : partitions)
   {
     std::printf("  detected partition, {} bytes\n", (part.end_block - part.start_block + 1) << dev.block_shift);
 
-    dev::register(blk::blkdev::create<partdev>(dev, part));
+    var dev = blk::blkdev::create<partdev>(dev, part);
+
+    dev::register(dev);
   }
 
   if (partitions.empty)

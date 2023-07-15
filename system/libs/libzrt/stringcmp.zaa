@@ -1,0 +1,24 @@
+//
+// stringcmp
+//
+
+//|///////////////////// stringcmp //////////////////////////////////////////
+extern "C" fn stringcmp(u8 *lhs, usize lhslen, u8 *rhs, usize rhslen) -> int
+{
+  var lhsend = lhs + lhslen;
+  var rhsend = rhs + rhslen;
+
+  for (; rhs != rhsend; ++lhs, ++rhs)
+  {
+    if (lhs == lhsend)
+      return -1;
+
+    if (var cmp = cast<i32>(*lhs) - cast<i32>(*rhs); cmp != 0)
+      return cmp;
+  }
+
+  if (lhs != lhsend)
+    return +1;
+
+  return 0;
+}

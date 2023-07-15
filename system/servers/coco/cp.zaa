@@ -16,7 +16,7 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
   var src = std::string();
   var dst = std::string();
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     if (arg.starts_with("-"))
       continue;
@@ -50,7 +50,7 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
   var buffer = [u8(0); 4096];
 
-  for(;;)
+  for (;;)
   {
     var srcres = read(&mut thread_ring, fin, buffer.data, buffer.len);
 
@@ -62,7 +62,7 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
       break;
     }
 
-    for(var data = buffer.data, var len = cast<usize>(srcres); len != 0; )
+    for (var data = buffer.data, var len = cast<usize>(srcres); len != 0; )
     {
       var dstres = write(&mut thread_ring, fout, data, len);
 

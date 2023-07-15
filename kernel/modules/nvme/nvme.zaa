@@ -1,0 +1,792 @@
+//
+// nvme
+//
+
+import std.stdio;
+import std.atomic;
+import std.vector;
+import std.function;
+import std.byteconv;
+import cpu;
+import pci;
+import msix;
+import vm;
+import io;
+import sys;
+import dev;
+import blk;
+import blk.partdev;
+import scheduler;
+import heap;
+import nvme.namespace;
+
+using vm::physaddr;
+
+enum cap
+{
+  const mqes_mask = 0xffff;
+  const mqes_shift = 0;
+  const dbl_mask = 0xf;
+  const dbl_shift = 32;
+}
+
+enum cc
+{
+  const enable = 1;
+
+  const mps_mask = 0xf;
+  const mps_shift = 7;
+  const iosqes_mask = 0xf;
+  const iosqes_shift = 16;
+  const iocqes_mask = 0xf;
+  const iocqes_shift = 20;
+}
+
+struct nvme_regs
+{
+  u64 cap;
+  u32 vs;
+  u32 intms;
+  u32 intmc;
+  u32 cc;
+  u32 reserved0;
+  u32 csts;
+  u32 nssr;
+  u32 aqa;
+  physaddr asq;
+  physaddr acq;
+  u32 cmbloc;
+  u32 cmbsz;
+  u32[1008] reserved1;
+}
+
+enum cmd : u8
+{
+  // admin
+  delete_io_sq = 0x00,
+  create_io_sq = 0x01,
+  get_log_page = 0x02,
+  delete_io_cq = 0x04,
+  create_io_cq = 0x05,
+  identify = 0x06,
+  abort = 0x08,
+  set_features = 0x09,
+  get_features = 0x0a,
+  async_evnt_request = 0x0c,
+  firmware_commit = 0x10,
+  firmware_download = 0x11,
+  ns_attach = 0x15,
+  keep_alive = 0x18,
+
+  // nvm
+  flush = 0x00,
+  write = 0x01,
+  read = 0x02,
+  write_uncorrectable = 0x4,
+  compare = 0x05,
+  write_zeros = 0x08,
+  dataset_management = 0x09,
+  reservation_register = 0x0d,
+  reservation_report = 0x0e,
+  reservation_acquire = 0x11,
+  reservation_release = 0x15,
+
+  pub const fn ~(cmd lhs) -> cmd { return cast<cmd>(~cast<u8>(lhs)); }
+  pub const fn &(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) & cast<u8>(rhs)); }
+  pub const fn |(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) | cast<u8>(rhs)); }
+}
+
+enum nvme_qprio
+{
+  urgent = 0,
+  high = 1,
+  medium = 2,
+  low = 3,
+}
+
+struct nvme_prpt
+{
+  uintptr[8] prdt;
+}
+
+struct nvme_sqe
+{
+  u32 cdw0;         // Command dword 0
+  u32 nsid;         // Namespace Identifier
+  u32 reserved0;
+  u32 reserved1;
+  physaddr mptr;    // Metadata Pointer
+  physaddr[2] prpp; // Data Pointer
+  u32[6] cdw;       // command-specific
+
+  fn opc=(this mut &, cmd op) -> void
+  {
+    this.cdw0 |= cast(op);
+  }
+
+  fn cid=(this mut &, usize cid) -> void
+  {
+    this.cdw0 |= cast<u32>(cid) << 16;
+  }
+
+  nvme_sqe() = default;
+  ~nvme_sqe() = default;
+}
+
+struct nvme_cqe
+{
+  u32[4] cdw;       // command-specific
+
+  fn sqid(this &) -> u32
+  {
+    return (this.cdw[2] >> 16) & 0xffff;
+  }
+
+  fn sqhead(this &) -> u32
+  {
+    return (this.cdw[2] >> 0) & 0xffff;
+  }
+
+  fn cid(this &) -> usize
+  {
+    return cast<usize>(this.cdw[3] & 0xffff);
+  }
+
+  fn phase(this &) -> int
+  {
+    return cast<int>((this.cdw[3] >> 16) & 1);
+  }
+
+  fn status(this &) -> u32
+  {
+    return (this.cdw[3] >> 17) & 0x7fff;
+  }
+
+  nvme_cqe() = default;
+  ~nvme_cqe() = default;
+}
+
+fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == mask)
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == cast(0))
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+  io_error = -5,
+  device_busy = -16,
+  invalid_argument = -22,
+  timed_out = -110,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct controller
+{
+  pub controller(pci::device &device)
+    : device(&device)
+  {
+  }
+
+  fn reset(this mut &) -> result
+  {
+    std::print("nvme ", this.name, " controller reset");
+
+    var regs = this.regs;
+
+    if (regs.cc & 0x1 == 0x1)
+    {
+      if (!wait_until_set(&regs.csts, 0x1, 1000))
+        return timed_out;
+    }
+
+    std::volatile_store(&regs.cc, regs.cc & ~cc::enable);
+
+    if (!wait_until_clear(&regs.csts, 0x1, 1000))
+      return timed_out;
+
+    return ok;
+  }
+
+  fn enable(this mut &) -> result
+  {
+    var regs = this.regs;
+
+    std::volatile_store(&regs.cc, regs.cc | cast<u32>((PAGE_SHIFT - 12) << cc::mps_shift));
+    std::volatile_store(&regs.cc, regs.cc | cast<u32>(std::ctz(sizeof<nvme_sqe>) << cc::iosqes_shift));
+    std::volatile_store(&regs.cc, regs.cc | cast<u32>(std::ctz(sizeof<nvme_cqe>) << cc::iocqes_shift));
+
+    std::volatile_store(&regs.cc, regs.cc | cc::enable);
+
+    if (!wait_until_set(&regs.csts, 0x1, 500))
+      return timed_out;
+
+    return ok;
+  }
+
+  fn disable(this mut &) -> result
+  {
+    std::volatile_store(&regs.cc, regs.cc & ~0x00000001);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
+  }
+
+  pub ~controller() = default;
+
+  io::response status;
+
+  usize queue_count;
+  usize namespace_count;
+  usize doorbell_stride;
+
+  queue mut *admin;
+  queue mut *[16] queues;
+
+  u8 irq;
+  (u8, u8) irqs;
+  nvme_regs mut *regs;
+  pci::device &device;
+}
+
+pub struct queue
+{
+  std::spin_lock lock;
+
+  pub queue(controller mut &controller, usize index, u32 entries)
+    : controller(&controller), index(index), entries(entries)
+  {
+    std::assert(entries & (entries - 1) == 0);
+
+    var doorbells = cast<u32 mut *>(controller.regs + 1);
+
+    this.sq = vm::allocate_physical_pages(sizeof<nvme_sqe> * cast(entries)).addr;
+    this.sq_mask = entries - 1;
+    this.sq_bell = doorbells + (2*index + 0) * controller.doorbell_stride;
+
+    this.cq = vm::allocate_physical_pages(sizeof<nvme_cqe> * cast(entries)).addr;
+    this.cq_mask = entries - 1;
+    this.cq_bell = doorbells + (2*index + 1) * controller.doorbell_stride;
+
+    std::memset(this.cq.ptr, 0, sizeof<nvme_cqe> * cast(entries));
+
+    this.prp = vm::allocate_physical_pages(sizeof<nvme_prpt> * cast(entries)).addr;
+    this.prp_mask = entries - 1;
+
+    std::memset(this.prp.ptr, 0, sizeof<nvme_prpt> * cast(entries));
+
+    handlers.resize(cast(entries));
+
+    phase = 1;
+  }
+
+  fn irq(this &) -> u8
+  {
+    if (this.controller.irqs.0 == this.controller.irqs.1)
+      return 0;
+
+    return cast<u8>(this.index);
+  }
+
+  pub queue(queue&&) = default;
+  pub ~queue() = default;
+
+  u32 entries;
+
+  physaddr sq;
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+  u32 mut *sq_bell;
+
+  physaddr cq;
+  u32 cq_head;
+  u32 cq_mask;
+  u32 mut *cq_bell;
+
+  physaddr prp;
+  u32 prp_head;
+  u32 prp_mask;
+
+  int phase;
+
+  std::vector<std::delegate<void fn(nvme_cqe *, result)>> handlers;
+
+  usize index;
+  controller mut &controller;
+}
+
+extern fn nvme_queue_handler(queue mut *queue) -> void
+{
+  var guard = std::lock_guard(&mut queue.lock);
+
+  var head = queue.cq_head;
+
+  for(;;)
+  {
+    var index = cast<usize>(head & queue.cq_mask);
+
+    var cqe = cast<nvme_cqe *>((queue.cq + index * sizeof<nvme_cqe>).ptr);
+
+    if (cqe.phase != queue.phase)
+      break;
+
+    var status = result::ok;
+
+    if (cqe.status != 0)
+    {
+      status = result::io_error;
+    }
+
+    queue.handlers[cqe.cid](cqe, status);
+
+    head = std::add_with_carry(head, 1).0;
+
+    if (head & queue.cq_mask == 0)
+      queue.phase ^= 1;
+
+    queue.sq_head = cqe.sqhead;
+  }
+
+  if (head != queue.cq_head)
+  {
+    if (std::sub_with_borrow(queue.sq_tail, queue.cq_head).0 >= queue.sq_mask)
+      blk::wake_from_stall();
+
+    queue.cq_head = head;
+
+    std::volatile_store(queue.cq_bell, cast(head & queue.cq_mask));
+  }
+}
+
+extern fn nvme_controller_handler(controller mut *controller) -> void
+{
+  nvme_queue_handler(controller.admin);
+
+  for(var i = 0; i < controller.queue_count; ++i)
+    nvme_queue_handler(controller.queues[i]);
+}
+
+pub fn initialise() -> void
+{
+  for (var &device : pci::devices)
+  {
+    if (device.class_code == [2, 8, 1])
+    {
+      var controller = std::allocator::new<controller>(device);
+
+      if (var result = controller.initialise(); !result)
+        std::print("nvme error initialising controller - ", result);
+    }
+  }
+}
+
+fn initialise(controller mut &controller) -> result
+{
+  var &device = controller.device;
+
+  var base = device.read_base_address(0);
+  var size = device.read_size_register(0);
+  var mapped = heap::mmap(vm::physrange(base, size));
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var queue_count = std::min(sys::cpu_count, controller.queues.len);
+
+  var irq = device.read_interrupt_line();
+
+  if (msix::count(device) >= queue_count + 1)
+  {
+    var vector = io::allocate_vectors(queue_count + 1);
+
+    if (msix::configure(device, vector))
+    {
+      msix::enable(device);
+
+      irq = vector.0;
+      controller.irqs = (vector.0 + 1, vector.1);
+    }
+  }
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  controller.irq = irq;
+  controller.regs = cast<nvme_regs mut *>(mapped.addr);
+
+  var regs = controller.regs;
+
+  if (var result = controller.reset(); !result)
+    return result;
+
+  var cap = regs.cap;
+
+  controller.doorbell_stride = 1 << ((cap >> cap::dbl_shift) & cap::dbl_mask);
+
+  controller.admin = std::allocator::new<queue>(controller, 0, 16);
+
+  regs.asq = controller.admin.sq;
+  regs.acq = controller.admin.cq;
+  regs.aqa = cast<u32>(controller.admin.sq_mask) << 0 | cast<u32>(controller.admin.cq_mask) << 16;
+
+  if (var result = controller.enable(); !result)
+    return result;
+
+  io::install_handler(irq, &cast<void fn(controller mut *)>(nvme_controller_handler), &controller);
+
+  var queue_entries = std::min(cast<u32>((cap >> cap::mqes_shift) & cap::mqes_mask + 1), 1024);
+
+  var identbuf = vm::allocate_physical_pages(4096);
+
+  if (controller.identify_controller(identbuf.addr))
+  {
+    controller.namespace_count = cast<usize>(std::load_le_u32(cast<u8*>((identbuf.addr + 516).ptr)));
+  }
+
+  vm::release_physical_pages(identbuf);
+
+  if (var result = controller.set_features_num_queues(&mut queue_count); !result)
+    return result;
+
+  for(var i = 0; i < queue_count; ++i)
+  {
+    controller.queues[i] = std::allocator::new<queue>(controller, i + 1, queue_entries);
+
+    if (var result = controller.queues[i].initialise(); !result)
+      std::print("nvme error initialising queue ", i + 1, " - ", result);
+  }
+
+  for(var irq = controller.irqs.0; irq < controller.irqs.1; ++irq)
+  {
+    io::install_handler(irq, &cast<void fn(queue mut *)>(nvme_queue_handler), controller.queues[cast<usize>(irq - controller.irqs.0)]);
+  }
+
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
+  controller.queue_count = queue_count;
+
+  detect(&mut controller);
+
+  return ok;
+}
+
+fn initialise(queue mut &queue) -> result
+{
+  var mut &controller = queue.controller;
+
+  if (var result = controller.create_completion_queue(queue.index, queue.entries, queue.cq, queue.irq); !result)
+    return result;
+
+  if (var result = controller.create_submission_queue(queue.index, queue.entries, queue.sq, nvme_qprio::urgent); !result)
+    return result;
+
+  return ok;
+}
+
+fn submit(queue mut &queue, nvme_sqe &cmd, std::delegate<void fn(nvme_cqe *, result)> &callback) -> result
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut queue.lock);
+
+  var tail = queue.sq_tail;
+  var index = cast<usize>(tail & queue.sq_mask);
+  var next = std::add_with_carry(tail, 1).0;
+
+  if (next & queue.sq_mask == queue.sq_head)
+    return device_busy;
+
+  var sqe = cast<nvme_sqe mut *>((queue.sq + index * sizeof<nvme_sqe>).ptr);
+
+  sqe.cdw0 = cmd.cdw0;
+  sqe.cid = cast(index);
+  sqe.nsid = cmd.nsid;
+  sqe.mptr = cmd.mptr;
+  sqe.prpp = cmd.prpp;
+  sqe.cdw = cmd.cdw;
+
+  queue.handlers[index] = callback;
+
+  queue.sq_tail = next;
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(queue.sq_bell, next & queue.sq_mask);
+
+  return ok;
+}
+
+fn identify_controller(controller mut &controller, vm::physaddr buffer) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::identify;
+  cmd.cdw[0] = 0x01;
+  cmd.prpp[0] = buffer;
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| {
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
+  return ok;
+}
+
+fn identify_active_namespace_list(controller mut &controller, vm::physaddr buffer) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::identify;
+  cmd.cdw[0] = 0x02;
+  cmd.prpp[0] = buffer;
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| {
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
+  return ok;
+}
+
+fn set_features_num_queues(controller mut &controller, usize mut &queue_count) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::set_features;
+  cmd.cdw[0] = 0x07;
+  cmd.cdw[1] = cast<u32>(queue_count - 1) << 0 | cast<u32>(queue_count - 1) << 16;
+
+  var cdw0 = u32(0);
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| {
+    cdw0 = cqe.cdw[0];
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
+  if (var allocated = std::min(cast<usize>(cdw0 >> 0) & 0xffff + 1, cast<usize>(cdw0 >> 16) & 0xffff + 1); allocated < queue_count)
+    queue_count = allocated;
+
+  return ok;
+}
+
+fn create_completion_queue(controller mut &controller, usize id, u32 size, vm::physaddr addr, u8 irq) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::create_io_cq;
+  cmd.cdw[0] = cast<u32>(size - 1) << 16 | cast<u32>(id);
+  cmd.cdw[1] = cast<u32>(irq) << 16 | 0x2 | 0x1;
+  cmd.prpp[0] = addr;
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| [var controller = &controller] {
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  return ok;
+}
+
+fn create_submission_queue(controller mut &controller, usize id, u32 size, vm::physaddr addr, nvme_qprio prioity) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::create_io_sq;
+  cmd.cdw[0] = cast<u32>(size - 1) << 16 | cast<u32>(id);
+  cmd.cdw[1] = cast<u32>(id) << 16 | cast<u32>(prioity) << 1 | 0x1;
+  cmd.prpp[0] = addr;
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| [var controller = &controller] {
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  return ok;
+}
+
+fn detect(controller mut &controller) -> result
+{
+  var buffer = vm::allocate_physical_pages(4096);
+
+  if (controller.identify_active_namespace_list(buffer.addr))
+  {
+    for(var nsid : *cast<u32[1024]*>(buffer.addr.ptr))
+    {
+      if (nsid == 0)
+        break;
+
+      std::print("nvme ", controller.name, "/", nsid, " namespace active");
+
+      var dev = blk::blkdev::create<namespace>(controller, nsid);
+
+      dev::register(dev);
+      blk::scan_for_partitions(dev);
+    }
+  }
+
+  vm::release_physical_pages(buffer);
+
+  return ok;
+}
+
+pub fn identify(controller mut &controller, u32 nsid, vm::physaddr buffer) -> result
+{
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::identify;
+  cmd.nsid = nsid;
+  cmd.cdw[0] = 0x00;
+  cmd.prpp[0] = buffer;
+
+  io::initiate(&mut controller.status.cb, 1);
+
+  var completer = |cqe, status| {
+    io::complete(&mut controller.status.cb, status);
+  };
+
+  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
+  return ok;
+}
+
+pub fn enqueue(controller mut &controller, u32 nsid, blk::request mut *request) -> result
+{
+  let block_size = request.device.block_size;
+  let block_shift = request.device.block_shift;
+
+  std::assert(request.length & (block_size - 1) == 0);
+  std::assert(request.length / block_size < 65536);
+  std::assert(request.position & cast(block_size - 1) == 0);
+
+  var quid = (cast<usize>(cpu::current) + sys::cpu_count - 1) % controller.queue_count;
+
+  var mut &queue = controller.queues[quid];
+
+  var cmd = nvme_sqe();
+
+  switch (request.type)
+  {
+    case read:
+      cmd.opc = cmd::read;
+
+    case write:
+      cmd.opc = cmd::write;
+  }
+
+  cmd.nsid = nsid;
+  cmd.cdw[0] = cast<u32>(((request.position >> block_shift) >> 0) & 0xffffffff);
+  cmd.cdw[1] = cast<u32>(((request.position >> block_shift) >> 32) & 0xffffffff);
+  cmd.cdw[2] = cast<u32>(((request.length >> block_shift) - 1) & 0xffff);
+
+  var nprp = std::ceil_div(request.length + cast<usize>(request.host[0].addr & PAGE_MASK), PAGE_SIZE);
+
+  cmd.prpp[0] = request.host[0].addr;
+
+  if (nprp == 2)
+  {
+    if (request.host.len == 1)
+      cmd.prpp[1] = (request.host[0].addr + PAGE_SIZE) & ~PAGE_MASK;
+
+    if (request.host.len == 2)
+      cmd.prpp[1] = request.host[1].addr;
+  }
+
+  if (nprp > 2)
+  {
+    std::assert(nprp <= 8);
+
+    var prpslot = std::atomic_add(&queue.prp_head, 1) & queue.prp_mask;
+    var prplist = cast<uintptr mut *>((queue.prp + cast(prpslot) * sizeof<nvme_prpt>).ptr);
+
+    if (!std::atomic_cmpxchg_strong(prplist, 0, ~0))
+      return device_busy;
+
+    for (var addr = (request.host[0].addr + PAGE_SIZE) & ~PAGE_MASK; addr < request.host[0].end; addr += PAGE_SIZE)
+      *prplist++ = cast<uintptr>(addr);
+
+    for (var i = 1; i != request.host.len; ++i)
+    {
+      for (var addr = request.host[i].addr; addr < request.host[i].end; addr += PAGE_SIZE)
+        *prplist++ = cast<uintptr>(addr);
+    }
+
+    cmd.prpp[1] = queue.prp + cast(prpslot) * sizeof<nvme_prpt>;
+  }
+
+  request.status = blk::request::status::running;
+
+  var completer = |cqe, status| [var request = request, var nprp = nprp, var prp1 = cmd.prpp[1]] {
+
+    if (nprp > 2)
+      std::memset(prp1.ptr, 0, sizeof<nvme_prpt>);
+
+    blk::complete(request, status ? blk::request::status::success : blk::request::status::errored);
+  };
+
+  if (var result = queue.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn cancel(controller mut &controller, u32 nsid, blk::request mut *request) -> result
+{
+  while (std::volatile_load(&request.status) == blk::request::status::running)
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+
+  return ok;
+}

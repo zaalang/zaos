@@ -1,0 +1,90 @@
+//
+// ldexp
+//
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// ldexpf /////////////////////////////////////////////
+extern "C" fn ldexpf(f32 x, int exp) -> f32
+{
+  var y = x;
+
+  if (exp > 127)
+  {
+    y *= 0x1p127f;
+    exp -= 127;
+
+    if (exp > 127)
+    {
+      y *= 0x1p127f;
+      exp -= 127;
+
+      if (exp > 127)
+        exp = 127;
+    }
+  }
+  else if (exp < -126)
+  {
+    y *= 0x1p-126f * 0x1p24f;
+    exp += 126 - 24;
+
+    if (exp < -126)
+    {
+      y *= 0x1p-126f * 0x1p24f;
+      exp += 126 - 24;
+
+      if (exp < -126)
+        exp = -126;
+    }
+  }
+
+  var i = cast<u32>(0x7f + exp) << 23;
+
+  return y * bit_cast<f32>(i);
+}
+
+//|///////////////////// ldexp //////////////////////////////////////////////
+extern "C" fn ldexp(f64 x, int exp) -> f64
+{
+  var y = x;
+
+  if (exp > 1023)
+  {
+    y *= 0x1p1023;
+    exp -= 1023;
+
+    if (exp > 1023)
+    {
+      y *= 0x1p1023;
+      exp -= 1023;
+
+      if (exp > 1023)
+        exp = 1023;
+    }
+  }
+  else if (exp < -1022)
+  {
+    y *= 0x1p-1022 * 0x1p53;
+    exp += 1022 - 53;
+
+    if (exp < -1022)
+    {
+      y *= 0x1p-1022 * 0x1p53;
+      exp += 1022 - 53;
+
+      if (exp < -1022)
+        exp = -1022;
+    }
+  }
+
+  var i = cast<u64>(0x3ff + exp) << 52;
+
+  return y * bit_cast<f64>(i);
+}

@@ -56,12 +56,12 @@ extern fn sys_mmap(i32 fd, virtaddr mmvsbuf, usize n, virtaddr addrbuf, u64 flag
     return result;
 
   var length = 0;
-  for(var &mm : mmvs)
+  for (var &mm : mmvs)
     length = std::max(length, mm.base + mm.length);
 
   var addr = process::current.sbrk(length);
 
-  for(var &mm : mmvs)
+  for (var &mm : mmvs)
   {
     var protection = vm::protection::none;
 

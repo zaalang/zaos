@@ -288,7 +288,7 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
         switch (in)
         {
           case 0x00 ..= 0x1f:
-            switch(in)
+            switch (in)
             {
               case 0x00:
                 ctx.next = event::key(key_code::sym(' '), key_state::pressed, key_modifiers::control);

@@ -61,7 +61,7 @@ fn dump_section_headers(elf::image &image)
   std::printf("  [Nr] Name              Type          Address           Offset    Size              EntSize           Flags  Link  Info  Align\n");
 
   var nr = 0;
-  for(var &header : image.section_headers)
+  for (var &header : image.section_headers)
   {
     std::printf("  [{:>2}]", nr);
     std::printf(" {:16.16}", section_name_string(image, header.shdr));
@@ -87,7 +87,7 @@ fn dump_program_headers(elf::image &image)
   std::print("Program Headers:");
   std::printf("  Type          Offset              VirtAddr            PhysAddr            FileSiz             MemSiz             Flags  Align\n");
 
-  for(var &header : image.program_headers)
+  for (var &header : image.program_headers)
   {
     std::printf("  {:12}", header.phdr.p_type);
     std::printf("  {:#018x}", header.phdr.p_offset);

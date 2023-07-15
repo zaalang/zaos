@@ -118,7 +118,7 @@ pub struct process
   {
     var guard = std::lock_guard(&mut procman.lock);
 
-    for(var mut &(id, process) : procman.processes)
+    for (var mut &(id, process) : procman.processes)
     {
       callback(process);
     }
@@ -168,7 +168,7 @@ pub struct process
   {
     var guard = std::lock_guard(&mut this.lock);
 
-    for(var thread = this.threads; thread; thread = thread.sibling)
+    for (var thread = this.threads; thread; thread = thread.sibling)
     {
       callback(thread);
     }
@@ -190,7 +190,7 @@ pub struct process
 
     var slot = this.fds.len;
 
-    for(var i = 8; i < this.fds.len; ++i)
+    for (var i = 8; i < this.fds.len; ++i)
     {
       if (!this.fds[i])
       {
@@ -235,7 +235,7 @@ pub struct process
 
   pub fn terminate(this mut &) -> void
   {
-    for(var thread = this.threads; thread; thread = thread.sibling)
+    for (var thread = this.threads; thread; thread = thread.sibling)
       thread.terminate();
   }
 
@@ -246,7 +246,7 @@ pub struct process
 
     process.state = state::zombie;
 
-    for(var thread = process.threads; thread; thread = thread.sibling)
+    for (var thread = process.threads; thread; thread = thread.sibling)
       thread.terminate();
 
     thread::exit(rval);
@@ -326,6 +326,7 @@ pub fn create_kernel_process(void fn(void mut *) *entry, void mut *parameter) ->
   var kernelmain = create_zero_task(process, entry, parameter);
 
   process.name = "kernel";
+  process.id = kernelmain.id;
   process.threads = kernelmain;
   process.state = process::state::running;
   process.pagetable = platform::pagetable;
@@ -384,7 +385,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
 
 pub fn process_push_cmdline(process mut *process, Range<std::string_view> &cmdline) -> i32
 {
-  for(var &arg : cmdline)
+  for (var &arg : cmdline)
   {
     process.sp -= arg.len + 1;
 
@@ -399,7 +400,7 @@ pub fn process_push_cmdline(process mut *process, Range<std::string_view> &cmdli
 
 pub fn process_push_environ(process mut *process, Range<std::string_view> &environ) -> i32
 {
-  for(var &arg : environ)
+  for (var &arg : environ)
   {
     process.sp -= arg.len + 1;
 
@@ -432,7 +433,7 @@ pub fn process_start(process mut *process, thread::priority priority) -> process
 {
   std::print(*process, "started");
 
-  for(var thread = process.threads; thread; thread = thread.sibling)
+  for (var thread = process.threads; thread; thread = thread.sibling)
     scheduler::enqueue(thread, priority);
 
   return process.id;
@@ -502,7 +503,7 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
   process.auxv.push_back(elf::auxval(elf::auxval::type::RINGFD, 6));
   process.auxv.push_back(elf::auxval(elf::auxval::type::ROOTFD, 4));
 
-  for(var &header : image.program_headers)
+  for (var &header : image.program_headers)
   {
     switch (header.phdr.p_type)
     {
@@ -590,11 +591,11 @@ pub fn teardown(process mut *process) -> void
   {
     var guard = std::lock_guard(&mut process.lock);
 
-    for(var child = process.children; child; child = child.sibling)
+    for (var child = process.children; child; child = child.sibling)
     {
       var guard = std::lock_guard(&mut child.lock);
 
-      for(var thread = child.threads; thread; thread = thread.sibling)
+      for (var thread = child.threads; thread; thread = thread.sibling)
         if (thread.id == child.id)
           thread.detach();
     }

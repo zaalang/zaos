@@ -18,6 +18,13 @@ $(BUILD)/clock.zaa.o\
 $(BUILD)/env.zaa.o\
 $(BUILD)/ceil.zaa.o\
 $(BUILD)/floor.zaa.o\
+$(BUILD)/trunc.zaa.o\
+$(BUILD)/round.zaa.o\
+$(BUILD)/fmod.zaa.o\
+$(BUILD)/sqrt.zaa.o\
+$(BUILD)/frexp.zaa.o\
+$(BUILD)/ldexp.zaa.o\
+$(BUILD)/stringcmp.zaa.o\
 $(BUILD)/exit.zaa.o\
 
 default: $(BUILD)/libzrt.a

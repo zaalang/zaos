@@ -77,7 +77,7 @@ pub fn sys_channel_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virta
 
   var fdvec = std::vector<i32>::with_size(fds.len);
 
-  for(var i = 0; i < fdvec.len; ++i)
+  for (var i = 0; i < fdvec.len; ++i)
   {
     fdvec[i] = process.new_fd(fds[i]);
   }
@@ -135,7 +135,7 @@ pub fn sys_channel_write(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 
 
   var fds = std::vector<vfs::fd>::with_size(fdvec.len);
 
-  for(var i = 0; i < fds.len; ++i)
+  for (var i = 0; i < fds.len; ++i)
   {
     fds[i] = process.fd(fdvec[i]);
 
@@ -184,7 +184,7 @@ pub fn sys_channel_call(process mut *process, ioring_ctx mut &ctx, i32 fd, virta
 
     var fds = std::vector<vfs::fd>::with_size(fdvec.len);
 
-    for(var i = 0; i < fds.len; ++i)
+    for (var i = 0; i < fds.len; ++i)
     {
       fds[i] = process.fd(fdvec[i]);
 
@@ -233,7 +233,7 @@ pub fn sys_channel_call(process mut *process, ioring_ctx mut &ctx, i32 fd, virta
 
   var fdvec = std::vector<i32>::with_size(fds.len);
 
-  for(var i = 0; i < fdvec.len; ++i)
+  for (var i = 0; i < fdvec.len; ++i)
   {
     fdvec[i] = process.new_fd(fds[i]);
   }

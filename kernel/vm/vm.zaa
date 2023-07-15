@@ -132,7 +132,7 @@ pub fn allocate_physical_page() -> page mut *
 
   std::assert(allocation.len != 0);
 
-  for(var mut &page : allocation[1 .. allocation.len])
+  rof (var mut &page : allocation[1 .. allocation.len])
     mm.pagecache.put(&page);
 
   return mm.pageallocator.page_from_address(allocation.addr);
@@ -173,7 +173,7 @@ pub fn release_physical_pages(physrange range) -> void
 
 fn ref_physical_pages(physrange range) -> void
 {
-  for(var addr = range.addr; addr < range.end; addr += PAGE_SIZE)
+  for (var addr = range.addr; addr < range.end; addr += PAGE_SIZE)
   {
     mm.pageallocator.page_from_address(addr).ref();
   }
@@ -283,7 +283,7 @@ pub fn create_physical_region(address_space mut &space, virtrange range, std::ve
 
   var addr = range.addr;
 
-  for(var phys : physical)
+  for (var phys : physical)
   {
     var pages = physrange(phys.begin & ~PAGE_MASK, (phys.end + PAGE_MASK) & ~PAGE_MASK);
 
@@ -368,7 +368,7 @@ fn mprotect(page_table mut &pagetable, address_space mut &space, virtrange range
 
   if (prot == protection::readonly || prot == protection::executable)
   {
-    for(var addr = region.range.addr; addr < region.range.end; addr += PAGE_SIZE)
+    for (var addr = region.range.addr; addr < region.range.end; addr += PAGE_SIZE)
     {
       if (var mapping = pagetable.query(addr); mapping.present)
         map_physical_pages(&mut pagetable, addr, physrange(mapping.address, PAGE_SIZE), prot, mflags::keep);
@@ -445,7 +445,7 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
       platform::disable_interrupts();
     }
 
-    for(var page = pages; page; )
+    for (var page = pages; page; )
     {
       var next = page.next;
 
@@ -498,7 +498,7 @@ fn lock(page_table mut &pagetable, address_space mut &space, virtrange range, pr
 
   if (status == result::ok)
   {
-    for(var addr = range.addr; addr < range.end; addr = (addr + PAGE_SIZE) & ~PAGE_MASK)
+    for (var addr = range.addr; addr < range.end; addr = (addr + PAGE_SIZE) & ~PAGE_MASK)
     {
       var mapping = pagetable.query(addr);
 
@@ -554,7 +554,7 @@ pub fn lock(virtrange range, protection prot, vm::iovec mut &result)
 
 pub fn unlock(physrange range) -> void
 {
-  for(var phys = range.begin; phys < range.end; phys = (phys + PAGE_SIZE) & ~PAGE_MASK)
+  for (var phys = range.begin; phys < range.end; phys = (phys + PAGE_SIZE) & ~PAGE_MASK)
   {
     var page = mm.pageallocator.page_from_address(phys);
 
@@ -565,7 +565,7 @@ pub fn unlock(physrange range) -> void
 
 pub fn unlock(std::vector<physrange> &regions) -> void
 {
-  for(var &range : regions)
+  for (var &range : regions)
     unlock(range);
 }
 

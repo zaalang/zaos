@@ -34,7 +34,7 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
 
   if (offset != 0 && length != 0)
   {
-    for(; i != this.host.end && (*i).size <= offset; ++i)
+    for (; i != this.host.end && (*i).size <= offset; ++i)
       offset -= (*i).size;
 
     var bytes = std::min((*i).size - offset, length);
@@ -46,7 +46,7 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
     i += 1;
   }
 
-  for(; i != this.host.end && length != 0; ++i)
+  for (; i != this.host.end && length != 0; ++i)
   {
     var bytes = std::min((*i).size, length);
 
@@ -65,7 +65,7 @@ pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
 
   if (offset != 0 && length != 0)
   {
-    for(; i != dst.host.end && (*i).size <= offset; ++i)
+    for (; i != dst.host.end && (*i).size <= offset; ++i)
       offset -= (*i).size;
 
     var data = ((*i).addr + offset).ptr;
@@ -80,7 +80,7 @@ pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
     i += 1;
   }
 
-  for(; i != dst.host.end && length != 0; ++i)
+  for (; i != dst.host.end && length != 0; ++i)
   {
     var data = (*i).addr.ptr;
     var bytes = std::min((*i).size, length);
@@ -104,7 +104,7 @@ pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::resu
 
   if (offset != 0 && length != 0)
   {
-    for(; i != src.host.end && (*i).size <= offset; ++i)
+    for (; i != src.host.end && (*i).size <= offset; ++i)
       offset -= (*i).size;
 
     var data = ((*i).addr + offset).ptr;
@@ -119,7 +119,7 @@ pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::resu
     i += 1;
   }
 
-  for(; i != src.host.end && length != 0; ++i)
+  for (; i != src.host.end && length != 0; ++i)
   {
     var data = (*i).addr.ptr;
     var bytes = std::min((*i).size, length);

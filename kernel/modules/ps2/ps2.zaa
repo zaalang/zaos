@@ -85,7 +85,7 @@ fn read_data_port() -> u8
 
 fn wait_then_read<T>(u16 port, T mut *value, u64 timeout) -> bool
 {
-  for(var k = 0; k < timeout; ++k)
+  for (var k = 0; k < timeout; ++k)
   {
     if (read_ctrl_port() & status::output_buffer_full != cast(0))
     {
@@ -102,7 +102,7 @@ fn wait_then_read<T>(u16 port, T mut *value, u64 timeout) -> bool
 
 fn wait_then_write<T>(u16 port, T value, u64 timeout) -> bool
 {
-  for(var k = 0; k < timeout; ++k)
+  for (var k = 0; k < timeout; ++k)
   {
     if (read_ctrl_port() & status::input_buffer_full == cast(0))
     {
@@ -119,7 +119,7 @@ fn wait_then_write<T>(u16 port, T value, u64 timeout) -> bool
 
 fn flush() -> bool
 {
-  for(var i = 0; i < 64; ++i)
+  for (var i = 0; i < 64; ++i)
   {
     if (read_ctrl_port() & status::output_buffer_full == cast(0))
       return true;
@@ -453,7 +453,7 @@ fn probe_mouse() -> result
 {
   var response = 0;
 
-  for(var cmd : [ 0xf3, 0xc8, 0xf3, 0x64, 0xf3, 0x50])
+  for (var cmd : [ 0xf3, 0xc8, 0xf3, 0x64, 0xf3, 0x50])
   {
     while (true)
     {
@@ -634,7 +634,7 @@ fn initialise(controller mut &controller) -> result
   if (!wait_then_write(PS2_DATA_PORT, cfg, 500))
     return timed_out;
 
-  for(var i = 0; i < controller.ports.len; ++i)
+  for (var i = 0; i < controller.ports.len; ++i)
   {
     if (controller.ports[i])
     {
@@ -648,7 +648,7 @@ fn initialise(controller mut &controller) -> result
 
 fn initialise(port mut &dev) -> result
 {
-  switch(dev.type)
+  switch (dev.type)
   {
     case mouse:
       std::print("ps2 mouse on port ", dev.index);

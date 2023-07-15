@@ -244,7 +244,7 @@ pub fn cell_width(String &str) -> int
 {
   var x = 0;
 
-  for(var ch : str.chars)
+  for (var ch : str.chars)
     x += cell_width(ch);
 
   return x;
@@ -254,7 +254,7 @@ pub fn text(painter mut &painter, String &str) -> void
 {
   painter.write(str.data, str.len);
 
-  for(var ch = str.chars.begin, var end = str.end; ch != end; ++ch)
+  for (var ch = str.chars.begin, var end = str.end; ch != end; ++ch)
   {
     switch (*ch)
     {
@@ -269,7 +269,7 @@ pub fn text(painter mut &painter, String &str) -> void
 
       case '\x1b':
 
-        for(var it = cast<u8*>(ch) + 1; it != end && std::is_ascii(*it) && !std::is_alpha(*it); ++it)
+        for (var it = cast<u8*>(ch) + 1; it != end && std::is_ascii(*it) && !std::is_alpha(*it); ++it)
           ++ch;
 
       else:

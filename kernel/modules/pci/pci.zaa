@@ -160,21 +160,21 @@ pub fn initialise() -> void
 
       while (entry != end)
       {
-        for(var bus = entry.bus_start; bus != entry.bus_end; ++bus)
+        for (var bus = entry.bus_start; bus != entry.bus_end; ++bus)
         {
           var busentry = cast<pci_header*>(physaddr(cast<uintptr>(entry.base_address) + cast<uintptr>(bus) << 20).ptr);
 
           if (busentry.device_id == 0 || busentry.device_id == 0xffff)
             continue;
 
-          for(var dev = 0; dev < 32; ++dev)
+          for (var dev = 0; dev < 32; ++dev)
           {
             var deventry = cast<pci_header*>(cast<uintptr>(busentry) + cast<uintptr>(dev) << 15);
 
             if (deventry.device_id == 0 || deventry.device_id == 0xffff)
               continue;
 
-            for(var func = 0; func < 8; ++func)
+            for (var func = 0; func < 8; ++func)
             {
               var entry = cast<pci_header*>(cast<uintptr>(deventry) + cast<uintptr>(func) << 12);
 
@@ -202,7 +202,7 @@ pub fn initialise() -> void
 
     std::print("pci bus: ", pci.devices.len, " devices");
 
-    for(var &device : pci.devices)
+    for (var &device : pci.devices)
       std::printf("  {}:{}.{} {} {} {}\n", device.bus, device.dev, device.func, device.vendor_id, device.device_id, device.class_code);
   }
 }
@@ -248,7 +248,48 @@ pub fn read_base_register(device &device, usize bar) -> u32
 
 pub fn read_base_address(device &device, usize bar) -> physaddr
 {
-  return physaddr(cast<uintptr>(read_base_register(device, bar)));
+  var base = read_base_register(device, bar);
+
+  if (base & 0x1 == 0x0)
+  {
+    if (base & 0x6 == 0x4)
+      return cast<uintptr>(base & ~0xf) | cast<uintptr>(read_base_register(device, bar + 1)) << 32;
+
+    return cast<uintptr>(base & ~0xf);
+  }
+
+  return cast<uintptr>(base & ~0x3);
+}
+
+pub fn read_size_register(device &device, usize bar) -> usize
+{
+  var base = read_base_register(device, bar);
+
+  std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar], 0xffffffff);
+
+  var size = read_base_register(device, bar);
+
+  std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar], base);
+
+  if (base & 0x1 == 0x0)
+  {
+    if (base & 0x6 == 0x4)
+    {
+      var basehi = read_base_register(device, bar + 1);
+
+      std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar + 1], 0xffffffff);
+
+      var sizehi = read_base_register(device, bar + 1);
+
+      std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar + 1], basehi);
+
+      return (cast<usize>(~size | 0xf) | cast<usize>(~sizehi) << 32) + 1;
+    }
+
+    return cast<usize>(~size | 0xf) + 1;
+  }
+
+  return cast<usize>(~size | 0x3) + 1;
 }
 
 pub fn read_interrupt_line(device &device) -> u8
@@ -264,7 +305,7 @@ pub fn read_capability(device &device, capabilities id) -> u8
   {
     var ptr = device.read_capabilities_ptr();
 
-    for(var i = 0; ptr != 0 && i < 48; ++i)
+    for (var i = 0; ptr != 0 && i < 48; ++i)
     {
       if (device.read_config<u8>(ptr) == cast(id))
         return ptr;

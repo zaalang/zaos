@@ -1,0 +1,441 @@
+//
+// opentype raster
+//
+
+import std.stdio;
+import std.math;
+import lml.fixed;
+import opentype.parser : face, glyph, glyphid, rect;
+import opentype.outline;
+
+using area_t = lml::fixed<i32, -8>;
+using coord_t = lml::fixed<i32, -8>;
+
+struct vec2
+{
+  coord_t x;
+  coord_t y;
+
+  vec2(coord_t x, coord_t y)
+    : x(x), y(y)
+  {
+  }
+
+  vec2() = default;
+  vec2(vec2 &) = default;
+  fn =(vec2 mut &, vec2 &) -> vec2 mut & = default;
+  ~vec2() = default;
+}
+
+struct context
+{
+  usize width;
+  usize height;
+  std::vector<area_t> cells; // width * height + width + 1
+
+  vec2 cursor;
+
+  context() = default;
+  ~context() = default;
+}
+
+fn fround(f64 v) -> coord_t
+{
+  return v + (v < 0.0 ? -0.5 : 0.5)*std::pow(2.0, coord_t::exponent);
+}
+
+fn hline(context &&ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
+{
+  using lml;
+  using std;
+
+  var dy = y1 - y0;
+
+  if (dy == 0)
+    return;
+
+  var (x0, x1) = (x0 < x1) ? (x0, x1) : (x1, x0);
+
+  var i0 = cast<usize>(max(floor(x0).to_rep, 0));
+  var i1 = min(cast<usize>(max(ceil(x1).to_rep, 0)), ctx.width);
+
+  if (i1 <= i0 + 1)
+  {
+    var area = dy * ((x0 - floor(x0)) + (x1 - floor(x0))) / coord_t(2);
+
+    *(row + i0) += d * (dy - area);
+    *(row + i1) += d * area;
+
+    return;
+  }
+
+  var dy0 = dy * (1 - fract(x0)) / (x1 - x0);
+  var area0 = dy0 * (1 - fract(x0)) / coord_t(2);
+  var dy1 = dy * (fract(x1)) / (x1 - x0);
+  var area1 = dy1 * (fract(x1)) / coord_t(2);
+  var dydx = coord_t(1) * (y1 - y0) / (x1 - x0);
+
+  *(row + i0) += d * area0;
+  *(row + i0 + 1) += d * (dy0 - area0 - dydx/2);
+
+  for (var i = i0 + 1; i < i1; ++i)
+    *(row + i) += d * dydx;
+
+  *(row + i1 - 1) += d * (dy - area0 - (dy0 - area0 - dydx/2) - cast<i32>(i1 - i0 - 1)*dydx - area1);
+  *(row + i1) += d * area1;
+}
+
+fn vline(context &&ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0, coord_t y1) -> void
+{
+  using lml;
+  using std;
+
+  var i0 = cast<usize>(max(floor(x0).to_rep, 0));
+  var i1 = min(cast<usize>(max(ceil(x0).to_rep, 0)), ctx.width);
+
+  var area = fract(x0);
+
+  *(row + i0) += d * (1 - y0) * (1 - area);
+  *(row + i1) += d * (1 - y0) * area;
+
+  for (row += ctx.width, var end = ctx.cells.data + j1*ctx.width; row < end; row += ctx.width)
+  {
+    *(row + i0) += d * (1 - area);
+    *(row + i1) += d * area;
+  }
+
+  *(row + i0) += d * y1 * (1 - area);
+  *(row + i1) += d * y1 * area;
+}
+
+fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
+{
+  using lml;
+  using std;
+
+  var (d, top, bot) = (xy0.y < xy1.y) ? (+1, xy0, xy1) : (-1, xy1, xy0);
+
+  var x = top.x;
+  var dx = bot.x - top.x;
+  var dy = bot.y - top.y;
+
+  var j0 = cast<usize>(max(floor(top.y).to_rep, 0));
+  var j1 = min(cast<usize>(max(floor(bot.y).to_rep, 0)), ctx.height);
+
+  if (dy == 0)
+    return;
+
+  if (j0 == j1)
+  {
+    hline(ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), bot.x, fract(bot.y));
+
+    return;
+  }
+
+  if (dx == 0)
+  {
+    vline(ctx, d, ctx.cells.data + j0*ctx.width, j1, top.x, fract(top.y), fract(bot.y));
+
+    return;
+  }
+
+  x += (coord_t(j0 + 1) - top.y) * dx / dy;
+
+  var x_step = coord_t(1) * dx / dy;
+  var x_bump = coord_t(1) * dx % dy;
+  var x_error = (coord_t(j0 + 1) - top.y) * dx % dy;
+
+  if (x_bump < 0)
+  {
+    x_step -= coord_t::numeric_traits::smallest;
+    x_bump += dy * coord_t::numeric_traits::smallest;
+  }
+
+  hline(ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), x, coord_t(1));
+
+  for (var row = ctx.cells.data + (j0+1)*ctx.width, var end = ctx.cells.data + j1*ctx.width; row < end; row += ctx.width)
+  {
+    var x_next = x + x_step;
+
+    if ((x_error += x_bump) > 0)
+    {
+      x_next += coord_t::numeric_traits::smallest;
+      x_error -= dy * coord_t::numeric_traits::smallest;
+    }
+
+    hline(ctx, d, row, x, coord_t(0), x_next, coord_t(1));
+
+    x = x_next;
+  }
+
+  hline(ctx, d, ctx.cells.data + j1*ctx.width, x, coord_t(0), bot.x, fract(bot.y));
+}
+
+fn move_to(context &&ctx, vec2 xy) -> void
+{
+  ctx.cursor = xy;
+}
+
+fn move_to(context &&ctx, (f64, f64) &xy) -> void
+{
+  move_to(ctx, vec2(fround(xy.0), fround(xy.1)));
+}
+
+fn line_to(context &&ctx, vec2 xy) -> void
+{
+  edge(ctx, ctx.cursor, xy);
+
+  move_to(ctx, xy);
+}
+
+fn line_to(context &&ctx, (f64, f64) &xy) -> void
+{
+  line_to(ctx, vec2(fround(xy.0), fround(xy.1)));
+}
+
+fn quad_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
+{
+  using lml;
+  using std;
+
+  const scale = 3.0;
+
+  var x = ctx.cursor.x.as<f64>();
+  var y = ctx.cursor.y.as<f64>();
+
+  var dx = x - 2.0 * xy1.0 + xy2.0;
+  var dy = y - 2.0 * xy1.1 + xy2.1;
+
+  var n = round(sqrt(sqrt((dx * dx + dy * dy) * scale)));
+
+  var du = 1.0 / n;
+  var dxdu = (xy1.0 - x) * 2.0 * du + dx * du*du;
+  var dydu = (xy1.1 - y) * 2.0 * du + dy * du*du;
+  var ddx = dx * 2.0 * du*du;
+  var ddy = dy * 2.0 * du*du;
+
+  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  {
+    x += dxdu;
+    y += dydu;
+    dxdu += ddx;
+    dydu += ddy;
+
+    line_to(ctx, vec2(fround(x), fround(y)));
+  }
+
+  line_to(ctx, vec2(fround(xy2.0), fround(xy2.1)));
+}
+
+fn cubic_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> void
+{
+  using lml;
+  using std;
+
+  const scale = 3.0;
+
+  var x = ctx.cursor.x.as<f64>();
+  var y = ctx.cursor.y.as<f64>();
+
+  var dx1 = x - 2.0 * xy1.0 + xy2.0;
+  var dy1 = y - 2.0 * xy1.1 + xy2.1;
+  var dx2 = -x + 3.0 * (xy1.0 - xy2.0) + xy3.0;
+  var dy2 = -y + 3.0 * (xy1.1 - xy2.1) + xy3.1;
+
+  var n = round(sqrt(sqrt((dx1 * dx1 + dy1 * dy1 + dx2 * dx2 + dy2 * dy2) * scale)));
+
+  var du = 1.0 / n;
+  var dxdu = (xy1.0 - x) * 3.0 * du + dx1 * 3.0 * du*du + dx2 * du*du*du;
+  var dydu = (xy1.1 - y) * 3.0 * du + dy1 * 3.0 * du*du + dy2 * du*du*du;
+  var ddx = dx1 * 6.0 * du*du + dx2 * 6.0 * du*du*du;
+  var ddy = dy1 * 6.0 * du*du + dy2 * 6.0 * du*du*du;
+  var dddx = dx2 * 6.0 * du*du*du;
+  var dddy = dy2 * 6.0 * du*du*du;
+
+  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  {
+    x += dxdu;
+    y += dydu;
+    dxdu += ddx;
+    dydu += ddy;
+    ddx += dddx;
+    ddy += dddy;
+
+    line_to(ctx, vec2(fround(x), fround(y)));
+  }
+
+  line_to(ctx, vec2(fround(xy3.0), fround(xy3.1)));
+}
+
+fn accumulate(context &ctx, std::vector<u8> mut &glyph) -> void
+{
+  glyph.clear();
+  glyph.reserve(ctx.width * ctx.height);
+
+  var sum = area_t(0);
+
+  for (var area : ctx.cells)
+  {
+    sum += area;
+
+    glyph.push_back(lml::clamp(lml::abs(sum) * 255, 0, 255).as<u8>);
+  }
+}
+
+pub struct bitmap
+{
+  pub usize width;
+  pub usize height;
+  pub std::vector<u8> data;
+
+  pub (f64, f64) origin;
+
+  pub fn [](this &, usize i, usize j) -> u8
+  {
+    return this.data[j*this.width + i];
+  }
+
+  pub bitmap() = default;
+  pub bitmap(bitmap &) = default;
+  pub fn =(bitmap mut &, bitmap &) -> bitmap mut & = default;
+  pub ~bitmap() = default;
+}
+
+pub struct transform
+{
+  pub f64[6] mat;
+
+  pub fn identity() -> transform
+  {
+    return [<f64>: 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 ];
+  }
+
+  pub fn scale(f64 sx, f64 sy) -> transform
+  {
+    return [<f64>: sx, 0.0, 0.0, 0.0, sy, 0.0 ];
+  }
+
+  pub fn translation(f64 dx, f64 dy) -> transform
+  {
+    return [<f64>: 1.0, 0.0, dx, 0.0, 1.0, dy ];
+  }
+
+  pub fn rotation(f64 cos, f64 sin) -> transform
+  {
+    return [<f64>: cos, -sin, 0.0, sin, cos, 0.0 ];
+  }
+
+  pub transform(f64[6] &mat)
+    : mat(mat)
+  {
+  }
+
+  pub transform(f64 m11 = 1.0, f64 m12 = 0.0, f64 m21 = 0.0, f64 m22 = 1.0, f64 dx = 0.0, f64 dy = 0.0)
+    : mat([m11, m12, dx, m21, m22, dy])
+  {
+  }
+
+  pub transform(transform &) = default;
+  pub fn =(transform mut &, transform &) -> transform mut & = default;
+  pub ~transform() = default;
+}
+
+pub fn abs(transform &tx) -> transform
+{
+  var &m = tx.mat;
+
+  return [std::abs(m[0]), std::abs(m[1]), std::abs(m[2]), std::abs(m[3]), std::abs(m[4]), std::abs(m[5])];
+}
+
+pub fn *(transform &lhs, transform &rhs) -> transform
+{
+  var m11 = lhs.mat[0] * rhs.mat[0] + lhs.mat[1] * rhs.mat[3];
+  var m12 = lhs.mat[0] * rhs.mat[1] + lhs.mat[1] * rhs.mat[4];
+  var dx  = lhs.mat[0] * rhs.mat[2] + lhs.mat[1] * rhs.mat[5] + lhs.mat[2];
+  var m21 = lhs.mat[3] * rhs.mat[0] + lhs.mat[4] * rhs.mat[3];
+  var m22 = lhs.mat[3] * rhs.mat[1] + lhs.mat[4] * rhs.mat[4];
+  var dy  = lhs.mat[3] * rhs.mat[2] + lhs.mat[4] * rhs.mat[5] + lhs.mat[5];
+
+  return [m11, m12, dx, m21, m22, dy];
+}
+
+pub fn *(transform &tx, (f64, f64) &pt) -> (f64, f64)
+{
+  var &m = tx.mat;
+
+  return (m[0]*pt.0 + m[1]*pt.1 + m[2], m[3]*pt.0 + m[4]*pt.1 + m[5]);
+}
+
+pub fn *(transform &tx, (i16, i16) &pt) -> (f64, f64)
+{
+  return tx * (cast<f64>(pt.0), cast<f64>(pt.1));
+}
+
+pub fn *(transform &tx, rect &bound) -> rect
+{
+  var centre = tx * (cast<f64>(bound.x_min + bound.x_max)/2.0, cast<f64>(bound.y_min + bound.y_max)/2.0);
+  var halfdim = abs(tx) * (cast<f64>(bound.x_max - bound.x_min)/2.0, cast<f64>(bound.y_max - bound.y_min)/2.0);
+
+  var x_min = cast<i16>(std::floor(centre.0 - halfdim.0));
+  var x_max = cast<i16>(std::ceil(centre.0 + halfdim.0));
+  var y_min = cast<i16>(std::floor(centre.1 - halfdim.1));
+  var y_max = cast<i16>(std::ceil(centre.1 + halfdim.1));
+
+  return rect(x_min, y_min, x_max, y_max);
+}
+
+fn trace(context &&ctx, face &face, glyph &glyph, transform &tx) -> bool
+{
+  switch (glyph.type)
+  {
+    case simple:
+
+      for (var &pt : opentype::outline(glyph))
+      {
+        switch (pt)
+        {
+          case move_to[pt]:
+            move_to(ctx, tx * (pt.x, pt.y));
+
+          case line_to[pt]:
+            line_to(ctx, tx * (pt.x, pt.y));
+
+          case quad_to[pt]:
+            quad_to(ctx, tx * (pt.x1, pt.y1), tx * (pt.x, pt.y));
+        }
+      }
+
+    case composite:
+
+      for (var &component : glyph.components)
+      {
+        trace(ctx, face, face.glyph(component.glyph_id), tx * transform(component.transform));
+      }
+  }
+
+  return true;
+}
+
+pub fn render(face &face, glyphid id, transform &tx, bitmap mut &bitmap) -> bool
+{
+  var glyph = face.glyph(id);
+  var bound = tx * transform::scale(1.0, -1.0) * glyph.bounding_box;
+
+  var ctx = context();
+  ctx.width = cast<usize>(bound.width);
+  ctx.height = cast<usize>(bound.height);
+  ctx.cells.resize(ctx.width * ctx.height + ctx.width + 1);
+
+  var tx = transform::translation(cast<f64>(-bound.x_min), cast<f64>(-bound.y_min)) * tx * transform::scale(1.0, -1.0);
+
+  if (!trace(ctx, face, glyph, tx))
+    return false;
+
+  bitmap.width = ctx.width;
+  bitmap.height = ctx.height;
+  bitmap.origin = tx * (0.0, 0.0);
+
+  ctx.accumulate(&mut bitmap.data);
+
+  return true;
+}

@@ -20,6 +20,8 @@ pub struct mutex
 
   pub fn lock(this mut &) -> void
   {
+    std::assert(thread::current.id != 0);
+
     if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
       return;
 
@@ -50,7 +52,7 @@ pub struct mutex
     if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
       return true;
 
-    if (!this.waiters.wait_until(this.spinlock, timeout))
+    if (!this.waiters.wait_until(&mut this.spinlock, timeout))
     {
       return false;
     }

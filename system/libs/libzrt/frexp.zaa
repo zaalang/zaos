@@ -1,0 +1,76 @@
+//
+// frexp
+//
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// frexpf /////////////////////////////////////////////
+extern "C" fn frexpf(f32 x, int mut *exp) -> f32
+{
+  var i = bit_cast<u32>(x);
+
+  var e = cast<int>(i >> 23) & 0xff;
+
+  if (e == 0)
+  {
+    if (x != 0.0)
+    {
+      x = frexpf(x * 0x1p64f, exp);
+      *exp -= 64;
+    }
+    else
+    {
+      *exp = 0;
+    }
+
+    return x;
+  }
+
+  if (e == 0xff)
+    return x;
+
+  *exp = e - 0x7e;
+  i &= 0x807fffff;
+  i |= 0x3f000000;
+
+  return bit_cast<f32>(i);
+}
+
+//|///////////////////// frexp //////////////////////////////////////////////
+extern "C" fn frexp(f64 x, int mut *exp) -> f64
+{
+  var i = bit_cast<u64>(x);
+
+  var e = cast<int>(i >> 52) & 0x7ff;
+
+  if (e == 0)
+  {
+    if (x != 0.0)
+    {
+      x = frexp(x * 0x1p64, exp);
+      *exp -= 64;
+    }
+    else
+    {
+      *exp = 0;
+    }
+
+    return x;
+  }
+
+  if (e == 0x7ff)
+    return x;
+
+  *exp = e - 0x3fe;
+  i &= 0x800fffffffffffff;
+  i |= 0x3fe0000000000000;
+
+  return bit_cast<f64>(i);
+}

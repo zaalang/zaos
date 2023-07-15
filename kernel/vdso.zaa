@@ -27,7 +27,7 @@ struct vdso<name>
 
     var loadsize = 0;
 
-    for(var &header : image.program_headers)
+    for (var &header : image.program_headers)
     {
       switch (header.phdr.p_type)
       {
@@ -38,7 +38,7 @@ struct vdso<name>
 
     -> { u8[$(loadsize)] image = $([ buf.data : loadsize ]); }
 
-    for(var &header : image.section_headers)
+    for (var &header : image.section_headers)
     {
       switch (header.shdr.sh_type)
       {
@@ -46,7 +46,7 @@ struct vdso<name>
 
           var strtab = image.section(cast<usize>(header.shdr.sh_link));
 
-          for(var offset = 0; offset < header.shdr.sh_size; offset += header.shdr.sh_entsize)
+          for (var offset = 0; offset < header.shdr.sh_size; offset += header.shdr.sh_entsize)
           {
             var entry = cast<elf::elf64_sym*>(image.data(header).data + cast(offset));
 
@@ -79,7 +79,7 @@ pub fn create_process_mapping(process mut *process) -> vm::virtaddr
 
   vm::create_anonymous_region(vm::virtrange(addr, size), vm::protection::executable, vm::usage::foreign);
 
-  for(var offset = 0; offset < size; offset += PAGE_SIZE)
+  for (var offset = 0; offset < size; offset += PAGE_SIZE)
   {
     var mapping = platform::pagetable.query(vm::virtaddr(data + offset));
 

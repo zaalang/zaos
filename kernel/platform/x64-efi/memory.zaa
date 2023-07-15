@@ -39,7 +39,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
   var max_usable_memory = 0;
   var max_physical_pages = 0;
 
-  for(var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
+  for (var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
   {
     var entry = cast<efi::EFI_MEMORY_DESCRIPTOR*>(cast<uintptr>(MemoryMap) + i * DescriptorSize);
 
@@ -111,7 +111,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
   var pml4 = cast<uintptr[512] mut *>(bootinfo.pml4);
 
-  for(var i = 0; i < 512; ++i)
+  for (var i = 0; i < 512; ++i)
     pml4[i] = 0;
 
   {
@@ -122,24 +122,24 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
     var pdp = cast<uintptr[512] mut *>(pml4[510]);
 
-    for(var i = 0; i < max_physical_pages; ++i)
+    for (var i = 0; i < max_physical_pages; ++i)
       pdp[i] = i*0x40000000 | 0x183; // present, readwrite, global, large
 
 //    // 2Mb pages
 //
 //    var addr = 0;
 //
-//    for(var k = 0; k < max_physical_pages; ++k)
+//    for (var k = 0; k < max_physical_pages; ++k)
 //    {
 //      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[k]) != 0)
 //        efi::panic(SystemTable, "bad_pd_alloc");
 //
 //      var pd = cast<uintptr[512] mut *>(pdp[k]);
 //
-//      for(var i = 0; i < 512; ++i)
+//      for (var i = 0; i < 512; ++i)
 //        pd[i] = 0;
 //
-//      for(var j = 0; j < 512 && addr < max_physical_pages * 0x40000000; ++j)
+//      for (var j = 0; j < 512 && addr < max_physical_pages * 0x40000000; ++j)
 //      {
 //        pd[j] = addr | 0x183; // present, readwrite, global, large
 //
@@ -149,7 +149,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 //      pdp[k] |= 0x7; // present, readwrite, user
 //    }
 
-    for(var i = max_physical_pages; i < 512; ++i)
+    for (var i = max_physical_pages; i < 512; ++i)
       pdp[i] = 0;
 
     pml4[510] |= 0x7; // present, readwrite, user    
@@ -165,7 +165,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
     var pdp = cast<uintptr[512] mut *>(pml4[511]);
 
-    for(var i = 0; i < 512; ++i)
+    for (var i = 0; i < 512; ++i)
       pdp[i] = 0;
 
     if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[510]) != 0)
@@ -173,7 +173,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
     var pd = cast<uintptr[512] mut *>(pdp[510]);
 
-    for(var i = 0; i < 512; ++i)
+    for (var i = 0; i < 512; ++i)
       pd[i] = 0;
 
     var addr = 0;
@@ -185,24 +185,24 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
     var kernel_data = extern(_data) - kernel_base;
     var kernel_size = extern(BASE_) - kernel_base;
 
-    for(var j = 0; j < 512 && addr < kernel_size; ++j)
+    for (var j = 0; j < 512 && addr < kernel_size; ++j)
     {
       if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pd[j]) != 0)
         efi::panic(SystemTable, "bad_pt_alloc");
 
       var pt = cast<uintptr[512] mut *>(pd[j]);
 
-      for(var i = 0; i < 512; ++i)
+      for (var i = 0; i < 512; ++i)
         pt[i] = 0;
 
-      for(var i = (addr / 4096) % 512; i < 512 && addr < kernel_data; ++i)
+      for (var i = (addr / 4096) % 512; i < 512 && addr < kernel_data; ++i)
       {
         pt[i] = kernel_base + addr | 0x101; // present, readonly, global
 
         addr += 4096;
       }
 
-      for(var i = (addr / 4096) % 512; i < 512 && addr < kernel_size; ++i)
+      for (var i = (addr / 4096) % 512; i < 512 && addr < kernel_size; ++i)
       {
         pt[i] = kernel_base + addr | (1 << 63) | 0x103; // present, readwrite, noexecute, global
 
@@ -224,7 +224,7 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
     std::assert(sizeof<thread_data> & 63 == 0);
 
-    for(var cpu = 0; cpu < bootinfo.cpu_count; ++cpu)
+    for (var cpu = 0; cpu < bootinfo.cpu_count; ++cpu)
     {
       var j = (addr / 4096) / 512;
 
@@ -233,14 +233,14 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
       var pt = cast<uintptr[512] mut *>(pd[j]);
 
-      for(var i = 0; i < 512; ++i)
+      for (var i = 0; i < 512; ++i)
         pt[i] = 0;
 
       var stack = 0;
       if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, stack_pages, &stack) != 0)
         efi::panic(SystemTable, "bad_stack_alloc");
 
-      for(var i = 512 - stack_pages; i < 512; ++i)
+      for (var i = 512 - stack_pages; i < 512; ++i)
       {
         pt[i] = stack | (1 << 63) | 0x103; // present, readwrite, noexecute, global
 
@@ -280,13 +280,13 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
     if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, heap_pages, &heap) != 0)
       efi::panic(SystemTable, "bad_heap_alloc");
 
-    for(var k = 400; k < 400 + heap_pages; ++k)
+    for (var k = 400; k < 400 + heap_pages; ++k)
     {
       pml4[k] = heap;
 
       var pdp = cast<uintptr[512] mut *>(pml4[k]);
 
-      for(var i = 0; i < 512; ++i)
+      for (var i = 0; i < 512; ++i)
         pdp[i] = 0;
 
       pml4[k] |= 0x7; // present, readwrite, user
@@ -309,27 +309,27 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
     var hunk_end = hunk + hunk_pages * 4096;
 
-    for(var k = 0; k < 512 && hunk < hunk_end; ++k)
+    for (var k = 0; k < 512 && hunk < hunk_end; ++k)
     {
       if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[k]) != 0)
         efi::panic(SystemTable, "bad_pd_alloc");
 
       var pd = cast<uintptr[512] mut *>(pdp[k]);
 
-      for(var i = 0; i < 512; ++i)
+      for (var i = 0; i < 512; ++i)
         pd[i] = 0;
 
-      for(var j = 0; j < 512 && hunk < hunk_end; ++j)
+      for (var j = 0; j < 512 && hunk < hunk_end; ++j)
       {
         if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pd[j]) != 0)
           efi::panic(SystemTable, "bad_pt_alloc");
 
         var pt = cast<uintptr[512] mut *>(pd[j]);
 
-        for(var i = 0; i < 512; ++i)
+        for (var i = 0; i < 512; ++i)
           pt[i] = 0;
 
-        for(var i = 0; i < 512 && hunk < hunk_end; ++i)
+        for (var i = 0; i < 512 && hunk < hunk_end; ++i)
         {
           pt[i] = hunk | (1 << 63) | 0x103; // present, readwrite, noexecute, global
 
@@ -363,7 +363,7 @@ pub fn cement(BootInfo &bootinfo, int cpu) -> void
 
     var pdp = cast<uintptr[512] mut *>(pml4[510] & ~0xfff);
 
-    for(var i = 0; i < 512; ++i)
+    for (var i = 0; i < 512; ++i)
     {
       if (pdp[i] & 0x81 == 1)
         pdp[i] |= (1 << 63); // noexecute

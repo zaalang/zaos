@@ -70,7 +70,7 @@ pub struct cursor
     if (bytes.len < sizeof<XcursorFileHeader> + cast(header.ntoc) * sizeof<XcursorFileToc>)
       throw std::system_error(std::errc::format_error);
 
-    for(var i = 0; i < header.ntoc; ++i)
+    for (var i = 0; i < header.ntoc; ++i)
     {
       var entry = cast<XcursorFileToc*>(header + 1) + cast(i);
 
@@ -114,7 +114,7 @@ pub struct cursor
     var header = cast<XcursorFileHeader*>(this.bytes.data);
 
     var position = 0;
-    for(var i = 0; i < header.ntoc; ++i)
+    for (var i = 0; i < header.ntoc; ++i)
     {
       var entry = cast<XcursorFileToc*>(header + 1) + cast(i);
 

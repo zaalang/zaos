@@ -183,7 +183,7 @@ fn clear(ioring_pollset mut &this) -> result
 {
   var guard = std::lock_guard(&mut this.lock);
 
-  for(var mut &event : this.events)
+  for (var mut &event : this.events)
   {
     if (event.mask & events::pollin == events::pollin)
       io::remove_notify(&mut event.readable.cb, &this);
@@ -262,7 +262,7 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
   io::reset(&mut pollset.readable.cb);
   io::initiate(&mut pollset.readable.cb, 1);
 
-  for(var mut &event : pollset.events)
+  for (var mut &event : pollset.events)
   {
     var revents = 0;
 

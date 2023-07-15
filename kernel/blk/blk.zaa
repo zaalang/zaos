@@ -14,6 +14,7 @@ import platform;
 import scheduler;
 import thread as _ : thread;
 import process as _ : process;
+import semaphore as _ : semaphore;
 import support.rc : Rc;
 
 struct io_queue
@@ -61,7 +62,7 @@ struct io_queue
 
     var prev = null<request mut *>;
 
-    for(var curr = this.head; curr; curr = curr.next)
+    for (var curr = this.head; curr; curr = curr.next)
     {
       if (curr == rq)
       {
@@ -98,7 +99,7 @@ fn dump(io_queue &this) -> void
 {
   std::print("[io queue]");
 
-  for(var rq = this.head; rq; rq = rq.next)
+  for (var rq = this.head; rq; rq = rq.next)
   {
     std::print("  ", rq.type, " ", rq.position, " ", rq.length);
   }
@@ -108,6 +109,7 @@ struct blkdev_manager
 {
   io_queue ioqueue;
 
+  semaphore doorbell;
   thread mut *kblockd;
 
   fn instance() -> blkdev_manager mut &
@@ -125,16 +127,6 @@ struct blkdev_manager
 fn blkman() -> blkdev_manager mut &
 {
   return &blkdev_manager::instance;
-}
-
-pub fn enqueue(request mut *rq) -> void
-{
-  rq.ref();
-
-  blkman.ioqueue.append(rq);
-
-  if (blkman.ioqueue.head == rq)
-    scheduler::unblock(blkman.kblockd);
 }
 
 pub fn open(blkdev_ptr &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> blk::result
@@ -188,12 +180,27 @@ pub fn read(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buff
   rq.position = position;
   rq.length = length;
   rq.cb = cb;
+  rq.ref();
 
   buffer.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 
-  enqueue(rq);
+  switch (rq.device.enqueue(rq))
+  {
+    case blk::result::ok:
+      ;
+
+    case blk::result::device_busy:
+
+      blkman.ioqueue.append(rq);
+
+      if (blkman.ioqueue.head == rq)
+        blkman.doorbell.release();
+
+    else:
+      complete(rq, blk::request::status::errored);
+  }
 }
 
 pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
@@ -204,12 +211,16 @@ pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buf
   rq.position = position;
   rq.length = length;
   rq.cb = cb;
+  rq.ref();
 
   buffer.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 
-  enqueue(rq);
+  blkman.ioqueue.append(rq);
+
+  if (blkman.ioqueue.head == rq)
+    blkman.doorbell.release();
 }
 
 pub fn ioctl(blkdev_ptr dev, u32 op, vm::iovec &buffer) -> result
@@ -243,22 +254,16 @@ pub fn complete(request mut *rq, request::status status) -> void
 
 pub fn wake_from_stall() -> void
 {
-  scheduler::unblock(blkman.kblockd);
+  blkman.doorbell.release();
 }
 
 fn kblockd(void*) -> void
 {
-  platform::disable_interrupts();
-
   while (true)
   {
-    scheduler::prepare_to_block();
-
-    platform::enable_interrupts();
-
     var entries = blkman.ioqueue.take();
 
-    for(var entry = &entries.0; *entry; )
+    for (var entry = &entries.0; *entry; )
     {
       var rq = *entry;
 
@@ -299,9 +304,7 @@ fn kblockd(void*) -> void
     if (entries.0)
       blkman.ioqueue.prepend(&mut entries);
 
-    platform::disable_interrupts();
-
-    scheduler::block();
+    blkman.doorbell.wait();
   }
 }
 
@@ -319,7 +322,7 @@ pub fn initialise() -> void
 pub fn enumerate(var &&callback) -> void
 {
   dev::enumerate(|id, dev| [callback] {
-    switch(dev)
+    switch (dev)
     {
       case blkdev[dev]:
         callback(id, dev);

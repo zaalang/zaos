@@ -229,7 +229,7 @@ pub fn validate_rsdp(void *acpi_root, uintptr physical_base) -> acpi_result
     return acpi_result::invalid_rsdp_signature;
 
   var checksum = u8(0);
-  for(var ch = cast<u8*>(acpi_root); ch != cast<u8*>(acpi_root) + sizeof<rsdp>; ++ch)
+  for (var ch = cast<u8*>(acpi_root); ch != cast<u8*>(acpi_root) + sizeof<rsdp>; ++ch)
     checksum = __add_with_carry(checksum, *ch).0;
 
   if (checksum != 0)
@@ -254,7 +254,7 @@ pub fn find_table(void *acpi_root, uintptr physical_base, var signature) -> desc
 
   var entries = cast<usize>(xsdt.length - sizeof<descriptor_header>) / sizeof<uintptr>;
 
-  for(var i = 0; i < entries; ++i)
+  for (var i = 0; i < entries; ++i)
   {
     var entry = host_address(*(cast<descriptor_header**>(xsdt + 1) + i), physical_base);
 

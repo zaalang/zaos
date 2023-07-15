@@ -79,6 +79,9 @@ image:
         - cp:
             src: data/left_side
             dest: /data/left_side
+        - cp:
+            src: data/NotoSans-Regular.ttf
+            dest: /data/NotoSans-Regular.ttf
         - md:
             dest: /srv
         - cp:
@@ -91,8 +94,8 @@ image:
             src: build/system/servers/winton/winton
             dest: /srv/winton
         - cp:
-            src: build/system/servers/newton/newton
-            dest: /srv/newton
+            src: build/system/servers/lamina/lamina
+            dest: /srv/lamina
         - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco

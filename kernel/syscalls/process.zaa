@@ -81,7 +81,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
   if (var result = vm::read_process_memory(argvbuf, argv.data, argv.len * sizeof<arg>); !result)
     return result;
 
-  for(var &arg : argv)
+  for (var &arg : argv)
   {
     if (arg.end < arg.beg || arg.len > 4096)
       return invalid_argument;
@@ -97,7 +97,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
   if (var result = vm::read_process_memory(envpbuf, envp.data, envp.len * sizeof<arg>); !result)
     return result;
 
-  for(var &arg : envp)
+  for (var &arg : envp)
   {
     if (arg.end < arg.beg || arg.end - arg.beg > 4096)
       return invalid_argument;
@@ -110,7 +110,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
 
   var process = create_process(process::current, vfs::basename(arg0));
 
-  for(var &arg : argv)
+  for (var &arg : argv)
   {
     var str = std::string<N:256>::with_size(arg.len);
 
@@ -120,7 +120,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
     process_push_cmdline(process, [ std::string_view(str) ]);
   }
 
-  for(var &arg : envp)
+  for (var &arg : envp)
   {
     var str = std::string<N:256>::with_size(arg.len);
 
@@ -130,7 +130,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
     process_push_environ(process, [ std::string_view(str) ]);
   }
 
-  for(var &attr : attrs)
+  for (var &attr : attrs)
   {
     switch (attr.type)
     {

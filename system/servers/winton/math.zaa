@@ -116,13 +116,13 @@ pub fn *(transform &lhs, transform &rhs) -> transform
 {
   var result = transform(void);
 
-  for(var i = 0; i < 4; ++i)
+  for (var i = 0; i < 4; ++i)
   {
-    for(var j = 0; j < 4; ++j)
+    for (var j = 0; j < 4; ++j)
     {
       result[i, j] = 0.0;
 
-      for(var p = 0; p < 4; ++p)
+      for (var p = 0; p < 4; ++p)
         result[i, j] += lhs[i, p] * rhs[p, j];
     }
   }
@@ -134,8 +134,8 @@ pub fn abs(transform &m) -> transform
 {
   var result = transform(void);
 
-  for(var i = 0; i < 4; ++i)
-    for(var j = 0; j < 4; ++j)
+  for (var i = 0; i < 4; ++i)
+    for (var j = 0; j < 4; ++j)
       result[i, j] = std::abs(m[i, j]);
 
   return result;
@@ -164,8 +164,8 @@ pub fn inverse(transform &m) -> transform
 
   var determinant = 1.0 / (m[0, 0]*result[0, 0] + m[1, 0]*result[0, 1] + m[2, 0]*result[0, 2] + m[3, 0]*result[0, 3]);
 
-  for(var i = 0; i < 4; ++i)
-    for(var j = 0; j < 4; ++j)
+  for (var i = 0; i < 4; ++i)
+    for (var j = 0; j < 4; ++j)
       result[i, j] *= determinant;
 
   return result;

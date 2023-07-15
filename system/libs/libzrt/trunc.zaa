@@ -1,0 +1,58 @@
+//
+// trunc
+//
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// truncf /////////////////////////////////////////////
+extern "C" fn truncf(f32 x) -> f32
+{
+  var i = bit_cast<u32>(x);
+
+  var e = cast<int>(i >> 23) & 0xff - 0x7f + 9;
+
+  if (e < 9)
+    e = 1;
+
+  if (e >= 23 + 9)
+    return x;
+
+  var m = u32(~0) >> e;
+
+  if ((i & m) == 0)
+    return x;
+
+  i &= ~m;
+
+  return bit_cast<f32>(i);
+}
+
+//|///////////////////// trunc //////////////////////////////////////////////
+extern "C" fn trunc(f64 x) -> f64
+{
+  var i = bit_cast<u64>(x);
+
+  var e = cast<int>(i >> 52) & 0x7ff - 0x3ff + 12;
+
+  if (e < 12)
+    e = 1;
+
+  if (e >= 52 + 12)
+    return x;
+
+  var m = u64(~0) >> e;
+
+  if ((i & m) == 0)
+    return x;
+
+  i &= ~m;
+
+  return bit_cast<f64>(i);
+}

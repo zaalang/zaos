@@ -21,7 +21,7 @@ pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &c
   var envp = std::vector<os::arg>();
   var attrs = std::vector<os::attr>();
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     argv.push_back(os::arg(arg.data, arg.len));
   }

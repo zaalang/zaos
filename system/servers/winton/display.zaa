@@ -114,11 +114,11 @@ pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> 
 
   var dstrow = cast<u32 mut *>(display.back_buffer.data + y0 * display.si.pitch);
 
-  for(var y = y0; y < y1; ++y)
+  for (var y = y0; y < y1; ++y)
   {
     var dst = dstrow + x0;
 
-    for(var x = x0; x < x1; ++x)
+    for (var x = x0; x < x1; ++x)
       *dst++ = color;
 
     dstrow += display.si.pitch/4;
@@ -127,7 +127,7 @@ pub fn fill(display mut &display, int x0, int y0, int x1, int y1, u32 color) -> 
   return 0;
 }
 
-fn premultipy(u32 rgba, u32 alpha) -> u32
+fn premultiply(u32 rgba, u32 alpha) -> u32
 {
   // https://arxiv.org/pdf/2202.02864.pdf
 
@@ -162,13 +162,13 @@ pub fn blit(display mut &display, bound &clip, vec3 translation, int width, int 
   var i0 = cast<usize>(std::floor(rect.low(0)) - translation.x);
   var j0 = cast<usize>(std::floor(rect.low(1)) - translation.y);
 
-  var x1 = cast<usize>(std::floor(rect.high(0)));
-  var y1 = cast<usize>(std::floor(rect.high(1)));
+  var x1 = cast<usize>(std::ceil(rect.high(0)));
+  var y1 = cast<usize>(std::ceil(rect.high(1)));
 
   var srcrow = bits + j0 * stride;
   var dstrow = cast<u32 mut *>(display.back_buffer.data + y0 * display.si.pitch);
 
-  for(var y = y0; y < y1; ++y)
+  for (var y = y0; y < y1; ++y)
   {
     var src = cast<u32*>(srcrow) + i0;
     var dst = dstrow + x0;
@@ -176,12 +176,12 @@ pub fn blit(display mut &display, bound &clip, vec3 translation, int width, int 
     switch (format)
     {
       case 0:
-        for(var x = x0; x < x1; ++x)
+        for (var x = x0; x < x1; ++x)
           *dst++ = *src++;
 
       case 1:
-        for(var x = x0; x < x1; ++x, ++src, ++dst)
-          *dst = std::add_with_carry(*src, premultipy(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
+        for (var x = x0; x < x1; ++x, ++src, ++dst)
+          *dst = std::add_with_carry(*src, premultiply(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
     }
 
     srcrow += stride;
@@ -215,11 +215,11 @@ pub fn blit(display mut &display, bound &clip, transform &transform, int width, 
 
   var inverse = inverse(transform);
 
-  for(var y = y0; y < y1; ++y)
+  for (var y = y0; y < y1; ++y)
   {
     var dstrow = cast<u32 mut *>(display.back_buffer.data + cast(y) * display.si.pitch);
 
-    for(var x = x0; x < x1; ++x)
+    for (var x = x0; x < x1; ++x)
     {
       var pt = project(inverse, vec2(x, y));
 
@@ -234,7 +234,7 @@ pub fn blit(display mut &display, bound &clip, transform &transform, int width, 
             *dst = *src;
 
           case 1:
-            *dst = std::add_with_carry(*src, premultipy(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
+            *dst = std::add_with_carry(*src, premultiply(*dst, 255 - ((*src & 0xff000000) >> 24))).0;
         }
       }
     }
@@ -243,9 +243,33 @@ pub fn blit(display mut &display, bound &clip, transform &transform, int width, 
   return 0;
 }
 
-pub fn swap(display mut &display) -> i32
+pub fn flip(display mut &display, bound &region) -> i32
 {
-  std::memcpy(display.fb.data, display.back_buffer.data, display.back_buffer.len);
+  var rect = clamp(region, display.bound);
+
+  if (rect.empty)
+    return 0;
+
+  var x0 = cast<usize>(std::floor(rect.low(0)));
+  var y0 = cast<usize>(std::floor(rect.low(1)));
+
+  var x1 = cast<usize>(std::ceil(rect.high(0)));
+  var y1 = cast<usize>(std::ceil(rect.high(1)));
+
+  var srcrow = cast<u32 mut *>(display.back_buffer.data + y0 * display.si.pitch);
+  var dstrow = cast<u32 mut *>(display.fb.data + y0 * display.si.pitch);
+
+  for (var y = y0; y < y1; ++y)
+  {
+    var src = srcrow + x0;
+    var dst = dstrow + x0;
+
+    for (var x = x0; x < x1; ++x)
+      *dst++ = *src++;
+
+    srcrow += display.si.pitch/4;
+    dstrow += display.si.pitch/4;
+  }
 
   return 0;
 }

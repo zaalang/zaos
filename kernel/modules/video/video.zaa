@@ -47,7 +47,7 @@ pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr
 {
   var &this = cast<bootfb&>(dev);
 
-  switch(query)
+  switch (query)
   {
     case device_name:
       result = "fb0";

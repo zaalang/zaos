@@ -1,0 +1,448 @@
+//
+// gfx blend
+//
+
+import std.math;
+import gfx.color;
+
+pub enum blend
+{
+  clear,             // r = 0
+  source,            // r = s
+  destination,       // r = d
+  source_over,       // r = s + (1-sa)*d
+  destination_over,  // r = d + (1-da)*s
+  source_in,         // r = s * da
+  destination_in,    // r = d * sa
+  source_out,        // r = s * (1-da)
+  destination_out,   // r = d * (1-sa)
+  source_atop,       // r = s*da + d*(1-sa)
+  destination_atop,  // r = d*sa + s*(1-da)
+
+  xor,               // r = s*(1-da) + d*(1-sa)
+  plus,              // r = min(s + d, 1)
+  minus,             // r = max(d - s, 0)
+  multiply,          // r = s*(1-da) + d*(1-sa) + s*d
+  screen,            // r = s + d - s*d
+
+  overlay,           // multiply or screen, depending on destination
+  darken,            // rc = s + d - max(s*da, d*sa), ra = source_over
+  lighten,           // rc = s + d - min(s*da, d*sa), ra = source_over
+  colordodge,        // brighten destination to reflect source
+  colorburn,         // darken destination to reflect source
+  hardlight,         // multiply or screen, depending on source
+  softlight,         // lighten or darken, depending on source
+  difference,        // rc = s + d - 2*(min(s*da, d*sa)), ra = source_over
+  exclusion,         // rc = s + d - two(s*d), ra = source_over
+}
+
+fn clip(gfx::color &color) -> gfx::color
+{
+  var a = std::clamp(color.a, 0.0, 1.0);
+  var r = std::clamp(color.r, 0.0, color.a);
+  var g = std::clamp(color.g, 0.0, color.a);
+  var b = std::clamp(color.b, 0.0, color.a);
+
+  return gfx::color(r, g, b, a);
+}
+
+fn xor(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca.(1 - Da) + Dca.(1 - Sa)
+  // Da'  = Sa + Da - 2.Sa.Da
+
+  var rgb = src * (1.0 - dst.a) + dst * (1.0 - src.a);
+  var a = src.a + dst.a - 2.0 * src.a * dst.a;
+
+  return gfx::color(rgb.r, rgb.g, rgb.b, a);
+}
+
+fn plus(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca + Dca
+  // Da'  = Sa + Da
+
+  var rgb = src + dst;
+  var a = src.a + dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn minus(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Dca - Sca
+  // Da' = 1 - (1 - Sa).(1 - Da) = Da + Sa - Sa.Da
+
+  var rgb = dst - src;
+  var a = dst.a + src.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn multiply(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca.Dca + Sca.(1 - Da) + Dca.(1 - Sa)
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src * dst + src * (1.0 - dst.a) + dst * (1.0 - src.a);
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn screen(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca + Dca - Sca.Dca
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src + dst - src * dst;
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn overlay(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // if 2.Dca <= Da
+  //   Dca' = 2.Sca.Dca + Sca.(1 - Da) + Dca.(1 - Sa)
+  // otherwise
+  //   Dca' = Sa.Da - 2.(Da - Dca).(Sa - Sca) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //
+  // Da' = Sa + Da - Sa.Da
+
+  var rgb = gfx::color();
+
+  #for(const k = 0; k < 3; ++k)
+  {
+    if (2.0 * dst.#k <= dst.a)
+      rgb.#k = 2.0 * src.#k * dst.#k + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+    else
+      rgb.#k = src.a * dst.a - 2.0 * (dst.a - dst.#k) * (src.a - src.#k) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+  }
+
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn darken(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = min(Sca.Da, Dca.Sa) + Sca.(1 - Da) + Dca.(1 - Sa)
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src + (dst - gfx::max(src * dst.a, dst * src.a));
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn lighten(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = max(Sca.Da, Dca.Sa) + Sca.(1 - Da) + Dca.(1 - Sa)
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src + (dst - gfx::min(src * dst.a, dst * src.a));
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn difference(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca + Dca - 2.min(Sca.Da, Dca.Sa)
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src + (dst - 2.0 * gfx::min(src * dst.a, dst * src.a));
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn exclusion(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // Dca' = Sca + Dca - 2.(Sca.Dca)
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = src + (dst - 2.0 * (src * dst));
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn colordodge(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // if Sca == Sa and Dca == 0
+  //     Dca' = Sca.(1 - Da) + Dca.(1 - Sa) = Sca.(1 - Da)
+  // otherwise if Sca == Sa
+  //     Dca' = Sa.Da + Sca.(1 - Da) + Dca.(1 - Sa)
+  // otherwise if Sca < Sa
+  //     Dca' = Sa.Da.min(1, Dca/Da.Sa/(Sa - Sca)) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = gfx::color();
+
+  #for(const k = 0; k < 3; ++k)
+  {
+    if (dst.#k == 0.0)
+      rgb.#k = src.#k * (1.0 - dst.a);
+    else if (src.#k == src.a)
+      rgb.#k = src.a * dst.a + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+    else
+      rgb.#k = src.a * dst.a * std::min(1.0, (dst.#k / dst.a) * src.a / (src.a - src.#k)) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+  }
+
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn colorburn(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // if Sca == 0 and Dca == Da
+  //   Dca' = Sa.Da + Dca.(1 - Sa)
+  // otherwise if Sca == 0
+  //   Dca' = Dca.(1 - Sa)
+  // otherwise if Sca > 0
+  //   Dca' =  Sa.Da.(1 - min(1, (1 - Dca/Da).Sa/Sca)) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = gfx::color();
+
+  #for(const k = 0; k < 3; ++k)
+  {
+    if (dst.#k == dst.a)
+      rgb.#k = src.a * dst.a + dst.#k * (1.0 - src.a);
+    else if (src.#k == 0.0)
+      rgb.#k = dst.#k * (1.0 - src.a);
+    else
+      rgb.#k = src.a * dst.a * (1.0 - std::min(1.0, (1.0 - dst.#k / dst.a) * src.a / src.#k)) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+  }
+
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn hardlight(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  // if 2.Sca < Sa
+  //    Dca' = 2.Sca.Dca + Sca.(1 - Da) + Dca.(1 - Sa)
+  // otherwise
+  //    Dca' = Sa.Da - 2.(Da - Dca).(Sa - Sca) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = gfx::color();
+
+  #for(const k = 0; k < 3; ++k)
+  {
+    if (2.0 * src.#k < src.a)
+      rgb.#k = 2.0 * src.a * dst.a + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+    else
+      rgb.#k = src.a * dst.a - 2.0 * (dst.a - dst.#k) * (src.a - src.#k) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+  }
+
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+fn softlight(gfx::color &src, gfx::color &dst) -> gfx::color
+{
+  //  if 2.Sca <= Sa
+  //    Dca' = Dca.(Sa + (2.Sca - Sa).(1 - Dca/Da)) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //  otherwise if 2.Sca > Sa and 4.Dca <= Da
+  //    Dca' = Dca.Sa + Da.(2.Sca - Sa).(4.Dca/Da.(4.Dca/Da + 1).(Dca/Da - 1) + 7.Dca/Da) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //  otherwise if 2.Sca > Sa and 4.Dca > Da
+  //     Dca' = Dca.Sa + Da.(2.Sca - Sa).((Dca/Da)^0.5 - Dca/Da) + Sca.(1 - Da) + Dca.(1 - Sa)
+  //
+  // Da'  = Sa + Da - Sa.Da
+
+  var rgb = gfx::color();
+
+  #for(const k = 0; k < 3; ++k)
+  {
+    var dda = (dst.a != 0.0) ? dst.#k / dst.a : 0.0;
+
+    if (2.0 * src.#k <= src.a)
+      rgb.#k = dst.#k * (src.a + (2.0 * src.#k - src.a) * (1.0 - dda)) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+    else if (4.0 * dst.#k <= dst.a)
+      rgb.#k = dst.#k * src.a + dst.a * (2.0 * src.#k - src.a) * (((16.0 * dda - 12.0) * dda + 3.0) * dda) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+    else
+      rgb.#k = dst.#k * src.a + dst.a * (2.0 * src.#k - src.a) * (std::sqrt(dda) - dda) + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
+  }
+
+  var a = src.a + dst.a - src.a * dst.a;
+
+  return clip(gfx::color(rgb.r, rgb.g, rgb.b, a));
+}
+
+pub fn blend(blend op, u32 dst, u32 src) -> u32
+{
+  switch (op)
+  {
+    case clear:
+      return 0;
+
+    case source:
+      return src;
+
+    case destination:
+      return dst;
+
+    case source_over:
+      return std::add_with_carry(src, gfx::premultiply(dst, 255 - (src >> 24))).0;
+
+    case destination_over:
+      return std::add_with_carry(dst, gfx::premultiply(src, 255 - (dst >> 24))).0;
+
+    case source_in:
+      return gfx::premultiply(src, dst >> 24);
+
+    case destination_in:
+      return gfx::premultiply(dst, src >> 24);
+
+    case source_out:
+      return gfx::premultiply(src, 255 - (dst >> 24));
+
+    case destination_out:
+      return gfx::premultiply(dst, 255 - (src >> 24));
+
+    case source_atop:
+      return std::add_with_carry(gfx::premultiply(src, dst >> 24), gfx::premultiply(dst, 255 - (src >> 24))).0;
+
+    case destination_atop:
+      return std::add_with_carry(gfx::premultiply(dst, src >> 24), gfx::premultiply(src, 255 - (dst >> 24))).0;
+
+    case xor:
+      return xor(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case plus:
+      return plus(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case minus:
+      return minus(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case multiply:
+      return multiply(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case screen:
+      return screen(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case overlay:
+      return overlay(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case darken:
+      return darken(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case lighten:
+      return lighten(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case colordodge:
+      return colordodge(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case colorburn:
+      return colorburn(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case hardlight:
+      return hardlight(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case softlight:
+      return softlight(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case difference:
+      return difference(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    case exclusion:
+      return exclusion(gfx::rgba(src), gfx::rgba(dst)).rgba;
+
+    else:
+      std::panic("unhanlded blend op");
+  }
+}
+
+pub fn blend(blend op, gfx::color &dst, gfx::color &src) -> gfx::color
+{
+  switch (op)
+  {
+    case clear:
+      return gfx::color();
+
+    case source:
+      return src;
+
+    case destination:
+      return dst;
+
+    case source_over:
+      return src + dst * (1.0 - src.a);
+
+    case destination_over:
+      return dst + src * (1.0 - dst.a);
+
+    case source_in:
+      return src * dst.a;
+
+    case destination_in:
+      return dst * src.a;
+
+    case source_out:
+      return src * (1.0 - dst.a);
+
+    case destination_out:
+      return dst * (1.0 - src.a);
+
+    case source_atop:
+      return src * dst.a + dst * (1.0 - src.a);
+
+    case destination_atop:
+      return dst * src.a + src * (1.0 - dst.a);
+
+    case xor:
+      return xor(src, dst);
+
+    case plus:
+      return plus(src, dst);
+
+    case minus:
+      return minus(src, dst);
+
+    case multiply:
+      return multiply(src, dst);
+
+    case screen:
+      return screen(src, dst);
+
+    case overlay:
+      return overlay(src, dst);
+
+    case darken:
+      return darken(src, dst);
+
+    case lighten:
+      return lighten(src, dst);
+
+    case colordodge:
+      return colordodge(src, dst);
+
+    case colorburn:
+      return colorburn(src, dst);
+
+    case hardlight:
+      return hardlight(src, dst);
+
+    case softlight:
+      return softlight(src, dst);
+
+    case difference:
+      return difference(src, dst);
+
+    case exclusion:
+      return exclusion(src, dst);
+
+    else:
+      std::panic("unhanlded blend op");
+  }
+}

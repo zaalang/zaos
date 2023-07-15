@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import std.byteconv;
 import vm;
 import blk;
 import ahci;
@@ -18,15 +19,15 @@ pub struct satadev : pub blk::blkdev
 
     if (port.identify(buffer.addr))
     {
-      var ident = cast<u16[256]*>(buffer.addr.ptr);
+      var ident = cast<u8[512]*>(buffer.addr.ptr);
 
-      std::assert(ident[49] & 0x300 != 0); // lba
-      std::assert(ident[83] & 0x4400 == 0x4400); // lba 48
-      std::assert(ident[106] & 0x5000 == 0x4000); // 512 byte sectors
+      std::assert(ident[99] & 0x3 != 0); // lba);
+      std::assert(ident[167] & 0x44 == 0x44); // lba 48);
+      std::assert(ident[213] & 0x50 == 0x40); // 512 byte sectors);
 
       this.block_size = 512;
       this.block_shift = std::ctz(this.block_size);
-      this.block_count = cast<usize>(ident[103]) << 48 | cast<usize>(ident[102]) << 32 | cast<usize>(ident[101]) << 16 | cast<usize>(ident[100]);
+      this.block_count = std::load_le_u64(&ident[200]);
     }
 
     vm::release_physical_pages(buffer);
@@ -37,51 +38,51 @@ pub struct satadev : pub blk::blkdev
     return this.port.name;
   }
 
+  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+  {
+    var &this = cast<satadev&>(dev);
+
+    switch (query)
+    {
+      case device_path:
+        result = std::format("disk/{}", this.name);
+
+      case device_part:
+        result = "0";
+
+      case device_uuid:
+        result = "";
+    }
+
+    return ok;
+  }
+
+  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<satadev mut &>(dev);
+
+    if (var result = this.port.enqueue(request); !result)
+      return cast<blk::result>(result);
+
+    return ok;
+  }
+
+  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<satadev mut &>(dev);
+
+    if (var result = this.port.cancel(request); !result)
+      return cast<blk::result>(result);
+
+    return ok;
+  }
+
   pub ~satadev() = default;
 
   ahci::port mut &port;
-}
-
-pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
-{
-  var &this = cast<satadev&>(dev);
-
-  switch(query)
-  {
-    case device_path:
-      result = std::format("disk/{}", this.name);
-
-    case device_part:
-      result = "0";
-
-    case device_uuid:
-      result = "";
-  }
-
-  return ok;
-}
-
-pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
-{
-  return not_supported;
-}
-
-pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
-{
-  var mut &this = cast<satadev mut &>(dev);
-
-  if (var result = this.port.enqueue(request); !result)
-    return cast<blk::result>(result);
-
-  return ok;
-}
-
-pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
-{
-  var mut &this = cast<satadev mut &>(dev);
-
-  if (var result = this.port.cancel(request); !result)
-    return cast<blk::result>(result);
-
-  return ok;
 }

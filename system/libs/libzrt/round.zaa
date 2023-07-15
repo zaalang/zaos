@@ -1,0 +1,78 @@
+//
+// round
+//
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// roundf /////////////////////////////////////////////
+extern "C" fn roundf(f32 x) -> f32
+{
+  const toint = 1.0 / 1.1920928955078125e-07;
+
+  var i = bit_cast<u32>(x);
+
+  var e = cast<int>(i >> 23) & 0xff;
+
+  if (e >= 0x7f + 23)
+    return x;
+
+  if (e < 0x7f - 1)
+    return 0.0f * x;
+
+  if ((i >> 31) != 0)
+    x = -x;
+
+  var y = x + toint - toint - x;
+
+  if (y > 0.5f)
+    y = y + x - 1.0;
+  else if (y <= -0.5)
+    y = y + x + 1.0;
+  else
+    y = y + x;
+
+  if ((i >> 31) != 0)
+    y = -y;
+
+  return y;
+}
+
+//|///////////////////// round //////////////////////////////////////////////
+extern "C" fn round(f64 x) -> f64
+{
+  const toint = 1.0 / 2.2204460492503131e-16;
+
+  var i = bit_cast<u64>(x);
+
+  var e = cast<int>(i >> 52) & 0x7ff;
+
+  if (e >= 0x3ff + 52)
+    return x;
+
+  if (e < 0x3ff - 1)
+    return 0.0 * x;
+
+  if ((i >> 63) != 0)
+    x = -x;
+
+  var y = x + toint - toint - x;
+
+  if (y > 0.5)
+    y = y + x - 1.0;
+  else if (y <= -0.5)
+    y = y + x + 1.0;
+  else
+    y = y + x;
+
+  if ((i >> 63) != 0)
+    y = -y;
+
+  return y;
+}

@@ -12,11 +12,11 @@ import io;
 import vm : PAGE_SIZE;
 import cpu;
 import heap;
-import platform;
 import scheduler;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import process as _ : process;
+import semaphore as _ : semaphore;
 import slab : slab_allocator;
 import support.rc : Rc;
 
@@ -186,6 +186,7 @@ struct block_cache
 
   std::flat_hash_map<cache_key, cache_entry mut *> entries;
 
+  semaphore doorbell;
   thread mut *plumber;
   cache_entry mut *drain;
 
@@ -205,7 +206,7 @@ struct block_cache
   {
     var guard = std::lock_guard(&mut pagecache.lock);
 
-    for(var mut &entry : pagecache.entries)
+    for (var mut &entry : pagecache.entries)
     {
       if (entry.key.node == node)
         destroy(entry.value);
@@ -261,7 +262,7 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
 {
   var dirty = 0;
 
-  for(var offset = 0; offset < len; offset += BLOCK_FLUSH_SIZE)
+  for (var offset = 0; offset < len; offset += BLOCK_FLUSH_SIZE)
   {
     dirty |= 1 << ((cast<u8*>(data) + offset - block.base) / BLOCK_FLUSH_SIZE);
   }
@@ -282,7 +283,7 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
         break;
     }
 
-    scheduler::unblock(pagecache.plumber);
+    pagecache.doorbell.release();
   }
 }
 
@@ -293,17 +294,11 @@ pub fn purge(vfs::node *node) -> void
 
 fn plumber(void*) -> void
 {
-  platform::disable_interrupts();
-
   while (true)
   {
-    scheduler::prepare_to_block();
-
-    platform::enable_interrupts();
-
     scheduler::sleep_until(cpu::system_time + 1_000_000_000);
 
-    for(var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
+    for (var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
     {
       var next = entry.next;
       var node = vfs::node_ptr(entry.node);
@@ -311,7 +306,7 @@ fn plumber(void*) -> void
       var response = io::response();
       var position = entry.offset;
 
-      for(var offset = 0; dirty != 0; )
+      for (var offset = 0; dirty != 0; )
       {
         var bytes = BLOCK_FLUSH_SIZE;
 
@@ -344,9 +339,7 @@ fn plumber(void*) -> void
       entry = next;
     }
 
-    platform::disable_interrupts();
-
-    scheduler::block();
+    pagecache.doorbell.wait();
   }
 }
 

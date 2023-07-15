@@ -13,37 +13,37 @@ import dev;
 import blk;
 import blk.partdev;
 import scheduler;
-import platform;
+import heap;
 import ahci.satadev;
 
 using vm::physaddr;
 
 enum cap
 {
-  s64a = 0x80000000,  // Supports 64-bit Addressing
-  sncq = 0x40000000,  // Supports Native Command Queuing
-  ssntf = 0x20000000, // Supports SNotification Register
-  smps = 0x10000000,  // Supports Mechanical Presence Switch
-  sss = 0x8000000,    // Supports Staggered Spin-up
-  salp = 0x4000000,   // Supports Aggressive Link Power Management
-  sal = 0x2000000,    // Supports Activity LED
-  sclo = 0x1000000,   // Supports Command List Override
-  iss_mask = 0xf,     // Interface Speed Support
-  iss_shift = 20,
-  snzo = 0x80000,     // Supports Non-Zero DMA Offsets
-  sam = 0x40000,      // Supports AHCI mode only
-  spm = 0x20000,      // Supports Port Multiplier
-  fbss = 0x10000,     // FIS-based Switching Supported
-  pmd = 0x8000,       // PIO Multiple DRQ Block
-  ssc = 0x4000,       // Slumber State Capable
-  psc = 0x2000,       // Partial State Capable
-  ncs_mask = 0x1f,    // Number of Command Slots
-  ncs_shift = 8,
-  cccs = 0x80,        // Command Completion Coalescing Supported
-  ems = 0x40,         // Enclosure Management Supported
-  sxs = 0x20,         // Supports External SATA
-  np_mask = 0x1f,     // Number of Ports
-  np_shift = 0,
+  const s64a = 0x80000000;  // Supports 64-bit Addressing
+  const sncq = 0x40000000;  // Supports Native Command Queuing
+  const ssntf = 0x20000000; // Supports SNotification Register
+  const smps = 0x10000000;  // Supports Mechanical Presence Switch
+  const sss = 0x8000000;    // Supports Staggered Spin-up
+  const salp = 0x4000000;   // Supports Aggressive Link Power Management
+  const sal = 0x2000000;    // Supports Activity LED
+  const sclo = 0x1000000;   // Supports Command List Override
+  const iss_mask = 0xf;     // Interface Speed Support
+  const iss_shift = 20;
+  const snzo = 0x80000;     // Supports Non-Zero DMA Offsets
+  const sam = 0x40000;      // Supports AHCI mode only
+  const spm = 0x20000;      // Supports Port Multiplier
+  const fbss = 0x10000;     // FIS-based Switching Supported
+  const pmd = 0x8000;       // PIO Multiple DRQ Block
+  const ssc = 0x4000;       // Slumber State Capable
+  const psc = 0x2000;       // Partial State Capable
+  const ncs_mask = 0x1f;    // Number of Command Slots
+  const ncs_shift = 8;
+  const cccs = 0x80;        // Command Completion Coalescing Supported
+  const ems = 0x40;         // Enclosure Management Supported
+  const sxs = 0x20;         // Supports External SATA
+  const np_mask = 0x1f;     // Number of Ports
+  const np_shift = 0;
 }
 
 enum ghc : u32
@@ -94,6 +94,7 @@ enum isr : u32
   error = 0x7dc00050,       // errors
   all = 0x7dc0007f,         // errors and interrupts
 
+  pub const fn ~(isr lhs) -> isr { return cast<isr>(~cast<u32>(lhs)); }
   pub const fn &(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) & cast<u32>(rhs)); }
   pub const fn |(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) | cast<u32>(rhs)); }
 }
@@ -199,7 +200,7 @@ struct fis
 
 fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
 {
-  for(var k = 0; k < timeout; ++k)
+  for (var k = 0; k < timeout; ++k)
   {
     if (std::volatile_load(reg) & mask == mask)
       return true;
@@ -212,7 +213,7 @@ fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
 
 fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
 {
-  for(var k = 0; k < timeout; ++k)
+  for (var k = 0; k < timeout; ++k)
   {
     if (std::volatile_load(reg) & mask == cast(0))
       return true;
@@ -223,7 +224,7 @@ fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
   return false;
 }
 
-pub enum result: i32
+pub enum result : i32
 {
   ok = 0,
   io_error = -5,
@@ -246,7 +247,7 @@ pub struct controller
 
   fn reset(this mut &) -> result
   {
-    std::print("ahci ", this.name, " device reset");
+    std::print("ahci ", this.name, " controller reset");
 
     var hba = this.hba;
 
@@ -293,7 +294,7 @@ pub struct port
 
     this.cl = cast<ahci_command[CLSZ] mut *>(regs.clb.ptr);
 
-    for(var i = 0; i < CLSZ; ++i)
+    for (var i = 0; i < CLSZ; ++i)
     {
       cl[i].ctba = memory.addr + sizeof<ahci_command[32]> + sizeof<fis> + i * sizeof<ahci_command_table>;
     }
@@ -352,7 +353,7 @@ pub struct port
   {
     var slot = 0;
 
-    for(; slot < CLSZ; ++slot)
+    for (; slot < CLSZ; ++slot)
     {
       var mask = std::volatile_load(&this.slots);
 
@@ -387,7 +388,7 @@ extern fn ahci_io_handler(controller mut *controller) -> void
 {
   var pending = controller.hba.is;
 
-  for(var i = 0; i < controller.ports.len; ++i)
+  for (var i = 0; i < controller.ports.len; ++i)
   {
     if (pending & (1 << i) != 0)
     {
@@ -413,12 +414,10 @@ extern fn ahci_io_handler(controller mut *controller) -> void
           if (is & isr::prc == isr::prc)
             continue;
 
-          std::print("ahci port error - ", serr);
-
           status = blk::request::status::errored;
         }
 
-        for(var slot = 0; ci != 0; ++slot)
+        for (var slot = 0; ci != 0; ++slot)
         {
           if (ci & 1 != 0)
           {
@@ -444,7 +443,7 @@ extern fn ahci_io_handler(controller mut *controller) -> void
 
 pub fn initialise() -> void
 {
-  for(var &device : pci::devices)
+  for (var &device : pci::devices)
   {
     if (device.class_code == [1, 6, 1])
     {
@@ -459,6 +458,10 @@ pub fn initialise() -> void
 fn initialise(controller mut &controller) -> result
 {
   var &device = controller.device;
+
+  var base = device.read_base_address(5);
+  var size = device.read_size_register(5);
+  var mapped = heap::mmap(vm::physrange(base, size));
 
   pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
   pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
@@ -481,7 +484,7 @@ fn initialise(controller mut &controller) -> result
     return invalid_argument;
 
   controller.irq = irq;
-  controller.hba = cast<ahci_hba mut *>(device.read_base_address(5).ptr);
+  controller.hba = cast<ahci_hba mut *>(mapped.addr);
 
   var hba = controller.hba;
 
@@ -490,11 +493,11 @@ fn initialise(controller mut &controller) -> result
   if (var result = controller.reset(); !result)
     return result;
 
-  io::install_handler(irq, cast(extern(ahci_io_handler)), &controller);
+  io::install_handler(irq, &cast<void fn(controller mut *)>(ahci_io_handler), &controller);
 
   var port_count = 1 + cast<usize>(hba.cap & 0b11111);
 
-  for(var i = 0; i < port_count; ++i)
+  for (var i = 0; i < port_count; ++i)
   {
     if (hba.pi & (1 << i) != 0)
     {
@@ -508,7 +511,7 @@ fn initialise(controller mut &controller) -> result
   std::volatile_store(&hba.is, hba.is);
   std::volatile_store(&hba.ghc, hba.ghc | ghc::interrupt_enabled);
 
-  for(var i = 0; i < controller.ports.len; ++i)
+  for (var i = 0; i < controller.ports.len; ++i)
   {
     if (controller.ports[i])
     {
@@ -578,7 +581,10 @@ fn initialise(port mut &port) -> result
 
 pub fn identify(port mut &port, vm::physaddr buffer) -> result
 {
-  var slot = 0;
+  var slot = port.find_slot();
+
+  if (slot == port::CLSZ)
+    return device_busy;
 
   var cmd = &port.cl[slot];
   var tbl = cast<ahci_command_table mut *>(cmd.ctba.ptr);
@@ -603,13 +609,15 @@ pub fn identify(port mut &port, vm::physaddr buffer) -> result
   if (!wait_until_clear(&port.regs.ci, 1 << slot, 1000))
     return timed_out;
 
+  std::atomic_and(&port.slots, ~(1 << slot));
+
   return ok;
 }
 
 pub fn enqueue(port mut &port, blk::request mut *request) -> result
 {
   std::assert(request.length & 511 == 0);
-  std::assert(request.length/512 < 65536);
+  std::assert(request.length / 512 < 65536);
   std::assert(request.position < (1 << 48));
 
   var slot = port.find_slot();
@@ -621,9 +629,19 @@ pub fn enqueue(port mut &port, blk::request mut *request) -> result
   var tbl = cast<ahci_command_table mut *>(cmd.ctba.ptr);
 
   std::memset(tbl.cfis.data, 0, 20);
+
   tbl.cfis[0] = 0x27;
   tbl.cfis[1] = 0x80;
-  tbl.cfis[2] = (request.type == blk::request::type::read) ? 0x60 : 0x61;
+
+  switch (request.type)
+  {
+    case read:
+      tbl.cfis[2] = 0x60;
+
+    case write:
+      tbl.cfis[2] = 0x61;
+  }
+
   tbl.cfis[3] = cast<u8>((request.length >> 9) & 0xff);
   tbl.cfis[4] = cast<u8>((request.position >> 9) & 0xff);
   tbl.cfis[5] = cast<u8>((request.position >> 17) & 0xff);
@@ -635,12 +653,10 @@ pub fn enqueue(port mut &port, blk::request mut *request) -> result
   tbl.cfis[11] = cast<u8>((request.length >> 17) & 0xff);
   tbl.cfis[12] = cast<u8>(slot) << 3;
 
-  for(var i = 0; i != request.host.len; ++i)
+  for (var i = 0; i != request.host.len; ++i)
   {
-    var range = request.host[i];
-
-    tbl.prdt[i].dba = range.addr;
-    tbl.prdt[i].dbc = cast<u32>(range.size - 1) | (1 << 31);
+    tbl.prdt[i].dba = request.host[i].addr;
+    tbl.prdt[i].dbc = cast<u32>(request.host[i].size - 1) | (1 << 31);
   }
 
   cmd.opts = 5;

@@ -69,7 +69,7 @@ fn take_first_cells(String &str, int n) -> std::string_view
 {
   var j = str.chars.begin;
 
-  for(; j != str.end; ++j)
+  for (; j != str.end; ++j)
   {
     if ((n -= cell_width(*j)) <= 0)
       break;
@@ -181,7 +181,7 @@ pub fn move_line_up(editor mut &this) -> void
   var i = sv.chars.begin;
   var n = cell_width(this.buffer[line.begin .. this.buffer.begin + this.cursor]);
 
-  for(; i != sv.end; ++i)
+  for (; i != sv.end; ++i)
   {
     if ((n -= cell_width(*i)) < 0)
       break;
@@ -204,7 +204,7 @@ pub fn move_line_down(editor mut &this) -> void
   var i = sv.chars.begin;
   var n = cell_width(this.buffer[line.begin .. this.buffer.begin + this.cursor]);
 
-  for(; i != sv.end; ++i)
+  for (; i != sv.end; ++i)
   {
     if ((n -= cell_width(*i)) < 0)
       break;
@@ -515,7 +515,7 @@ pub fn process(editor mut &this, event &event) -> status
           switch (evt.key)
           {
             case sym[ch]:
-              switch(ch)
+              switch (ch)
               {
                 case 'C':
                   return status::canceled(signal::ctrl_c);
@@ -552,7 +552,7 @@ pub fn process(editor mut &this, event &event) -> status
               return dirty;
 
             case sym[ch]:
-              switch(ch)
+              switch (ch)
               {
               }
           }
@@ -579,7 +579,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
   if (this.completions.len != 0)
     edit_max_line = 1;
 
-  for(var y = 0, var line : text.split("\n"))
+  for (var y = 0, var line : text.split("\n"))
   {
     if (text.begin + this.cursor <= line.end)
     {
@@ -602,7 +602,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
     prompt.paint_left(prompt, painter);
   painter.save_position();
 
-  for(var y = 0, var line : text.split("\n"))
+  for (var y = 0, var line : text.split("\n"))
   {
     if (y >= this.sy)
     {
@@ -652,7 +652,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
     var max_name_len = 0;
     var has_descriptions = false;
 
-    for(var &entry : this.completions)
+    for (var &entry : this.completions)
     {
       if (max_name_len < entry.value.len)
         max_name_len = entry.value.len;
@@ -678,11 +678,11 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
       if (this.completion_index / columns > menu_max_line)
         sy = this.completion_index / columns - menu_max_line;
 
-      for(var y = 0, var i = 0; i < this.completions.len; i += columns)
+      for (var y = 0, var i = 0; i < this.completions.len; i += columns)
       {
         if (y >= sy)
         {
-          for(var index = i; index < std::min(i + columns, this.completions.len); index += 1)
+          for (var index = i; index < std::min(i + columns, this.completions.len); index += 1)
           {
             var &entry = this.completions[index];
 
@@ -717,7 +717,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
       if (this.completion_index > menu_max_line)
         sy = this.completion_index - menu_max_line;
 
-      for(var y = 0, var index = 0; index < this.completions.len; ++index)
+      for (var y = 0, var index = 0; index < this.completions.len; ++index)
       {
         var &entry = this.completions[index];
 

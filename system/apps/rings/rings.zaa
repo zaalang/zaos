@@ -108,7 +108,8 @@ struct application
         case configure[msg]:
           zidl::send<zidl::zaos_winton::compositor::acknowledge_request>(this.endpoint, msg.serial);
 
-          this.surface_commit(msg.surface_id, callback: true);
+          if (this.frame == 0)
+            this.surface_commit(msg.surface_id, callback: true);
 
         case pointer_enter[msg]:
           this.focus_serial = msg.serial;

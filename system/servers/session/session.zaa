@@ -164,16 +164,13 @@ fn main() -> int
     std::panic("unable to init loop - ", cast<std::errc>(-result));
 
   registry::instance.register("zaos.winton", "/zaos/srv/winton");
-  registry::instance.register("zaos.newton", "/zaos/srv/newton");
+  registry::instance.register("zaos.lamina", "/zaos/srv/lamina");
   registry::instance.register("zaos.baz", "/zaos/root/baz");
   registry::instance.register("zaos.rings", "/zaos/root/rings");
   registry::instance.register("zaos.triangle", "/zaos/root/triangle");
   //registry::instance.register("zaos.bar", "/zaos/root/bar");
 
-  //for(var i = 1; i < 16; ++i)
-  //  registry::instance.register(std::format("zaos.triangle{}", i), "/zaos/root/triangle");
-
-  for(var mut &(uri, service) : registry::instance.services)
+  for (var mut &(uri, service) : registry::instance.services)
   {
     if (var result = service.spawn(); result < 0)
       std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-result));

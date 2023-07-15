@@ -198,7 +198,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   var count = usize(0);
   var remaining = std::min(pipe.len, length);
 
-  for(var span : pipe.spans)
+  for (var span : pipe.spans)
   {
     var bytes = std::min(remaining, span.len);
 

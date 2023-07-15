@@ -32,7 +32,7 @@ pub struct wait_queue
 
   pub fn notify_n(this mut &, usize n) -> void
   {
-    for(var waiter = this.waiters; waiter && n != 0; waiter = this.waiters, n -= 1)
+    for (var waiter = this.waiters; waiter && n != 0; waiter = this.waiters, n -= 1)
     {
       pop_waiter(&mut this, waiter);
 

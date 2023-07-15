@@ -48,9 +48,9 @@ extern fn reloc(uintptr base, uintptr dynamic, uintptr offset) -> void
   var relasz = 0;
   var relaent = 0;
 
-  for(var entry = cast<Elf64_Dyn*>(dynamic); entry.tag != 0; ++entry)
+  for (var entry = cast<Elf64_Dyn*>(dynamic); entry.tag != 0; ++entry)
   {
-    switch(entry.tag)
+    switch (entry.tag)
     {
       case DT_RELA:
         rela = base + entry.value;
@@ -86,7 +86,7 @@ fn set_command_line(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mu
   if (bootinfo.cmdline.len < cast(lip.LoadOptionsSize / 2))
     efi::panic(SystemTable, "bad_cmdline_len");
 
-  for(var i = 0, var ch = cast<u16*>(lip.LoadOptions); i < cast(lip.LoadOptionsSize / 2); ++ch, ++i)
+  for (var i = 0, var ch = cast<u16*>(lip.LoadOptions); i < cast(lip.LoadOptionsSize / 2); ++ch, ++i)
     bootinfo.cmdline[i] = cast<u8>(*ch & 0xff);
 }
 
@@ -108,7 +108,7 @@ fn set_root_device(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut
   {
     if (dpp.Type == 4 && dpp.SubType == 1)
     {
-      for(var i = 0; i < 16; ++i)
+      for (var i = 0; i < 16; ++i)
         bootinfo.rootdevice[i] = *(cast<u8*>(dpp) + 24 + i);
     }
 
@@ -138,7 +138,7 @@ fn exit_boot_services(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable)
       break;
   }
 
-  for(var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
+  for (var i = 0; i < MemoryMapSize / DescriptorSize; ++i)
   {
     var entry = cast<efi::EFI_MEMORY_DESCRIPTOR mut *>(cast<uintptr>(MemoryMap) + i * DescriptorSize);
 

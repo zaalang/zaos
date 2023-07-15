@@ -15,7 +15,7 @@ pub fn cat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmd
 
   var path = std::string();
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     if (arg.starts_with("-"))
       continue;
@@ -36,7 +36,7 @@ pub fn cat(terminal::terminal mut &terminal, env::env mut &env, std::string &cmd
 
   var buffer = [u8(0); 4096];
 
-  for(;;)
+  for (;;)
   {
     var bytes = read(&mut thread_ring, fd, buffer.data, buffer.len);
 

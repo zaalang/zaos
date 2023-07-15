@@ -50,7 +50,7 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
 
   var count = 0;
 
-  for(var mut &event : evts)
+  for (var mut &event : evts)
   {
     if (event.id < 0)
       continue;

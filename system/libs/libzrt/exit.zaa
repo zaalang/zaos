@@ -7,7 +7,7 @@ extern fn __vdso_process_exit(i32 rval) -> void;
 
 extern fn exit(i32 rval) -> void
 {
-  for(;;)
+  for (;;)
   {
     __vdso_process_exit(rval);
   }

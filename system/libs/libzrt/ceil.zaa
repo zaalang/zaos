@@ -2,8 +2,6 @@
 // ceil
 //
 
-const toint = 1.0 / 2.2204460492503131e-16;
-
 fn bit_cast<T, U>(U &value) -> T
 {
   var result = T(void);
@@ -50,6 +48,8 @@ extern "C" fn ceilf(f32 x) -> f32
 //|///////////////////// ceil ///////////////////////////////////////////////
 extern "C" fn ceil(f64 x) -> f64
 {
+  const toint = 1.0 / 2.2204460492503131e-16;
+
   var i = bit_cast<u64>(x);
 
   var e = cast<int>(i >> 52) & 0x7ff;

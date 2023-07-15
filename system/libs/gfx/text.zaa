@@ -1,0 +1,87 @@
+//
+// gfx text
+//
+
+import std.math;
+import std.span : Span;
+import std.string : String;
+import gfx.blit;
+import gfx.color;
+import gfx.blend;
+import gfx.transform;
+import opentype.parser;
+import opentype.raster;
+
+pub fn draw_glyph(gfx::paint_t &&ctx, gfx::transform &Q, opentype::face &face, opentype::glyphid id, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  var xy = Q.translation();
+  var bitmap = opentype::bitmap();
+  var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+
+  if (!opentype::render(face, id, transform, &mut bitmap))
+    return;
+
+  ctx.blit_glyph(cast<int>(std::floor(xy.x - bitmap.origin.0)), cast<int>(std::round(xy.y - bitmap.origin.1)), bitmap.data.data, bitmap.width, bitmap.height, color, mode);
+}
+
+pub fn draw_glyphs(gfx::paint_t &&ctx, gfx::transform &Q, opentype::face &face, std::span<opentype::glyphid> ids, std::span<gfx::point> positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  var bitmap = opentype::bitmap();
+
+  for (var i = 0, var end = std::min(ids.len, positions.len); i < end; ++i)
+  {
+    var xy = Q * positions[i];
+    var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+
+    if (!opentype::render(face, ids[i], transform, &mut bitmap))
+      return;
+
+    ctx.blit_glyph(cast<int>(std::floor(xy.x - bitmap.origin.0)), cast<int>(std::round(xy.y - bitmap.origin.1)), bitmap.data.data, bitmap.width, bitmap.height, color, mode);
+  }
+}
+
+pub fn draw_glyphs(gfx::paint_t &&ctx, gfx::transform &Q, opentype::face &face, Span<opentype::glyphid> &ids, Span<gfx::point> &positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_glyphs(ctx, Q, face, std::span(ids), std::span(positions), color, mode);
+}
+
+pub fn draw_text(gfx::paint_t &&ctx, gfx::transform &Q, opentype::face &face, std::string_view text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  var bitmap = opentype::bitmap();
+  var last_id = opentype::glyphid();
+
+  var position = gfx::point(0.0, 0.0);
+
+  for (var ch : text.chars)
+  {
+    switch (face.find(ch))
+    {
+      case Some[id]:
+
+        var metric = face.metric(id);
+
+        if (var kerning = face.kerning(last_id, id); kerning)
+          position.x += cast(kerning?!);
+
+        else if (var layout = face.layout(opentype::gpos::tag::kern, last_id, id); layout.flags & opentype::layout::flags::placement)
+          position.x += cast(layout.x_advance);
+
+        var xy = Q * position;
+        var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+
+        if (!opentype::render(face, id, transform, &mut bitmap))
+          continue;
+
+        ctx.blit_glyph(cast<int>(std::floor(xy.x - bitmap.origin.0)), cast<int>(std::round(xy.y - bitmap.origin.1)), bitmap.data.data, bitmap.width, bitmap.height, color, mode);
+
+        position.x += cast(metric.advance_width);
+
+        last_id = id;
+    }
+  }
+}
+
+pub fn draw_text(gfx::paint_t &&ctx, gfx::transform &Q, opentype::face &face, String &text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_text(ctx, Q, face, std::string_view(text), color, mode);
+}

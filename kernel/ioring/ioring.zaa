@@ -209,7 +209,7 @@ pub fn dump(io_ring &this) -> void
 {
   std::print("[io ring]");
 
-  for(var &ctx : this.pending)
+  for (var &ctx : this.pending)
   {
     std::print("  ", ctx.status, " ", ctx.entries.len);
   }
@@ -371,7 +371,7 @@ pub fn retire(io_ring mut &this, ioring_sqe &sqe, result status) -> result
   var index = cast<usize>(tail) & this.cq_mask;
   var next = std::add_with_carry(tail, 1).0;
 
-  if (next == std::volatile_load(&header.cq_head))
+  if (std::sub_with_borrow(next, std::volatile_load(&header.cq_head)).0 > cast(this.cq_mask + 1))
     return overflow;
 
   var cqe = ioring_cqe(void);
@@ -523,7 +523,7 @@ fn destroy(vfs::node mut *node) -> void
 {
   var ring = cast<io_ring mut *>(node);
 
-  for(;;)
+  for (;;)
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut ring.lock);
 

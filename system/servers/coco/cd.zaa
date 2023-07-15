@@ -15,7 +15,7 @@ pub fn cd(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
   var path = std::string("/zaos/root");
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     if (arg.starts_with("-"))
       continue;
@@ -29,7 +29,7 @@ pub fn cd(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
   if (path.starts_with("/"))
     fullpath = "";
 
-  for(var part : path.split("/"))
+  for (var part : path.split("/"))
   {
     if (part == "")
       continue;

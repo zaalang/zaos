@@ -192,7 +192,7 @@ fn lookup_block(image &this, ext2_inode *inode, u64 offset) -> std::span<u8>
 
     result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
 
-    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+    for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
       result.len += block_size;
   }
   else if (index < k1)
@@ -205,7 +205,7 @@ fn lookup_block(image &this, ext2_inode *inode, u64 offset) -> std::span<u8>
 
     result.data = cast<u8*>(this.data) + cast<usize>(table0[index]) << block_shift;
 
-    for(var current = table0[index]; index < table0.len && table0[index] == current; ++index, ++current)
+    for (var current = table0[index]; index < table0.len && table0[index] == current; ++index, ++current)
       result.len += block_size;
   }
   else if (index < k2)
@@ -222,7 +222,7 @@ fn lookup_block(image &this, ext2_inode *inode, u64 offset) -> std::span<u8>
 
     result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
 
-    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+    for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
       result.len += block_size;
   }
   else if (index < k3)
@@ -243,7 +243,7 @@ fn lookup_block(image &this, ext2_inode *inode, u64 offset) -> std::span<u8>
 
     result.data = cast<u8*>(this.data) + cast<usize>(table[index]) << block_shift;
 
-    for(var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
+    for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
       result.len += block_size;
   }
 
@@ -263,7 +263,7 @@ fn acquire_bits(image mut &this, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 
 
   var bitmap = cast<u8 mut *>(this.data) + cast<usize>(bitmapblock) << block_shift;
 
-  for(var i = 0; i < bitmap_size; ++i)
+  for (var i = 0; i < bitmap_size; ++i)
   {
     if (*(bitmap + i) != 255)
     {
@@ -273,7 +273,7 @@ fn acquire_bits(image mut &this, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 
 
       if (last == 8)
       {
-        for(i += 1; i < bitmap_size - 1 && *(bitmap + i) == 0; ++i)
+        for (i += 1; i < bitmap_size - 1 && *(bitmap + i) == 0; ++i)
           last += 8;
 
         last += cast<u64>(std::ctz(*(bitmap + i)));
@@ -290,7 +290,7 @@ fn acquire_bits(image mut &this, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 
     }
   }
 
-  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  for (var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
   {
     *(bitmap + (i >> 3)) |= 1 << (i & 0x7);
   }
@@ -305,13 +305,13 @@ fn release_bits(image mut &this, u64 bitmapblock, u64 idx, u64 count) -> result
 
   var bitmap = cast<u8 mut *>(this.data) + cast<usize>(bitmapblock) << block_shift;
 
-  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  for (var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
   {
     if (*(bitmap + (i >> 3)) & (1 << (i & 0x7)) == 0)
       return argument_out_of_domain;
   }
 
-  for(var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
+  for (var i = cast<usize>(idx); i < cast<usize>(idx + count); ++i)
   {
     *(bitmap + (i >> 3)) &= ~(1 << (i & 0x7));
   }
@@ -324,7 +324,7 @@ fn allocate_inode(image mut &this, ext2_ino_t mut &ino, u16 mode) -> result
   var vol = this.volume_info;
   var superblock = cast<ext2_super_block mut *>(vol.superblock);
 
-  for(var group = 0; group < vol.group_count; ++group)
+  for (var group = 0; group < vol.group_count; ++group)
   {
     var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
     var inodebitmap = get_inode_bitmap(vol.superblock, groupdesc);
@@ -382,9 +382,9 @@ fn allocate_blocks(image mut &this, u64 wanted, u64 mut &block, u64 mut &count) 
   var vol = this.volume_info;
   var superblock = cast<ext2_super_block mut *>(vol.superblock);
 
-  for(var k = 0; k < 2; ++k)
+  for (var k = 0; k < 2; ++k)
   {
-    for(var group = 0; group < vol.group_count; ++group)
+    for (var group = 0; group < vol.group_count; ++group)
     {
       var groupdesc = cast<ext2_group_descriptor mut *>(vol.gdt + cast(group) * vol.group_descriptor_size);
       var blockbitmap = get_block_bitmap(vol.superblock, groupdesc);
@@ -433,17 +433,17 @@ fn deallocate_blocks(image mut &this, u64 block, u64 count) -> result
 
 fn free(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize end) -> result
 {
-  for(var i = beg; i < end; )
+  for (var i = beg; i < end; )
   {
     if (var block = table[i]; block != 0)
     {
       var count = 0;
-      for(var j = 0; i + j < end && table[i + j] == block + cast(j); ++j)
+      for (var j = 0; i + j < end && table[i + j] == block + cast(j); ++j)
         count += 1;
 
       this.deallocate_blocks(cast(block), count);
 
-      for(var j = 0; j < count; ++j)
+      for (var j = 0; j < count; ++j)
         table[i++] = 0;
     }
     else
@@ -455,7 +455,7 @@ fn free(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize end
 
 fn free_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
 {
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
     var table0 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
@@ -471,7 +471,7 @@ fn free_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, u
 
 fn free_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
 {
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
     var table1 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
@@ -487,7 +487,7 @@ fn free_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usiz
 
 fn free_triple_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> result
 {
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
     var table2 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
@@ -538,7 +538,7 @@ pub fn recover(image mut &this, ext2_inode mut *inode, u64 last) -> result
 
 fn alloc(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize end) -> result
 {
-  for(var i = beg; i < end; )
+  for (var i = beg; i < end; )
   {
     var first = 0;
     var count = 0;
@@ -546,7 +546,7 @@ fn alloc(image mut &this, std::mutable_span<u32> mut &table, usize beg, usize en
     if (var result = this.allocate_blocks(cast<u64>(end - i), &mut first, &mut count); !result)
       return result;
 
-    for(var j = 0; j < count; ++j)
+    for (var j = 0; j < count; ++j)
       table[i++] = cast<u32>(first + j);
   }
 
@@ -558,14 +558,14 @@ fn alloc_indirect(image mut &this, std::mutable_span<u32> mut &table, usize k0, 
   if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
     var table0 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
     if (var result = this.alloc(&mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
       return result;
 
-    for(var j = last - k; j < table0.len; ++j)
+    for (var j = last - k; j < table0.len; ++j)
       table0[j] = 0;
   }
 
@@ -577,14 +577,14 @@ fn alloc_double_indirect(image mut &this, std::mutable_span<u32> mut &table, usi
   if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
     var table1 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
     if (var result = this.alloc_indirect(&mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
-    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table1.len; ++j)
+    for (var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table1.len; ++j)
       table1[j] = 0;
   }
 
@@ -596,14 +596,14 @@ fn alloc_triple_indirect(image mut &this, std::mutable_span<u32> mut &table, usi
   if (var result = this.alloc(&mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
-  for(var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
+  for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
     var table2 = std::mutable_span(cast<u32 mut *>(cast<uintptr>(this.data) + cast<usize>(table[i]) << block_shift), 1 << (block_shift - 2));
 
     if (var result = this.alloc_double_indirect(&mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
-    for(var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table2.len; ++j)
+    for (var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table2.len; ++j)
       table2[j] = 0;
   }
 
@@ -674,11 +674,11 @@ fn find(image &this, image::inode &dir, std::string_view name, ext2_dir_entry * 
 {
   var dentry = cast<ext2_inode mut *>(dir.desc);
 
-  for(var position = 0; position < dentry.size; )
+  for (var position = 0; position < dentry.size; )
   {
     var block = lookup_block(this, dentry, position);
 
-    for(entry = cast<ext2_dir_entry*>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    for (entry = cast<ext2_dir_entry*>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
     {
       if (entry.rec_len == 0)
         break;
@@ -701,7 +701,7 @@ fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2
 {
   var dentry = cast<ext2_inode mut *>(dir.desc);
 
-  for(var position = 0;; )
+  for (var position = 0;; )
   {
     if (position >= dentry.size)
     {
@@ -721,7 +721,7 @@ fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2
 
     var block = lookup_block(this, dentry, position);
 
-    for(entry = cast<ext2_dir_entry mut *>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    for (entry = cast<ext2_dir_entry mut *>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
     {
       if (entry.rec_len == 0)
         break;
@@ -797,11 +797,11 @@ pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) ->
   var block_shift = superblock.block_shift;
   var block_mask = cast<u64>((1 << block_shift) - 1);
 
-  for(var position = dir.cursor & ~block_mask; position < dir.size; )
+  for (var position = dir.cursor & ~block_mask; position < dir.size; )
   {
     var block = lookup_block(this, dir.desc, position);
 
-    for(var entry = cast<ext2_dir_entry*>(block.data + cast(dir.cursor & block_mask)); entry < cast<ext2_dir_entry*>(block.data + block.len); )
+    for (var entry = cast<ext2_dir_entry*>(block.data + cast(dir.cursor & block_mask)); entry < cast<ext2_dir_entry*>(block.data + block.len); )
     {
       if (entry.rec_len == 0)
         break;
@@ -941,7 +941,7 @@ pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> re
   var block_shift = superblock.block_shift;
   var block_mask = cast<u64>((1 << block_shift) - 1);
 
-  for(var i = 0; i < len; )
+  for (var i = 0; i < len; )
   {
     var block = lookup_block(this, fd.desc, fd.cursor & ~block_mask);
 

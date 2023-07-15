@@ -1,0 +1,82 @@
+//
+// semaphore
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import scheduler;
+import thread as _ : thread;
+import waitqueue as _ : wait_queue;
+
+pub struct semaphore
+{
+  pub u32 value = 0;
+  pub u32 maxvalue = 1;
+
+  pub fn wait(this mut &) -> void
+  {
+    while (true)
+    {
+      var current = std::volatile_load(&this.value);
+
+      if (current == 0)
+      {
+        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+        if (std::volatile_load(&this.value) != 0)
+          continue;
+
+        this.waiters.wait(&mut this.spinlock);
+
+        current = 1;
+      }
+
+      if (std::atomic_cmpxchg_weak(&this.value, current, std::min(current, this.maxvalue) - 1))
+        break;
+    }
+  }
+
+  pub fn wait_until(this mut &, u64 timeout) -> bool
+  {
+    while (true)
+    {
+      var current = std::volatile_load(&this.value);
+
+      if (current == 0)
+      {
+        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+        if (std::volatile_load(&this.value) != 0)
+          continue;
+
+        if (!this.waiters.wait_until(&mut this.spinlock, timeout))
+          return false;
+
+        current = 1;
+      }
+
+      if (std::atomic_cmpxchg_weak(&this.value, current, std::min(current, this.maxvalue) - 1))
+        break;
+    }
+
+    return true;
+  }
+
+  pub fn release(this mut &) -> void
+  {
+    if (std::atomic_add(&this.value, 1) == 0)
+    {
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+      this.waiters.notify_one();
+    }
+  }
+
+  pub semaphore() = default;
+  pub semaphore(#semaphore&) = default;
+  pub ~semaphore() = default;
+
+  std::spin_lock spinlock;
+  wait_queue waiters;
+}

@@ -13,6 +13,7 @@ import vfs;
 import scheduler;
 import io;
 import pci;
+import nvme;
 import ahci;
 import blk;
 import ps2;
@@ -50,6 +51,7 @@ fn kernel_main(void*) -> void
   vfs::initialise();
   ioring::initialise();
   pci::initialise();
+  nvme::initialise();
   ahci::initialise();
   ps2::initialise();
   pty::initialise();
@@ -87,7 +89,7 @@ fn bootstrap_filesystem() -> void
 
   var devpath = vfs::lookup(vfs::root, "dev");
 
-  for(var part : rootdev.query(blk::query::device_path).split("/"))
+  for (var part : rootdev.query(blk::query::device_path).split("/"))
     devpath = vfs::lookup(devpath, part);
 
   devpath = vfs::lookup(devpath, rootuuid);

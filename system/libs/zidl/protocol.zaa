@@ -128,7 +128,7 @@ pub fn call<zidl_request_t, zidl_response_t, Args, Callback>(i32 fd, Args && ...
 
     else:
 
-      for(var i = 0; i < infds; ++i)
+      for (var i = 0; i < infds; ++i)
         os::close(&mut thread_ring, handles[i]);
 
       return zidl::errc::bad_dispatch;
@@ -220,7 +220,7 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
   switch (zidl::ordinal(bytes.data, inbytes))
   {
     #{
-      #for(const decl : std::meta::fields_of($zidl_protocol_t::dispatch_t))
+      #for (const decl : std::meta::fields_of($zidl_protocol_t::dispatch_t))
       {
         if (std::meta::name_of(decl) == "kind")
           continue;
@@ -245,7 +245,7 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
 
     else:
 
-      for(var i = 0; i < infds; ++i)
+      for (var i = 0; i < infds; ++i)
         os::close(&mut thread_ring, handles[i]);
 
       return zidl::errc::bad_dispatch;

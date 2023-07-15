@@ -1,0 +1,184 @@
+//
+// gfx rect
+//
+
+import gfx;
+import gfx.size;
+import gfx.point;
+import gfx.color;
+pub import lml.bound : Bound;
+
+pub struct rect
+{
+  float[2] lo;
+  float[2] hi;
+
+  pub using bound_t = Bound<rect, float, 2>;
+
+  pub fn x(this &) -> float
+  {
+    return this.lo[0];
+  }
+
+  pub fn y(this &) -> float
+  {
+    return this.lo[1];
+  }
+
+  pub fn width(this &) -> float
+  {
+    return this.hi[0] - this.lo[0];
+  }
+
+  pub fn height(this &) -> float
+  {
+    return this.hi[1] - this.lo[1];
+  }
+
+  pub fn origin(this &) -> gfx::point
+  {
+    return gfx::point(this.lo[0], this.lo[1]);
+  }
+
+  pub fn size(this &) -> gfx::dim
+  {
+    return gfx::dim(this.hi[0] - this.lo[0], this.hi[1] - this.lo[1]);
+  }
+
+  pub fn centre(this &) -> gfx::point
+  {
+    return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
+  }
+
+  pub fn halfdim(this &) -> gfx::halfdim
+  {
+    return gfx::halfdim(0.5*(this.hi[0] - this.lo[0]), 0.5*(this.hi[1] - this.lo[1]));
+  }
+
+  pub fn left(this &) -> float
+  {
+    return this.lo[0];
+  }
+
+  pub fn right(this &) -> float
+  {
+    return this.hi[0];
+  }
+
+  pub fn top(this &) -> float
+  {
+    return this.lo[1];
+  }
+
+  pub fn bottom(this &) -> float
+  {
+    return this.hi[1];
+  }
+
+  pub fn top_left(this &) -> gfx::point
+  {
+    return gfx::point(this.lo[0], this.lo[1]);
+  }
+
+  pub fn top_centre(this &) -> gfx::point
+  {
+    return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], this.lo[1]);
+  }
+
+  pub fn top_right(this &) -> gfx::point
+  {
+    return gfx::point(this.hi[0], this.lo[1]);
+  }
+
+  pub fn centre_left(this &) -> gfx::point
+  {
+    return gfx::point(this.lo[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
+  }
+
+  pub fn centre_right(this &) -> gfx::point
+  {
+    return gfx::point(this.hi[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
+  }
+
+  pub fn bottom_left(this &) -> gfx::point
+  {
+    return gfx::point(this.lo[0], this.hi[1]);
+  }
+
+  pub fn bottom_centre(this &) -> gfx::point
+  {
+    return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], this.hi[1]);
+  }
+
+  pub fn bottom_right(this &) -> gfx::point
+  {
+    return gfx::point(this.hi[0], this.hi[1]);
+  }
+
+  pub fn empty(this &) -> bool
+  {
+    return this.lo[0] >= this.hi[0] || this.lo[1] >= this.hi[1];
+  }
+
+  pub rect(float x, float y, float width, float height)
+    : lo([x, y]), hi([x + width, y + height])
+  {
+  }
+
+  pub rect(gfx::point &origin, float width, float height)
+    : lo([origin.x, origin.y]), hi([origin.x + width, origin.y + height])
+  {
+  }
+
+  pub rect(gfx::point &origin, gfx::dim &size)
+    : lo([origin.x, origin.y]), hi([origin.x + size.width, origin.y + size.height])
+  {
+  }
+
+  pub rect(gfx::point &centre, gfx::halfdim &size)
+    : lo([centre.x - size.width, centre.y - size.height]), hi([centre.x + size.width, centre.y + size.height])
+  {
+  }
+
+  pub rect(gfx::point &min, gfx::point &max)
+    : lo([min.x, min.y]), hi([max.x, max.y])
+  {
+  }
+
+  pub rect(float[2] &lo, float[2] &hi)
+    : lo(lo), hi(hi)
+  {
+  }
+
+  pub fn low<i>(this &) -> float
+  {
+    return this.lo[i];
+  }
+
+  pub fn high<i>(this &) -> float
+  {
+    return this.hi[i];
+  }
+
+  pub rect() = default;
+  pub rect(rect &) = default;
+  pub fn =(rect mut &, rect &) -> rect mut & = default;
+  pub ~rect() = default;
+}
+
+#[lifetime(depend(this))]
+pub fn translate!(rect mut &this, float dx, float dy) -> rect mut &
+{
+  this.lo[0] += dx;
+  this.hi[0] += dx;
+  this.lo[1] += dy;
+  this.hi[1] += dy;
+
+  return &this;
+}
+
+#[nodiscard]
+pub fn translate(rect &this, float dx, float dy) -> rect
+{
+  return rect(this).translate!(dx, dy);
+}

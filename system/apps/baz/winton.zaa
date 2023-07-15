@@ -209,7 +209,7 @@ struct connection
           }
 
         case buffer_release[msg]:
-          for(var mut &(id, surface) : connection.surfaces)
+          for (var mut &(id, surface) : connection.surfaces)
             surface.release(msg.buffer_id);
 
         case pointer_enter[msg]:
@@ -404,7 +404,7 @@ struct surface : pub isurface &
 
   fn release(surface mut &this, u32 buffer_id) -> void
   {
-    for(var mut &buffer : this.buffers)
+    for (var mut &buffer : this.buffers)
       if (buffer.id == buffer_id)
         buffer.busy = false;
   }
@@ -443,7 +443,7 @@ struct surface : pub isurface &
 
   fn get(this mut &) throws -> buffer mut &
   {
-    for(var mut &buffer : this.buffers)
+    for (var mut &buffer : this.buffers)
     {
       if (!buffer.busy)
         return &buffer;
@@ -514,7 +514,7 @@ struct surface : pub isurface &
 
   fn destroy(this mut &) -> void
   {
-    for(var mut &buffer : this.buffers)
+    for (var mut &buffer : this.buffers)
     {
       this.connection.buffer_destroy(buffer.id);
 

@@ -1,0 +1,66 @@
+//
+// gfx transform
+//
+
+import std.math;
+import gfx.point;
+pub import lml.matrix : Matrix;
+
+pub struct transform : pub f64[3][3]
+{
+  pub using matrix_t = Matrix<f64, 3, 3>;
+  pub using result_type<I, J> = transform;
+
+  pub fn identity() -> transform
+  {
+    return [ [<f64>: 1.0, 0.0, 0.0 ], [<f64>: 0.0, 1.0, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub fn scale(f64 sx, f64 sy) -> transform
+  {
+    return [ [<f64>: sx, 0.0, 0.0 ], [<f64>: 0.0, sy, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub fn translation(f64 dx, f64 dy) -> transform
+  {
+    return [ [<f64>: 1.0, 0.0, dx ], [<f64>: 0.0, 1.0, dy ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub fn rotation(f64 cos, f64 sin) -> transform
+  {
+    return [ [<f64>: cos, -sin, 0.0 ], [<f64>: sin, cos, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub fn shear(f64 hx, f64 hy) -> transform
+  {
+    return [ [<f64>: 1.0, -hx, 0.0 ], [<f64>: hy, 1.0, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub transform(f64[3][3] &mat)
+    : super(mat)
+  {
+  }
+
+  pub fn [](this &&, usize i, usize j)
+  {
+    return &this.super[i][j];
+  }
+
+  pub fn translation(this&) -> gfx::point
+  {
+    return gfx::point(this[0][2], this[1][2]);
+  }
+
+  pub transform() = default;
+  pub transform(transform &) = default;
+  pub fn =(transform mut &, transform &) -> transform mut & = default;
+  pub ~transform() = default;
+}
+
+pub fn *(transform &transform, gfx::point &pt) -> gfx::point
+{
+  var x = transform[0,0]*pt.x + transform[0,1]*pt.y + transform[0,2];
+  var y = transform[1,0]*pt.x + transform[1,1]*pt.y + transform[1,2];
+
+  return gfx::point(x, y);
+}

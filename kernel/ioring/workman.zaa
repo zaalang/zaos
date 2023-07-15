@@ -6,10 +6,12 @@ import std.stdlib;
 import std.algorithm;
 import ioring : ioring_header, ioring_sqe, ioring_cqe, io_ring, result;
 import cpu;
+import sys;
 import scheduler;
 import platform;
 import thread as _ : thread;
 import process as _ : process;
+import semaphore as _ : semaphore;
 
 struct ring_queue
 {
@@ -57,7 +59,7 @@ pub fn dump(ring_queue &this) -> void
 {
   std::print("[ring queue]");
 
-  for(var rq = this.head; rq; rq = rq.next)
+  for (var rq = this.head; rq; rq = rq.next)
   {
     std::print("  ", rq.type, " ", rq.position, " ", rq.length);
   }
@@ -65,8 +67,7 @@ pub fn dump(ring_queue &this) -> void
 
 struct worker
 {
-  std::spin_lock lock;
-
+  semaphore doorbell;
   thread mut *kworkd;
 
   worker() = default;
@@ -79,6 +80,8 @@ struct work_manager
   ring_queue rings;
 
   worker[1] workers;
+
+  u32 activity;
 
   pub fn instance() -> work_manager mut &
   {
@@ -102,52 +105,36 @@ pub fn enqueue(work_manager mut &workman, io_ring mut *ring) -> void
   workman.rings.append(ring);
 }
 
-pub fn wake_from_stall(work_manager mut &workman) -> void
-{
-  var mut &worker = workman.workers[cast<usize>(cpu::current) % workman.workers.len];
-
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut worker.lock);
-
-  scheduler::unblock(worker.kworkd);
-}
-
 pub fn trigger(work_manager mut &workman) -> void
 {
-  std::assert(platform::interrupts_disabled);
+  std::atomic_add(&workman.activity, 1);
 
-  for(var mut &worker : workman.workers)
-  {
-    var guard = std::lock_guard(&mut worker.lock);
+  var mut &worker = workman.workers[cast<usize>(cpu::current) % workman.workers.len];
 
-    scheduler::unblock(worker.kworkd);
-  }
+  worker.doorbell.release();
+}
+
+pub fn wake_from_stall(work_manager mut &workman) -> void
+{
+  workman.trigger();
 }
 
 fn kworkd(worker mut *worker) -> void
 {
-  platform::disable_interrupts();
-
-  worker.lock.lock();
-
   while (true)
   {
-    scheduler::prepare_to_block();
-
-    worker.lock.unlock();
-
-    platform::enable_interrupts();
-
     var now = cpu::system_time;
+    var activity = std::atomic_load(&workman.activity);
 
     var entries = workman.rings.take();
 
-    for(var entry = &entries.0; *entry; )
+    for (var entry = &entries.0; *entry; )
     {
       var ring = *entry;
 
       if (ring.lock.try_lock)
       {
-        for(var mut &ctx : ring.pending)
+        for (var mut &ctx : ring.pending)
         {
           var j = ctx.entries.begin;
 
@@ -217,11 +204,11 @@ fn kworkd(worker mut *worker) -> void
 
     if (entries.0)
     {
-      for(var ring = entries.0; ring; ring = ring.next)
+      for (var ring = entries.0; ring; ring = ring.next)
       {
         if (ring.lock.try_lock)
         {
-          for(var mut &ctx : ring.pending)
+          for (var mut &ctx : ring.pending)
           {
             if (ctx.wake_time != 0)
               timeout = std::min(timeout, ctx.wake_time);
@@ -238,11 +225,10 @@ fn kworkd(worker mut *worker) -> void
       workman.rings.append(&mut entries);
     }
 
-    platform::disable_interrupts();
+    if (workman.activity != activity)
+      continue;
 
-    worker.lock.lock();
-
-    scheduler::block_until(&mut worker.lock, timeout);
+    worker.doorbell.wait_until(timeout);
   }
 }
 
@@ -250,10 +236,22 @@ pub fn initialise() -> void
 {
   workman.rings.last = &workman.rings.head;
 
-  for(var mut &worker : workman.workers)
+  for (var mut &worker : workman.workers)
   {
     worker.kworkd = thread::create(process::current, &cast<void fn(worker mut *)>(kworkd), &worker);
   }
 
-  scheduler::enqueue(workman.workers[0].kworkd);
+  platform::disable_interrupts();
+
+  for (var cpu = 0; cpu < sys::cpu_count; ++cpu)
+  {
+    workman.workers[cpu % workman.workers.len].kworkd.pinned = &sys::runqueue(cast(cpu));
+  }
+
+  platform::enable_interrupts();
+
+  for (var mut &worker : workman.workers)
+  {
+    scheduler::enqueue(worker.kworkd);
+  }
 }

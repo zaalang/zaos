@@ -16,7 +16,7 @@ pub fn rename(terminal::terminal mut &terminal, env::env mut &env, std::string &
   var src = std::string();
   var dst = std::string();
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     if (arg.starts_with("-"))
       continue;

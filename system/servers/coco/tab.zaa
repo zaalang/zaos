@@ -50,7 +50,7 @@ pub struct completer : pub readline::completer
           break;
         }
 
-        for(var pos = 0; pos < cast(dirres); )
+        for (var pos = 0; pos < cast(dirres); )
         {
           var entry = cast<dirent*>(buffer.data + cast(pos));
 

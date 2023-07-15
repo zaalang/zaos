@@ -91,7 +91,7 @@ pub struct slab_allocator<T>
     this.slabs = slab;
 
     var prev = &slab.firstfree;
-    for(var addr = allocation.range.begin; addr + sizeof<kmem_slab_entry> <= allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
+    for (var addr = allocation.range.begin; addr + sizeof<kmem_slab_entry> <= allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
     {
       *prev = new<kmem_slab_entry>(cast<kmem_slab_entry mut *>(addr.ptr))();
 
@@ -187,7 +187,7 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
   while (slab != this.slabs)
   {
     var free = 0;
-    for(var entry = slab.firstfree; entry; entry = entry.nextfree)
+    for (var entry = slab.firstfree; entry; entry = entry.nextfree)
       free += sizeof<kmem_slab_entry>;
 
     if (slab.allocation.size - sizeof<kmem_slab> < free + sizeof<kmem_slab_entry>)
@@ -195,7 +195,7 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
       slab.prev.next = slab.next;
       slab.next.prev = slab.prev;
 
-      for(var addr = slab.allocation.range.begin; addr + sizeof<kmem_slab_entry> <= slab.allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
+      for (var addr = slab.allocation.range.begin; addr + sizeof<kmem_slab_entry> <= slab.allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
       {
         cast<kmem_slab_entry mut *>(addr.ptr).~kmem_slab_entry();
       }

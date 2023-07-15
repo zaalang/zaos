@@ -1,0 +1,134 @@
+//
+// sqrt
+//
+
+fn bit_cast<T, U>(U &value) -> T
+{
+  var result = T(void);
+
+  __memcpy(&result, &value, sizeof(result));
+
+  return result;
+}
+
+//|///////////////////// sqrtf //////////////////////////////////////////////
+extern "C" fn sqrtf(f32 x) -> f32
+{
+  var i = bit_cast<u32>(x);
+
+  var e = cast<int>(i >> 23) & 0xff;
+
+  if (x == 0.0 || (e == 0xff && (x != x || x > 0.0)))
+    return x;
+
+  if (x < 0.0)
+    return __nan;
+
+  if (e == 0)
+  {
+    while ((i & (1 << 23)) == 0)
+    {
+      i <<= 1;
+      e -= 1;
+    }
+
+    e += 1;
+  }
+
+  e -= 127;
+  i &= 0x807fffff;
+  i |= 0x00800000;
+
+  if ((e & 1) == 1)
+    i <<= 1;
+
+  e >>= 1;
+  i <<= 1;
+
+  var s = 0;
+  var q = 0;
+  var r = 0x01000000;
+
+  while (r != 0)
+  {
+    var t = s + r;
+
+    if (t <= i)
+    {
+      s = t + r;
+      i -= t;
+      q += r;
+    }
+
+    i <<= 1;
+    r >>= 1;
+  }
+
+  if (i != 0)
+    q += q & 1;
+
+  i = (q >> 1) + (cast<u32>(e + 0x7e) << 23);
+
+  return bit_cast<f32>(i);
+}
+
+//|///////////////////// sqrt //////////////////////////////////////////////
+extern "C" fn sqrt(f64 x) -> f64
+{
+  var i = bit_cast<u64>(x);
+
+  var e = cast<int>(i >> 52) & 0x7ff;
+
+  if (x == 0.0 || (e == 0x7ff && (x != x || x > 0.0)))
+    return x;
+
+  if (x < 0.0)
+    return __nan;
+
+  if (e == 0)
+  {
+    while ((i & (1 << 52)) == 0)
+    {
+      i <<= 1;
+      e -= 1;
+    }
+
+    e += 1;
+  }
+
+  e -= 1023;
+  i &= 0x800fffffffffffff;
+  i |= 0x0010000000000000;
+
+  if ((e & 1) == 1)
+    i <<= 1;
+
+  e >>= 1;
+  i <<= 1;
+
+  var s = 0;
+  var q = 0;
+  var r = 0x0020000000000000;
+
+  while (r != 0)
+  {
+    var t = s + r;
+
+    if (t <= i)
+    {
+      s = t + r;
+      i -= t;
+      q += r;
+    }
+
+    i <<= 1;
+    r >>= 1;
+  }
+
+  if (i != 0)
+    q += q & 1;
+
+  i = (q >> 1) + (cast<u64>(e + 0x3fe) << 52);
+
+  return bit_cast<f64>(i);
+}

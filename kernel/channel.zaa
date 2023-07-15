@@ -367,7 +367,7 @@ fn destroy(vfs::node mut *node) -> void
   io::complete(&mut channel.node1.readable.cb, 0);
   io::complete(&mut channel.node1.writeable.cb, 0);
 
-  for(var mut &tx : channel.transactions)
+  for (var mut &tx : channel.transactions)
   {
     io::complete(&mut tx.value.response.cb, 0);
   }

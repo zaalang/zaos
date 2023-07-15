@@ -69,7 +69,7 @@ pub struct diag
   {
     var beg = text.head;
 
-    for(var i = 1; i < loc.lineno; ++i)
+    for (var i = 1; i < loc.lineno; ++i)
       beg = std::find(beg, text.tail, cast<u8>('\n')) + 1;
 
     var end = std::find(beg, text.tail, cast<u8>('\n'));

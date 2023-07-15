@@ -198,7 +198,7 @@ pub struct proc_auxv_node : pub sysfs::sysfs_file_node
 
       stream.begin('{');
 
-      for(var &arg : process.auxv)
+      for (var &arg : process.auxv)
       {
         stream.append(std::meta::enumerator_name(arg.type), arg.value);
       }
@@ -260,7 +260,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
 
       stream.begin('[');
 
-      for(var arg : process.envp)
+      for (var arg : process.envp)
       {
         stream.begin('"');
 
@@ -331,7 +331,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
 
       stream.begin('[');
 
-      for(var arg : process.argv)
+      for (var arg : process.argv)
       {
         stream.begin('"');
 

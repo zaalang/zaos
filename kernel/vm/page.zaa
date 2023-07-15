@@ -67,7 +67,7 @@ pub struct physaddr : pub platform::physaddr_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physaddr &addr) throws -> void
 {
-  ctx.written += std::format_to(&mut os, "{}", addr.ptr);
+  ctx.written += std::format_to(&mut os, "phys{:#016x}", addr.super);
 }
 
 pub struct physrange : pub platform::physrange_t
@@ -125,7 +125,7 @@ pub struct physrange : pub platform::physrange_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physrange &range) throws -> void
 {
-  ctx.written += std::format_to(&mut os, "physrange {{ {} - {} }}", range.begin.ptr, range.end.ptr);
+  ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
 }
 
 pub struct virtaddr : pub platform::virtaddr_t
@@ -183,7 +183,7 @@ pub struct virtaddr : pub platform::virtaddr_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtaddr &addr) throws -> void
 {
-  ctx.written += std::format_to(&mut os, "{}", addr.ptr);
+  ctx.written += std::format_to(&mut os, "{:#016x}", addr.super);
 }
 
 pub struct virtrange : pub platform::virtrange_t
@@ -256,7 +256,7 @@ pub struct virtrange : pub platform::virtrange_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &range) throws -> void
 {
-  ctx.written += std::format_to(&mut os, "virtrange {{ {} - {} }}", range.begin.ptr, range.end.ptr);
+  ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
 }
 
 pub struct page
@@ -450,7 +450,7 @@ pub fn inject_allocated_page(page_allocator mut &this, platform::physaddr_t addr
 
   var index = addr >> PAGE_SHIFT;
 
-  for(var i = 0; index != 0; ++i)
+  for (var i = 0; index != 0; ++i)
   {
     if (this.pages[index].prevfree)
       break;
@@ -465,7 +465,7 @@ pub fn inject_allocated_page(page_allocator mut &this, platform::physaddr_t addr
 
   this.take(order, base);
 
-  for(var i = order; i != 0; --i)
+  for (var i = order; i != 0; --i)
   {
     if (addr < base + (PAGE_SIZE/2) << i)
       this.release(i - 1, base + (PAGE_SIZE/2) << i);
@@ -509,13 +509,13 @@ pub fn allocate(page_allocator mut &this, usize size) -> page_allocation
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-  for(var i = order; i < this.freelist.len; ++i)
+  for (var i = order; i < this.freelist.len; ++i)
   {
     if (this.freelist[i])
     {
       var index = this.take(i, this.freelist[i]) - this.pages.data;
 
-      for(var j = i; j > order; --j)
+      for (var j = i; j > order; --j)
       {
         this.release(j - 1, (index << PAGE_SHIFT) + (PAGE_SIZE/2) << j);
       }
@@ -539,7 +539,7 @@ pub fn release(page_allocator mut &this, std::mutable_span<page> &pages) -> void
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-  for(var i = order; i != this.freelist.len - 1; ++i)
+  for (var i = order; i != this.freelist.len - 1; ++i)
   {
     var mut &buddy = this.pages[index ^ (1 << i)];
 
@@ -561,12 +561,12 @@ pub fn dump_free_pages(page_allocator &this)
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-  for(var i = 0; i < this.freelist.len; ++i)
+  for (var i = 0; i < this.freelist.len; ++i)
   {
     var count = 0;
     var capacity = 0;
 
-    for(var entry = this.freelist[i]; entry; entry = entry.next)
+    for (var entry = this.freelist[i]; entry; entry = entry.next)
     {
       count += 1;
       capacity += PAGE_SIZE << i;

@@ -77,14 +77,14 @@ pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
   {
     var lines = std::vector<line>::with_capacity(rows);
 
-    for(var i = 0; i != rows - screen.lines.len; ++i)
+    for (var i = 0; i != rows - screen.lines.len; ++i)
     {
       // insert from scroll buffer
     }
 
     screen.cursor_y += lines.len;
 
-    for(var i = 0; i != screen.lines.len; ++i)
+    for (var i = 0; i != screen.lines.len; ++i)
     {
       lines.push_back(&move screen.lines[(screen.head + i) % screen.lines.len]);
     }
@@ -95,13 +95,13 @@ pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
     screen.lines = &move lines;
   }
 
-  for(var mut &line : screen.lines)
+  for (var mut &line : screen.lines)
   {
     if (var existing = line.cells.len; existing < columns)
     {
       line.cells.resize(columns);
 
-      for(var i = existing; i < line.cells.len; ++i)
+      for (var i = existing; i < line.cells.len; ++i)
       {
         line.cells[i].ch = ' ';
         line.cells[i].width = 1;
@@ -138,11 +138,11 @@ pub fn draw(screen mut &screen, var callback) -> vt::result
 {
   var attrs = attrs(void);
 
-  for(var y = 0; y < screen.rows; ++y)
+  for (var y = 0; y < screen.rows; ++y)
   {
     var &line = screen.lines[(screen.head + y) % screen.lines.len];
 
-    for(var x = 0; x < screen.columns; ++x)
+    for (var x = 0; x < screen.columns; ++x)
     {
       var &cell = line.cells[x];
 
@@ -314,7 +314,7 @@ pub fn scroll_up(screen mut &screen, usize count) -> vt::result
   }
   else
   {
-    for(var y = screen.margin_top; y != screen.margin_bottom - count; ++y)
+    for (var y = screen.margin_top; y != screen.margin_bottom - count; ++y)
     {
       var mut &src = screen.lines[(screen.head + y + count) % screen.lines.len];
       var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
@@ -418,7 +418,7 @@ pub fn delete_lines(screen mut &screen, usize count) -> vt::result
   if (screen.margin_bottom - screen.cursor_y - 1 < count)
     count = screen.margin_bottom - screen.cursor_y - 1;
 
-  for(var y = screen.cursor_y; y != screen.margin_bottom - count; ++y)
+  for (var y = screen.cursor_y; y != screen.margin_bottom - count; ++y)
   {
     var mut &src = screen.lines[(screen.head + y + count) % screen.lines.len];
     var mut &dst = screen.lines[(screen.head + y) % screen.lines.len];
@@ -475,7 +475,7 @@ pub fn delete_characters(screen mut &screen, usize count) -> vt::result
   var y = screen.cursor_y;
   var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
 
-  for(var x = screen.cursor_x; x != screen.columns - count; ++x)
+  for (var x = screen.cursor_x; x != screen.columns - count; ++x)
   {
     line.cells[x] = line.cells[x + count];
   }
@@ -493,14 +493,14 @@ pub fn erase(screen mut &screen, usize x0, usize y0, usize x1, usize y1) -> vt::
   if (y1 >= screen.rows)
     y1 = screen.rows - 1;
 
-  for(var y = y0; y <= y1; ++y)
+  for (var y = y0; y <= y1; ++y)
   {
     var mut &line = screen.lines[(screen.head + y) % screen.lines.len];
 
     var beg = (y == y0) ? x0 : 0;
     var end = (y == y1) ? x1 : screen.columns - 1;
 
-    for(var x = beg; x <= end; ++x)
+    for (var x = beg; x <= end; ++x)
     {
       line.cells[x].ch = ' ';
       line.cells[x].width = 1;
@@ -592,7 +592,7 @@ pub fn put(screen mut &screen, char ch, attrs &attrs) -> vt::result
   line.cells[x].width = width;
   line.cells[x].attrs = attrs;
 
-  for(var i = 1; i < width && i + x < line.cells.len; ++i)
+  for (var i = 1; i < width && i + x < line.cells.len; ++i)
   {
     line.cells[x + i].width = 0;
   }
@@ -624,7 +624,7 @@ pub fn set_palette(screen mut &screen, vt::palette &palette) -> vt::result
 
 pub fn write(screen mut &screen, u8 *data, usize len) -> vt::result
 {
-  for(var ch = data, var end = data + len; ch != end; ++ch)
+  for (var ch = data, var end = data + len; ch != end; ++ch)
   {
     scan(&mut screen, &mut screen.state, *ch);
   }

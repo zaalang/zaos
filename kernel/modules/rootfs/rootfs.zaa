@@ -179,7 +179,7 @@ pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &n
 
   var dentry = olddir.contents[j].value;
 
-  for(var parent = newpath; parent; parent = cast<inode&>(*parent).parent)
+  for (var parent = newpath; parent; parent = cast<inode&>(*parent).parent)
     if (parent == dentry)
       return invalid_argument;
 
@@ -292,7 +292,7 @@ pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize of
         return cast(result);
     }
 
-    for(var &(name, node) : this.contents)
+    for (var &(name, node) : this.contents)
     {
       var file_type = vfs::ftype();
 

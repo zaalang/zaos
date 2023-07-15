@@ -13,7 +13,7 @@ pub struct blkdev
 {
   pub usize block_size;
   pub int block_shift;
-  pub usize block_count;
+  pub u64 block_count;
 
   pub fn create<T>(var && ...args) -> shared_ptr<T>
   {

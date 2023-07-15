@@ -184,7 +184,7 @@ fn settermios(ptty mut &this, termios &tios) -> chr::result
 {
   if ((tios.c_lflag & ICANON == ICANON) && (this.termios.c_lflag & ICANON != ICANON))
   {
-    for(var ch : this.in)
+    for (var ch : this.in)
     {
       if (ch == this.termios.c_cc[VEOF] || ch == this.termios.c_cc[VEOL] || ch == cast('\n') || ch == cast('\r'))
       {
@@ -412,7 +412,7 @@ pub fn puts(ptty mut &this, u8 *data, usize len) -> chr::result
 
   var count = 0;
 
-  for(var ch = data, var end = data + len; ch != end; ++ch)
+  for (var ch = data, var end = data + len; ch != end; ++ch)
   {
     if (var result = this.putc(*ch); !result)
       break;
@@ -430,7 +430,7 @@ pub fn gets(ptty mut &this, u8 mut *data, usize len) -> chr::result
   var count = 0;
   var remaining = std::min(this.out.len, len);
 
-  for(var span : this.out.spans)
+  for (var span : this.out.spans)
   {
     var bytes = std::min(remaining, span.len);
 
@@ -458,7 +458,7 @@ pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr
 {
   var &this = cast<ptty&>(dev);
 
-  switch(query)
+  switch (query)
   {
     case device_name:
       result = std::format("pts/{}", this.id);
@@ -551,7 +551,7 @@ pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length)
   {
     if (this.lines != 0)
     {
-      for(var ch : this.in)
+      for (var ch : this.in)
       {
         if (remaining >= length)
           break;
@@ -575,7 +575,7 @@ pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length)
     remaining = std::min(this.in.len, length);
   }
 
-  for(var span : this.in.spans)
+  for (var span : this.in.spans)
   {
     var bytes = std::min(remaining, span.len);
 
@@ -617,7 +617,7 @@ pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length
     if (!result)
       return;
 
-    for(var ch : std::span(cast<u8*>(region.addr.ptr), region.size))
+    for (var ch : std::span(cast<u8*>(region.addr.ptr), region.size))
     {
       if (result = this.emit(ch); !result)
         break;

@@ -18,7 +18,7 @@ pub fn ps(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
     terminal.write(std::format("{:>8} {:12}\n", "PID", "CMD"));
 
-    for(var &process : proclist.value.as_array)
+    for (var &process : proclist.value.as_array)
     {
       terminal.write(std::format("{:>8} {:12}\n", process["pid"].as<int>, process["name"].as_str));
     }

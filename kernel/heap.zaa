@@ -3,7 +3,7 @@
 //
 
 import std.stdio;
-import vm.page : PAGE_SIZE, physaddr, virtaddr, physrange, virtrange;
+import vm.page : physaddr, virtaddr, physrange, virtrange;
 import vfs.node;
 import platform;
 import cpu;
@@ -60,7 +60,7 @@ struct bitmap
 
   fn find(this &) -> usize
   {
-    for(var i = 0; i < this.n; ++i)
+    for (var i = 0; i < this.n; ++i)
     {
       if (*(this.bits + i) != 0)
         return i << 6 + cast<usize>(std::ctz(*(this.bits + i)));
@@ -94,12 +94,12 @@ pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
   std::print("heap initial memory: ", bootinfo.hunk_size);
 
   var bitmapsize = 0;
-  for(var i = 0; i < heap.blockmap.len; ++i)
+  for (var i = 0; i < heap.blockmap.len; ++i)
     bitmapsize += std::pow(2, i);
 
   var memory = cast<u64 mut *>(early_malloc(bootinfo, bitmapsize * sizeof<u64>).ptr);
 
-  for(var i = 0; i < heap.blockmap.len; ++i)
+  for (var i = 0; i < heap.blockmap.len; ++i)
   {
     var n = std::pow(2, heap.blockmap.len - i - 1);
 
@@ -114,10 +114,10 @@ pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
 
   std::memset(memory, 0, bitmapsize * sizeof<u64>);
 
-  for(var i = 0; i < (heap.limit - heap.base) / (heap.blockmap[0].n * heap.blocksize); ++i)
+  for (var i = 0; i < (heap.limit - heap.base) / (heap.blockmap[0].n * heap.blocksize); ++i)
     heap.blockmap[heap.blockmap.len - 1].set(i);
 
-  for(var i = 0; i <= bootinfo.hunk_size / heap.blocksize; ++i)
+  for (var i = 0; i <= bootinfo.hunk_size / heap.blocksize; ++i)
     heap.take_blocks(0);
 
   std::print("heap block size: ", heap.blocksize);
@@ -143,13 +143,13 @@ fn take_blocks(heap_allocator mut &heap, usize order) -> virtaddr
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut heap.lock);
 
-  for(var i = order; i < heap.blockmap.len; ++i)
+  for (var i = order; i < heap.blockmap.len; ++i)
   {
     if (var bit = heap.blockmap[i].find(); bit != ~0)
     {
       heap.blockmap[i].unset(bit);
 
-      for(var j = i; j > order; --j)
+      for (var j = i; j > order; --j)
       {
         bit *= 2;
 
@@ -169,7 +169,7 @@ fn release_blocks(heap_allocator mut &heap, virtaddr addr, usize order) -> void
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut heap.lock);
 
-  for(var i = order; i != heap.blockmap.len - 1; ++i)
+  for (var i = order; i != heap.blockmap.len - 1; ++i)
   {
     var buddy = bit ^ 1;
 
@@ -266,13 +266,27 @@ pub fn mmap(usize size) -> virtrange
   return allocation;
 }
 
+pub fn mmap(vm::physrange range) -> virtrange
+{
+  var inset = range.addr & PAGE_MASK;
+  var pages = std::vector<vm::physrange, N:1>::from([ range ]);
+
+  var allocation = heap.allocate(inset + range.size);
+
+  vm::create_physical_region(allocation, pages, vm::protection::readwrite, vm::usage::private | vm::usage::foreign);
+
+  return virtrange(allocation.addr + inset, range.size);
+}
+
 pub fn mmap(vfs::node_ptr &node, u64 offset, usize size) -> virtrange
 {
-  var allocation = heap.allocate(size);
+  var inset = cast<usize>(offset & PAGE_MASK);
+
+  var allocation = heap.allocate(inset + size);
 
   vm::create_backed_region(allocation, node, offset, vm::protection::readonly, vm::usage::private);
 
-  return allocation;
+  return virtrange(allocation.addr + inset, size);
 }
 
 pub fn munmap(virtrange allocation) -> void

@@ -90,7 +90,7 @@ fn register(device_manager mut &devman, device device) -> dev_t
 
   var slot = devman.nodes.len;
 
-  for(var i = 0; i != devman.nodes.len; ++i)
+  for (var i = 0; i != devman.nodes.len; ++i)
     if (!devman.nodes[i].device)
       slot = i;
 
@@ -180,7 +180,7 @@ pub fn enumerate(var &&callback) -> void
 {
   var guard = std::lock_shared_guard(&mut devman.lock);
 
-  for(var &node : devman.nodes)
+  for (var &node : devman.nodes)
   {
     callback(node.id, node.device);
   }

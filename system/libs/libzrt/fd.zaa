@@ -151,7 +151,7 @@ extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
 {
   var result = fd_result();
 
-  for(var i = 0; i < n; ++i)
+  for (var i = 0; i < n; ++i)
   {
     var res = os::read(&mut thread_ring, cast(fd), (iovs + i).data, (iovs + i).len);
 
@@ -181,9 +181,9 @@ extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
 {
   var result = fd_result();
 
-  for(var i = 0; i < n; ++i)
+  for (var i = 0; i < n; ++i)
   {
-    for(var data = (iovs + i).data, var len = (iovs + i).len; len != 0; )
+    for (var data = (iovs + i).data, var len = (iovs + i).len; len != 0; )
     {
       var cnt = os::write(&mut thread_ring, cast(fd), data, len);
 

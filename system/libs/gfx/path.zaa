@@ -1,0 +1,414 @@
+//
+// gfx path
+//
+
+import gfx.rect;
+import gfx.point;
+import gfx.fill;
+import gfx.stroke;
+import std.vector;
+
+pub union vertex
+{
+  struct move_to_node
+  {
+    float x;
+    float y;
+
+    move_to_node(float x, float y)
+      : x(x), y(y)
+    {
+    }
+
+    move_to_node(move_to_node&) = default;
+    ~move_to_node() = default;
+  }
+
+  struct line_to_node
+  {
+    float x;
+    float y;
+
+    line_to_node(float x, float y)
+      : x(x), y(y)
+    {
+    }
+
+    line_to_node(line_to_node&) = default;
+    ~line_to_node() = default;
+  }
+
+  struct quad_to_node
+  {
+    float x1;
+    float y1;
+    float x;
+    float y;
+
+    quad_to_node(float x1, float y1, float x, float y)
+      : x1(x1), y1(y1), x(x), y(y)
+    {
+    }
+
+    quad_to_node(quad_to_node&) = default;
+    ~quad_to_node() = default;
+  }
+
+  struct cubic_to_node
+  {
+    float x1;
+    float y1;
+    float x2;
+    float y2;
+    float x;
+    float y;
+
+    cubic_to_node(float x1, float y1, float x2, float y2, float x, float y)
+      : x1(x1), y1(y1), x2(x2), y2(y2), x(x), y(y)
+    {
+    }
+
+    cubic_to_node(cubic_to_node&) = default;
+    ~cubic_to_node() = default;
+  }
+
+  struct conic_to_node
+  {
+    float x1;
+    float y1;
+    float x;
+    float y;
+    float w;
+
+    conic_to_node(float x1, float y1, float x, float y, float w)
+      : x1(x1), y1(y1), x(x), y(y), w(w)
+    {
+    }
+
+    conic_to_node(conic_to_node&) = default;
+    ~conic_to_node() = default;
+  }
+
+  pub move_to(move_to_node),
+  pub line_to(line_to_node),
+  pub quad_to(quad_to_node),
+  pub cubic_to(cubic_to_node),
+  pub conic_to(conic_to_node),
+  pub close,
+
+  pub vertex(vertex&) = default;
+  pub fn =(vertex mut &, vertex &&) -> vertex mut & = default;
+  pub ~vertex() = default;
+}
+
+pub struct path
+{
+  pub std::vector<vertex> vertices;
+
+  pub fn move_to(this mut &, float x, float y) -> void
+  {
+    this.vertices.push_back(vertex::move_to(x, y));
+  }
+
+  pub fn line_to(this mut &, float x, float y) -> void
+  {
+    this.vertices.push_back(vertex::line_to(x, y));
+  }
+
+  pub fn quad_to(this mut &, float x1, float y1, float x, float y) -> void
+  {
+    this.vertices.push_back(vertex::quad_to(x1, y1, x, y));
+  }
+
+  pub fn cubic_to(this mut &, float x1, float y1, float x2, float y2, float x, float y) -> void
+  {
+    this.vertices.push_back(vertex::cubic_to(x1, y1, x2, y2, x, y));
+  }
+
+  pub fn conic_to(this mut &, float x1, float y1, float x, float y, float w) -> void
+  {
+    this.vertices.push_back(vertex::conic_to(x1, y1, x, y, w));
+  }
+
+  pub fn close(this mut &) -> void
+  {
+    this.vertices.push_back(vertex::close);
+  }
+
+  pub fn append(this mut &, path &&other) -> void
+  {
+    this.vertices.append((&&other).vertices);
+  }
+
+  pub fn append(path mut &this, gfx::transform &Q, path &&other) -> void
+  {
+    for (var &vertex : other.vertices)
+      this.vertices.push_back(Q * vertex);
+  }
+
+  pub path() = default;
+  pub path(path &&) = default;
+  pub fn =(path mut &, path &&) -> path mut & = default;
+  pub ~path() = default;
+}
+
+pub fn *(gfx::transform &Q, vertex &vertex) -> vertex
+{
+  switch (vertex)
+  {
+    case move_to[pt]:
+      return vertex::move_to(gfx::point(Q * gfx::point(pt.x, pt.y))...);
+
+    case line_to[pt]:
+      return vertex::line_to(gfx::point(Q * gfx::point(pt.x, pt.y))...);
+
+    case quad_to[pt]:
+      return vertex::quad_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x, pt.y))...);
+
+    case cubic_to[pt]:
+      return vertex::cubic_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x2, pt.y2))..., gfx::point(Q * gfx::point(pt.x, pt.y))...);
+
+    case conic_to[pt]:
+      return vertex::conic_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x, pt.y))..., pt.w);
+
+    case close:
+      return vertex::close();
+  }
+
+  std::panic();
+}
+
+#[lifetime(depend(this))]
+pub fn transform!(path mut &this, gfx::transform &Q) -> path mut &
+{
+  for (var mut &vertex : this.vertices)
+    vertex = Q * vertex;
+
+  return &this;
+}
+
+#[nodiscard]
+pub fn transform(path &&this, gfx::transform &Q) -> path
+{
+  #if (__is_rvalue<typeof(this)>)
+    return this.transform!(Q);
+
+  return path(this).transform!(Q);
+}
+
+pub fn *(gfx::transform &Q, path &&this) -> path
+{
+  return (&&this).transform(Q);
+}
+
+#[lifetime(depend(this))]
+pub fn translate!(path mut &this, float dx, float dy) -> path mut &
+{
+  return &this.transform!(gfx::transform::translation(dx, dy));
+}
+
+#[nodiscard]
+pub fn translate(path &&this, float dx, float dy) -> path
+{
+  return (&&this).transform(gfx::transform::translation(dx, dy));
+}
+
+#[lifetime(depend(this))]
+pub fn scale!(path mut &this, float dx, float dy) -> path mut &
+{
+  return &this.transform!(gfx::transform::scale(dx, dy));
+}
+
+#[nodiscard]
+pub fn scale(path &&this, float dx, float dy) -> path
+{
+  return (&&this).transform(gfx::transform::scale(dx, dy));
+}
+
+pub fn arc_to(path mut &this, gfx::rect &bound, float start_angle, float sweep_angle) -> void
+{
+  using std;
+
+  var centre = bound.centre;
+  var radius = bound.halfdim;
+  var weight = sqrt(2) / 2.0;
+
+  start_angle = start_angle % (2.0*PI);
+  sweep_angle = clamp(sweep_angle, -2.0*PI, 2.0*PI);
+
+  this.line_to(centre.x + radius.width * cos(start_angle), centre.y + radius.height * sin(start_angle));
+
+  while (!fcmp(sweep_angle, 0.0))
+  {
+    var step = 0.0;
+
+    if (sweep_angle < 0.0)
+    {
+      step = max(sweep_angle, -0.5 * PI);
+    }
+    else
+    {
+      step = min(sweep_angle, 0.5 * PI);
+    }
+
+    var x = cos(step / 2.0);
+    var y = sin(step / 2.0);
+
+    var x1 = centre.x + radius.width * (x + y * (y / x)) * cos(start_angle + step / 2.0);
+    var y1 = centre.y + radius.height * (x + y * (y / x)) * sin(start_angle + step / 2.0);
+
+    var x2 = centre.x + radius.width * cos(start_angle + step);
+    var y2 = centre.y + radius.height * sin(start_angle + step);
+
+    this.conic_to(x1, y1, x2, y2, weight);
+
+    start_angle += step;
+    sweep_angle -= step;
+  }
+}
+
+pub fn arc_at(path mut &this, gfx::point &origin, gfx::point &endpoint, float radius_x, float radius_y, float x_axis_rotation, int large_arc_flag, int sweep_flag) -> void
+{
+  using std;
+
+  var rx = abs(radius_x);
+  var ry = abs(radius_y);
+
+  var mx = (origin.x - endpoint.x) / 2.0;
+  var my = (origin.y - endpoint.y) / 2.0;
+
+  var cos_axis = cos(x_axis_rotation);
+  var sin_axis = sin(x_axis_rotation);
+
+  var x1 = cos_axis * mx + sin_axis * my;
+  var y1 = -sin_axis * mx + cos_axis * my;
+
+  var prx = rx * rx;
+  var pry = ry * ry;
+  var px1 = x1 * x1;
+  var py1 = y1 * y1;
+
+  if (var alpha = px1/prx + py1/pry; alpha > 1.0)
+  {
+    rx *= sqrt(alpha);
+    ry *= sqrt(alpha);
+    prx = rx * rx;
+    pry = ry * ry;
+  }
+
+  var sign = (large_arc_flag == sweep_flag) ? -1.0 : 1.0;
+  var factor = (prx*pry - prx*py1 - pry*px1) / (prx*py1 + pry*px1);
+  var scale = sign * sqrt(std::max(factor, 0.0));
+  var cx1 = scale * ((rx * y1) / ry);
+  var cy1 = scale * -((ry * x1) / rx);
+
+  var cx = (origin.x + endpoint.x) / 2.0 + (cos_axis * cx1 - sin_axis * cy1);
+  var cy = (origin.y + endpoint.y) / 2.0 + (sin_axis * cx1 + cos_axis * cy1);
+
+  var ux = (x1 - cx1) / rx;
+  var uy = (y1 - cy1) / ry;
+  var vx = (-x1 - cx1) / rx;
+  var vy = (-y1 - cy1) / ry;
+
+  var start_angle = atan2(uy, ux);
+  var sweep_angle = atan2(vy, vx) - start_angle;
+
+  if (sweep_flag == 0 && sweep_angle > 0.0)
+    sweep_angle -= 2.0 * PI;
+
+  if (sweep_flag == 1 && sweep_angle < 0.0)
+    sweep_angle += 2.0 * PI;
+
+  var arc = path();
+  arc.move_to(rx * cos(start_angle), ry * sin(start_angle));
+  arc.arc_to(gfx::rect(gfx::point(0.0, 0.0), gfx::halfdim(rx, ry)), start_angle, sweep_angle);
+
+  this.append(gfx::transform::translation(cx, cy) * gfx::transform::rotation(cos_axis, sin_axis), arc);
+}
+
+pub fn rect_at(path mut &this, gfx::rect &bound) -> void
+{
+  this.move_to(bound.left, bound.bottom);
+  this.line_to(bound.right, bound.bottom);
+  this.line_to(bound.right, bound.top);
+  this.line_to(bound.left, bound.top);
+  this.close();
+}
+
+pub fn ellipse_at(path mut &this, gfx::rect &bound) -> void
+{
+  var centre = bound.centre;
+  var weight = std::sqrt(2) / 2.0;
+
+  this.move_to(bound.left, centre.y);
+  this.conic_to(bound.left, bound.bottom, centre.x, bound.bottom, weight);
+  this.conic_to(bound.right, bound.bottom, bound.right, centre.y, weight);
+  this.conic_to(bound.right, bound.top, centre.x, bound.top, weight);
+  this.conic_to(bound.left, bound.top, bound.left, centre.y, weight);
+  this.close();
+}
+
+pub fn ellipse_at(path mut &this, gfx::point &centre, float radius_x, float radius_y) -> void
+{
+  if (radius_x <= 0.0 || radius_y <= 0.0)
+    return;
+
+  this.ellipse_at(gfx::rect(centre, gfx::halfdim(radius_x, radius_y)));
+}
+
+pub fn circle_at(path mut &this, gfx::point &centre, float radius) -> void
+{
+  if (radius <= 0.0)
+    return;
+
+  this.ellipse_at(gfx::rect(centre, gfx::halfdim(radius, radius)));
+}
+
+pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float[8] &radii) -> void
+{
+  var weight = std::sqrt(2) / 2.0;
+
+  this.move_to(bound.left, bound.bottom - radii[1]);
+  this.conic_to(bound.left, bound.bottom, bound.left + radii[0], bound.bottom, weight);
+  this.line_to(bound.right - radii[2], bound.bottom);
+  this.conic_to(bound.right, bound.bottom, bound.right, bound.right - radii[3], weight);
+  this.line_to(bound.right, bound.top + radii[5]);
+  this.conic_to(bound.right, bound.top, bound.right - radii[4], bound.top, weight);
+  this.line_to(bound.left + radii[6], bound.top);
+  this.conic_to(bound.left, bound.top, bound.left, bound.top + radii[7], weight);
+  this.close();
+}
+
+pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float bottom_left_radius, float bottom_right_radius, float top_right_radius, float top_left_radius) -> void
+{
+  if (bottom_left_radius < 0.0 || bottom_right_radius < 0.0 || top_right_radius < 0.0 || top_left_radius < 0.0)
+    return;
+
+  if (std::max(bottom_left_radius + bottom_right_radius, top_left_radius + top_right_radius) > bound.width || std::max(top_left_radius + bottom_left_radius, top_right_radius + bottom_right_radius) > bound.height)
+  {
+    var scale = std::min(bound.width / std::max(bottom_left_radius + bottom_right_radius, top_left_radius + top_right_radius), bound.height / std::max(top_left_radius + bottom_left_radius, top_right_radius + bottom_right_radius));
+
+    bottom_left_radius *= scale;
+    bottom_right_radius *= scale;
+    top_right_radius *= scale;
+    top_left_radius *= scale;
+  }
+
+  this.rounded_rect_at(bound, [bottom_left_radius, bottom_left_radius, bottom_right_radius, bottom_right_radius, top_right_radius, top_right_radius, top_left_radius, top_left_radius]);
+}
+
+pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float radius_x, float radius_y) -> void
+{
+  if (radius_x < 0.0 || radius_y < 0.0)
+    return;
+
+  if (radius_x + radius_x > bound.width || radius_y + radius_y > bound.height)
+  {
+    var scale = std::min(bound.width / (radius_x + radius_x), bound.height / (radius_y + radius_y));
+
+    radius_x *= scale;
+    radius_y *= scale;
+  }
+
+  this.rounded_rect_at(bound, [radius_x, radius_y, radius_x, radius_y, radius_x, radius_y, radius_x, radius_y]);
+}

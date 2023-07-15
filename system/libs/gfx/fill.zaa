@@ -1,0 +1,139 @@
+//
+// gfx fill
+//
+
+import std.math;
+import gfx.path;
+import gfx.color;
+import gfx.blend;
+import gfx.transform;
+import gfx.raster;
+import lml.fixed;
+
+struct state
+{
+  gfx::point start;
+  gfx::point cursor;
+  gfx::raster_t raster;
+
+  state() = default;
+  ~state() = default;
+}
+
+fn move_to(state &&state, gfx::transform &Q, float x, float y) -> void
+{
+  var pt = Q * gfx::point(x, y);
+
+  if (state.cursor != state.start)
+    close(state);
+
+  state.raster.move_to(pt.x, pt.y);
+
+  state.cursor = state.start = pt;
+}
+
+fn line_to(state &&state, gfx::transform &Q, float x, float y) -> void
+{
+  var pt = Q * gfx::point(x, y);
+
+  state.raster.line_to(pt.x, pt.y);
+
+  state.cursor = pt;
+}
+
+fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y) -> void
+{
+  var pt = Q * gfx::point(x, y);
+  var cp = Q * gfx::point(x1, y1);
+
+  state.raster.quad_to(cp.x, cp.y, pt.x, pt.y);
+
+  state.cursor = pt;
+}
+
+fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y) -> void
+{
+  var pt = Q * gfx::point(x, y);
+  var cp1 = Q * gfx::point(x1, y1);
+  var cp2 = Q * gfx::point(x2, y2);
+
+  state.raster.cubic_to(cp1.x, cp1.y, cp2.x, cp2.y, pt.x, pt.y);
+
+  state.cursor = pt;
+}
+
+fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float w) -> void
+{
+  var pt = Q * gfx::point(x, y);
+  var cp = Q * gfx::point(x1, y1);
+
+  state.raster.conic_to(cp.x, cp.y, pt.x, pt.y, w);
+
+  state.cursor = pt;
+}
+
+fn close(state &&state) -> void
+{
+  if (state.cursor != state.start)
+    state.raster.line_to(state.start.x, state.start.y);
+
+  state.cursor = state.start;
+}
+
+pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  var state = state();
+
+  state.raster.clip(std::clamp(clip.left, 0.0, cast(ctx.width)), std::clamp(clip.top, 0.0, cast(ctx.height)), std::clamp(clip.right, 0.0, cast(ctx.width)), std::clamp(clip.bottom, 0.0, cast(ctx.height)));
+
+  for (var &vertex : path.vertices)
+  {
+    switch (vertex)
+    {
+      case move_to[pt]:
+        move_to(state, Q, pt.x, pt.y);
+
+      case line_to[pt]:
+        line_to(state, Q, pt.x, pt.y);
+
+      case quad_to[pt]:
+        quad_to(state, Q, pt.x1, pt.y1, pt.x, pt.y);
+
+      case cubic_to[pt]:
+        cubic_to(state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y);
+
+      case conic_to[pt]:
+        conic_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w);
+
+      case close:
+        close(state);
+    }
+  }
+
+  close(state);
+
+  var color = gfx::premultiply(color.rgba);
+
+  state.raster.accumulate(|scanline| {
+
+    var row = cast<u32 mut *>(ctx.data + cast<usize>(scanline.y) * ctx.stride);
+
+    for (var span : scanline)
+    {
+      var alpha = lml::clamp(lml::abs(span.alpha) * 255, 0, 255).as<u32>();
+
+      if (alpha <= 0)
+        continue;
+
+      for (var x = cast<usize>(span.x), var end = cast<usize>(span.x) + span.len; x != end; ++x)
+      {
+        *(row + x) = gfx::blend(mode, *(row + x), gfx::premultiply(color, alpha));
+      }
+    }
+  });
+}
+
+pub fn fill_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  fill_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, color, mode);
+}

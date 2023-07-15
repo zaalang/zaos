@@ -42,6 +42,7 @@ vm/region.zaa\
 vm/iovec.zaa\
 vm/result.zaa\
 mutex.zaa\
+semaphore.zaa\
 waitqueue.zaa\
 thread.zaa\
 process.zaa\
@@ -75,8 +76,11 @@ support/rc.zaa\
 support/json.zaa\
 modules/pci/pci.zaa\
 modules/msi/msi.zaa\
+modules/msix/msix.zaa\
 modules/ahci/ahci.zaa\
 modules/ahci/satadev.zaa\
+modules/nvme/nvme.zaa\
+modules/nvme/namespace.zaa\
 modules/rootfs/rootfs.zaa\
 modules/devfs/devfs.zaa\
 modules/ext2fs/ext2fs.zaa\

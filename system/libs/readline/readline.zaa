@@ -98,7 +98,7 @@ pub fn read_line(context mut &ctx, prompt &prompt) -> result
     case canceled[signal]:
       flush(&mut ctx.editor, ctx.stdout, prompt);
 
-      switch(signal)
+      switch (signal)
       {
         case ctrl_c:
           return result::ctrl_c;

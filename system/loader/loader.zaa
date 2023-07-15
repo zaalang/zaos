@@ -50,7 +50,7 @@ fn parse(uintptr base) -> obj
 
   var dynamic = 0;
 
-  for(var i = 0; i < header.e_phnum; ++i)
+  for (var i = 0; i < header.e_phnum; ++i)
   {
     var entry = cast<elf::elf64_phdr*>(base + cast(header.e_phoff) + cast(i*header.e_phentsize));
 
@@ -62,9 +62,9 @@ fn parse(uintptr base) -> obj
 
   obj.base = base;
 
-  for(var entry = cast<elf::elf64_dyn*>(dynamic); entry.d_tag != cast(0); ++entry)
+  for (var entry = cast<elf::elf64_dyn*>(dynamic); entry.d_tag != cast(0); ++entry)
   {
-    switch(entry.d_tag)
+    switch (entry.d_tag)
     {
       case GNU_HASH:
         obj.hashtb = base + cast<uintptr>(entry.d_val);
@@ -100,7 +100,7 @@ fn parse(uintptr base) -> obj
 
 fn reloc(obj &obj, obj &lib)
 {
-  for(var rela = obj.rela, var relasz = obj.relasz; relasz != 0; )
+  for (var rela = obj.rela, var relasz = obj.relasz; relasz != 0; )
   {
     var rel = cast<elf::elf64_rela*>(rela);
 
@@ -113,7 +113,7 @@ fn reloc(obj &obj, obj &lib)
     relasz -= obj.relaent;
   }
 
-  for(var rela = obj.pltrela, var relasz = obj.pltrelsz; relasz != 0; )
+  for (var rela = obj.pltrela, var relasz = obj.pltrelsz; relasz != 0; )
   {
     var rel = cast<elf::elf64_rela*>(rela);
 
@@ -173,7 +173,7 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
 
   var loads = std::vector<os::mmvec, N:16>();
 
-  for(var &header : image.program_headers)
+  for (var &header : image.program_headers)
   {
     switch (header.phdr.p_type)
     {
@@ -214,7 +214,7 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
   if (var result = os::mmap(fd, loads.data, loads.len, &addr, 0); result < 0)
     std::panic("loader: mmap ", result);
 
-  for(var &header : image.program_headers)
+  for (var &header : image.program_headers)
   {
     switch (header.phdr.p_type)
     {
@@ -252,7 +252,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
   var base = 0;
   var vdso = 0;
 
-  for(var entry = auxv; entry.type != cast(0); ++entry)
+  for (var entry = auxv; entry.type != cast(0); ++entry)
   {
     switch (entry.type)
     {
@@ -271,13 +271,13 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
 
   #if (1)
   {
-    for(var i = 0; i < cast<usize>(argc); ++i)
+    for (var i = 0; i < cast<usize>(argc); ++i)
       std::print("loader: arg ", i, ": ", std::string_view((argv + i).beg, (argv + i).end));
 
-    for(var i = 0; i < cast<usize>(envc); ++i)
+    for (var i = 0; i < cast<usize>(envc); ++i)
       std::print("loader: env ", i, ": ", std::string_view((envp + i).beg, (envp + i).end));
 
-    for(var entry = auxv; entry.type != cast(0); ++entry)
+    for (var entry = auxv; entry.type != cast(0); ++entry)
       std::print("loader: ", *entry);
   }
 
@@ -286,7 +286,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
 
   var ctx = ctx();
 
-  for(var entry = auxv; entry.type != cast(0); ++entry)
+  for (var entry = auxv; entry.type != cast(0); ++entry)
   {
     switch (entry.type)
     {
@@ -304,7 +304,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
   var main = load(&mut ctx, std::string_view((argv + 0).beg, (argv + 0).end));
   var start = main.base + cast(cast<elf::elf64_ehdr*>(main.base).e_entry);
 
-  for(var entry = auxv; entry.type != cast(0); ++entry)
+  for (var entry = auxv; entry.type != cast(0); ++entry)
   {
     switch (entry.type)
     {

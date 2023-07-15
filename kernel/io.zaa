@@ -94,7 +94,7 @@ pub fn remove_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -
   var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
 
   var prev = null<handler mut *>;
-  for(var handler = vector.head; handler; handler = handler.next)
+  for (var handler = vector.head; handler; handler = handler.next)
   {
     if (handler.entry == entry && handler.parameter == parameter)
     {
@@ -123,7 +123,7 @@ extern fn io_dispatch(u8 irq) -> void
 
   var guard = std::lock_guard(&mut vector.lock);
 
-  for(var handler = vector.head; handler; handler = handler.next)
+  for (var handler = vector.head; handler; handler = handler.next)
   {
     handler.entry(handler.parameter);
   }
@@ -242,7 +242,7 @@ pub fn wait_until(response mut &rq, u64 timeout) -> bool
 
 pub fn add_notify(Rc<iocb> mut &cb, ioring_pollset mut *pollset) -> void
 {
-  for(;;)
+  for (;;)
   {
     var tmp = std::vector<ioring_pollset mut *>::with_size((*cb).pollsets.len + 1);
 
@@ -299,7 +299,7 @@ pub fn complete(Rc<iocb> mut &cb, var result) -> void
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
 
-    for(var mut &pollset : (*cb).pollsets)
+    for (var mut &pollset : (*cb).pollsets)
       ioring::trigger(pollset);
 
     ioring::workman.trigger();

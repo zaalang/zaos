@@ -283,7 +283,7 @@ fn ==(directory_entry *entry, std::string_view name) -> bool
   var i = 0;
   var j = 0;
 
-  for(; i < entry.name.len && j < name.len; ++j)
+  for (; i < entry.name.len && j < name.len; ++j)
   {
     if (name[j] == cast('.') && entry.name[i] == cast(' '))
     {
@@ -307,7 +307,7 @@ fn set_name(directory_entry mut &entry, std::string_view name) -> void
 {
   memset(entry.name.data, 0x20, entry.name.len);
 
-  for(var i = 0, var j = 0; i < entry.name.len && j < name.len; ++j)
+  for (var i = 0, var j = 0; i < entry.name.len && j < name.len; ++j)
   {
     if (name[j] == cast('.'))
     {
@@ -374,7 +374,7 @@ fn allocate(image mut &this, image::volume &vol, u32 prev, u32 mut &next) -> res
   if (prev != 0 && prev + 1 < vol.total_clusters && read_fat(vol, fat, prev + 1) == 0)
     i = prev + 1;
 
-  for( ; i < vol.total_clusters; ++i)
+  for ( ; i < vol.total_clusters; ++i)
   {
     if (read_fat(vol, fat, i) == 0)
     {
@@ -490,7 +490,7 @@ pub fn read(image &this, image::inode mut &fd, std::span<u8> mut &view) -> resul
   view.len = 0;
   view.data = fd.data;
 
-  for(var cluster = fd.cluster; fd.cluster == cluster; cluster += 1)
+  for (var cluster = fd.cluster; fd.cluster == cluster; cluster += 1)
   {
     var bytes = std::min(fd.bytes_per_cluster - (fd.cursor & (fd.bytes_per_cluster - 1)), fd.dentry.filesize - fd.cursor);
 
@@ -554,7 +554,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u8 attr
 
   var node = dir;
 
-  for(;;)
+  for (;;)
   {
     var prev = node.cluster;
     var entry = cast<directory_entry mut *>(node.data);
@@ -732,7 +732,7 @@ pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> re
   if (fd.filesize < fd.cursor + cast(len))
     return result::no_space_remaining;
 
-  for(var i = 0; i < len; )
+  for (var i = 0; i < len; )
   {
     var bytes = std::min(fd.bytes_per_cluster - (fd.cursor & (fd.bytes_per_cluster - 1)), cast<u32>(len - i));
 

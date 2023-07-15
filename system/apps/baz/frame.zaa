@@ -28,15 +28,15 @@ const close_position = -32;
 
 const minimise_width = 16;
 const minimise_height = 16;
-const minimise_position = -74;
+const minimise_position = -80;
 
 const maximise_width = 16;
 const maximise_height = 16;
-const maximise_position = -52;
+const maximise_position = -56;
 
 const restore_width = 16;
 const restore_height = 16;
-const restore_position = -52;
+const restore_position = -56;
 
 const close = [
   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -222,22 +222,22 @@ fn lerp(u32 dst, u32 src, u8 t) -> u32
 
 fn fill(u8 mut *buffer, i32 x, i32 y, usize stride, i32 width, i32 height, u32 color) -> void
 {
-  for(var j = 0; j < height; ++j)
+  for (var j = 0; j < height; ++j)
   {
     var dst = cast<u32 mut *>(buffer + cast(y + j) * stride) + cast(x);
 
-    for(var i = 0; i < width; ++i)
+    for (var i = 0; i < width; ++i)
       *dst++ = color;
   }
 }
 
 fn over(u8 mut *buffer, i32 x, i32 y, usize stride, i32 width, i32 height, u32 color) -> void
 {
-  for(var j = 0; j < height; ++j)
+  for (var j = 0; j < height; ++j)
   {
     var dst = cast<u32 mut *>(buffer + cast(y + j) * stride) + cast(x);
 
-    for(var i = 0; i < width; ++i)
+    for (var i = 0; i < width; ++i)
     {
       *dst = lerp(*dst, color, cast((*dst >> 24) & 0xff));
 
@@ -248,11 +248,11 @@ fn over(u8 mut *buffer, i32 x, i32 y, usize stride, i32 width, i32 height, u32 c
 
 fn blit(u8 mut *buffer, i32 x, i32 y, usize stride, u8 *data, i32 width, i32 height, u32 color) -> void
 {
-  for(var j = 0; j < height; ++j)
+  for (var j = 0; j < height; ++j)
   {
     var dst = cast<u32 mut *>(buffer + cast(y + j) * stride) + cast(x);
 
-    for(var i = 0; i < width; ++i)
+    for (var i = 0; i < width; ++i)
     {
       *dst = lerp(*dst, color, *(data + cast(j * width + i)));
 
@@ -260,7 +260,6 @@ fn blit(u8 mut *buffer, i32 x, i32 y, usize stride, u8 *data, i32 width, i32 hei
     }
   }
 }
-
 
 pub fn render(i32 width, i32 height, usize stride, u8 mut *buffer, u32 title_color, u32 text_color, options options, u32 hit_color, location hit) -> void
 {
@@ -293,7 +292,7 @@ pub fn render(i32 width, i32 height, usize stride, u8 mut *buffer, u32 title_col
       if (options & options::close == options::close)
       {
         if (hit == location::close)
-          over(buffer, width + interior_right + close_position - 2, frame_button_y - frame_title_y - 4, stride, close_width + 5, close_height + 7, hit_color);
+          over(buffer, width + interior_right + close_position - 4, frame_button_y - frame_title_y - 4, stride, close_width + 8, close_height + 7, hit_color);
 
         blit(buffer, width + interior_right + close_position, frame_button_y - frame_title_y, stride, close.data, close_width, close_height, text_color);
       }
@@ -302,71 +301,71 @@ pub fn render(i32 width, i32 height, usize stride, u8 mut *buffer, u32 title_col
 
       var y = 0;
 
-      for(var endy = frame_top_height; y < endy; ++y)
+      for (var endy = frame_top_height; y < endy; ++y)
       {
         var dst = cast<u32 mut *>(buffer + cast(y) * stride);
 
-        for(var x = 0, var endx = frame_top_left_width; x < endx; ++x)
+        for (var x = 0, var endx = frame_top_left_width; x < endx; ++x)
           *dst++ = tint(frame[cast(y) * frame_width + cast(x)], title_color);
 
-        for(var x = frame_top_left_width, var endx = width - frame_top_right_width; x < endx; ++x)
+        for (var x = frame_top_left_width, var endx = width - frame_top_right_width; x < endx; ++x)
           *dst++ = tint(frame[cast(y) * frame_width + frame_top_left_width], title_color);
 
-        for(var x = width - frame_top_right_width, var endx = width; x < endx; ++x)
+        for (var x = width - frame_top_right_width, var endx = width; x < endx; ++x)
           *dst++ = tint(frame[cast(y) * frame_width + (frame_width - frame_top_right_width) + cast(x - (width - frame_top_right_width))], title_color);
       }
 
-      for(var endy = frame_title_height; y < endy; ++y)
+      for (var endy = frame_title_height; y < endy; ++y)
       {
         var dst = cast<u32 mut *>(buffer + cast(y) * stride);
 
-        for(var x = 0, var endx = frame_top_left_width; x < endx; ++x)
+        for (var x = 0, var endx = frame_top_left_width; x < endx; ++x)
           *dst++ = tint(frame[frame_top_height * frame_width + cast(x)], title_color);
 
-        for(var x = frame_top_left_width, var endx = width - frame_top_right_width; x < endx; ++x)
+        for (var x = frame_top_left_width, var endx = width - frame_top_right_width; x < endx; ++x)
           *dst++ = tint(frame[frame_top_height * frame_width + frame_top_left_width], title_color);
 
-        for(var x = width - frame_top_right_width, var endx = width; x < endx; ++x)
+        for (var x = width - frame_top_right_width, var endx = width; x < endx; ++x)
           *dst++ = tint(frame[frame_top_height * frame_width + (frame_width - frame_top_right_width) + cast(x - (width - frame_top_right_width))], title_color);
       }
 
-      for(var endy = height - frame_lower_height; y < endy; ++y)
+      for (var endy = height - frame_lower_height; y < endy; ++y)
       {
         var dst = cast<u32 mut *>(buffer + cast(y) * stride);
 
-        for(var x = 0, var endx = frame_middle_left_width; x < endx; ++x)
+        for (var x = 0, var endx = frame_middle_left_width; x < endx; ++x)
           *dst++ = frame[(frame_top_height + 1) * frame_width + x];
 
         dst += cast(width - frame_middle_right_width - frame_middle_left_width);
 
-        for(var x = width - frame_middle_right_width, var endx = width; x < endx; ++x)
+        for (var x = width - frame_middle_right_width, var endx = width; x < endx; ++x)
           *dst++ = frame[(frame_top_height + 1) * frame_width + (frame_width - frame_middle_right_width) + cast(x - (width - frame_middle_right_width))];
       }
 
-      for(var endy = height - frame_bottom_height; y < endy; ++y)
+      for (var endy = height - frame_bottom_height; y < endy; ++y)
       {
         var dst = cast<u32 mut *>(buffer + cast(y) * stride);
 
-        for(var x = 0, var endx = frame_lower_left_width; x < endx; ++x)
+        for (var x = 0, var endx = frame_lower_left_width; x < endx; ++x)
           *dst++ = frame[((frame_height - frame_lower_height) + cast(y - (height - frame_lower_height))) * frame_width + cast(x)];
 
         dst += cast(width - frame_lower_right_width - frame_lower_left_width);
 
-        for(var x = width - frame_lower_right_width, var endx = width; x < endx; ++x)
+        for (var x = width - frame_lower_right_width, var endx = width; x < endx; ++x)
           *dst++ = frame[((frame_height - frame_lower_height) + cast(y - (height - frame_lower_height))) * frame_width + (frame_width - frame_lower_right_width) + cast(x - (width - frame_lower_right_width))];
       }
 
-      for(var endy = height; y < endy; ++y)
+      for (var endy = height; y < endy; ++y)
       {
         var dst = cast<u32 mut *>(buffer + cast(y) * stride);
 
-        for(var x = 0, var endx = frame_bottom_left_width; x < endx; ++x)
+        for (var x = 0, var endx = frame_bottom_left_width; x < endx; ++x)
           *dst++ = frame[((frame_height - frame_bottom_height) + cast(y - (height - frame_bottom_height))) * frame_width + cast(x)];
 
-        for(var x = frame_bottom_left_width, var endx = width - frame_bottom_right_width; x < endx; ++x)
+        for (var x = frame_bottom_left_width, var endx = width - frame_bottom_right_width; x < endx; ++x)
           *dst++ = frame[((frame_height - frame_bottom_height) + cast(y - (height - frame_bottom_height))) * frame_width + frame_bottom_left_width];
 
-        for(var x = width - frame_bottom_right_width, var endx = width; x < endx; ++x)
+        for (var x = width - frame_bottom_right_width, var endx = width; x < endx; ++x)
           *dst++ = frame[((frame_height - frame_bottom_height) + cast(y - (height - frame_bottom_height))) * frame_width + (frame_width - frame_bottom_right_width) + cast(x - (width - frame_bottom_right_width))];
       }
 
@@ -393,7 +392,7 @@ pub fn render(i32 width, i32 height, usize stride, u8 mut *buffer, u32 title_col
       if (options & options::close == options::close)
       {
         if (hit == location::close)
-          over(buffer, width + close_position - 2, frame_button_y - 5, stride, close_width + 9, close_height + 9, hit_color);
+          over(buffer, width + close_position - 4, frame_button_y - 5, stride, close_width + 11, close_height + 9, hit_color);
 
         blit(buffer, width + close_position, frame_button_y, stride, close.data, close_width, close_height, text_color);
       }
@@ -420,19 +419,19 @@ pub fn location(i32 x, i32 y, i32 width, i32 height, options options) -> locatio
         {
           if (options & options::minimise == options::minimise)
           {
-            if (width + interior_right + minimise_position < x && x < width + interior_right + minimise_position + minimise_width + 4)
+            if (width + interior_right + minimise_position - 2 < x && x < width + interior_right + minimise_position + minimise_width + 4)
               location = location::minimise;
           }
 
           if (options & options::maximise == options::maximise)
           {
-            if (width + interior_right + maximise_position < x && x < width + interior_right + maximise_position + maximise_width + 4)
+            if (width + interior_right + maximise_position - 2 < x && x < width + interior_right + maximise_position + maximise_width + 4)
               location = location::maximise;
           }
 
           if (options & options::close == options::close)
           {
-            if (width + interior_right + close_position < x && x < width + interior_right + close_position + close_width + 4)
+            if (width + interior_right + close_position - 2 < x && x < width + interior_right + close_position + close_width + 4)
               location = location::close;
           }
         }
@@ -488,19 +487,19 @@ pub fn location(i32 x, i32 y, i32 width, i32 height, options options) -> locatio
         {
           if (options & options::minimise == options::minimise)
           {
-            if (width + minimise_position < x && x < width + minimise_position + minimise_width + 4)
+            if (width + minimise_position - 2 < x && x < width + minimise_position + minimise_width + 4)
               location = location::minimise;
           }
 
           if (options & options::maximise == options::maximise)
           {
-            if (width + maximise_position < x && x < width + maximise_position + maximise_width + 4)
+            if (width + maximise_position - 2 < x && x < width + maximise_position + maximise_width + 4)
               location = location::maximise;
           }
 
           if (options & options::close == options::close)
           {
-            if (width + close_position < x && x < width + close_position + close_width + 4)
+            if (width + close_position - 2 < x && x < width + close_position + close_width + 4)
               location = location::close;
           }
         }

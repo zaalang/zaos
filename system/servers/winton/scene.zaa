@@ -158,7 +158,7 @@ pub fn initialise(scene mut &scene) -> i32
 {
   scene.layers.reserve(scene::layers::count);
 
-  for(var i = 0; i < scene::layers::count; ++i)
+  for (var i = 0; i < scene::layers::count; ++i)
     scene.layers.push_back(node::layer());
 
   return 0;
@@ -249,7 +249,7 @@ fn update(scene mut &scene, node mut &node, float dt) -> void
   switch (node)
   {
     case layer[layer]:
-      for(var mut &node : layer.children)
+      for (var mut &node : layer.children)
         update(&mut scene, &mut *node, dt);
 
     case window[window]:
@@ -259,7 +259,7 @@ fn update(scene mut &scene, node mut &node, float dt) -> void
 
 pub fn update(scene mut &scene, float dt) -> void
 {
-  for(var mut &node : scene.layers)
+  for (var mut &node : scene.layers)
   {
     update(&mut scene, &mut node, dt);
   }
@@ -326,7 +326,7 @@ fn build(scene &scene, node &node, std::vector<node*> mut &view_list) -> void
   switch (node)
   {
     case layer[layer]:
-      for(var &node : layer.children)
+      for (var &node : layer.children)
       {
         build(scene, *node, &mut view_list);
       }
@@ -344,7 +344,7 @@ pub fn build_view_list(scene &scene) -> std::vector<node*>
 {
   var view_list = std::vector<node*>();
 
-  for(var &node : scene.layers)
+  for (var &node : scene.layers)
   {
     build(scene, node, &mut view_list);
   }

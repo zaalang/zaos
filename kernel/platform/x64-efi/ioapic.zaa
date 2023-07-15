@@ -73,7 +73,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   ic.interrupt_base = bootinfo.ioapic_interrupt_base;
   ic.interrupt_count = (ioapic_read(ic.ioapic, 0x1) >> 16) & 0xff + 1;
 
-  for(var irq = 0; irq < ic.interrupt_count; ++irq)
+  for (var irq = 0; irq < ic.interrupt_count; ++irq)
   {
     var vector = ic.interrupt_base + irq;
 
@@ -93,13 +93,13 @@ extern fn io_vector_id(u8 irq) -> u8
 
 extern fn allocate_io_vectors(usize count) -> ( u8, u8 )
 {
-  for(var j = 0; j < 230 - count; ++j)
+  for (var j = 0; j < 230 - count; ++j)
   {
     if (ic.allocated[j >> 6] & (1 << (j & 0x3f)) == 0)
     {
       var i = j;
 
-      for(j += 1; j < i + count; ++j)
+      for (j += 1; j < i + count; ++j)
       {
         if (ic.allocated[j >> 6] & (1 << (j & 0x3f)) != 0)
           break;
@@ -107,7 +107,7 @@ extern fn allocate_io_vectors(usize count) -> ( u8, u8 )
 
       if (j - i == count)
       {
-        for(var k = i; k != j; ++k)
+        for (var k = i; k != j; ++k)
         {
           ic.allocated[k >> 6] |= 1 << (k & 0x3f);
         }

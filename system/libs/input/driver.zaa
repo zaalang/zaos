@@ -213,7 +213,7 @@ pub fn dispatch(driver mut &driver) -> i32
 
   var input = input_event(void);
 
-  for(var i = 0; i < cast(count); ++i)
+  for (var i = 0; i < cast(count); ++i)
   {
     var device = cast<device mut *>(evts[i].user_data);
 

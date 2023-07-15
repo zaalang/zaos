@@ -9,7 +9,7 @@ pub fn gnu_hash(u8 *name) -> u32
 {
   var hash = u32(5381);
 
-  for(; *name != 0; ++name)
+  for (; *name != 0; ++name)
   {
     hash = std::add_with_carry(std::add_with_carry(hash << 5, hash).0, cast(*name)).0;
   }
@@ -44,7 +44,7 @@ pub fn gnu_lookup(uintptr hashtb, uintptr strtab, uintptr symtab, u32 namehash, 
         var lhs = name;
         var rhs = cast<u8*>(strtab + cast(sym.st_name));
 
-        for(; *lhs == *rhs && *rhs != 0; ++lhs, ++rhs)
+        for (; *lhs == *rhs && *rhs != 0; ++lhs, ++rhs)
           ;
 
         if (*lhs == *rhs)

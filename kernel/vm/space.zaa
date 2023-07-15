@@ -40,7 +40,7 @@ pub fn each(address_space &&this, var &&callback)
   if (!this.root)
     return;
 
-  for(var node = this.root.leftmost; node; )
+  for (var node = this.root.leftmost; node; )
   {
     var next = node.next;
 
@@ -267,7 +267,7 @@ fn tree_verify(address_space &this) -> bool
   if (!this.root)
     return true;
 
-  for(var node = this.root.leftmost; node; node = node.next)
+  for (var node = this.root.leftmost; node; node = node.next)
   {
     var x = node;
     var l = x.left;
@@ -299,7 +299,7 @@ pub fn dump(address_space &this) -> void
     return;
   }
 
-  for(var node = this.root.leftmost; node; node = node.next)
+  for (var node = this.root.leftmost; node; node = node.next)
   {
     if (node.backing)
       std::printf("  {:#016x} - {:#016x} {:7} {:10} {}\n", node.range.begin, node.range.end, node.usage, node.protection, node.offset);

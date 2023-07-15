@@ -172,14 +172,14 @@ pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr
 
   var guard = std::lock_shared_guard(&mut this.lock);
 
-  for(var position = 0; position < this.size; )
+  for (var position = 0; position < this.size; )
   {
     var block = fs.volume.fetch_block(fs.dev, this.contents, position);
 
     if (!block.result)
       return vfs::node_ptr();
 
-    for(var entry = cast<ext2_dir_entry*>(block.ptr); entry < cast<ext2_dir_entry*>(block.ptr + block.length); )
+    for (var entry = cast<ext2_dir_entry*>(block.ptr); entry < cast<ext2_dir_entry*>(block.ptr + block.length); )
     {
       if (entry.rec_len == 0)
         break;
@@ -371,7 +371,7 @@ pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &n
   {
     var dentry = lookup(oldpath, oldname);
 
-    for(var parent = newpath; parent != fs.root; )
+    for (var parent = newpath; parent != fs.root; )
     {
       if (!parent)
         return io_error;
@@ -543,14 +543,14 @@ pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize of
 
   var block_mask = cast<u64>(fs.volume.blocksize - 1);
 
-  for(var position = cursor & ~block_mask; position < this.size; )
+  for (var position = cursor & ~block_mask; position < this.size; )
   {
     var block = fs.volume.fetch_block(fs.dev, this.contents, position);
 
     if (!block.result)
       return block.result;
 
-    for(var entry = cast<ext2_dir_entry*>(block.ptr + cast(cursor & block_mask)); entry < cast<ext2_dir_entry*>(block.ptr + block.length); )
+    for (var entry = cast<ext2_dir_entry*>(block.ptr + cast(cursor & block_mask)); entry < cast<ext2_dir_entry*>(block.ptr + block.length); )
     {
       if (entry.rec_len == 0)
         break;
@@ -622,7 +622,7 @@ pub fn readlink(vfs::node_ptr &node, std::string mut &buffer) -> vfs::result
 
   buffer.clear();
 
-  for(var position = 0; position < this.size; )
+  for (var position = 0; position < this.size; )
   {
     var block = fs.volume.fetch_block(fs.dev, this.contents, position);
 
@@ -658,7 +658,7 @@ pub fn read(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   if (position + cast(length) > this.size)
     length = std::align_up(cast<usize>(this.size - position), fs.volume.blocksize);
 
-  for(var remaining = length; remaining != 0; )
+  for (var remaining = length; remaining != 0; )
   {
     var block = fs.volume.lookup_block(fs.dev, this.contents, position);
 
@@ -694,7 +694,7 @@ pub fn write(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
   if (position + cast(length) > std::align_up(this.size, fs.volume.blocksize))
     return invalid_argument;
 
-  for(var remaining = length; remaining != 0; )
+  for (var remaining = length; remaining != 0; )
   {
     var block = fs.volume.lookup_block(fs.dev, this.contents, position);
 

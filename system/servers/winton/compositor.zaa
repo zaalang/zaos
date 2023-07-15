@@ -538,12 +538,12 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
       }
 
       if (surface.state & surface::state::mapped != surface::state::mapped)
-        configure(client, &**surface);
+        configure(client, &*surface);
 
       surface.callback = callback;
 
       if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
-        schedule_redraw(compositor, &**surface);
+        schedule_redraw(compositor, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -614,7 +614,7 @@ fn create_window(client mut *client, u32 surface_id) -> result
       if (surface.node)
         return winton::errc::invalid_surface;
 
-      surface.node = compositor.scene.create_window(&**surface, scene::scene::layers::normal);
+      surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::normal);
 
     else:
       return winton::errc::invalid_surface;
@@ -651,7 +651,7 @@ fn acknowledge(client mut *client, u32 serial) -> result
 {
   var compositor = client.compositor;
 
-  for(var mut &(id, surface) : client.surfaces)
+  for (var mut &(id, surface) : client.surfaces)
   {
     if (surface.configure_serial != serial)
       continue;
@@ -783,7 +783,7 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
 
       if (surface.node)
       {
-        if (&**surface != compositor.pointer.surface)
+        if (&*surface != compositor.pointer.surface)
           return winton::errc::invalid_surface;
 
         // todo: update hotspot
@@ -795,11 +795,11 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
       if (compositor.pointer.surface)
         destroy(compositor.pointer.surface);
 
-      surface.node = compositor.scene.create_cursor(&**surface, compositor.pointer.position, hotspot_x, hotspot_y);
+      surface.node = compositor.scene.create_cursor(&*surface, compositor.pointer.position, hotspot_x, hotspot_y);
 
       surface.state |= surface::state::mapped;
 
-      compositor.pointer.surface = &**surface;
+      compositor.pointer.surface = &*surface;
 
     else:
       return winton::errc::invalid_surface;
@@ -821,7 +821,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
 
       if (surface.node)
       {
-        if (&**surface != compositor.pointer.surface)
+        if (&*surface != compositor.pointer.surface)
           return winton::errc::invalid_surface;
       }
 
@@ -842,7 +842,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
         case resize_bottom_right:
           var &cursor = compositor.theme.cursors[cast(cursor)];
 
-          surface.node = compositor.scene.create_cursor(&**surface, compositor.pointer.position, cursor.hotspot_x, cursor.hotspot_y);
+          surface.node = compositor.scene.create_cursor(&*surface, compositor.pointer.position, cursor.hotspot_x, cursor.hotspot_y);
 
           surface.pending = cursor.sprite.buffer;
           surface.pending_damage = bound::max();
@@ -853,7 +853,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
 
       surface.state |= surface::state::mapped;
 
-      compositor.pointer.surface = &**surface;
+      compositor.pointer.surface = &*surface;
 
     else:
       return winton::errc::invalid_surface;
@@ -875,7 +875,7 @@ fn set_minimised(client mut *client, u32 surface_id) -> result
 
       surface.incomming_state.flags |= winton::state::minimised;
 
-      configure(client, &**surface);
+      configure(client, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -901,7 +901,7 @@ fn set_maximised(client mut *client, u32 surface_id) -> result
       surface.incomming_state.height = compositor.display.height;
       surface.incomming_state.flags |= winton::state::maximised;
 
-      configure(client, &**surface);
+      configure(client, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -927,7 +927,7 @@ fn set_fullscreen(client mut *client, u32 surface_id) -> result
       surface.incomming_state.height = compositor.display.height;
       surface.incomming_state.flags |= winton::state::fullscreen;
 
-      configure(client, &**surface);
+      configure(client, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -954,7 +954,7 @@ fn unset_maximised(client mut *client, u32 surface_id) -> result
       surface.incomming_state.height = surface.restore_state.height;
       surface.incomming_state.flags &= ~winton::state::maximised;
 
-      configure(client, &**surface);
+      configure(client, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -981,7 +981,7 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
       surface.incomming_state.height = surface.restore_state.height;
       surface.incomming_state.flags &= ~winton::state::fullscreen;
 
-      configure(client, &**surface);
+      configure(client, &*surface);
 
     else:
       return winton::errc::invalid_surface;
@@ -1144,7 +1144,7 @@ fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> voi
 
   var view_list = compositor.scene.build_view_list();
 
-  for(var node : view_list)
+  for (var node : view_list)
   {
     var surface = cast<surface mut *>(node.surface);
 
@@ -1154,7 +1154,7 @@ fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> voi
     compositor.damage = expand(compositor.damage, node.transform * surface.damage);
   }
 
-  for(var node : view_list)
+  for (var node : view_list)
   {
     var surface = cast<surface mut *>(node.surface);
 
@@ -1171,9 +1171,9 @@ fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> voi
     surface.damage.clear();
   }
 
-  compositor.damage.clear();
+  display.flip(compositor.damage);
 
-  display.swap();
+  compositor.damage.clear();
 
   timeout.deadline += display.dt;
   compositor.status &= ~compositor::status::scheduled;
@@ -1409,9 +1409,9 @@ fn input_handler(compositor mut *compositor, input::event &event) -> void
 
 pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> result
 {
-  for(var mut &client : compositor.clients)
+  for (var mut &client : compositor.clients)
   {
-    for(var mut &(id, surface) : client.surfaces)
+    for (var mut &(id, surface) : client.surfaces)
     {
       if (surface_id == surface.uuid)
       {

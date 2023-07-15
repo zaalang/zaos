@@ -30,7 +30,7 @@ pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr
 {
   var &this = cast<mouse&>(dev);
 
-  switch(query)
+  switch (query)
   {
     case device_name:
       result = "input/mouse/ps2/0";

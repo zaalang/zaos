@@ -21,11 +21,11 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
   var paths = std::vector<std::string>();
 
-  for(var arg : cmdline.words.drop_n(1))
+  for (var arg : cmdline.words.drop_n(1))
   {
     if (arg.starts_with("-"))
     {
-      for(var ch : arg.chars)
+      for (var ch : arg.chars)
       {
         if (ch == 'l')
           long_mode = true;
@@ -48,7 +48,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
   std::sort(&mut paths);
 
-  for(var &path : paths)
+  for (var &path : paths)
   {
     var dir = open(&mut thread_ring, os::string(path.data, path.len), O_RDONLY | O_DIRECTORY, 0);
 
@@ -71,7 +71,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
     var buffer = [u8(0); 4096];
 
-    for(;;)
+    for (;;)
     {
       var dirres = read(&mut thread_ring, dir, buffer.data, buffer.len);
 
@@ -83,7 +83,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
         break;
       }
 
-      for(var pos = 0; pos < cast(dirres); )
+      for (var pos = 0; pos < cast(dirres); )
       {
         var entry = cast<dirent*>(buffer.data + cast(pos));
 
@@ -98,7 +98,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
     if (long_mode)
     {
-      for(var &file : files)
+      for (var &file : files)
       {
         var fd = open(&mut thread_ring, dir, os::string(file.data, file.len), O_NOFOLLOW, 0);
 
@@ -189,11 +189,11 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
       var x = 0;
       var maxwidth = 0;
 
-      for(var &file : files)
+      for (var &file : files)
         if (var len = file.chars.len; maxwidth < len)
           maxwidth = len;
 
-      for(var &file : files)
+      for (var &file : files)
       {
         terminal.write(std::format("{:*s}", maxwidth, file));
 

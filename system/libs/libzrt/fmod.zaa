@@ -1,0 +1,76 @@
+//
+// fmod
+//
+
+extern "C" fn frexpf(f32 x, int mut *exp) -> f32;
+extern "C" fn frexp(f64 x, int mut *exp) -> f64;
+extern "C" fn ldexpf(f32 x, int exp) -> f32;
+extern "C" fn ldexp(f64 x, int exp) -> f64;
+
+//|///////////////////// fmodf //////////////////////////////////////////////
+extern "C" fn fmodf(f32 x, f32 y) -> f32
+{
+  if (y == 0.0f || !__is_finite(x) || __is_nan(y))
+    return __nan;
+
+  var sign = false;
+
+  if (x < 0.0)
+  {
+    x = -x;
+    sign = true;
+  }
+
+  if (y < 0.0)
+    y = -y;
+
+  var yexp = 0;
+  var yfr = frexpf(y, &yexp);
+
+  while (x >= y)
+  {
+    var xexp = 0;
+    var xfr = frexpf(x, &xexp);
+
+    if (xfr < yfr)
+      xexp -= 1;
+
+    x = x - ldexpf(y, xexp - yexp);
+  }
+
+  return sign ? -x : x;
+}
+
+//|///////////////////// fmod ///////////////////////////////////////////////
+extern "C" fn fmod(f64 x, f64 y) -> f64
+{
+  if (y == 0.0 || !__is_finite(x) || __is_nan(y))
+    return __nan;
+
+  var sign = false;
+
+  if (x < 0.0)
+  {
+    x = -x;
+    sign = true;
+  }
+
+  if (y < 0.0)
+    y = -y;
+
+  var yexp = 0;
+  var yfr = frexp(y, &yexp);
+
+  while (x >= y)
+  {
+    var xexp = 0;
+    var xfr = frexp(x, &xexp);
+
+    if (xfr < yfr)
+      xexp -= 1;
+
+    x = x - ldexp(y, xexp - yexp);
+  }
+
+  return sign ? -x : x;
+}

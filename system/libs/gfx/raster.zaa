@@ -1,0 +1,563 @@
+//
+// gfx raster
+//
+
+import std.stdio;
+import std.math;
+import std.algorithm.sort;
+import lml.fixed;
+
+using area_t = lml::fixed<i32, -8>;
+using coord_t = lml::fixed<i32, -8>;
+
+struct vec2
+{
+  coord_t x;
+  coord_t y;
+
+  vec2(coord_t x, coord_t y)
+    : x(x), y(y)
+  {
+  }
+
+  vec2() = default;
+  vec2(vec2 &) = default;
+  fn =(vec2 mut &, vec2 &) -> vec2 mut & = default;
+  ~vec2() = default;
+}
+
+struct cell
+{
+  i32 y;
+  i32 x;
+  area_t area;
+  area_t cover;
+
+  fn <=>(cell &lhs, cell &rhs) -> int = default;
+
+  cell(i32 x, i32 y, area_t area, area_t cover)
+    : x(x), y(y), area(area), cover(cover)
+  {
+  }
+
+  cell(cell &) = default;
+  fn =(cell mut &, cell &) -> cell mut & = default;
+  ~cell() = default;
+}
+
+pub struct raster_t
+{
+  std::vector<cell> cells;
+
+  vec2 cursor;
+
+  coord_t clip_left;
+  coord_t clip_top;
+  coord_t clip_right;
+  coord_t clip_bottom;
+
+  pub raster_t() = default;
+  pub ~raster_t() = default;
+}
+
+fn fround(float v) -> coord_t
+{
+  return v + (v < 0.0 ? -0.5 : 0.5)*std::pow(2.0, coord_t::exponent);
+}
+
+fn commit(raster_t &&ctx, i32 x, i32 y, var area, var cover) -> void
+{
+  ctx.cells.push_back(x, y, area_t(area), area_t(cover));
+}
+
+fn hline(raster_t &&ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
+{
+  using lml;
+  using std;
+
+  var dy = y1 - y0;
+
+  if (dy == 0)
+    return;
+
+  var (x0, x1) = (x0 < x1) ? (x0, x1) : (x1, x0);
+
+  var i0 = floor(x0).to_rep;
+  var i1 = floor(x1).to_rep;
+
+  if (i0 == i1)
+  {
+    commit(ctx, i0, j0, d * dy * (fract(x0) + fract(x1)) / 2, d * dy);
+
+    return;
+  }
+
+  var dy0 = dy * (1 - fract(x0)) / (x1 - x0);
+  var dydx = coord_t(1) * (y1 - y0) / (x1 - x0);
+  var dy1 = dy - dy0 - cast<i32>(i1 - i0 - 1)*dydx;
+
+  commit(ctx, i0, j0, d * dy0 * (1 + fract(x0)) / 2, d * dy0);
+
+  for (var i = i0 + 1; i < i1; ++i)
+    commit(ctx, i, j0, d * dydx / 2, d * dydx);
+
+  commit(ctx, i1, j0, d * dy1 * fract(x1) / 2, d * dy1);
+}
+
+fn vline(raster_t &&ctx, int d, i32 j0, i32 j1, coord_t x0, coord_t y0, coord_t y1) -> void
+{
+  using lml;
+  using std;
+
+  var i = floor(x0).to_rep;
+
+  var area = fract(x0);
+
+  commit(ctx, i, j0, d * (1 - y0) * area, d * (1 - y0));
+
+  for (var j = j0 + 1; j < j1; ++j)
+  {
+    commit(ctx, i, j, d * area, d);
+  }
+
+  commit(ctx, i, j1, d * y1 * area, d * y1);
+}
+
+fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
+{
+  using lml;
+  using std;
+
+  var (d, top, bot) = (v0.y < v1.y) ? (+1, v0, v1) : (-1, v1, v0);
+
+  var x = top.x;
+  var dx = bot.x - top.x;
+  var dy = bot.y - top.y;
+
+  var j0 = floor(top.y).to_rep;
+  var j1 = floor(bot.y).to_rep;
+
+  if (j0 == j1)
+  {
+    hline(ctx, d, j0, top.x, fract(top.y), bot.x, fract(bot.y));
+
+    return;
+  }
+
+  if (dx == 0)
+  {
+    vline(ctx, d, j0, j1, top.x, fract(top.y), fract(bot.y));
+
+    return;
+  }
+
+  x += (coord_t(j0 + 1) - top.y) * dx / dy;
+
+  var x_step = coord_t(1) * dx / dy;
+  var x_bump = coord_t(1) * dx % dy;
+  var x_error = (coord_t(j0 + 1) - top.y) * dx % dy;
+
+  if (x_bump < 0)
+  {
+    x_step -= coord_t::numeric_traits::smallest;
+    x_bump += dy * coord_t::numeric_traits::smallest;
+  }
+
+  hline(ctx, d, j0, top.x, fract(top.y), x, coord_t(1));
+
+  for (var j = j0 + 1; j < j1; ++j)
+  {
+    var x_next = x + x_step;
+
+    if ((x_error += x_bump) > 0)
+    {
+      x_next += coord_t::numeric_traits::smallest;
+      x_error -= dy * coord_t::numeric_traits::smallest;
+    }
+
+    hline(ctx, d, j, x, coord_t(0), x_next, coord_t(1));
+
+    x = x_next;
+  }
+
+  hline(ctx, d, j1, x, coord_t(0), bot.x, fract(bot.y));
+}
+
+fn clip_flags_x(raster_t &ctx, coord_t x) -> u32
+{
+  return cast<u32>(x > ctx.clip_right) << 0 | cast<u32>(x < ctx.clip_left) << 2;
+}
+
+fn clip_flags_y(raster_t &ctx, coord_t y) -> u32
+{
+  return cast<u32>(y > ctx.clip_bottom) << 1 | cast<u32>(y < ctx.clip_top) << 3;
+}
+
+pub fn clip(raster_t &&ctx, float left, float top, float right, float bottom) -> void
+{
+  ctx.clip_left = fround(left);
+  ctx.clip_top = fround(top);
+  ctx.clip_right = fround(right);
+  ctx.clip_bottom = fround(bottom);
+}
+
+pub fn move_to(raster_t &&ctx, vec2 xy) -> void
+{
+  ctx.cursor = xy;
+}
+
+fn line_y(raster_t &&ctx, vec2 v0, vec2 v1) -> void
+{
+  var x0 = v0.x;
+  var y0 = v0.y;
+  var x1 = v1.x;
+  var y1 = v1.y;
+
+  var srcflags = clip_flags_y(ctx, y0);
+  var dstflags = clip_flags_y(ctx, y1);
+
+  if ((srcflags | dstflags) != 0)
+  {
+    if (srcflags == dstflags)
+      return;
+
+    if (srcflags & 0x8 != 0)
+    {
+      v0.x = x0 + (ctx.clip_top - y0) * (x1 - x0) / (y1 - y0);
+      v0.y = ctx.clip_top;
+    }
+
+    if (srcflags & 0x2 != 0)
+    {
+      v0.x = x0 + (ctx.clip_bottom - y0) * (x1 - x0) / (y1 - y0);
+      v0.y = ctx.clip_bottom;
+    }
+
+    if (dstflags & 0x8 != 0)
+    {
+      v1.x = x0 + (ctx.clip_top - y0) * (x1 - x0) / (y1 - y0);
+      v1.y = ctx.clip_top;
+    }
+
+    if (dstflags & 0x2 != 0)
+    {
+      v1.x = x0 + (ctx.clip_bottom - y0) * (x1 - x0) / (y1 - y0);
+      v1.y = ctx.clip_bottom;
+    }
+  }
+
+  edge(ctx, v0, v1);
+}
+
+pub fn line_to(raster_t &&ctx, vec2 xy) -> void
+{
+  var x0 = ctx.cursor.x;
+  var y0 = ctx.cursor.y;
+  var x1 = xy.x;
+  var y1 = xy.y;
+
+  var srcflags = clip_flags_x(ctx, x0);
+  var dstflags = clip_flags_x(ctx, x1);
+
+  switch (srcflags << 1 | dstflags << 0)
+  {
+    case 0:
+      line_y(ctx, vec2(x0, y0), vec2(x1, y1));
+
+    case 1:
+      var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(x0, y0), vec2(ctx.clip_right, yi));
+      line_y(ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_right, y1));
+
+    case 2:
+      var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
+      line_y(ctx, vec2(ctx.clip_right, yi), vec2(x1, y1));
+
+    case 3:
+      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, y1));
+
+    case 4:
+      var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(x0, y0), vec2(ctx.clip_left, yi));
+      line_y(ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_left, y1));
+
+    case 6:
+      var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
+      var yj = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
+      line_y(ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_left, yj));
+      line_y(ctx, vec2(ctx.clip_left, yj), vec2(ctx.clip_left, y1));
+
+    case 8:
+      var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
+      line_y(ctx, vec2(ctx.clip_left, yi), vec2(x1, y1));
+
+    case 9:
+      var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
+      var yj = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
+      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
+      line_y(ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_right, yj));
+      line_y(ctx, vec2(ctx.clip_right, yj), vec2(ctx.clip_right, y1));
+
+    case 12:
+      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, y1));
+  }
+
+  move_to(ctx, xy);
+}
+
+pub fn move_to(raster_t &&ctx, float x, float y) -> void
+{
+  move_to(ctx, vec2(fround(x), fround(y)));
+}
+
+pub fn line_to(raster_t &&ctx, float x, float y) -> void
+{
+  line_to(ctx, vec2(fround(x), fround(y)));
+}
+
+pub fn quad_to(raster_t &&ctx, float x1, float y1, float x2, float y2) -> void
+{
+  using lml;
+  using std;
+
+  const scale = 3.0;
+
+  var x = ctx.cursor.x.as<float>();
+  var y = ctx.cursor.y.as<float>();
+
+  var dx = x - 2.0 * x1 + x2;
+  var dy = y - 2.0 * y1 + y2;
+
+  var n = round(sqrt(sqrt((dx * dx + dy * dy) * scale)));
+
+  var du = 1.0 / n;
+  var dxdu = (x1 - x) * 2.0 * du + dx * du*du;
+  var dydu = (y1 - y) * 2.0 * du + dy * du*du;
+  var ddx = dx * 2.0 * du*du;
+  var ddy = dy * 2.0 * du*du;
+
+  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  {
+    x += dxdu;
+    y += dydu;
+    dxdu += ddx;
+    dydu += ddy;
+
+    line_to(ctx, x, y);
+  }
+
+  line_to(ctx, x2, y2);
+}
+
+pub fn cubic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float x3, float y3) -> void
+{
+  using lml;
+  using std;
+
+  const scale = 3.0;
+
+  var x = ctx.cursor.x.as<float>();
+  var y = ctx.cursor.y.as<float>();
+
+  var dx1 = x - 2.0 * x1 + x2;
+  var dy1 = y - 2.0 * y1 + y2;
+  var dx2 = -x + 3.0 * (x1 - x2) + x3;
+  var dy2 = -y + 3.0 * (y1 - y2) + y3;
+
+  var n = round(sqrt(sqrt((dx1 * dx1 + dy1 * dy1 + dx2 * dx2 + dy2 * dy2) * scale)));
+
+  var du = 1.0 / n;
+  var dxdu = (x1 - x) * 3.0 * du + dx1 * 3.0 * du*du + dx2 * du*du*du;
+  var dydu = (y1 - y) * 3.0 * du + dy1 * 3.0 * du*du + dy2 * du*du*du;
+  var ddx = dx1 * 6.0 * du*du + dx2 * 6.0 * du*du*du;
+  var ddy = dy1 * 6.0 * du*du + dy2 * 6.0 * du*du*du;
+  var dddx = dx2 * 6.0 * du*du*du;
+  var dddy = dy2 * 6.0 * du*du*du;
+
+  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  {
+    x += dxdu;
+    y += dydu;
+    dxdu += ddx;
+    dydu += ddy;
+    ddx += dddx;
+    ddy += dddy;
+
+    line_to(ctx, x, y);
+  }
+
+  line_to(ctx, x3, y3);
+}
+
+pub fn conic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float w) -> void
+{
+  using lml;
+  using std;
+
+  const scale = 3.0;
+
+  var x = ctx.cursor.x.as<float>();
+  var y = ctx.cursor.y.as<float>();
+
+  var a = w - 1.0;
+  var k = a / (4.0 * (2.0 + a));
+  var kx = k * (x - 2.0 * x1 + x2);
+  var ky = k * (y - 2.0 * y1 + y2);
+
+  var n = round(log2(scale*scale * (kx*kx + ky*ky) + 1.0) * 0.25);
+
+  fn subdivide[ctx](float x0, float y0, float x1, float y1, float x2, float y2, float w, int n) -> void
+  {
+    if (n <= 0)
+    {
+      quad_to(ctx, x1, y1, x2, y2);
+
+      return;
+    }
+
+    var u = 1.0 / (1.0 + w);
+    var wu = w * u;
+
+    var px1 = u * x0 + wu * x1;
+    var py1 = u * y0 + wu * y1;
+    var px2 = 0.5 * u * x0 + wu * x1 + 0.5 * u * x2;
+    var py2 = 0.5 * u * y0 + wu * y1 + 0.5 * u * y2;
+    var px3 = wu * x1 + u * x2;
+    var py3 = wu * y1 + u * y2;
+    var pw = sqrt(0.5 + 0.5 * w);
+
+    subdivide(x0, y0, px1, py1, px2, py2, pw, n - 1);
+    subdivide(px2, py2, px3, py3, x2, y2, pw, n - 1);
+  }
+
+  subdivide(x, y, x1, y1, x2, y2, w, cast<int>(n));
+}
+
+struct span
+{
+  i32 x;
+  area_t alpha;
+  usize len;
+
+  span(i32 x, area_t alpha, usize len)
+    : x(x), alpha(alpha), len(len)
+  {
+  }
+
+  span() = default;
+  span(span &) = default;
+  fn =(span mut &, span &) -> span mut & = default;
+  ~span() = default;
+}
+
+struct scanline
+{
+  i32 y;
+  usize n;
+  cell *cells;
+
+  pub struct span_iterator
+  {
+    i32 x;
+    area_t cover;
+    cell *cell;
+    cell *end;
+
+    span_iterator(cell *cell, cell *end)
+      : cell(cell), end(end)
+    {
+      if (cell != end)
+        x = cell.x;
+    }
+
+    pub span_iterator() = default;
+    pub span_iterator(span_iterator &&) = default;
+    pub fn =(span_iterator mut &lhs, span_iterator &&rhs) -> span_iterator mut & = default;
+    pub ~span_iterator() = default;
+
+    pub fn ++(span_iterator mut &this) -> span_iterator mut &
+    {
+      if (this.x == this.cell.x)
+      {
+        while (this.cell != this.end && this.cell.x == this.x)
+        {
+          this.cover += this.cell.cover;
+
+          ++this.cell;
+        }
+
+        this.x += 1;
+      }
+      else
+      {
+        this.x = this.cell.x;
+      }
+
+      return &this;
+    }
+  }
+
+  pub fn ==(span_iterator &lhs, span_iterator &rhs) -> bool
+  {
+    return lhs.cell == rhs.cell;
+  }
+
+  pub fn begin(this &)
+  {
+    return span_iterator(this.cells, this.cells + this.n);
+  }
+
+  pub fn end(this &)
+  {
+    return span_iterator(this.cells + this.n, this.cells + this.n);
+  }
+
+  pub fn [](this &&, span_iterator &iter) -> span
+  {
+    var area = area_t(0);
+    var cover = iter.cover;
+
+    for (var cell = iter.cell; cell != iter.end && cell.x == iter.x; ++cell)
+    {
+      area += cell.area;
+      cover += cell.cover;
+    }
+
+    if (iter.x == iter.cell.x)
+      return span(iter.x, cover - area, 1);
+    else
+      return span(iter.x, cover, cast<usize>(iter.cell.x - iter.x));
+  }
+
+  scanline(i32 y, cell *cells, usize n)
+    : y(y), n(n), cells(cells)
+  {
+  }
+
+  scanline(scanline &) = default;
+  fn =(scanline mut &, scanline &) -> scanline mut & = default;
+  ~scanline() = default;
+}
+
+pub fn reset(raster_t &&ctx) -> void
+{
+  ctx.cells.clear();
+}
+
+pub fn accumulate<Callback>(raster_t &&ctx, Callback &&render) -> void
+{
+  std::sort(&mut ctx.cells);
+
+  for (var cell = ctx.cells.begin; cell != ctx.cells.end; )
+  {
+    var beg = cell;
+
+    while (cell != ctx.cells.end && cell.y == beg.y)
+      ++cell;
+
+    render(scanline(beg.y, beg, cell - beg));
+  }
+}

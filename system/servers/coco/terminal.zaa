@@ -416,7 +416,7 @@ pub fn read_line(terminal mut &terminal, readline::completer mut *completer = nu
     case canceled[signal]:
       readline::flush(&mut editor, pty.slave, prompt);
 
-      switch(signal)
+      switch (signal)
       {
         case ctrl_c:
           return readline::result::ctrl_c;

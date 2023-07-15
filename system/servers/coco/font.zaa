@@ -42,7 +42,7 @@ fn preload(std::string_literal name)
 
   try
   {
-    for(var line : std::readfile(__srcdir__ + name).lines)
+    for (var line : std::readfile(__srcdir__ + name).lines)
     {
       if ((line.len != 37 && line.len != 69) || line[4] != cast(':'))
         std::panic("invalid glyph record");
@@ -56,7 +56,7 @@ fn preload(std::string_literal name)
 
       font[codepoint].sz = cast<u8>(line.len - 5);
 
-      for(var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
+      for (var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
       {
         if (std::atoi(&line[j], &line[j]+2, &mut font[codepoint].data[i], 16).error)
           std::panic("invalid glyph bytes");
@@ -97,7 +97,7 @@ pub fn load(font mut &font, String &path) -> i32
   {
     var fin = std::file::open(path);
 
-    for(var line : std::buffered_reader(&mut fin).lines)
+    for (var line : std::buffered_reader(&mut fin).lines)
     {
       if ((line.len != 37 && line.len != 69) || line[4] != cast(':'))
         return -cast<i32>(std::errc::format_error);
@@ -111,7 +111,7 @@ pub fn load(font mut &font, String &path) -> i32
 
       glyphs[codepoint].sz = cast<u8>(line.len - 5);
 
-      for(var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
+      for (var i = 0, var j = 5; j + 1 < line.len; i += 1, j += 2)
       {
         if (std::atoi(&line[j], &line[j]+2, &mut glyphs[codepoint].data[i], 16).error)
           return -cast<i32>(std::errc::format_error);
@@ -133,7 +133,7 @@ pub fn width(font &font, String &str) -> int
 {
   var sum = 0;
 
-  for(var ch = str.chars.begin; ch != str.end; )
+  for (var ch = str.chars.begin; ch != str.end; )
   {
     var codepoint = *ch++;
 

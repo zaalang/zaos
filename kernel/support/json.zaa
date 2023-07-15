@@ -8,7 +8,7 @@ pub fn json_escape_inplace(std::string mut &str, u8 *beg, u8 *end) -> void
 {
   var idx = beg - str.data;
 
-  for(var i = 0, var cnt = end - beg; i < cnt; ++i)
+  for (var i = 0, var cnt = end - beg; i < cnt; ++i)
   {
     switch (str[idx])
     {

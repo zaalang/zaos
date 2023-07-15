@@ -109,7 +109,7 @@ struct context
 
 fn resolve_type(context &&ctx, std::string_view name) -> type *
 {
-  for(var &type : ctx.typetable)
+  for (var &type : ctx.typetable)
   {
     switch (*type)
     {
@@ -165,7 +165,7 @@ fn sizeof_tag_type(tag_type *tagtype) -> usize
   var size = 0;
   var align = 1;
 
-  for(var field : tagtype.fields)
+  for (var field : tagtype.fields)
   {
     var alignment = alignof_type(field);
 
@@ -207,7 +207,7 @@ fn alignof_tag_type(tag_type *tagtype) -> usize
 {
   var align = 1;
 
-  for(var field : tagtype.fields)
+  for (var field : tagtype.fields)
   {
     align = std::max(align, alignof_type(field));
   }
@@ -274,7 +274,7 @@ fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
 
   size += std::align_up(sizeof<zidl::zidl_header_t>, 8);
 
-  for(var &variable : variables)
+  for (var &variable : variables)
   {
     switch (variable)
     {
@@ -299,7 +299,7 @@ fn max_request_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
 {
   var size = 0;
 
-  for(var &method : methods)
+  for (var &method : methods)
   {
     switch (method)
     {
@@ -319,7 +319,7 @@ fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
 {
   var size = 0;
 
-  for(var &method : methods)
+  for (var &method : methods)
   {
     switch (method)
     {
@@ -337,7 +337,7 @@ fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
 
 fn codegen_fields(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
 {
-  for(var &variable : variables)
+  for (var &variable : variables)
   {
     switch (variable)
     {
@@ -358,7 +358,7 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
 {
   std::fprintf(ctx.fout, "      pub this(");
 
-  for(var &variable : variables)
+  for (var &variable : variables)
   {
     if (&variable != &variables.front)
       std::fprintf(ctx.fout, ", ");
@@ -398,7 +398,7 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
   {
     std::fprintf(ctx.fout, "        : ");
 
-    for(var &variable : variables)
+    for (var &variable : variables)
     {
       if (&variable != &variables.front)
         std::fprintf(ctx.fout, ", ");
@@ -447,7 +447,7 @@ fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
   std::fprintf(ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
   std::fprintf(ctx.fout, "      {{\n");
 
-  for(var &variable : variables)
+  for (var &variable : variables)
   {
     switch (variable)
     {
@@ -478,7 +478,7 @@ fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
   std::fprintf(ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
   std::fprintf(ctx.fout, "      {{\n");
 
-  for(var &variable : variables)
+  for (var &variable : variables)
   {
     switch (variable)
     {
@@ -548,7 +548,7 @@ fn codegen_dispatch(context &&ctx, zidl::protocol &protocol) throws -> void
   std::fprintf(ctx.fout, "    pub union dispatch_t\n");
   std::fprintf(ctx.fout, "    {{\n");
 
-  for(var &method : protocol.methods)
+  for (var &method : protocol.methods)
   {
     switch (method)
     {
@@ -573,7 +573,7 @@ fn codegen_dispatch(context &&ctx, zidl::protocol &protocol) throws -> void
 
 fn codegen_messages(context &&ctx, zidl::protocol &protocol) throws -> void
 {
-  for(var &method : protocol.methods)
+  for (var &method : protocol.methods)
   {
     switch (method)
     {
@@ -613,7 +613,7 @@ fn codegen_bits(context &&ctx, zidl::bits &bits) throws -> void
   std::fprintf(ctx.fout, "  pub enum {} : u32\n", bits.name);
   std::fprintf(ctx.fout, "  {{\n");
 
-  for(var &constant : bits.constants)
+  for (var &constant : bits.constants)
   {
     switch (constant)
     {
@@ -643,7 +643,7 @@ fn codegen_enumerator(context &&ctx, zidl::enumerator &enumerator) throws -> voi
   std::fprintf(ctx.fout, "  pub enum {} : i32\n", enumerator.name);
   std::fprintf(ctx.fout, "  {{\n");
 
-  for(var &constant : enumerator.constants)
+  for (var &constant : enumerator.constants)
   {
     switch (constant)
     {
@@ -666,7 +666,7 @@ fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
   std::fprintf(ctx.fout, "  pub struct {}\n", structure.name);
   std::fprintf(ctx.fout, "  {{\n");
 
-  for(var &field : structure.fields)
+  for (var &field : structure.fields)
   {
     switch (field)
     {
@@ -689,7 +689,7 @@ fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
 
   var fields = std::vector<type*>();
 
-  for(var &field : structure.fields)
+  for (var &field : structure.fields)
   {
     switch (field)
     {
@@ -720,7 +720,7 @@ fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throw
   std::fprintf(ctx.fout, "pub struct {}\n", ast.name.gsub(".", "_"));
   std::fprintf(ctx.fout, "{{\n");
 
-  for(var &decl : ast.decls)
+  for (var &decl : ast.decls)
   {
     switch (decl)
     {

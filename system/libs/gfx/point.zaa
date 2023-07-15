@@ -1,0 +1,61 @@
+//
+// gfx point
+//
+
+pub import lml.point : Point;
+
+pub struct point
+{
+  pub float x;
+  pub float y;
+
+  pub using point_t = Point<float, 2>;
+
+  pub point(float x, float y)
+    : x(x), y(y)
+  {
+  }
+
+  pub fn get<i>(this &) -> float
+  {
+    return this.#i;
+  }
+
+  pub fn ==(point &lhs, point &rhs) -> bool = default;
+  pub fn <=>(point &lhs, point &rhs) -> int = default;
+
+  pub point() = default;
+  pub point(point &) = default;
+  pub fn =(point mut &, point &) -> point mut & = default;
+  pub ~point() = default;
+}
+
+pub fn *(float lhs, point &rhs) -> point
+{
+  return point(lhs * rhs.x, lhs * rhs.y);
+}
+
+pub fn *(point &lhs, float rhs) -> point
+{
+  return point(lhs.x * rhs, lhs.y * rhs);
+}
+
+pub fn +(point &lhs, point &rhs) -> point
+{
+  return point(lhs.x + rhs.x, lhs.y + rhs.y);
+}
+
+#[lifetime(depend(this))]
+pub fn translate!(point mut &this, float dx, float dy) -> point mut &
+{
+  this.x += dx;
+  this.y += dy;
+
+  return &this;
+}
+
+#[nodiscard]
+pub fn translate(point &this, float dx, float dy) -> point
+{
+  return point(this).translate!(dx, dy);
+}

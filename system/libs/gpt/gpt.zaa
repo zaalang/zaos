@@ -82,11 +82,11 @@ pub fn crc32(void *data, usize len) -> u32
 {
   var crc = ~0;
 
-  for(var ch = cast<u8*>(data), var end = ch + len; ch != end; ++ch)
+  for (var ch = cast<u8*>(data), var end = ch + len; ch != end; ++ch)
   {
     crc ^= cast<u32>(*ch);
 
-    for(var i = 0; i < 8; ++i)
+    for (var i = 0; i < 8; ++i)
       crc = (crc >> 1) ^ (0xedb88320 & -(crc & 1));
   }
 

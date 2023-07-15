@@ -1,1 +1,2 @@
 cursors: https://invent.kde.org/plasma/breeze
+font: https://fonts.google.com/noto

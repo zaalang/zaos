@@ -1771,16 +1771,16 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
     var fb = sys::boot_frame_buffer();
     var len = std::format_to(&mut std::mutable_span(buffer.data, buffer.len), format, args...);
 
-    for(var k = 0; k < len; ++k)
+    for (var k = 0; k < len; ++k)
     {
       if (32 <= buffer[k] && buffer[k] < 128)
       {
-        for(var j = 0; j < 16; ++j)
+        for (var j = 0; j < 16; ++j)
         {
           var src = font[cast<usize>(buffer[k] - 32) * 16 + j];
           var dst = cast<u32 mut *>(platform::PHYSICAL_BASE + fb.address + (cy + j) * fb.pitch + cx*4);
 
-          for(var i = 7; i >= 0; --i)
+          for (var i = 7; i >= 0; --i)
           {
             *dst++ = (src & (1 << i) != 0) ? 0xffffffff : 0x00000000;
           }
@@ -1800,7 +1800,7 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
         cy += 16;
       }
 
-      if (cy >= fb.height)
+      if (cy + 16 >= fb.height)
       {
         cy = 0;
       }

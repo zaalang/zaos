@@ -45,7 +45,7 @@ pub fn initialise(BootInfo mut &bootinfo)
   std::memcpy(cast<void mut *>(code_base + 0x10), &bootinfo.gdt, sizeof(bootinfo.gdt));
   std::memcpy(cast<void mut *>(code_base + 0x18), &bootinfo.pml4, sizeof(bootinfo.pml4));
 
-  for(var cpu = 1; cpu < bootinfo.cpu_count; ++cpu)
+  for (var cpu = 1; cpu < bootinfo.cpu_count; ++cpu)
   {
     var apic = cast<uintptr>(bootinfo.apic_address);
     var apic_id = cast<u32>(bootinfo.apic_ids[cpu]);
@@ -82,7 +82,7 @@ pub fn initialise(BootInfo mut &bootinfo)
     cpu::spin(bootinfo.early_tsc_frequency / 100 + 1);
 
     // send STARTUP IPI (twice)
-    for(var j = 0; j < 2; j++)
+    for (var j = 0; j < 2; j++)
     {
       // clear apic errors
       apic_write(apic, APIC_ESR, 0);

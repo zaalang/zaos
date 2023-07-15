@@ -1,0 +1,89 @@
+//
+// nvme namespace
+//
+
+import std.stdio;
+import std.byteconv;
+import vm;
+import blk;
+import nvme;
+import platform;
+
+pub struct namespace : pub blk::blkdev
+{
+  pub namespace(nvme::controller mut &controller, u32 nsid)
+    : super(blk::device_operations()),
+      controller(&controller),
+      nsid(nsid)
+  {
+    var buffer = vm::allocate_physical_pages(4096);
+
+    if (controller.identify(nsid, buffer.addr))
+    {
+      var ident = cast<u8[4096]*>(buffer.addr.ptr);
+
+      var flbas = ident[26];
+      var lbaf = std::load_le_u32(&ident[128 + cast<usize>((flbas >> 0) & 0xf)]);
+
+      this.block_size = 1 << ((lbaf >> 16) & 0xff);
+      this.block_shift = std::ctz(this.block_size);
+      this.block_count = std::load_le_u64(&ident[0]);
+    }
+
+    vm::release_physical_pages(buffer);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}/{}", this.controller.name, this.nsid);
+  }
+
+  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+  {
+    var &this = cast<namespace&>(dev);
+
+    switch (query)
+    {
+      case device_path:
+        result = std::format("disk/{}", this.name);
+
+      case device_part:
+        result = "0";
+
+      case device_uuid:
+        result = "";
+    }
+
+    return ok;
+  }
+
+  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<namespace mut &>(dev);
+
+    if (var result = this.controller.enqueue(this.nsid, request); !result)
+      return cast<blk::result>(result);
+
+    return ok;
+  }
+
+  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  {
+    var mut &this = cast<namespace mut &>(dev);
+
+    if (var result = this.controller.cancel(this.nsid, request); !result)
+      return cast<blk::result>(result);
+
+    return ok;
+  }
+
+  pub ~namespace() = default;
+
+  u32 nsid;
+  nvme::controller mut &controller;
+}

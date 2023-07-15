@@ -3,23 +3,35 @@
 //
 
 import std.stdio;
+import std.string : String;
 import app.loop;
 import winton;
+import opentype;
+import gfx.blit;
+import gfx.text;
 
 struct test : pub winton::window
 {
+  std::vector<u8> font_data;
+  opentype::face font_face;
+
   pub fn create(winton::display &&display, winton::window::flags flags) throws -> test
   {
     return test(winton::window::create(display, flags, winton::iwindow()));
   }
 
+  pub fn set_font(this mut &, String &path) throws -> void
+  {
+    this.font_data = std::readfile_to_vector(path);
+    this.font_face = opentype::face::parse(this.font_data);
+
+    if (this.font_face.error)
+      std::print("Error loading font - ", this.font_face.error);
+  }
+
   pub fn button_event(this mut &, winton::input &input) override -> void
   {
     std::print(input);
-
-    import os.zaos.sched;
-    if (input.button_state[1] == 1)
-      os::process_kill(11);
   }
 
   pub fn key_event(this mut &, winton::input &input) override -> void
@@ -34,14 +46,22 @@ struct test : pub winton::window
   {
     var rect = this.interior;
 
-    for(var y = rect.y; y < rect.y + rect.height; ++y)
-    {
-      var row = cast<u32 mut *>(buffer.data + cast<usize>(buffer.offset) + cast(y) * cast<usize>(buffer.stride));
+    var painter = gfx::create_context(buffer.width, buffer.height, cast(buffer.stride), buffer.data);
 
-      for(var x = rect.x; x < rect.x + rect.width; ++x)
-      {
-        *(row + cast(x)) = 0xffffffff;
-      }
+    painter.fill_rect(rect.x, rect.y, rect.width, rect.height, gfx::color(1.0, 1.0, 1.0));
+
+    var x = 10.0;
+    var y = 60.0;
+    var h = 0.032;
+
+    for(var i = 1; i < 16; ++i)
+    {
+      var s = std::floor(1000.0 * h) / 1000.0;
+
+      painter.draw_text(gfx::transform::translation(x, y) * gfx::transform::scale(s, s), this.font_face, "The quick brown fox jumps over the lazy dog", gfx::color(0.0, 0.0, 0.0));
+
+      y += 1125.0 * h;
+      h *= 0.96*0.96;
     }
   }
 
@@ -71,7 +91,9 @@ fn main() -> int
 
     var window = test::create(display, winton::window::flags::close_button | winton::window::flags::minimise_button | winton::window::flags::maximise_button);
 
-    window.schedule_resize(300, 300);
+    window.set_font("/zaos/data/NotoSans-Regular.ttf");
+
+    window.schedule_resize(800, 400);
 
     loop.run();
   }

@@ -46,7 +46,7 @@ pub struct default_completer : pub completer
     if (var j = matcher.find_last_of(" \t\r\n"); j != matcher.end)
       matcher = buffer[j + 1 .. matcher.end];
 
-    for(var &word : this.words)
+    for (var &word : this.words)
     {
       if (word.starts_with(matcher))
       {

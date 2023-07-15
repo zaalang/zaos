@@ -1,0 +1,73 @@
+//
+// newton
+//
+
+import std.stdio;
+import std.function;
+import app.loop;
+import zidl.zaos_sys;
+import shell;
+import desktop;
+
+struct service
+{
+  app::loop loop;
+
+  std::delegate<void fn(zidl::string_view, zidl::channel)> on_connect;
+
+  service() = default;
+  ~service() = default;
+}
+
+fn initialise(service mut &service) -> i32
+{
+  if (var result = app::initialise(&mut service.loop); result < 0)
+    std::panic("winton: unable to init loop - ", cast<std::errc>(-result));
+
+  service.loop.connect_handler = &cast<void fn(app::loop mut &, zidl::string_view, zidl::channel)>(connect_handler);
+
+  return 0;
+}
+
+fn connect_handler(app::loop mut &loop, zidl::string_view uri, zidl::channel channel) -> void
+{
+  var service = cast<service mut *>(cast<uintptr>(&loop) - offsetof(service::loop));
+
+  service.on_connect(uri, &move channel);
+}
+
+fn run(service mut &service) -> void
+{
+  service.loop.run();
+}
+
+fn main() -> int
+{
+  var service = service();
+
+  if (var result = initialise(&mut service); result < 0)
+    std::panic("newton: unable to initialise - ", cast<std::errc>(-result));
+
+  try
+  {
+    var shell = shell::create();
+
+    service.on_connect = |uri, channel| {
+      shell.accept(uri, &move channel);
+    };
+
+    shell.connect();
+
+    var desktop = desktop::create(&mut shell);
+
+    desktop.connect();
+
+    service.run();
+  }
+  catch(std::error e)
+  {
+    std::print("error - ", e);
+  }
+
+  return 0;
+}

@@ -1,0 +1,196 @@
+//
+// opentype outline
+//
+
+import std.stdlib;
+import opentype.parser : glyph, point, points_stream;
+
+pub union vertex
+{
+  struct move_to_data
+  {
+    i16 x;
+    i16 y;
+
+    move_to_data(i16 x, i16 y)
+      : x(x), y(y)
+    {
+    }
+
+    ~move_to_data() = default;
+  }
+
+  struct line_to_data
+  {
+    i16 x;
+    i16 y;
+
+    line_to_data(i16 x, i16 y)
+      : x(x), y(y)
+    {
+    }
+
+    ~line_to_data() = default;
+  }
+
+  struct quad_to_data
+  {
+    i16 x1;
+    i16 y1;
+    i16 x;
+    i16 y;
+
+    quad_to_data(i16 x1, i16 y1, i16 x, i16 y)
+      : x1(x1), y1(y1), x(x), y(y)
+    {
+    }
+
+    ~quad_to_data() = default;
+  }
+
+  pub move_to(move_to_data),
+  pub line_to(line_to_data),
+  pub quad_to(quad_to_data),
+
+  vertex(vertex&) = default;
+  pub ~vertex() = default;
+}
+
+pub struct outline_view
+{
+  points_stream stream;
+
+  pub outline_iterator first;
+  pub outline_sentinal second;
+
+  pub outline_view(glyph &glyph)
+    : stream(glyph),
+      first(&mut stream)
+  {
+  }
+
+  pub ~outline_view() = default;
+
+  pub struct outline_iterator
+  {
+    enum state
+    {
+      move_to = 0,
+      draw_to,
+    }
+
+    state state;
+    pub point init;
+    pub point prev;
+    pub point point;
+
+    outline_iterator(points_stream mut &stream)
+      : stream(&stream)
+    {
+      stream.read(&mut point);
+    }
+
+    pub outline_iterator() = default;
+    pub outline_iterator(outline_iterator &&) = default;
+    pub fn =(outline_iterator mut &lhs, outline_iterator &&rhs) -> outline_iterator mut & = default;
+    pub ~outline_iterator() = default;
+
+    pub fn ++(outline_iterator mut &this) -> outline_iterator mut &
+    {
+      switch (this.state)
+      {
+        case move_to:
+          this.init = this.point;
+          this.state = state::draw_to;
+
+        case draw_to:
+          if (this.prev.fin)
+          {
+            this.point = this.prev;
+            this.point.fin = false;
+            this.state = state::move_to;
+          }
+      }
+
+      this.prev = this.point;
+
+      if (!this.prev.fin)
+      {
+        this.stream.read(&mut this.point);
+
+        if (this.prev.on && !this.point.on)
+        {
+          this.prev = this.point;
+
+          if (!this.prev.fin)
+          {
+            this.stream.read(&mut this.point);
+          }
+          else
+          {
+            this.point = this.init;
+          }
+        }
+      }
+      else
+      {
+        this.point = this.init;
+      }
+
+      return &this;
+    }
+
+    pub fn ==(outline_iterator &this, outline_sentinal &) -> bool
+    {
+      return this.stream.eof;
+    }
+
+    points_stream mut &stream;
+  }
+
+  pub struct outline_sentinal
+  {
+    pub outline_sentinal() = default;
+    pub outline_sentinal(outline_sentinal &&) = default;
+    pub fn =(outline_sentinal mut &lhs, outline_sentinal &&rhs) -> outline_sentinal mut & = default;
+    pub ~outline_sentinal() = default;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn begin(this &&)
+  {
+    return this.first;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn end(this &&)
+  {
+    return this.second;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn [](this &&, outline_iterator &iter) -> vertex
+  {
+    switch (iter.state)
+    {
+      case move_to:
+        return vertex::move_to(iter.point.x, iter.point.y);
+
+      case draw_to:
+        if (!iter.prev.on && !iter.point.on)
+          return vertex::quad_to(iter.prev.x, iter.prev.y, (iter.prev.x + iter.point.x)/2, (iter.prev.y + iter.point.y)/2);
+        else if (!iter.prev.on)
+          return vertex::quad_to(iter.prev.x, iter.prev.y, iter.point.x, iter.point.y);
+        else
+          return vertex::line_to(iter.point.x, iter.point.y);
+    }
+
+    std::panic();
+  }
+}
+
+#[lifetime(depend(glyph))]
+pub fn outline(glyph &glyph)
+{
+  return outline_view(glyph);
+}

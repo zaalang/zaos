@@ -1,0 +1,2668 @@
+//
+// opentype parser
+//
+
+import std.stdlib;
+import std.span : Span;
+import std.optional;
+
+pub enum errc : u32
+{
+  internal_error = 1,
+  unknown_magic,
+  missing_head_table,
+  missing_hhea_table,
+  missing_maxp_table,
+  invalid_loca_format,
+  insufficient_data,
+
+  pub fn bool(errc code) -> bool
+  {
+    return cast<u32>(code) != 0;
+  }
+}
+
+pub enum magic : u32
+{
+  truetype,
+  opentype,
+}
+
+pub enum tag : u32
+{
+  GDEF = 0x47444546,
+  GPOS = 0x47504f53,
+  GSUB = 0x47535542,
+  OS_2 = 0x4f532f32,
+  cmap = 0x636d6170,
+  gasp = 0x67617370,
+  glyf = 0x676c7966,
+  head = 0x68656164,
+  hhea = 0x68686561,
+  hmtx = 0x686d7478,
+  loca = 0x6c6f6361,
+  maxp = 0x6d617870,
+  name = 0x6e616d65,
+  post = 0x706f7374,
+  prep = 0x70726570,
+  kern = 0x6b65726e,
+}
+
+pub struct f2dot14 : pub i16
+{
+  pub f2dot14(i16 v = 0)
+    : super(v)
+  {
+  }
+
+  pub fn value(this&) -> f64
+  {
+    return cast<f64>(this.super) / 16384.0;
+  }
+
+  pub f2dot14(f2dot14 &&) = default;
+  pub fn =(f2dot14 mut &, f2dot14 &&) -> f2dot14 mut & = default;
+  pub ~f2dot14() = default;
+}
+
+pub struct fixed : pub u32
+{
+  pub fixed(u32 v = 0)
+    : super(v)
+  {
+  }
+
+  pub fn value(this&) -> f64
+  {
+    return cast<f64>(this.super) / 65536.0;
+  }
+
+  pub fixed(fixed &&) = default;
+  pub fn =(fixed mut &, fixed &&) -> fixed mut & = default;
+  pub ~fixed() = default;
+}
+
+pub struct rect
+{
+  pub i16 x_min;
+  pub i16 y_min;
+  pub i16 x_max;
+  pub i16 y_max;
+
+  pub fn width(this&) -> i16
+  {
+    return this.x_max - this.x_min;
+  }
+
+  pub fn height(this&) -> i16
+  {
+    return this.y_max - this.y_min;
+  }
+
+  pub rect(i16 x_min = 0, i16 y_min = 0, i16 x_max = 0, i16 y_max = 0)
+    : x_min(x_min), y_min(y_min), x_max(x_max), y_max(y_max)
+  {
+  }
+
+  pub rect(rect &&) = default;
+  pub fn =(rect mut &, rect &&) -> rect mut & = default;
+  pub ~rect() = default;
+}
+
+pub struct glyphid : u16
+{
+  pub glyphid(u16 id = 0)
+    : super(id)
+  {
+  }
+
+  pub fn ==(glyphid &lhs, glyphid &rhs) -> bool = default;
+  pub fn <=>(glyphid &lhs, glyphid &rhs) -> int = default;
+
+  pub glyphid(glyphid &&) = default;
+  pub fn =(glyphid mut &, glyphid &&) -> glyphid mut & = default;
+  pub ~glyphid() = default;
+}
+
+#[packed]
+struct table_record
+{
+  tag tag;
+  u32 checksum;
+  u32 offset;
+  u32 length;
+
+  table_record() = default;
+  table_record(table_record&&) = default;
+  fn =(table_record mut &, table_record &) -> table_record mut & = default;
+  ~table_record() = default;
+}
+
+pub enum platform : u16
+{
+  unicode = 0,
+  macintosh = 1,
+  windows = 3,
+}
+
+#[packed]
+struct name_record
+{
+  platform platform_id;
+  u16 encoding_id;
+  u16 language_id;
+  u16 name_id;
+  u16 length;
+  u16 offset;
+
+  name_record() = default;
+  name_record(name_record&&) = default;
+  fn =(name_record mut &, name_record &) -> name_record mut & = default;
+  ~name_record() = default;
+}
+
+#[packed]
+struct encoding_record
+{
+  platform platform_id;
+  u16 encoding_id;
+  u32 offset;
+
+  encoding_record() = default;
+  encoding_record(encoding_record&&) = default;
+  fn =(encoding_record mut &, encoding_record &) -> encoding_record mut & = default;
+  ~encoding_record() = default;
+}
+
+pub struct head
+{
+  pub u16 units_per_em;
+  pub rect bounding_box;
+  pub u16 lowest_recommended_ppem;
+  pub i16 index_to_location_format;
+
+  pub head() = default;
+  pub head(head &&) = default;
+  pub fn =(head mut &, head &&) -> head mut & = default;
+  pub ~head() = default;
+}
+
+pub struct hhea
+{
+  pub i16 ascender;
+  pub i16 descender;
+  pub i16 linegap;
+  pub u16 number_of_metrics;
+
+  pub hhea() = default;
+  pub hhea(hhea &&) = default;
+  pub fn =(hhea mut &, hhea &&) -> hhea mut & = default;
+  pub ~hhea() = default;
+}
+
+pub struct maxp
+{
+  pub u16 number_of_glyphs;
+
+  pub maxp() = default;
+  pub maxp(maxp &&) = default;
+  pub fn =(maxp mut &, maxp &&) -> maxp mut & = default;
+  pub ~maxp() = default;
+}
+
+pub struct name
+{
+  pub enum id
+  {
+    copyright = 0,
+    family = 1,
+    subfamily = 2,
+    uniqueid = 3,
+    fullname = 4,
+    version_string = 5,
+    postscript_name = 6,
+    trademark = 7,
+    manufacturer = 8,
+    designer = 9,
+    description = 10,
+    vendor_url = 11,
+    designer_url = 12,
+    license = 13,
+    license_url = 14,
+    typographic_family = 16,
+    typographic_subfamily = 17,
+  }
+
+  std::span<u8> records;
+  std::span<u8> storage;
+
+  pub name() = default;
+  pub name(name &&) = default;
+  pub fn =(name mut &, name &&) -> name mut & = default;
+  pub ~name() = default;
+}
+
+pub enum width
+{
+  ultra_condensed = 1,
+  extra_condensed = 2,
+  condensed = 3,
+  semi_condensed = 4,
+  normal = 5,
+  semi_expanded = 6,
+  expanded = 7,
+  extra_expanded = 8,
+  ultra_expanded = 9,
+}
+
+pub enum weight
+{
+  thin = 100,
+  extra_light = 200,
+  light = 300,
+  normal = 400,
+  medium = 500,
+  semi_bold = 600,
+  bold = 700,
+  extra_bold = 800,
+  black = 900,
+}
+
+pub enum style
+{
+  normal,
+  italic,
+  oblique,
+}
+
+pub struct os_2
+{
+  u16 us_weight_class;
+  u16 us_width_class;
+  u16 fs_selection;
+  i16 s_typo_ascender;
+  i16 s_typo_descender;
+  i16 s_typo_linegap;
+
+  pub os_2() = default;
+  pub os_2(os_2 &&) = default;
+  pub fn =(os_2 mut &, os_2 &&) -> os_2 mut & = default;
+  pub ~os_2() = default;
+}
+
+#[packed]
+struct long_hor_metric
+{
+  u16 advance_width;
+  i16 leftside_bearing;
+
+  long_hor_metric() = default;
+  long_hor_metric(long_hor_metric&&) = default;
+  fn =(long_hor_metric mut &, long_hor_metric &) -> long_hor_metric mut & = default;
+  ~long_hor_metric() = default;
+}
+
+pub struct hmtx
+{
+  std::span<u8> metrics;
+  std::span<u8> bearings;
+
+  pub hmtx() = default;
+  pub hmtx(hmtx &&) = default;
+  pub fn =(hmtx mut &, hmtx &&) -> hmtx mut & = default;
+  pub ~hmtx() = default;
+}
+
+pub struct cmap
+{
+  pub enum format
+  {
+    byte_encoding = 0,
+    highbyte_mapping_through_table =  2,
+    segment_mapping_to_delta_values = 4,
+    trimmed_table_mapping = 6,
+    mixed_coverage = 8,
+    trimmed_array = 10,
+    segmented_coverage = 12,
+    many_to_one_range_mappings = 13,
+    unicode_variation_sequences = 14,
+  }
+
+  std::span<u8> data;
+  std::span<u8> records;
+
+  pub cmap() = default;
+  pub cmap(cmap &&) = default;
+  pub fn =(cmap mut &, cmap &&) -> cmap mut & = default;
+  pub ~cmap() = default;
+}
+
+pub struct glyph
+{
+  pub enum type
+  {
+    simple,
+    composite,
+  }
+
+  pub rect bounding_box;
+  pub i16 number_of_contours;
+
+  pub std::span<u8> data;
+
+  pub fn type(this&) -> type
+  {
+    if (this.number_of_contours < 0)
+      return type::composite;
+
+    return type::simple;
+  }
+
+  pub glyph(rect &bound)
+    : bounding_box(bound)
+  {
+  }
+
+  pub glyph() = default;
+  pub glyph(glyph &&) = default;
+  pub fn =(glyph mut &, glyph &&) -> glyph mut & = default;
+  pub ~glyph() = default;
+}
+
+pub struct loca
+{
+  pub enum format
+  {
+    short,
+    long,
+  }
+
+  format format;
+  std::span<u8> offsets;
+
+  pub loca() = default;
+  pub loca(loca &&) = default;
+  pub fn =(loca mut &, loca &&) -> loca mut & = default;
+  pub ~loca() = default;
+}
+
+pub struct glyf
+{
+  pub enum simple_glyph_flags
+  {
+    pub const on_curve_point = 0x01;
+    pub const x_short_vector = 0x02;
+    pub const y_short_vector = 0x04;
+    pub const repeat_flag = 0x08;
+    pub const x_is_same_or_positive_x_short_vector = 0x10;
+    pub const y_is_same_or_positive_y_short_vector = 0x20;
+    pub const overlap_simple = 0x40;
+
+    const x_vector = x_short_vector | x_is_same_or_positive_x_short_vector;
+    const y_vector = y_short_vector | y_is_same_or_positive_y_short_vector;
+  }
+
+  pub enum component_glyph_flags
+  {
+    pub const arg_1_and_2_are_words = 0x0001;
+    pub const args_are_xy_values = 0x0002;
+    pub const round_xy_to_grid = 0x0004;
+    pub const we_have_a_scale = 0x0008;
+    pub const more_components = 0x0020;
+    pub const we_have_an_x_and_y_scale = 0x0040;
+    pub const we_have_a_two_by_two = 0x0080;
+    pub const we_have_instructions = 0x0100;
+    pub const use_my_metrics = 0x0200;
+    pub const overlap_compound = 0x0400;
+    pub const scaled_component_offset = 0x0800;
+    pub const unscaled_component_offset = 0x1000;
+  }
+
+  std::span<u8> data;
+
+  pub glyf() = default;
+  pub glyf(glyf &&) = default;
+  pub fn =(glyf mut &, glyf &&) -> glyf mut & = default;
+  pub ~glyf() = default;
+}
+
+#[packed]
+struct kerning_pair
+{
+  u32 pair;
+  i16 value;
+
+  fn left(this&) -> glyphid
+  {
+    return cast<u16>((this.pair >> 16) & 0xffff);
+  }
+
+  fn right(this&) -> glyphid
+  {
+    return cast<u16>((this.pair >> 0) & 0xffff);
+  }
+
+  kerning_pair() = default;
+  kerning_pair(kerning_pair &&) = default;
+  fn =(kerning_pair mut &, kerning_pair &) -> kerning_pair mut & = default;
+  ~kerning_pair() = default;
+}
+
+pub struct kern
+{
+  std::span<u8> tables;
+
+  pub kern() = default;
+  pub kern(kern &&) = default;
+  pub fn =(kern mut &, kern &&) -> kern mut & = default;
+  pub ~kern() = default;
+}
+
+#[packed]
+struct range_record
+{
+  glyphid start;
+  glyphid end;
+  u16 value;
+
+  range_record() = default;
+  range_record(range_record&&) = default;
+  fn =(range_record mut &, range_record &) -> range_record mut & = default;
+  ~range_record() = default;
+}
+
+#[packed]
+struct value_record
+{
+  i16 x_placement;
+  i16 y_placement;
+  i16 x_advance;
+  i16 y_advance;
+  u16 x_pladevice_offset;
+  u16 y_pladevice_offset;
+  u16 x_advdevice_offset;
+  u16 y_advdevice_offset;
+
+  fn size(u16 mask) -> usize
+  {
+    return cast<usize>(std::popcnt(mask)) * sizeof<u16>;
+  }
+
+  value_record() = default;
+  value_record(value_record&&) = default;
+  fn =(value_record mut &, value_record &) -> value_record mut & = default;
+  ~value_record() = default;
+}
+
+#[packed]
+struct pairvalue_record
+{
+  glyphid glyph;
+  value_record value1;
+  value_record value2;
+
+  pairvalue_record() = default;
+  pairvalue_record(pairvalue_record&&) = default;
+  fn =(pairvalue_record mut &, pairvalue_record &) -> pairvalue_record mut & = default;
+  ~pairvalue_record() = default;
+}
+
+#[packed]
+struct entryexit_record
+{
+  u16 entry_anchor_offset;
+  u16 exit_anchor_offset;
+
+  entryexit_record() = default;
+  entryexit_record(entryexit_record&&) = default;
+  fn =(entryexit_record mut &, entryexit_record &) -> entryexit_record mut & = default;
+  ~entryexit_record() = default;
+}
+
+#[packed]
+struct mark_record
+{
+  u16 mark_class;
+  u16 mark_anchor_offset;
+
+  mark_record() = default;
+  mark_record(mark_record&&) = default;
+  fn =(mark_record mut &, mark_record &) -> mark_record mut & = default;
+  ~mark_record() = default;
+}
+
+pub struct gpos
+{
+  pub enum tag : u32
+  {
+    abvm = 0x6162766d,
+    blwm = 0x626c776d,
+    dist = 0x64697374,
+    kern = 0x6b65726e,
+    mark = 0x6d61726b,
+    mkmk = 0x6d6b6d6b,
+    curs = 0x63757273,
+  }
+
+  pub enum lookup_type : u16
+  {
+    single_adjustment = 1,
+    pair_adjustment = 2,
+    cursive_attachment = 3,
+    marktobase_attachment = 4,
+    marktoligature_attachment = 5,
+    marktomark_attachment = 6,
+    context_positioning = 7,
+    chained_context_positioning = 8,
+    extension_positioning = 9,
+  }
+
+  u16 scriptlist_offset;
+  u16 featurelist_offset;
+  u16 lookuplist_offset;
+
+  std::span<u8> data;
+
+  pub gpos() = default;
+  pub gpos(gpos &&) = default;
+  pub fn =(gpos mut &, gpos &&) -> gpos mut & = default;
+  pub ~gpos() = default;
+}
+
+pub struct gsub
+{
+  pub enum tag : u32
+  {
+    aalt = 0x61616c74,
+    c2sc = 0x63327363,
+    case_ = 0x63617365,
+    ccmp = 0x63636d70,
+    dnom = 0x646e6f6d,
+    frac = 0x66726163,
+    liga = 0x6c696761,
+    lnum = 0x6c6e756d,
+    locl = 0x6c6f636c,
+    numr = 0x6e756d72,
+    onum = 0x6f6e756d,
+    ordn = 0x6f72646e,
+    pnum = 0x706e756d,
+    rtlm = 0x72746c6d,
+    salt = 0x73616c74,
+    smcp = 0x736d6370,
+    ss03 = 0x73733033,
+    ss04 = 0x73733034,
+    subs = 0x73756273,
+    sups = 0x73757073,
+    tnum = 0x746e756d,
+    zero = 0x7a65726f,
+  }
+
+  pub enum lookup_type : u16
+  {
+    single = 1,
+    multiple = 2,
+    alternate = 3,
+    ligature = 4,
+    context = 5,
+    chaining_context = 6,
+    extension_substitution = 7,
+    reverse_chaining_context = 8,
+  }
+
+  u16 scriptlist_offset;
+  u16 featurelist_offset;
+  u16 lookuplist_offset;
+
+  std::span<u8> data;
+
+  pub gsub() = default;
+  pub gsub(gsub &&) = default;
+  pub fn =(gsub mut &, gsub &&) -> gsub mut & = default;
+  pub ~gsub() = default;
+}
+
+pub struct face
+{
+  pub errc error;
+
+  head head;
+  hhea hhea;
+  maxp maxp;
+  std::optional<name> name;
+  std::optional<os_2> os_2;
+  std::optional<hmtx> hmtx;
+  std::optional<cmap> cmap;
+  std::optional<loca> loca;
+  std::optional<glyf> glyf;
+  std::optional<kern> kern;
+  std::optional<gpos> gpos;
+  std::optional<gsub> gsub;
+
+  std::span<u8> data;
+  std::span<u8> tables;
+
+  #[lifetime(depend(*data.data))]
+  pub fn parse(Span<u8> &data) -> face
+  {
+    return parse_face(std::span(data));
+  }
+
+  pub fn units_per_em(this&) -> u16
+  {
+    return this.head.units_per_em;
+  }
+
+  pub fn ascender(this&) -> i16
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        if (os_2.fs_selection & 0x80 == 0x80)
+          return os_2.s_typo_ascender;
+    }
+
+    return this.hhea.ascender;
+  }
+
+  pub fn descender(this&) -> i16
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        if (os_2.fs_selection & 0x80 == 0x80)
+          return os_2.s_typo_descender;
+    }
+
+    return this.hhea.descender;
+  }
+
+  pub fn leading(this&) -> i16
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        if (os_2.fs_selection & 0x80 == 0x80)
+          return os_2.s_typo_linegap;
+    }
+
+    return this.hhea.linegap;
+  }
+
+  pub fn height(this&) -> i16
+  {
+    return this.ascender - this.descender;
+  }
+
+  pub fn width(this&) -> width
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        return cast<width>(os_2.us_width_class);
+    }
+
+    return width::normal;
+  }
+
+  pub fn weight(this&) -> weight
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        return cast<weight>(os_2.us_weight_class);
+    }
+
+    return weight::normal;
+  }
+
+  pub fn style(this&) -> style
+  {
+    switch (this.os_2)
+    {
+      case Some[os_2]:
+        if (os_2.fs_selection & 0x01 == 0x01)
+          return style::italic;
+        if (os_2.fs_selection & 0x200 == 0x200)
+          return style::oblique;
+    }
+
+    return style::normal;
+  }
+
+  pub fn advance(this&, glyphid id) -> u16
+  {
+    return this.metric(id).advance_width;
+  }
+
+  pub fn leftside_bearing(this&, glyphid id) -> i16
+  {
+    return this.metric(id).leftside_bearing;
+  }
+
+  pub fn max_bounding_box(this&) -> rect
+  {
+    return this.head.bounding_box;
+  }
+
+  pub fn number_of_glyphs(this&) -> u16
+  {
+    return this.maxp.number_of_glyphs;
+  }
+
+  pub face() = default;
+  pub face(face &&) = default;
+  pub fn =(face mut &, face &&) -> face mut & = default;
+  pub ~face() = default;
+}
+
+struct stream
+{
+  std::span<u8> data;
+
+  stream(std::span<u8> &data)
+    : data(data)
+  {
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_integral<T>
+  {
+    var bytes = sizeof<T>;
+
+    if (this.data.len < sizeof<T>)
+      throw errc::insufficient_data;
+
+    var value = T(void);
+
+    std::memcpy(&value, this.data.data, bytes);
+
+    this.data.remove_prefix!(bytes);
+
+    return std::byteswap(value);
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, glyphid>
+  {
+    return this.read<u16>();
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, f2dot14>
+  {
+    return this.read<i16>();
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, fixed>
+  {
+    return this.read<u32>();
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, magic>
+  {
+    switch (this.read<u32>())
+    {
+      case 0x00010000:
+      case 0x74727565:
+        return magic::truetype;
+
+      case 0x4f54544f:
+        return magic::opentype;
+    }
+
+    throw errc::unknown_magic;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, tag>
+  {
+    return cast(this.read<u32>());
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, table_record>
+  {
+    var record = table_record();
+
+    record.tag = this.read<tag>();
+    record.checksum = this.read<u32>();
+    record.offset = this.read<u32>();
+    record.length = this.read<u32>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, platform>
+  {
+    return cast(this.read<u16>());
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, name_record>
+  {
+    var record = name_record();
+
+    record.platform_id = this.read<platform>();
+    record.encoding_id = this.read<u16>();
+    record.language_id = this.read<u16>();
+    record.name_id = this.read<u16>();
+    record.length = this.read<u16>();
+    record.offset = this.read<u16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, encoding_record>
+  {
+    var record = encoding_record();
+
+    record.platform_id = this.read<platform>();
+    record.encoding_id = this.read<u16>();
+    record.offset = this.read<u32>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, long_hor_metric>
+  {
+    var record = long_hor_metric();
+
+    record.advance_width = this.read<u16>();
+    record.leftside_bearing = this.read<i16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, range_record>
+  {
+    var record = range_record();
+
+    record.start = this.read<glyphid>();
+    record.end = this.read<glyphid>();
+    record.value = this.read<u16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &, u16 mask) throws -> T
+    where __is_same<T, value_record>
+  {
+    var record = value_record();
+
+    if (mask & 0x0001 != 0)
+      record.x_placement = this.read<i16>();
+    if (mask & 0x0002 != 0)
+      record.y_placement = this.read<i16>();
+    if (mask & 0x0004 != 0)
+      record.x_advance = this.read<i16>();
+    if (mask & 0x0008 != 0)
+      record.y_advance = this.read<i16>();
+    if (mask & 0x0010 != 0)
+      record.x_pladevice_offset = this.read<u16>();
+    if (mask & 0x0020 != 0)
+      record.y_pladevice_offset = this.read<u16>();
+    if (mask & 0x0040 != 0)
+      record.x_advdevice_offset = this.read<u16>();
+    if (mask & 0x0080 != 0)
+      record.y_advdevice_offset = this.read<u16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &, u16 mask1, u16 mask2) throws -> T
+    where __is_same<T, pairvalue_record>
+  {
+    var record = pairvalue_record();
+
+    record.glyph = this.read<glyphid>();
+    record.value1 = this.read<value_record>(mask1);
+    record.value2 = this.read<value_record>(mask2);
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, entryexit_record>
+  {
+    var record = entryexit_record();
+
+    record.entry_anchor_offset = this.read<u16>();
+    record.exit_anchor_offset = this.read<u16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, mark_record>
+  {
+    var record = mark_record();
+
+    record.mark_class = this.read<u16>();
+    record.mark_anchor_offset = this.read<u16>();
+
+    return record;
+  }
+
+  fn read<T>(this mut &) throws -> T
+    where __is_same<T, kerning_pair>
+  {
+    var record = kerning_pair();
+
+    record.pair = this.read<u32>();
+    record.value = this.read<i16>();
+
+    return record;
+  }
+
+  fn read(this mut &, usize len) throws -> std::span<u8>
+  {
+    if (this.data.len < len)
+      throw errc::insufficient_data;
+
+    var data = this.data[0 .. len];
+
+    this.data.remove_prefix!(len);
+
+    return data;
+  }
+
+  fn discard(this mut &, usize len) throws -> void
+  {
+    if (this.data.len < len)
+      throw errc::insufficient_data;
+
+    this.data.remove_prefix!(len);
+  }
+
+  stream() = default;
+  stream(stream&) = default;
+  ~stream() = default;
+}
+
+struct view<T>
+{
+  std::span<u8> data;
+
+  view(std::span<u8> &data)
+    : data(data)
+  {
+  }
+
+  fn len(this&) -> usize
+  {
+    return this.data.len / sizeof<T>;
+  }
+
+  fn [](this&, usize index) throws -> T
+  {
+    if (this.data.len < index * sizeof<T> + sizeof<T>)
+      throw errc::insufficient_data;
+
+    return stream(this.data.subspan(index * sizeof<T>, sizeof<T>)).read<T>();
+  }
+
+  fn ==(this &lhs, Span<T> &rhs) throws -> bool
+  {
+    if (lhs.len != rhs.len)
+      return false;
+
+    for (var i = 0, var end = lhs.len; i != end; ++i)
+      if (lhs[i] != rhs[i])
+        return false;
+
+    return true;
+  }
+
+  fn lower_bound<Value, Cmp>(this&, Value &value, Cmp &cmp = std::less) throws -> usize
+    match (T u, Value v, Cmp cmp) { cmp(u, v); }
+  {
+    var lo = 0;
+    var hi = this.len;
+
+    while (hi > lo)
+    {
+      var mid = (lo + hi) / 2;
+
+      if (cmp(this[mid], value))
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+
+    return lo;
+  }
+
+  view() = default;
+  view(view&) = default;
+  ~view() = default;
+}
+
+fn get(std::span<u8> &data, u32 offset, u32 length) throws -> std::span<u8>
+{
+  if (data.len < cast<usize>(offset) + cast<usize>(length))
+    throw errc::insufficient_data;
+
+  return data[cast<usize>(offset) .. cast<usize>(offset) + cast<usize>(length)];
+}
+
+fn get(std::span<u8> &data, u16 offset, u16 length) throws -> std::span<u8>
+{
+  if (data.len < cast<usize>(offset) + cast<usize>(length))
+    throw errc::insufficient_data;
+
+  return data[cast<usize>(offset) .. cast<usize>(offset) + cast<usize>(length)];
+}
+
+fn table(face &face, tag tag) throws -> std::optional<table_record>
+{
+  var stream = stream(face.tables);
+
+  for (var i = 0; i < face.tables.len / sizeof<table_record>; ++i)
+  {
+    if (var table = stream.read<table_record>(); table.tag == tag)
+      return table;
+  }
+
+  return None;
+}
+
+fn utf16be(std::span<u8> &data) -> std::string
+{
+  var str = std::string();
+
+  for (var i = 1; i < data.len; i += 2)
+  {
+    str += cast<char>(data[i-1] << 8) + cast<char>(data[i]);
+  }
+
+  return str;
+}
+
+pub fn name(face &face, name::id id) -> std::string
+{
+  switch (face.name)
+  {
+    case Some[name]:
+      try
+      {
+        var stream = stream(name.records);
+
+        for (var i = 0; i < name.records.len / sizeof<name_record>; ++i)
+        {
+          if (var record = stream.read<name_record>(); record.name_id == cast(id))
+          {
+            if (record.platform_id == platform::unicode || (record.platform_id == platform::windows && record.language_id == 0x409))
+              return utf16be(name.storage.get(record.offset, record.length));
+          }
+        }
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return std::string_view();
+}
+
+pub struct metric
+{
+  pub u16 advance_width;
+  pub i16 leftside_bearing;
+
+  pub metric() = default;
+  pub metric(metric&&) = default;
+  pub fn =(metric mut &, metric &) -> metric mut & = default;
+  pub ~metric() = default;
+}
+
+pub fn metric(face &face, glyphid id) -> metric
+{
+  var metric = metric();
+
+  switch (face.hmtx)
+  {
+    case Some[hmtx]:
+      try
+      {
+        var record = view<long_hor_metric>(hmtx.metrics)[std::min(cast<usize>(id), cast<usize>(face.hhea.number_of_metrics - 1))];
+
+        if (cast<u16>(id) >= face.hhea.number_of_metrics)
+          record.leftside_bearing = view<i16>(hmtx.bearings)[cast<usize>(id) - cast<usize>(face.maxp.number_of_glyphs)];
+
+        metric.advance_width = record.advance_width;
+        metric.leftside_bearing = record.leftside_bearing;
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return metric;
+}
+
+fn cmap_format_4(stream table, char codepoint) throws -> std::optional<glyphid>
+{
+  var length = table.read<u16>();
+  var language = table.read<u16>();
+  var seg_count_x2 = table.read<u16>();
+  var search_range = table.read<u16>();
+  var entry_selector = table.read<u16>();
+  var range_shift = table.read<u16>();
+  var end_codes = view<u16>(table.read(cast<usize>(seg_count_x2)));
+  var reserved0 = table.read<u16>();
+  var start_codes = view<u16>(table.read(cast<usize>(seg_count_x2)));
+  var id_deltas = view<i16>(table.read(cast<usize>(seg_count_x2)));
+  var id_range_offsets = view<u16>(table.data);
+
+  var lo = 0;
+  var hi = start_codes.len;
+
+  while (hi > lo)
+  {
+    var mid = (lo + hi) / 2;
+    var end_point = end_codes[mid];
+
+    if (cast(end_point) >= codepoint)
+    {
+      var start_point = start_codes[mid];
+
+      if (cast(start_point) <= codepoint)
+      {
+        var delta = id_deltas[mid];
+        var range = id_range_offsets[mid];
+
+        if (range == 0)
+          return std::add_with_carry(cast<u16>(codepoint), std::bit_cast<u16>(delta)).0;
+
+        var base = id_range_offsets[mid + cast<usize>(range)/2 + cast<usize>(codepoint - cast(start_point))];
+
+        return std::add_with_carry(base, std::bit_cast<u16>(delta)).0;
+      }
+
+      hi = mid;
+    }
+    else
+      lo = mid + 1;
+  }
+
+  return None;
+}
+
+fn find(cmap &cmap, encoding_record &record, char codepoint) throws -> std::optional<glyphid>
+{
+  var table = stream(cmap.data.remove_prefix(cast<usize>(record.offset)));
+
+  switch (cast<cmap::format>(table.read<u16>()))
+  {
+    case segment_mapping_to_delta_values:
+      return cmap_format_4(table, codepoint);
+  }
+
+  return None;
+}
+
+pub fn find(face &face, char codepoint) -> std::optional<glyphid>
+{
+  switch (face.cmap)
+  {
+    case Some[cmap]:
+      try
+      {
+        var stream = stream(cmap.records);
+
+        for (var i = 0; i < cmap.records.len / sizeof<encoding_record>; ++i)
+        {
+          var record = stream.read<encoding_record>();
+
+          if (var id = find(cmap, record, codepoint); id.is_some)
+            return id;
+        }
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return None;
+}
+
+fn get(loca &loca, glyphid id) throws -> usize
+{
+  switch (loca.format)
+  {
+    case short:
+      return cast<usize>(view<u16>(loca.offsets)[cast<usize>(id)]) * 2;
+
+    case long:
+      return cast<usize>(view<u32>(loca.offsets)[cast<usize>(id)]);
+
+    else:
+      throw errc::invalid_loca_format;
+  }
+}
+
+#[lifetime(depend(*face))]
+pub fn glyph(face &face, glyphid id) -> glyph
+{
+  var glyph = glyph();
+
+  if (face.loca.is_none || face.glyf.is_none)
+    return glyph;
+
+  var &loca = face.loca.value;
+  var &glyf = face.glyf.value;
+
+  try
+  {
+    var offset0 = loca.get(id);
+    var offset1 = loca.get(glyphid(cast<u16>(id) + 1));
+
+    if (offset1 <= offset0)
+      return glyph;
+
+    var stream = stream(glyf.data[offset0 .. offset1]);
+
+    glyph.number_of_contours = stream.read<i16>();
+    glyph.bounding_box.x_min = stream.read<i16>();
+    glyph.bounding_box.y_min = stream.read<i16>();
+    glyph.bounding_box.x_max = stream.read<i16>();
+    glyph.bounding_box.y_max = stream.read<i16>();
+    glyph.data = stream.data;
+  }
+  catch(errc)
+  {
+  }
+
+  return glyph;
+}
+
+fn kern_format_0(std::span<u8> subtable, glyphid left, glyphid right) throws -> std::optional<i16>
+{
+  var stream = stream(subtable);
+
+  var num_pairs = stream.read<u16>();
+  var search_range = stream.read<u16>();
+  var entry_selector = stream.read<u16>();
+  var range_shift = stream.read<u16>();
+  var pairs = view<kerning_pair>(stream.data);
+
+  var needle = cast<u32>(left) << 16 | cast<u32>(right);
+
+  var j = pairs.lower_bound(needle, |p, v| p.pair < needle);
+
+  if (j == pairs.len || pairs[j].pair != needle)
+    return None;
+
+  return pairs[j].value;
+}
+
+pub fn kerning(face &face, glyphid left, glyphid right) -> std::optional<i16>
+{
+  switch (face.kern)
+  {
+    case Some[kern]:
+      try
+      {
+        var stream = stream(kern.tables);
+
+        while (!stream.data.empty)
+        {
+          var version = stream.read<u16>();
+          var length = stream.read<u16>();
+          var coverage = stream.read<u16>();
+          var subtable = stream.read(cast<usize>(length) - 3*sizeof<u16>);
+
+          if (coverage != 1)
+            continue;
+
+          switch (version)
+          {
+            case 0:
+              if (var kerning = kern_format_0(subtable, left, right); kerning.is_some)
+                return kerning;
+          }
+        }
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return None;
+}
+
+pub struct anchor
+{
+  pub i16 x_coordinate;
+  pub i16 y_coordinate;
+  pub u16 anchor_point;
+  pub u16 x_device_offset;
+  pub u16 y_device_offset;
+
+  pub anchor() = default;
+  pub anchor(anchor&&) = default;
+  pub fn =(anchor mut &, anchor &) -> anchor mut & = default;
+  pub ~anchor() = default;
+}
+
+pub struct layout
+{
+  pub enum flags
+  {
+    placement = 0x1,
+    entry_anchor = 0x2,
+    exit_anchor = 0x4,
+    base_anchor = 0x8,
+    mark_anchor = 0x10,
+
+    pub const fn bool(flags lhs) -> bool { return cast<isize>(lhs) != 0; }
+
+    pub const fn ~(flags lhs) -> flags { return cast<flags>(~cast<isize>(lhs)); }
+    pub const fn &(flags lhs, flags rhs) -> flags { return cast<flags>(cast<isize>(lhs) & cast<isize>(rhs)); }
+    pub const fn |(flags lhs, flags rhs) -> flags { return cast<flags>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  pub flags flags;
+
+  pub i16 x_placement;
+  pub i16 y_placement;
+  pub i16 x_advance;
+  pub i16 y_advance;
+
+  pub anchor[2] anchor;
+
+  pub layout() = default;
+  pub layout(layout&&) = default;
+  pub fn =(layout mut &, layout &) -> layout mut & = default;
+  pub ~layout() = default;
+}
+
+fn coverage_lookup(stream coverage, glyphid id) throws -> std::optional<usize>
+{
+  switch (coverage.read<u16>())
+  {
+    case 1:
+      var glyph_count = coverage.read<u16>();
+      var glyphs = view<glyphid>(coverage.read(cast<usize>(glyph_count) * sizeof<glyphid>));
+
+      var j = glyphs.lower_bound(id);
+
+      if (j < glyphs.len && glyphs[j] == id)
+        return j;
+
+    case 2:
+      var range_count = coverage.read<u16>();
+      var ranges = view<range_record>(coverage.read(cast<usize>(range_count) * sizeof<range_record>));
+
+      for (var i = 0; i < ranges.len; ++i)
+      {
+        var range = ranges[i];
+
+        if (range.start <= id && id <= range.end)
+          return cast<usize>(range.value) + (cast<usize>(id) - cast<usize>(range.start));
+      }
+  }
+
+  return None;
+}
+
+fn classdef_lookup(stream classdef, glyphid id) throws -> std::optional<u16>
+{
+  switch (classdef.read<u16>())
+  {
+    case 1:
+      var start = classdef.read<u16>();
+      var glyph_count = classdef.read<u16>();
+      var classes = view<u16>(classdef.read(cast<usize>(glyph_count) * sizeof<glyphid>));
+
+      if (start <= cast<u16>(id) && cast<u16>(id) < start + glyph_count)
+        return classes[cast<usize>(id) - cast<usize>(start)];
+
+    case 2:
+      var range_count = classdef.read<u16>();
+      var ranges = view<range_record>(classdef.read(cast<usize>(range_count) * sizeof<range_record>));
+
+      for (var i = 0; i < ranges.len; ++i)
+      {
+        var range = ranges[i];
+
+        if (range.start <= id && id <= range.end)
+          return range.value;
+      }
+  }
+
+  return None;
+}
+
+fn anchor_lookup(stream anchortable) throws -> anchor
+{
+  var anchor = anchor();
+
+  switch (anchortable.read<u16>())
+  {
+    case 1:
+      anchor.x_coordinate = anchortable.read<i16>();
+      anchor.y_coordinate = anchortable.read<i16>();
+
+    case 2:
+      anchor.x_coordinate = anchortable.read<i16>();
+      anchor.y_coordinate = anchortable.read<i16>();
+      anchor.anchor_point = anchortable.read<u16>();
+
+    case 3:
+      anchor.x_coordinate = anchortable.read<i16>();
+      anchor.y_coordinate = anchortable.read<i16>();
+      anchor.x_device_offset = anchortable.read<u16>();
+      anchor.y_device_offset = anchortable.read<u16>();
+  }
+
+  return anchor;
+}
+
+fn gpos_single_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var pos_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var value_format = subtable.read<u16>();
+    var value = subtable.read<value_record>(value_format);
+
+    layout.x_advance += value.x_advance;
+    layout.y_advance += value.y_advance;
+    layout.x_placement += value.x_placement;
+    layout.y_placement += value.y_placement;
+    layout.flags |= layout::flags::placement;
+  }
+}
+
+fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var pos_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var value_format1 = subtable.read<u16>();
+    var value_format2 = subtable.read<u16>();
+
+    var coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    switch (pos_format)
+    {
+      case 1:
+        var pairset_count = subtable.read<u16>();
+        var pairset_offsets = view<u16>(subtable.read(cast<usize>(pairset_count) * sizeof<u16>));
+
+        var j = coverage_lookup(coverage, left);
+
+        if (j.is_none || j.value >= pairset_offsets.len)
+          continue;
+
+        var pairsets  = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(pairset_offsets[j.value])));
+
+        var pairvalue_count = pairsets.read<u16>();
+        var pairvalues = stream(pairsets.read(cast<usize>(pairvalue_count) * sizeof<pairvalue_record>));
+
+        for (var k = 0; k < pairvalue_count; ++k)
+        {
+          if (var record = pairvalues.read<pairvalue_record>(value_format1, value_format2); record.glyph == right)
+          {
+            layout.x_advance += record.value1.x_advance;
+            layout.y_advance += record.value1.y_advance;
+            layout.x_placement += record.value2.x_placement;
+            layout.y_placement += record.value2.y_placement;
+            layout.flags |= layout::flags::placement;
+
+            break;
+          }
+        }
+
+      case 2:
+        var classdef1_offset = subtable.read<u16>();
+        var classdef2_offset = subtable.read<u16>();
+        var classdef1_count = subtable.read<u16>();
+        var classdef2_count = subtable.read<u16>();
+
+        var classdef1 = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef1_offset)));
+
+        var j = classdef_lookup(classdef1, left);
+
+        if (j.is_none || j.value >= classdef1_count)
+          continue;
+
+        var classdef2 = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef2_offset)));
+
+        var k = classdef_lookup(classdef2, right);
+
+        if (k.is_none || k.value >= classdef2_count)
+          continue;
+
+        var record_size = value_record::size(value_format1) + value_record::size(value_format2);
+
+        subtable.discard(cast<usize>(j.value) * cast<usize>(classdef2_count) * record_size);
+        subtable.discard(cast<usize>(k.value) * record_size);
+
+        var value1 = subtable.read<value_record>(value_format1);
+        var value2 = subtable.read<value_record>(value_format2);
+
+        layout.x_advance += value1.x_advance;
+        layout.y_advance += value1.y_advance;
+        layout.x_placement += value2.x_placement;
+        layout.y_placement += value2.y_placement;
+        layout.flags |= layout::flags::placement;
+    }
+  }
+}
+
+fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var pos_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var entryexit_count = subtable.read<u16>();
+    var entryexits = view<entryexit_record>(subtable.read(cast<usize>(entryexit_count) * sizeof<entryexit_record>));
+
+    var coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    var j = coverage_lookup(coverage, right);
+
+    if (j.is_none || j.value >= entryexits.len)
+      continue;
+
+    var entryexit = entryexits[j.value];
+
+    if (entryexit.entry_anchor_offset != 0)
+    {
+      var entry_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.entry_anchor_offset)));
+
+      layout.anchor[0] = anchor_lookup(entry_anchor_table);
+      layout.flags |= layout::flags::entry_anchor;
+    }
+
+    if (entryexit.exit_anchor_offset != 0)
+    {
+      var exit_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.exit_anchor_offset)));
+
+      layout.anchor[1] = anchor_lookup(exit_anchor_table);
+      layout.flags |= layout::flags::exit_anchor;
+    }
+  }
+}
+
+fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var pos_format = subtable.read<u16>();
+    var mark_coverage_offset = subtable.read<u16>();
+    var base_coverage_offset = subtable.read<u16>();
+    var mark_class_count = subtable.read<u16>();
+    var mark_array_offset = subtable.read<u16>();
+    var base_array_offset = subtable.read<u16>();
+
+    var markarray = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset)));
+
+    var mark_count = markarray.read<u16>();
+    var marks = view<mark_record>(markarray.read(cast<usize>(mark_count) * sizeof<mark_record>));
+
+    var mark_coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_coverage_offset)));
+
+    var j = coverage_lookup(mark_coverage, right);
+
+    if (j.is_none || j.value >= marks.len)
+      continue;
+
+    var mark = marks[j.value];
+
+    var mark_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset) + cast<usize>(mark.mark_anchor_offset)));
+
+    layout.anchor[1] = anchor_lookup(mark_anchor_table);
+    layout.flags |= layout::flags::mark_anchor;
+
+    var basearray = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset)));
+
+    var base_count = basearray.read<u16>();
+    var bases = view<u16>(basearray.read(cast<usize>(base_count) * sizeof<u16> * cast(mark_class_count)));
+
+    var base_coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_coverage_offset)));
+
+    var k = coverage_lookup(base_coverage, left);
+
+    if (k.is_none || k.value >= bases.len)
+      continue;
+
+    var anchor_table_offset = bases[k.value * cast(mark_count) + cast(mark.mark_class)];
+
+    var base_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset) + cast<usize>(anchor_table_offset)));
+
+    layout.anchor[0] = anchor_lookup(base_anchor_table);
+    layout.flags |= layout::flags::base_anchor;
+  }
+}
+
+pub fn layout(face &face, gpos::tag tag, glyphid left, glyphid right) -> layout
+{
+  var layout = layout();
+
+  switch (face.gpos)
+  {
+    case Some[gpos]:
+      try
+      {
+        var features = stream(gpos.data.remove_prefix(cast<usize>(gpos.featurelist_offset)));
+
+        var num_features = features.read<u16>();
+
+        var lookups = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset)));
+
+        var num_lookups = lookups.read<u16>();
+
+        for (var i = 0; i < num_features; ++i)
+        {
+          var feature_tag = features.read<u32>();
+          var feature_offset = features.read<u16>();
+
+          if (cast<gpos::tag>(feature_tag) != tag)
+            continue;
+
+          var feature = stream(gpos.data.remove_prefix(cast<usize>(gpos.featurelist_offset) + cast<usize>(feature_offset)));
+
+          var params_offset = feature.read<u16>();
+          var indices_count = feature.read<u16>();
+          var indices = view<u16>(feature.read(cast<usize>(indices_count) * sizeof<u16>));
+
+          for (var j = 0; j < indices.len; ++j)
+          {
+            var lookup_offset = view<u16>(lookups.data)[cast<usize>(indices[j])];
+
+            var lookup = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset)));
+
+            var lookup_type = lookup.read<u16>();
+            var lookup_flag = lookup.read<u16>();
+            var subtable_count = lookup.read<u16>();
+            var subtable_offsets = view<u16>(lookup.read(cast<usize>(subtable_count) * sizeof<u16>));
+            var mark_filtering_set = lookup.read<u16>();
+
+            switch (cast<gpos::lookup_type>(lookup_type))
+            {
+              case single_adjustment:
+                gpos_single_adjustment_lookup(gpos, lookup_offset, subtable_offsets, left, right, &mut layout);
+
+              case pair_adjustment:
+                gpos_pair_adjustment_lookup(gpos, lookup_offset, subtable_offsets, left, right, &mut layout);
+
+              case cursive_attachment:
+                gpos_cursive_attachment_lookup(gpos, lookup_offset, subtable_offsets, left, right, &mut layout);
+
+              case marktobase_attachment:
+              case marktoligature_attachment:
+              case marktomark_attachment:
+                gpos_anchor_attachment_lookup(gpos, lookup_offset, subtable_offsets, left, right, &mut layout);
+            }
+          }
+        }
+
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return layout;
+}
+
+pub struct substitution
+{
+  pub usize consumed;
+  pub usize produced;
+  pub glyphid[8] glyphs;
+
+  pub substitution() = default;
+  pub substitution(substitution&&) = default;
+  pub fn =(substitution mut &, substitution &) -> substitution mut & = default;
+  pub ~substitution() = default;
+}
+
+fn gsub_single_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var subst_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+
+    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    switch (subst_format)
+    {
+      case 1:
+        var delta = subtable.read<i16>();
+
+        var j = coverage_lookup(coverage, input[0]);
+
+        if (j.is_none)
+          continue;
+
+        substitution.consumed = 1;
+        substitution.produced = 1;
+        substitution.glyphs[0] = glyphid(std::add_with_carry(cast<u16>(input[0]), std::bit_cast<u16>(delta)).0);
+
+      case 2:
+        var glyph_count = subtable.read<u16>();
+        var glyphs = view<glyphid>(subtable.read(cast<usize>(glyph_count) * sizeof<glyphid>));
+
+        var j = coverage_lookup(coverage, input[0]);
+
+        if (j.is_none || j.value >= glyphs.len)
+          continue;
+
+        substitution.consumed = 1;
+        substitution.produced = 1;
+        substitution.glyphs[0] = glyphs[j.value];
+    }
+  }
+}
+
+fn gsub_multiple_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var subst_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var sequence_count = subtable.read<u16>();
+    var sequences = view<u16>(subtable.read(cast<usize>(sequence_count) * sizeof<u16>));
+
+    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    var j = coverage_lookup(coverage, input[0]);
+
+    if (j.is_none || j.value >= sequences.len)
+      continue;
+
+    var sequence_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(sequences[j.value])));
+
+    var glyph_count = sequence_table.read<u16>();
+    var glyphs = view<glyphid>(sequence_table.read(cast<usize>(glyph_count) * sizeof<glyphid>));
+
+    substitution.consumed = 1;
+    substitution.produced = std::min(cast<usize>(glyph_count), substitution.glyphs.len);
+
+    for (var k = 0; k < substitution.produced; ++k)
+      substitution.glyphs[k] = glyphs[k];
+  }
+}
+
+fn gsub_alternate_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var subst_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var alternate_count = subtable.read<u16>();
+    var alternates = view<u16>(subtable.read(cast<usize>(alternate_count) * sizeof<u16>));
+
+    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    var j = coverage_lookup(coverage, input[0]);
+
+    if (j.is_none || j.value >= alternates.len)
+      continue;
+
+    var alternates_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(alternates[j.value])));
+
+    var glyph_count = alternates_table.read<u16>();
+    var glyphs = view<glyphid>(alternates_table.read(cast<usize>(glyph_count) * sizeof<glyphid>));
+
+    substitution.consumed = 1;
+    substitution.produced = std::min(cast<usize>(glyph_count), substitution.glyphs.len);
+
+    for (var k = 0; k < substitution.produced; ++k)
+      substitution.glyphs[k] = glyphs[k];
+  }
+}
+
+fn gsub_ligature_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+{
+  for (var i = 0; i < subtable_offsets.len; ++i)
+  {
+    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+
+    var subst_format = subtable.read<u16>();
+    var coverage_offset = subtable.read<u16>();
+    var ligature_set_count = subtable.read<u16>();
+    var ligature_sets = view<u16>(subtable.read(cast<usize>(ligature_set_count) * sizeof<u16>));
+
+    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+
+    var j = coverage_lookup(coverage, input[0]);
+
+    if (j.is_none || j.value >= ligature_sets.len)
+      continue;
+
+    var ligatures_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value])));
+
+    var ligature_count = ligatures_table.read<u16>();
+    var ligatures = view<u16>(ligatures_table.read(cast<usize>(ligature_count) * sizeof<glyphid>));
+
+    for (var k = 0; k < ligatures.len; ++k)
+    {
+      var ligature = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value]) + cast<usize>(ligatures[k])));
+
+      var glyph = ligature.read<glyphid>();
+      var component_count = ligature.read<u16>();
+      var components = view<glyphid>(ligature.read(cast<usize>(component_count - 1) * sizeof<glyphid>));
+
+      if (input.len < cast(component_count))
+        continue;
+
+      if (components == input[1 .. cast<usize>(component_count)])
+      {
+        substitution.consumed = cast(component_count);
+        substitution.produced = 1;
+        substitution.glyphs[0] = glyph;
+
+        break;
+      }
+    }
+  }
+}
+
+pub fn substitution(face &face, gsub::tag tag, std::span<glyphid> &input) -> substitution
+{
+  var substitution = substitution();
+
+  if (input.empty)
+    return substitution;
+
+  switch (face.gsub)
+  {
+    case Some[gsub]:
+      try
+      {
+        var features = stream(gsub.data.remove_prefix(cast<usize>(gsub.featurelist_offset)));
+
+        var num_features = features.read<u16>();
+
+        var lookups = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset)));
+
+        var num_lookups = lookups.read<u16>();
+
+        for (var i = 0; i < num_features; ++i)
+        {
+          var feature_tag = features.read<u32>();
+          var feature_offset = features.read<u16>();
+
+          if (cast<gsub::tag>(feature_tag) != tag)
+            continue;
+
+          var feature = stream(gsub.data.remove_prefix(cast<usize>(gsub.featurelist_offset) + cast<usize>(feature_offset)));
+
+          var params_offset = feature.read<u16>();
+          var indices_count = feature.read<u16>();
+          var indices = view<u16>(feature.read(cast<usize>(indices_count) * sizeof<u16>));
+
+          for (var j = 0; j < indices.len; ++j)
+          {
+            var lookup_offset = view<u16>(lookups.data)[cast<usize>(indices[j])];
+
+            var lookup = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset)));
+
+            var lookup_type = lookup.read<u16>();
+            var lookup_flag = lookup.read<u16>();
+            var subtable_count = lookup.read<u16>();
+            var subtable_offsets = view<u16>(lookup.read(cast<usize>(subtable_count) * sizeof<u16>));
+            var mark_filtering_set = lookup.read<u16>();
+
+            switch (cast<gsub::lookup_type>(lookup_type))
+            {
+              case single:
+                gsub_single_lookup(gsub, lookup_offset, subtable_offsets, input, &mut substitution);
+
+              case multiple:
+                gsub_multiple_lookup(gsub, lookup_offset, subtable_offsets, input, &mut substitution);
+
+              case alternate:
+                gsub_alternate_lookup(gsub, lookup_offset, subtable_offsets, input, &mut substitution);
+
+              case ligature:
+                gsub_ligature_lookup(gsub, lookup_offset, subtable_offsets, input, &mut substitution);
+            }
+          }
+        }
+      }
+      catch(errc)
+      {
+      }
+  }
+
+  return substitution;
+}
+
+pub fn substitution(face &face, gsub::tag tag, Span<glyphid> &glyphs) -> substitution
+{
+  return face.substitution(tag, std::span(glyphs));
+}
+
+fn parse_face(std::span<u8> &data) -> face
+{
+  var face = face();
+
+  face.data = data;
+
+  try
+  {
+    var stream = stream(data);
+
+    var magic = stream.read<magic>();
+    var num_tables = stream.read<u16>();
+    var search_range = stream.read<u16>();
+    var entry_selector = stream.read<u16>();
+    var range_shift = stream.read<u16>();
+
+    face.tables = stream.read(cast<usize>(num_tables) * sizeof<table_record>);
+
+    switch (face.table(tag::head))
+    {
+      case Some[head]:
+        face.head = parse_head(face.data.get(head.offset, head.length));
+
+      case None:
+        throw errc::missing_head_table;
+    }
+
+    switch (face.table(tag::hhea))
+    {
+      case Some[hhea]:
+        face.hhea = parse_hhea(face.data.get(hhea.offset, hhea.length));
+
+      case None:
+        throw errc::missing_hhea_table;
+    }
+
+    switch (face.table(tag::maxp))
+    {
+      case Some[maxp]:
+        face.maxp = parse_maxp(face.data.get(maxp.offset, maxp.length));
+
+      case None:
+        throw errc::missing_maxp_table;
+    }
+
+    switch (face.table(tag::name))
+    {
+      case Some[name]:
+        face.name = parse_name(face.data.get(name.offset, name.length));
+    }
+
+    switch (face.table(tag::OS_2))
+    {
+      case Some[os_2]:
+        face.os_2 = parse_os_2(face.data.get(os_2.offset, os_2.length));
+    }
+
+    switch (face.table(tag::hmtx))
+    {
+      case Some[hmtx]:
+        face.hmtx = parse_hmtx(face, face.data.get(hmtx.offset, hmtx.length));
+    }
+
+    switch (face.table(tag::cmap))
+    {
+      case Some[cmap]:
+        face.cmap = parse_cmap(face.data.get(cmap.offset, cmap.length));
+    }
+
+    switch (face.table(tag::loca))
+    {
+      case Some[loca]:
+        face.loca = parse_loca(face, face.data.get(loca.offset, loca.length));
+
+        switch (face.table(tag::glyf))
+        {
+          case Some[glyf]:
+            face.glyf = parse_glyf(face, face.data.get(glyf.offset, glyf.length));
+        }
+    }
+
+    switch (face.table(tag::kern))
+    {
+      case Some[kern]:
+        face.kern = parse_kern(face, face.data.get(kern.offset, kern.length));
+    }
+
+    switch (face.table(tag::GPOS))
+    {
+      case Some[gpos]:
+        face.gpos = parse_gpos(face, face.data.get(gpos.offset, gpos.length));
+    }
+
+    switch (face.table(tag::GSUB))
+    {
+      case Some[gsub]:
+        face.gsub = parse_gsub(face, face.data.get(gsub.offset, gsub.length));
+    }
+  }
+  catch(errc e)
+  {
+    face.error = e;
+  }
+
+  return face;
+}
+
+fn parse_head(std::span<u8> &data) throws -> head
+{
+  var head = head();
+
+  var stream = stream(data);
+
+  var major_version = stream.read<u16>();
+  var minor_version = stream.read<u16>();
+  var font_revision = stream.read<fixed>();
+  var checksum_adjustment = stream.read<u32>();
+  var magic_number = stream.read<u32>();
+  var flags = stream.read<u16>();
+  head.units_per_em = stream.read<u16>();
+  var created = stream.read<u64>();
+  var modified = stream.read<u64>();
+  head.bounding_box.x_min = stream.read<i16>();
+  head.bounding_box.y_min = stream.read<i16>();
+  head.bounding_box.x_max = stream.read<i16>();
+  head.bounding_box.y_max = stream.read<i16>();
+  var macstyle = stream.read<u16>();
+  head.lowest_recommended_ppem = stream.read<u16>();
+  var font_direction_hint = stream.read<i16>();
+  head.index_to_location_format = stream.read<i16>();
+  var glyphdata_format = stream.read<i16>();
+
+  return head;
+}
+
+fn parse_hhea(std::span<u8> &data) throws -> hhea
+{
+  var hhea = hhea();
+
+  var stream = stream(data);
+
+  var major_version = stream.read<u16>();
+  var minor_version = stream.read<u16>();
+  hhea.ascender = stream.read<i16>();
+  hhea.descender = stream.read<i16>();
+  hhea.linegap = stream.read<i16>();
+  var advance_width_max = stream.read<u16>();
+  var min_leftside_bearing = stream.read<i16>();
+  var min_rightside_bearing = stream.read<i16>();
+  var x_max_extent = stream.read<i16>();
+  var caret_slope_rise = stream.read<i16>();
+  var caret_slope_run = stream.read<i16>();
+  var caret_offset = stream.read<i16>();
+  var reserved0 = stream.read<i16>();
+  var reserved1 = stream.read<i16>();
+  var reserved2 = stream.read<i16>();
+  var reserved3 = stream.read<i16>();
+  var metric_data_format = stream.read<i16>();
+  hhea.number_of_metrics = stream.read<u16>();
+
+  return hhea;
+}
+
+fn parse_maxp(std::span<u8> &data) throws -> maxp
+{
+  var maxp = maxp();
+
+  var stream = stream(data);
+
+  var version = stream.read<u32>();
+  maxp.number_of_glyphs = stream.read<u16>();
+
+  return maxp;
+}
+
+fn parse_name(std::span<u8> &data) throws -> name
+{
+  var name = name();
+
+  var stream = stream(data);
+
+  var version = stream.read<u16>();
+  var num_records = stream.read<u16>();
+  var storage_offset = stream.read<u16>();
+
+  name.records = stream.read(cast<usize>(num_records) * sizeof<name_record>);
+  name.storage = data.remove_prefix(cast<usize>(storage_offset));
+
+  return name;
+}
+
+fn parse_os_2(std::span<u8> &data) throws -> os_2
+{
+  var os_2 = os_2();
+
+  var stream = stream(data);
+
+  var version = stream.read<u16>();
+  var avg_char_width = stream.read<i16>();
+  os_2.us_weight_class = stream.read<u16>();
+  os_2.us_width_class = stream.read<u16>();
+  var fs_type = stream.read<u16>();
+  var y_subscript_xsize = stream.read<i16>();
+  var y_subscript_ysize = stream.read<i16>();
+  var y_subscript_xoffset = stream.read<i16>();
+  var y_subscript_yoffset = stream.read<i16>();
+  var y_superscript_xsize = stream.read<i16>();
+  var y_superscript_ysize = stream.read<i16>();
+  var y_superscript_xoffset = stream.read<i16>();
+  var y_superscript_yoffset = stream.read<i16>();
+  var y_strikeout_size = stream.read<i16>();
+  var y_strikeout_position = stream.read<i16>();
+  var s_family_class = stream.read<i16>();
+  var panose = stream.read(10);
+  var ul_unicode_range1 = stream.read<u32>();
+  var ul_unicode_range2 = stream.read<u32>();
+  var ul_unicode_range3 = stream.read<u32>();
+  var ul_unicode_range4 = stream.read<u32>();
+  var ach_vend_id = stream.read<tag>();
+  os_2.fs_selection = stream.read<u16>();
+  var us_firstchar_index = stream.read<u16>();
+  var us_lastchar_index = stream.read<u16>();
+  os_2.s_typo_ascender = stream.read<i16>();
+  os_2.s_typo_descender = stream.read<i16>();
+  os_2.s_typo_linegap = stream.read<i16>();
+  var us_win_ascent = stream.read<u16>();
+  var us_win_descent = stream.read<u16>();
+  //var ul_codepage_range1 = stream.read<u32>();
+  //var ul_codepage_range2 = stream.read<u32>();
+  //var sx_height = stream.read<i16>();
+  //var scap_height = stream.read<i16>();
+  //var usdefaultchar = stream.read<u16>();
+  //var us_breakchar = stream.read<u16>();
+  //var us_max_context = stream.read<u16>();
+  //var us_lower_optical_pointsize = stream.read<u16>();
+  //var us_upper_optical_pointsize = stream.read<u16>();
+
+  return os_2;
+}
+
+fn parse_hmtx(face &face, std::span<u8> &data) throws -> hmtx
+{
+  var hmtx = hmtx();
+
+  var stream = stream(data);
+
+  hmtx.metrics = stream.read(cast<usize>(face.hhea.number_of_metrics) * sizeof<long_hor_metric>);
+  hmtx.bearings = stream.read(cast<usize>(face.maxp.number_of_glyphs - face.hhea.number_of_metrics) * sizeof<i16>);
+
+  return hmtx;
+}
+
+fn parse_cmap(std::span<u8> &data) throws -> cmap
+{
+  var cmap = cmap();
+
+  var stream = stream(data);
+
+  var version = stream.read<u16>();
+  var num_records = stream.read<u16>();
+
+  cmap.records = stream.read(cast<usize>(num_records) * sizeof<encoding_record>);
+
+  cmap.data = data;
+
+  return cmap;
+}
+
+fn parse_loca(face &face, std::span<u8> &data) throws -> loca
+{
+  var loca = loca();
+
+  var stream = stream(data);
+
+  var count = face.number_of_glyphs + 1;
+
+  switch (face.head.index_to_location_format)
+  {
+    case 0:
+      loca.format = loca::format::short;
+      loca.offsets = stream.read(cast<usize>(count) * sizeof<u16>);
+
+    case 1:
+      loca.format = loca::format::long;
+      loca.offsets = stream.read(cast<usize>(count) * sizeof<u32>);
+
+    else:
+      throw errc::invalid_loca_format;
+  }
+
+  return loca;
+}
+
+fn parse_glyf(face &face, std::span<u8> &data) throws -> glyf
+{
+  var glyf = glyf();
+
+  glyf.data = data;
+
+  return glyf;
+}
+
+fn parse_kern(face &face, std::span<u8> &data) throws -> kern
+{
+  var kern = kern();
+
+  var stream = stream(data);
+
+  var version = stream.read<u16>();
+  var num_tables = stream.read<u16>();
+
+  kern.tables = stream.data;
+
+  return kern;
+}
+
+fn parse_gpos(face &face, std::span<u8> &data) throws -> gpos
+{
+  var gpos = gpos();
+
+  var stream = stream(data);
+
+  var major_version = stream.read<u16>();
+  var minor_version = stream.read<u16>();
+  gpos.scriptlist_offset = stream.read<u16>();
+  gpos.featurelist_offset = stream.read<u16>();
+  gpos.lookuplist_offset = stream.read<u16>();
+
+  gpos.data = data;
+
+  return gpos;
+}
+
+fn parse_gsub(face &face, std::span<u8> &data) throws -> gsub
+{
+  var gsub = gsub();
+
+  var stream = stream(data);
+
+  var major_version = stream.read<u16>();
+  var minor_version = stream.read<u16>();
+  gsub.scriptlist_offset = stream.read<u16>();
+  gsub.featurelist_offset = stream.read<u16>();
+  gsub.lookuplist_offset = stream.read<u16>();
+
+  gsub.data = data;
+
+  return gsub;
+}
+
+pub struct component
+{
+  u16 flags;
+  pub glyphid glyph_id;
+  pub f64[6] transform;
+
+  pub component() = default;
+  pub component(component&) = default;
+  pub ~component() = default;
+}
+
+fn read(stream mut &stream, component mut &component) -> void
+{
+  try
+  {
+    component.flags = stream.read<u16>();
+    component.glyph_id = stream.read<glyphid>();
+
+    component.transform = [ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 ];
+
+    if (component.flags & glyf::component_glyph_flags::args_are_xy_values != 0)
+    {
+      if (component.flags & glyf::component_glyph_flags::arg_1_and_2_are_words != 0)
+      {
+        component.transform[2] = cast<f64>(stream.read<i16>());
+        component.transform[5] = cast<f64>(stream.read<i16>());
+      }
+      else
+      {
+        component.transform[2] = cast<f64>(stream.read<i8>());
+        component.transform[5] = cast<f64>(stream.read<i8>());
+      }
+    }
+
+    if (component.flags & glyf::component_glyph_flags::we_have_a_scale != 0)
+    {
+      component.transform[0] = component.transform[4] = stream.read<f2dot14>().value;
+    }
+    else if (component.flags & glyf::component_glyph_flags::we_have_an_x_and_y_scale != 0)
+    {
+      component.transform[0] = stream.read<f2dot14>().value;
+      component.transform[4] = stream.read<f2dot14>().value;
+    }
+    else if (component.flags & glyf::component_glyph_flags::we_have_a_two_by_two != 0)
+    {
+      component.transform[0] = stream.read<f2dot14>().value;
+      component.transform[1] = stream.read<f2dot14>().value;
+      component.transform[3] = stream.read<f2dot14>().value;
+      component.transform[4] = stream.read<f2dot14>().value;
+    }
+  }
+  catch(errc)
+  {
+    component.flags = 0;
+  }
+}
+
+pub struct components_view
+{
+  stream stream;
+
+  pub components_iterator first;
+  pub components_sentinal second;
+
+  pub components_view(glyph &glyph)
+    : stream(glyph.data),
+      first(&mut stream)
+  {
+    std::assert(glyph.number_of_contours < 0);
+  }
+
+  pub ~components_view() = default;
+
+  pub struct components_iterator
+  {
+    pub component component;
+
+    components_iterator(stream mut &stream)
+      : stream(&stream)
+    {
+      stream.read(&mut component);
+    }
+
+    pub components_iterator() = default;
+    pub components_iterator(components_iterator &&) = default;
+    pub fn =(components_iterator mut &lhs, components_iterator &&rhs) -> components_iterator mut & = default;
+    pub ~components_iterator() = default;
+
+    pub fn ++(components_iterator mut &this) -> components_iterator mut &
+    {
+      if (this.component.flags & glyf::component_glyph_flags::more_components != 0)
+        this.stream.read(&mut this.component);
+      else
+        this.component.flags = 0;
+
+      return &this;
+    }
+
+    pub fn ==(components_iterator &this, components_sentinal &) -> bool
+    {
+      return this.component.flags == 0;
+    }
+
+    stream mut &stream;
+  }
+
+  pub struct components_sentinal
+  {
+    pub components_sentinal() = default;
+    pub components_sentinal(components_sentinal &&) = default;
+    pub fn =(components_sentinal mut &lhs, components_sentinal &&rhs) -> components_sentinal mut & = default;
+    pub ~components_sentinal() = default;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn begin(this &&)
+  {
+    return this.first;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn end(this &&)
+  {
+    return this.second;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn [](this &&, components_iterator &iter) -> component &
+  {
+    return &iter.component;
+  }
+}
+
+#[lifetime(depend(glyph))]
+pub fn components(glyph &glyph)
+{
+  return components_view(glyph);
+}
+
+pub struct point
+{
+  pub i16 x;
+  pub i16 y;
+  pub bool on;
+  pub bool fin;
+
+  pub point(i16 x, i16 y, bool on, bool fin)
+    : x(x), y(y), on(on), fin(fin)
+  {
+  }
+
+  pub point() = default;
+  pub point(point&) = default;
+  pub fn =(point mut &, point &) -> point mut & = default;
+  pub ~point() = default;
+}
+
+pub struct points_stream
+{
+  u16 i;
+  u16 n;
+  u8 flag;
+  u8 repeats;
+  stream flags;
+  stream x_coords;
+  stream y_coords;
+  stream endpoints;
+  stream instructions;
+
+  pub points_stream(glyph &glyph)
+  {
+    try
+    {
+      var stream = stream(glyph.data);
+
+      if (glyph.number_of_contours <= 0)
+        return;
+
+      this.endpoints.data = stream.read(cast<usize>(glyph.number_of_contours) * sizeof<u16>);
+
+      var instruction_length = stream.read<u16>();
+      this.instructions.data = stream.read(cast<usize>(instruction_length));
+
+      var flags = stream;
+      var x_coords_len = 0;
+      var y_coords_len = 0;
+      var endpoint = view<u16>(this.endpoints.data)[cast<usize>(glyph.number_of_contours - 1)];
+
+      for (var i = 0; i <= endpoint; )
+      {
+        var flag = flags.read<u8>();
+
+        var repeats = 1;
+        if (flag & glyf::simple_glyph_flags::repeat_flag != 0)
+          repeats += cast(flags.read<u8>());
+
+        x_coords_len += cast<u16>(flag & glyf::simple_glyph_flags::x_short_vector != 0) * repeats;
+        x_coords_len += cast<u16>(flag & glyf::simple_glyph_flags::x_vector == 0) * (repeats * 2);
+
+        y_coords_len += cast<u16>(flag & glyf::simple_glyph_flags::y_short_vector != 0) * repeats;
+        y_coords_len += cast<u16>(flag & glyf::simple_glyph_flags::y_vector == 0) * (repeats * 2);
+
+        i += repeats;
+      }
+
+      this.flags.data = stream.read(stream.data.len - flags.data.len);
+      this.x_coords.data = stream.read(cast<usize>(x_coords_len));
+      this.y_coords.data = stream.read(cast<usize>(y_coords_len));
+    }
+    catch(errc)
+    {
+    }
+  }
+
+  pub fn eof(this &) -> bool
+  {
+    return this.i > this.n;
+  }
+
+  pub fn read(this mut &, point mut &point) -> void
+  {
+    try
+    {
+      if (this.i == this.n)
+      {
+        this.n = this.endpoints.read<u16>() + 1;
+      }
+
+      if (this.repeats == 0)
+      {
+        this.flag = this.flags.read<u8>();
+
+        this.repeats = 1;
+        if (this.flag & glyf::simple_glyph_flags::repeat_flag != 0)
+          this.repeats += cast(this.flags.read<u8>());
+      }
+
+      switch (this.flag & glyf::simple_glyph_flags::x_vector)
+      {
+        case glyf::simple_glyph_flags::x_short_vector | glyf::simple_glyph_flags::x_is_same_or_positive_x_short_vector:
+          point.x += cast<i16>(this.x_coords.read<u8>());
+
+        case glyf::simple_glyph_flags::x_short_vector:
+          point.x += -cast<i16>(this.x_coords.read<u8>());
+
+        case 0:
+          point.x += this.x_coords.read<i16>();
+      }
+
+      switch (this.flag & glyf::simple_glyph_flags::y_vector)
+      {
+        case glyf::simple_glyph_flags::y_short_vector | glyf::simple_glyph_flags::y_is_same_or_positive_y_short_vector:
+          point.y += cast<i16>(this.y_coords.read<u8>());
+
+        case glyf::simple_glyph_flags::y_short_vector:
+          point.y += -cast<i16>(this.y_coords.read<u8>());
+
+        case 0:
+          point.y += this.y_coords.read<i16>();
+      }
+
+      point.on = (this.flag & glyf::simple_glyph_flags::on_curve_point != 0);
+      point.fin = (this.i + 1 == this.n);
+
+      this.repeats -= 1;
+    }
+    catch(errc)
+    {
+    }
+
+    this.i += 1;
+  }
+
+  pub ~points_stream() = default;
+}
+
+pub struct points_view
+{
+  points_stream stream;
+
+  pub points_iterator first;
+  pub points_sentinal second;
+
+  pub points_view(glyph &glyph)
+    : stream(glyph),
+      first(&mut stream)
+  {
+  }
+
+  pub ~points_view() = default;
+
+  pub struct points_iterator
+  {
+    pub point point;
+
+    points_iterator(points_stream mut &stream)
+      : stream(&stream)
+    {
+      stream.read(&mut point);
+    }
+
+    pub points_iterator() = default;
+    pub points_iterator(points_iterator &&) = default;
+    pub fn =(points_iterator mut &lhs, points_iterator &&rhs) -> points_iterator mut & = default;
+    pub ~points_iterator() = default;
+
+    pub fn ++(points_iterator mut &this) -> points_iterator mut &
+    {
+      this.stream.read(&mut this.point);
+
+      return &this;
+    }
+
+    pub fn ==(points_iterator &this, points_sentinal &) -> bool
+    {
+      return this.stream.eof;
+    }
+
+    points_stream mut &stream;
+  }
+
+  pub struct points_sentinal
+  {
+    pub points_sentinal() = default;
+    pub points_sentinal(points_sentinal &&) = default;
+    pub fn =(points_sentinal mut &lhs, points_sentinal &&rhs) -> points_sentinal mut & = default;
+    pub ~points_sentinal() = default;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn begin(this &&)
+  {
+    return this.first;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn end(this &&)
+  {
+    return this.second;
+  }
+
+  #[lifetime(depend(*this))]
+  pub fn [](this &&, points_iterator &iter) -> point &
+  {
+    return &iter.point;
+  }
+}
+
+#[lifetime(depend(glyph))]
+pub fn points(glyph &glyph)
+{
+  return points_view(glyph);
+}

@@ -390,7 +390,7 @@ pub fn panic(EFI_SYSTEM_TABLE *SystemTable, var msg) -> void
   var buffer = [u16(0); 256];
 
   var out = buffer.data;
-  for(var i = 0; i < msg.len; ++i)
+  for (var i = 0; i < msg.len; ++i)
     *out++ = cast(*(msg.data + i));
 
   SystemTable.ConOut.ClearScreen();

@@ -119,7 +119,7 @@ pub fn cmdline() -> std::string_view
 
 pub fn cmdline(String &name, String &default = "") -> std::string_view
 {
-  for(var ch = sys.cmdline.begin, var end = sys.cmdline.end; ch != end; ++ch)
+  for (var ch = sys.cmdline.begin, var end = sys.cmdline.end; ch != end; ++ch)
   {
     if (*ch == 0)
       break;
@@ -257,7 +257,7 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
 {
   std::assert(platform::interrupts_disabled);
 
-  for(var i = 0; i < sys.cpu_count; ++i)
+  for (var i = 0; i < sys.cpu_count; ++i)
   {
     if (i == cast(cpu::current))
       continue;

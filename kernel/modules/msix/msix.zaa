@@ -1,0 +1,87 @@
+//
+// msix
+//
+
+import std.stdio;
+import std.vector;
+import pci;
+import sys;
+import vm;
+import heap;
+import platform;
+
+enum msix_register
+{
+  control = 0x02,
+  table = 0x04,
+  pba = 0x08,
+
+  fn +(u8 lhs, msix_register rhs) -> u8 { return lhs + cast<u8>(rhs); }
+}
+
+pub fn count(pci::device &device) -> usize
+{
+  var offset = device.read_capability(pci::capabilities::msix);
+
+  if (offset == 0)
+    return 0;
+
+  var control = device.read_config<u16>(offset + msix_register::control);
+
+  return cast<usize>(control & 0x7ff) + 1;
+}
+
+pub fn configure(pci::device &device, (u8, u8) &vectors) -> bool
+{
+  std::assert(vectors.1 - vectors.0 != 0);
+  std::assert(cast<usize>(vectors.1 - vectors.0) <= count(device));
+
+  var offset = device.read_capability(pci::capabilities::msix);
+  var control = device.read_config<u16>(offset + msix_register::control);
+
+  var table_count = cast<usize>(control & 0x7ff) + 1;
+  var table_value = device.read_config<u32>(offset + msix_register::table);
+  var pba_value = device.read_config<u32>(offset + msix_register::pba);
+
+  var table_base = device.read_base_address(cast<usize>(table_value & 0x7)) + cast<usize>(table_value & 0xfff8);
+  var table = heap::mmap(vm::physrange(table_base, table_count * 16));
+
+  var pba_base = device.read_base_address(cast<usize>(pba_value & 0x7)) + cast<usize>(pba_value & 0xfff8);
+  var pba = heap::mmap(vm::physrange(table_base, table_count * 16));
+
+  for (var i = 0; i < cast<usize>(vectors.1 - vectors.0); ++i)
+  {
+    var address = uintptr(0xfee00000) | (i % sys::cpu_count) << 12;
+    var data = platform::io_vector_id(vectors.0 + cast<u8>(i));
+
+    var entry = cast<u32 mut *>(table.addr + i * 16);
+
+    std::volatile_store(entry + 0, cast<u32>(address & 0xffffffff));
+    std::volatile_store(entry + 1, cast<u32>(address >> 32));
+    std::volatile_store(entry + 2, cast<u32>(data));
+    std::atomic_and(entry + 3, ~1);
+  }
+
+  heap::munmap(table);
+  heap::munmap(pba);
+
+  return true;
+}
+
+pub fn enable(pci::device &device) -> void
+{
+  device.write_command(device.read_command() | pci::command::interrupt_disable);
+
+  var offset = device.read_capability(pci::capabilities::msix);
+  var control = device.read_config<u16>(offset + msix_register::control);
+
+  device.write_config<u16>(offset + msix_register::control, control | 0x8000);
+}
+
+pub fn disable(pci::device &device) -> void
+{
+  var offset = device.read_capability(pci::capabilities::msix);
+  var control = device.read_config<u16>(offset + msix_register::control);
+
+  device.write_config<u16>(offset + msix_register::control, control & ~0x8000);
+}

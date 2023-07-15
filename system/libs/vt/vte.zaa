@@ -403,7 +403,7 @@ fn csi_mode(vt::screen mut &screen, vte mut &vte, bool active) -> void
 {
   if (vte.flags == 0)
   {
-    for(var i = 0; i < vte.argc; ++i)
+    for (var i = 0; i < vte.argc; ++i)
     {
       switch (vte.argv[i])
       {
@@ -418,7 +418,7 @@ fn csi_mode(vt::screen mut &screen, vte mut &vte, bool active) -> void
 
   if (vte.flags & flags::question != 0)
   {
-    for(var i = 0; i < vte.argc; ++i)
+    for (var i = 0; i < vte.argc; ++i)
     {
       switch (vte.argv[i])
       {
@@ -440,7 +440,7 @@ fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
   if (vte.argc == 0)
     vte.argc = 1;
 
-  for(var i = 0; i < vte.argc; ++i)
+  for (var i = 0; i < vte.argc; ++i)
   {
     switch (vte.argv[i])
     {

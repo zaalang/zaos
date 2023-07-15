@@ -34,7 +34,7 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
 {
   var table = SystemTable.ConfigurationTable;
 
-  for(var i = 0; i < SystemTable.NumberOfTableEntries; ++i)
+  for (var i = 0; i < SystemTable.NumberOfTableEntries; ++i)
   {
     var entry = table + i;
 
@@ -359,7 +359,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   idt_set_system_gate(&mut idt, 19, isr_table + 19*64, cpu::selector::code0, 0);
   idt_set_system_gate(&mut idt, 20, isr_table + 20*64, cpu::selector::code0, 1);
 
-  for(var i = 32; i < 250; ++i)
+  for (var i = 32; i < 250; ++i)
     idt_set_system_gate(&mut idt, i, isr_table + i*64, cpu::selector::code0, 0); // io_dispatch_handler
 
   idt_set_system_gate(&mut idt, 0xfc, isr_table + 252*64, cpu::selector::code0, 0); // apic_timer_interrupt_handler

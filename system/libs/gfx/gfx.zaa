@@ -1,0 +1,25 @@
+//
+// gfx
+//
+
+pub struct paint_t
+{
+  pub int width;
+  pub int height;
+  pub usize stride;
+  pub u8 mut *data;
+
+  paint_t(int width, int height, usize stride, u8 mut *data)
+    : width(width), height(height), stride(stride), data(data)
+  {
+  }
+
+  pub paint_t(paint_t &) = default;
+  pub fn =(paint_t mut &, paint_t &) -> paint_t mut & = default;
+  pub ~paint_t() = default;
+}
+
+pub fn create_context(int width, int height, usize stride, u8 mut *data) -> paint_t
+{
+  return paint_t(width, height, stride, data);
+}

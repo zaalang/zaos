@@ -123,7 +123,7 @@ fn pds(virtaddr_t addr) -> usize[3]
   return [ (addr >> 39) & 0x1ff, (addr >> 30) & 0x1ff, (addr >> 21) & 0x1ff ];
 }
 
-fn pt_entry(virtaddr_t addr) -> usize
+fn pte(virtaddr_t addr) -> usize
 {
   return (addr >> 12) & 0x1ff;
 }
@@ -163,7 +163,7 @@ pub fn query(page_table mut &this, virtaddr_t addr) -> page_table_query
 {
   var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
-  for(var i : pds(addr))
+  for (var i : pds(addr))
   {
     if (pt[i] & pdbits::present == 0)
       return page_table_query(0);
@@ -171,7 +171,7 @@ pub fn query(page_table mut &this, virtaddr_t addr) -> page_table_query
     pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
   }
 
-  return page_table_query(pt[pt_entry(addr)]);
+  return page_table_query(pt[pte(addr)]);
 }
 
 pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protection prot, mflags mflags, physaddr_t fn() &allocate) -> void
@@ -183,7 +183,7 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
   {
     var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
-    for(var i : pds(addr))
+    for (var i : pds(addr))
     {
       var entry = std::atomic_load(&pt[i], std::memory_order::relaxed);
 
@@ -207,7 +207,7 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
       pt = cast<uintptr[512] mut *>(entry & ~0xfff + PHYSICAL_BASE);
     }
 
-    for(var i = pt_entry(addr); page != pages.1 && i < 512; ++i)
+    for (var i = pte(addr); page != pages.1 && i < 512; ++i)
     {
       var flags = uintptr(0);
 
@@ -250,14 +250,14 @@ pub fn set_memory_type(page_table mut &this, virtrange_t range, mtype mtype) -> 
   {
     var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
-    for(var i : pds(addr))
+    for (var i : pds(addr))
     {
       std::assert(pt[i] & pdbits::present != 0);
 
       pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
     }
 
-    for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+    for (var i = pte(addr); addr < range.1 && i < 512; ++i)
     {
       std::assert(pt[i] != 0);
 
@@ -289,14 +289,14 @@ pub fn unmap(page_table mut &this, virtrange_t range) -> void
   {
     var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
-    for(var i : pds(addr))
+    for (var i : pds(addr))
     {
       std::assert(pt[i] & pdbits::present != 0);
 
       pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
     }
 
-    for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+    for (var i = pte(addr); addr < range.1 && i < 512; ++i)
     {
       std::assert(pt[i] != 0);
 
@@ -335,7 +335,7 @@ pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, void fn(vo
         {
           pt = cast<uintptr[512] mut *>(pt[pds[2]] & ~0xfff + PHYSICAL_BASE);
 
-          for(var i = pt_entry(addr); addr < range.1 && i < 512; ++i)
+          for (var i = pte(addr); addr < range.1 && i < 512; ++i)
           {
             if (pt[i] & pdbits::present != 0)
             {
@@ -370,25 +370,25 @@ pub fn dispose(page_table mut &this, void mut *data, void fn(void mut *, physadd
 {
   var pml4 = cast<physaddr_t[512] mut *>(this.pml4 + PHYSICAL_BASE);
 
-  for(var k = 0; k < 256; ++k)
+  for (var k = 0; k < 256; ++k)
   {
     if (pml4[k] & pdbits::present != 0)
     {
       var pdp = cast<physaddr_t[512] mut *>(pml4[k] & ~0xfff + PHYSICAL_BASE);
 
-      for(var j = 0; j < 512; ++j)
+      for (var j = 0; j < 512; ++j)
       {
         if (pdp[j] & pdbits::present != 0)
         {
           var pd = cast<physaddr_t[512] mut *>(pdp[j] & ~0xfff + PHYSICAL_BASE);
 
-          for(var i = 0; i < 512; ++i)
+          for (var i = 0; i < 512; ++i)
           {
             if (pd[i] & pdbits::present != 0)
             {
               var pt = cast<physaddr_t[512] mut *>(pd[i] & ~0xfff + PHYSICAL_BASE);
 
-              for(var i = 0; i < 512; ++i)
+              for (var i = 0; i < 512; ++i)
                 std::assert(pt[i] == 0);
 
               callback(data, pd[i] & ~0xfff);

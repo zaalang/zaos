@@ -27,22 +27,22 @@ fn init(keymap mut &keymap) -> void
   const fallback_sym_shift_map = [<u8>: 0x00, 0x01, 0x00, 0x00, 0x04, 0x05, 0x7f, 0x00, 0x08, 0x09, 0x00, 0x0b, 0x0c, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x00, 0x00, 0x00, 0x00, 0x7e, 0x00, 0x22, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x5f, 0x3e, 0x3f, 0x29, 0x21, 0x40, 0x23, 0x24, 0x25, 0x5e, 0x26, 0x2a, 0x28, 0x00, 0x3a, 0x7c, 0x2b, 0x00, 0x00, 0x00, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x7b, 0x7c, 0x7d ];
   const fallback_sym_control_map = [<u8>: 0x00, 0x01, 0x00, 0x00, 0x04, 0x05, 0x7f, 0x00, 0x7f, 0x09, 0x00, 0x0b, 0x0c, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d ];
 
-  for(var i = 0; i < fallback_key_map.len; ++i)
+  for (var i = 0; i < fallback_key_map.len; ++i)
     keymap.keys[i] = cast(fallback_key_map[i]);
 
-  for(var i = 0; i < fallback_sym_map.len; ++i)
+  for (var i = 0; i < fallback_sym_map.len; ++i)
     keymap.syms[i][0] = cast(fallback_sym_map[i]);
 
-  for(var i = 0; i < fallback_sym_shift_map.len; ++i)
+  for (var i = 0; i < fallback_sym_shift_map.len; ++i)
     keymap.syms[i][1] = cast(fallback_sym_shift_map[i]);
 
-  for(var i = 0; i < fallback_sym_control_map.len; ++i)
+  for (var i = 0; i < fallback_sym_control_map.len; ++i)
     keymap.syms[i][2] = cast(fallback_sym_control_map[i]);
 
-  for(var i = 0; i < fallback_sym_map.len; ++i)
+  for (var i = 0; i < fallback_sym_map.len; ++i)
     keymap.syms[i][3] = cast(fallback_sym_map[i]);
 
-  for(var i = 0; i < fallback_sym_shift_map.len; ++i)
+  for (var i = 0; i < fallback_sym_shift_map.len; ++i)
     keymap.syms[i][4] = cast(fallback_sym_shift_map[i]);
 }
 
@@ -60,7 +60,7 @@ pub fn load_keys(keymap mut &keymap, std::string_view path) -> i32
     if (!keys.is_map)
       return -cast<i32>(errc::keys_format_invalid);
 
-    for(var &(k, v) : keys.as_map)
+    for (var &(k, v) : keys.as_map)
     {
       if (!k.is_integer)
         return -cast<i32>(errc::keys_format_invalid);
@@ -70,7 +70,7 @@ pub fn load_keys(keymap mut &keymap, std::string_view path) -> i32
 
       var keycode = 0;
 
-      switch(v)
+      switch (v)
       {
         case Integer[integer]:
           if (integer > 0 && integer <= 255)
@@ -85,7 +85,7 @@ pub fn load_keys(keymap mut &keymap, std::string_view path) -> i32
 
           if (string.len > 1)
           {
-            #for(const k : std::meta::enumerators_of($Key))
+            #for (const k : std::meta::enumerators_of($Key))
             {
               if (string == std::meta::name_of(k))
                 keycode = cast(Key::#k);
@@ -121,7 +121,7 @@ pub fn load_syms(keymap mut &keymap, std::string_view path) -> i32
     if (!syms.is_map)
       return -cast<i32>(errc::syms_format_invalid);
 
-    for(var &(k, v) : syms.as_map)
+    for (var &(k, v) : syms.as_map)
     {
       if (!k.is_integer)
         return -cast<i32>(errc::syms_format_invalid);
@@ -135,11 +135,11 @@ pub fn load_syms(keymap mut &keymap, std::string_view path) -> i32
       if (!v.is_array)
         return -cast<i32>(errc::syms_format_invalid);
 
-      for(var i = 0, var &e : v.as_vec;; ++i)
+      for (var i = 0, var &e : v.as_vec;; ++i)
       {
         var symbol = '\0';
 
-        switch(e)
+        switch (e)
         {
           case Integer[integer]:
             if (integer > 0 && integer <= 0x1ffff)
