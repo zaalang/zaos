@@ -43,7 +43,7 @@ pub struct screen
   pub fn rows(this&) { return this.rows; }
   pub fn columns(this&) { return this.columns; }
 
-  pub std::delegate<void fn(u8*, usize)> on_reply;
+  pub std::delegate<fn(u8*, usize)> on_reply;
 
   vte state;
 

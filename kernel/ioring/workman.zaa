@@ -154,7 +154,7 @@ fn kworkd(worker mut *worker) -> void
             if (ctx.wake_time != 0 && ctx.wake_time <= now)
               ctx.blockers.clear();
 
-            if (!ctx.blockers.empty && std::all_of(ctx.blockers, fn(var &k) { return !k.ready; }))
+            if (!ctx.blockers.empty && std::all_of(ctx.blockers, fn (var &k) { return !k.ready; }))
               continue;
 
             ctx.wake_time = 0;
@@ -200,7 +200,7 @@ fn kworkd(worker mut *worker) -> void
       }
     }
 
-    var timeout = ~0;
+    var waketime = ~0;
 
     if (entries.0)
     {
@@ -211,14 +211,14 @@ fn kworkd(worker mut *worker) -> void
           for (var mut &ctx : ring.pending)
           {
             if (ctx.wake_time != 0)
-              timeout = std::min(timeout, ctx.wake_time);
+              waketime = std::min(waketime, ctx.wake_time);
           }
 
           ring.lock.unlock();
         }
         else
         {
-          timeout = std::min(timeout, cpu::system_time + 1_000);
+          waketime = std::min(waketime, cpu::system_time + 1_000);
         }
       }
 
@@ -228,7 +228,7 @@ fn kworkd(worker mut *worker) -> void
     if (workman.activity != activity)
       continue;
 
-    worker.doorbell.wait_until(timeout);
+    worker.doorbell.wait_until(waketime);
   }
 }
 
@@ -238,7 +238,7 @@ pub fn initialise() -> void
 
   for (var mut &worker : workman.workers)
   {
-    worker.kworkd = thread::create(process::current, &cast<void fn(worker mut *)>(kworkd), &worker);
+    worker.kworkd = thread::create(process::current, &cast<fn(worker mut *)>(kworkd), &worker);
   }
 
   platform::disable_interrupts();

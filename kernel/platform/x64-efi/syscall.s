@@ -10,7 +10,7 @@
             .global syscall_entry
 
             .section .data
-            .set SYSCALL_COUNT, 19
+            .set SYSCALL_COUNT, 22
 systable:   .quad sys_thread_exit
             .quad sys_process_exit
             .quad sys_get_pagesize
@@ -29,7 +29,10 @@ systable:   .quad sys_thread_exit
             .quad sys_process_create_wrapper
             .quad sys_process_kill
             .quad sys_thread_create
+            .quad sys_thread_munmap_exit
             .quad sys_wait
+            .quad sys_futex_wait
+            .quad sys_futex_wake
             #.quad syscall_7_wrapper
             #.quad syscall_8_wrapper
             #.quad syscall_9_wrapper

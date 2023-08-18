@@ -65,7 +65,7 @@ pub fn send<zidl_message_t, Args>(i32 fd, Args && ...args) -> result
   request.fds = handles.data;
   request.nfds = encode.handles_actual;
 
-  if (var result = os::channel_write(&mut thread_ring, fd, 0, &request); result < 0)
+  if (var rc = os::channel_write(&mut thread_ring, fd, 0, &request); rc < 0)
     return zidl::errc::channel_operation_failed;
 
   return 0;
@@ -104,9 +104,9 @@ pub fn call<zidl_request_t, zidl_response_t, Args, Callback>(i32 fd, Args && ...
   var inbytes = 0;
   var infds = 0;
 
-  if (var result = os::channel_call(&mut thread_ring, fd, &request, &response, &inbytes, &infds); result <= 0)
+  if (var rc = os::channel_call(&mut thread_ring, fd, &request, &response, &inbytes, &infds); rc <= 0)
   {
-    if (result == 0)
+    if (rc == 0)
       return zidl::errc::channel_closed;
 
     return zidl::errc::channel_operation_failed;
@@ -166,7 +166,7 @@ pub struct completer
     response.fds = this.handles.data;
     response.nfds = encode.handles_actual;
 
-    if (var result = os::channel_write(&mut thread_ring, this.fd, this.txid, &response); result < 0)
+    if (var rc = os::channel_write(&mut thread_ring, this.fd, this.txid, &response); rc < 0)
       return (this.status = result(zidl::errc::channel_operation_failed));
 
     return 0;
@@ -207,9 +207,9 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
   var inbytes = 0;
   var infds = 0;
 
-  if (var result = os::channel_read(&mut thread_ring, fd, &txid, &request, &inbytes, &infds); result <= 0)
+  if (var rc = os::channel_read(&mut thread_ring, fd, &txid, &request, &inbytes, &infds); rc <= 0)
   {
-    if (result == 0)
+    if (rc == 0)
       return zidl::errc::channel_closed;
 
     return zidl::errc::channel_operation_failed;

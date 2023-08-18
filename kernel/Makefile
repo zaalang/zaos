@@ -55,6 +55,7 @@ kprint.zaa\
 event.zaa\
 buffer.zaa\
 channel.zaa\
+futex.zaa\
 vfs/vfs.zaa\
 vfs/fs.zaa\
 vfs/node.zaa\

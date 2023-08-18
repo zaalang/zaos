@@ -258,17 +258,17 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
   {
     var in = u8(0);
 
-    if (var result = os::read(&mut thread_ring, fd, &in, 1); result != 1)
+    if (var bytes = os::read(&mut thread_ring, fd, &in, 1); bytes != 1)
     {
-      if (result == 0)
+      if (bytes == 0)
       {
         ctx.next = event::end_of_file;
         return true;
       }
 
-      if (result != os::EAGAIN)
+      if (bytes != os::EAGAIN)
       {
-        ctx.next = event::error(cast<std::errc>(-result));
+        ctx.next = event::error(cast<std::errc>(-bytes));
         return true;
       }
 

@@ -337,7 +337,7 @@ pub struct queue
 
   int phase;
 
-  std::vector<std::delegate<void fn(nvme_cqe *, result)>> handlers;
+  std::vector<std::delegate<fn(nvme_cqe *, result)>> handlers;
 
   usize index;
   controller mut &controller;
@@ -460,7 +460,7 @@ fn initialise(controller mut &controller) -> result
   if (var result = controller.enable(); !result)
     return result;
 
-  io::install_handler(irq, &cast<void fn(controller mut *)>(nvme_controller_handler), &controller);
+  io::install_handler(irq, &cast<fn(controller mut *)>(nvme_controller_handler), &controller);
 
   var queue_entries = std::min(cast<u32>((cap >> cap::mqes_shift) & cap::mqes_mask + 1), 1024);
 
@@ -486,7 +486,7 @@ fn initialise(controller mut &controller) -> result
 
   for(var irq = controller.irqs.0; irq < controller.irqs.1; ++irq)
   {
-    io::install_handler(irq, &cast<void fn(queue mut *)>(nvme_queue_handler), controller.queues[cast<usize>(irq - controller.irqs.0)]);
+    io::install_handler(irq, &cast<fn(queue mut *)>(nvme_queue_handler), controller.queues[cast<usize>(irq - controller.irqs.0)]);
   }
 
   if (controller.status.wait(); !controller.status)
@@ -512,7 +512,8 @@ fn initialise(queue mut &queue) -> result
   return ok;
 }
 
-fn submit(queue mut &queue, nvme_sqe &cmd, std::delegate<void fn(nvme_cqe *, result)> &callback) -> result
+#[lifetime(consume(callback))]
+fn submit(queue mut &queue, nvme_sqe &cmd, std::delegate<fn(nvme_cqe *, result)> mut &callback) -> result
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut queue.lock);
 
@@ -532,7 +533,7 @@ fn submit(queue mut &queue, nvme_sqe &cmd, std::delegate<void fn(nvme_cqe *, res
   sqe.prpp = cmd.prpp;
   sqe.cdw = cmd.cdw;
 
-  queue.handlers[index] = callback;
+  queue.handlers[index] = &move callback;
 
   queue.sq_tail = next;
 
@@ -556,7 +557,7 @@ fn identify_controller(controller mut &controller, vm::physaddr buffer) -> resul
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   if (controller.status.wait(); !controller.status)
@@ -578,7 +579,7 @@ fn identify_active_namespace_list(controller mut &controller, vm::physaddr buffe
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   if (controller.status.wait(); !controller.status)
@@ -603,7 +604,7 @@ fn set_features_num_queues(controller mut &controller, usize mut &queue_count) -
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   if (controller.status.wait(); !controller.status)
@@ -629,7 +630,7 @@ fn create_completion_queue(controller mut &controller, usize id, u32 size, vm::p
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   return ok;
@@ -649,7 +650,7 @@ fn create_submission_queue(controller mut &controller, usize id, u32 size, vm::p
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   return ok;
@@ -694,7 +695,7 @@ pub fn identify(controller mut &controller, u32 nsid, vm::physaddr buffer) -> re
     io::complete(&mut controller.status.cb, status);
   };
 
-  if (var result = controller.admin.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = controller.admin.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   if (controller.status.wait(); !controller.status)
@@ -777,7 +778,7 @@ pub fn enqueue(controller mut &controller, u32 nsid, blk::request mut *request) 
     blk::complete(request, status ? blk::request::status::success : blk::request::status::errored);
   };
 
-  if (var result = queue.submit(cmd, std::delegate<void fn(nvme_cqe *, result)>(completer)); !result)
+  if (var result = queue.submit(cmd, &move std::delegate<fn(nvme_cqe *, result)>(completer)); !result)
     return result;
 
   return ok;

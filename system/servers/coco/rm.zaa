@@ -29,8 +29,8 @@ pub fn rm(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
     return -22;
   }
 
-  if (var result = unlink(&mut thread_ring, os::string(path.data, path.len), 0); result < 0)
-    return result;
+  if (var rc = unlink(&mut thread_ring, os::string(path.data, path.len), 0); rc < 0)
+    return rc;
 
   return 0;
 }

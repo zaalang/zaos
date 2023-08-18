@@ -8,6 +8,7 @@ import cpu;
 import result as _ : result;
 import thread as _ : thread;
 import process as _ : process;
+import futex;
 
 enum flags
 {
@@ -28,6 +29,12 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
   if (thread.id != thread.process.id && thread.process != process::current)
     return vm::result::no_such_process;
 
+  if (thread == thread::current)
+    return vm::result::deadlock_avoided;
+
+  if (thread.is_detached)
+    return vm::result::deadlock_avoided;
+
   if (flags & flags::nohang == 0)
   {
     thread.rval.wait();
@@ -35,10 +42,13 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
 
   if (thread.rval.ready)
   {
-    var rval = thread.rval.result;
+    if (rvalbuf != 0)
+    {
+      var rval = thread.rval.result;
 
-    if (var result = vm::write_process_memory(rvalbuf, &rval, sizeof<i32>); !result)
-      return result;
+      if (var result = vm::write_process_memory(rvalbuf, &rval, sizeof<i32>); !result)
+        return result;
+    }
 
     if (flags & flags::nowait == 0)
     {
@@ -47,6 +57,33 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
 
     return id;
   }
+
+  if (flags & flags::nowait == 0)
+  {
+    thread.detach();
+  }
+
+  return 0;
+}
+
+extern fn sys_futex_wait(virtaddr addr, u32 expected, u64 abstime) -> result
+{
+  if (addr == 0 || !vm::is_user_address(addr))
+    return invalid_argument;
+
+  if (var result = futex::wait(addr, expected, abstime); !result)
+    return result;
+
+  return 0;
+}
+
+extern fn sys_futex_wake(virtaddr addr, u32 count) -> result
+{
+  if (addr == 0 || !vm::is_user_address(addr))
+    return invalid_argument;
+
+  if (var result = futex::wake(addr, count); !result)
+    return result;
 
   return 0;
 }

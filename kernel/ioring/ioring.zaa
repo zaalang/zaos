@@ -388,7 +388,7 @@ pub fn retire(io_ring mut &this, ioring_sqe &sqe, result status) -> result
   if (!this.readable.ready)
     io::complete(&mut this.readable.cb, 0);
 
-  this.waiters.notify_all();
+  this.waiters.wake_all();
 
   return ok;
 }

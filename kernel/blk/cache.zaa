@@ -175,9 +175,9 @@ pub fn wait(block_ptr mut &block) -> void
   return block.response.wait();
 }
 
-pub fn wait_until(block_ptr mut &block, u64 timeout) -> bool
+pub fn wait_until(block_ptr mut &block, u64 abstime) -> bool
 {
-  return block.response.wait_until(timeout);
+  return block.response.wait_until(abstime);
 }
 
 struct block_cache
@@ -345,7 +345,7 @@ fn plumber(void*) -> void
 
 pub fn spawn_plumber() -> void
 {
-  pagecache.plumber = thread::create(process::current, &cast<void fn(void mut *)>(plumber), null);
+  pagecache.plumber = thread::create(process::current, &cast<fn(void mut *)>(plumber), null);
 
   scheduler::enqueue(pagecache.plumber);
 }

@@ -150,8 +150,8 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
     std::panic("loader: fd ", fd);
 
   var stat = os::stat();
-  if (var result = os::stat(&mut ctx.ring, fd, &stat, 0x7f); result < 0)
-    std::panic("loader: stat ", result);
+  if (var rc = os::stat(&mut ctx.ring, fd, &stat, 0x7f); rc < 0)
+    std::panic("loader: stat ", rc);
 
   var mmvec = os::mmvec();
   mmvec.offset = 0;
@@ -160,13 +160,13 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
   mmvec.prot = os::prot::readonly;
 
   var addr = null<void mut *>();
-  if (var result = os::mmap(fd, &mmvec, 1, &addr, 0); result < 0)
-    std::panic("loader: mmap ", result);
+  if (var rc = os::mmap(fd, &mmvec, 1, &addr, 0); rc < 0)
+    std::panic("loader: mmap ", rc);
 
   var image = elf::image(addr, cast(stat.size));
 
-  if (var result = image.verify_elf_header(); !result)
-    std::panic("loader: verify ", result);
+  if (var rc = image.verify_elf_header(); !rc)
+    std::panic("loader: verify ", rc);
 
   if (image.ehdr.e_type != elf::elf64_etype::DYN)
     std::panic("loader: verify ", elf::result::format_error);
@@ -211,8 +211,8 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
     }
   }
 
-  if (var result = os::mmap(fd, loads.data, loads.len, &addr, 0); result < 0)
-    std::panic("loader: mmap ", result);
+  if (var rc = os::mmap(fd, loads.data, loads.len, &addr, 0); rc < 0)
+    std::panic("loader: mmap ", rc);
 
   for (var &header : image.program_headers)
   {

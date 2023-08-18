@@ -132,12 +132,12 @@ pub fn open_pty(pty mut &pty) -> i32
   grantpt.gid = getgid();
   grantpt.mode = 0o660;
 
-  if (var result = ioctl(&mut thread_ring, master, tio::grantpt, &grantpt, sizeof<grantpt>); result < 0)
-    return result;
+  if (var rc = ioctl(&mut thread_ring, master, tio::grantpt, &grantpt, sizeof<grantpt>); rc < 0)
+    return rc;
 
   var ptn = 0;
-  if (var result = ioctl(&mut thread_ring, master, tio::getptn, &ptn, sizeof<int>); result < 0)
-    return result;
+  if (var rc = ioctl(&mut thread_ring, master, tio::getptn, &ptn, sizeof<int>); rc < 0)
+    return rc;
 
   var buffer = [0; 64];
   var len = std::sprintf(&mut buffer, "/dev/pts/{}", ptn);
@@ -199,8 +199,8 @@ pub fn resize(pty mut &pty, usize width, usize height) -> i32
   ws.ws_xpixel = 0;
   ws.ws_ypixel = 0;
 
-  if (var result = os::ioctl(&mut thread_ring, pty.master, tio::setwinsize, &ws, sizeof(ws)); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.master, tio::setwinsize, &ws, sizeof(ws)); rc < 0)
+    return rc;
 
   return 0;
 }
@@ -208,13 +208,13 @@ pub fn resize(pty mut &pty, usize width, usize height) -> i32
 pub fn echo_off(pty mut &pty) -> i32
 {
   var state = termios(void);
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
 
   state.c_lflag &= ~LFLAG::ECHO;
 
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }
@@ -222,21 +222,21 @@ pub fn echo_off(pty mut &pty) -> i32
 pub fn echo_on(pty mut &pty) -> i32
 {
   var state = termios(void);
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
 
   state.c_lflag |= LFLAG::ECHO;
 
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }
 
 pub fn enable_raw_mode(pty mut &pty) -> i32
 {
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &pty.state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &pty.state, sizeof<termios>); rc < 0)
+    return rc;
 
   var raw = pty.state;
   raw.c_iflag &= ~(IFLAG::BRKINT | IFLAG::ICRNL | IFLAG::ISTRIP);
@@ -244,16 +244,16 @@ pub fn enable_raw_mode(pty mut &pty) -> i32
   raw.c_cflag |= (CFLAG::CS8);
   raw.c_lflag &= ~(LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ISIG);
 
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &raw, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &raw, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }
 
 pub fn restore_cooked_mode(pty mut &pty) -> i32
 {
-  if (var result = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &pty.state, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &pty.state, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }

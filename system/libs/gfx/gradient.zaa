@@ -1,0 +1,186 @@
+//
+// gfx gradient
+//
+
+import std.math;
+import std.vector;
+import std.range : Range;
+import gfx.color;
+import gfx.point;
+import gfx.transform;
+
+pub struct color_stop
+{
+  pub f32 position;
+  pub gfx::color color;
+
+  pub color_stop(f32 position, gfx::color &color)
+    : position(position), color(color)
+  {
+  }
+
+  pub color_stop() = default;
+  pub color_stop(color_stop&) = default;
+  pub fn =(color_stop mut &, color_stop &) -> color_stop mut & = default;
+  pub ~color_stop() = default;
+}
+
+pub struct gradient
+{
+  std::vector<color_stop, N:2> stops;
+
+  pub fn stops(this&)
+  {
+    return &this.stops;
+  }
+
+  pub fn set_stops(this mut &, Range<color_stop> &&stops) -> void
+  {
+    this.stops = &&stops;
+  }
+
+  pub fn append_stop(this mut &, f32 position, gfx::color &color) -> void
+  {
+    this.stops.push_back(position, color);
+  }
+
+  pub fn insert_stop(this mut &, f32 position, gfx::color &color) -> void
+  {
+    var insertpos = this.stops.begin;
+    while (insertpos != this.stops.end && this.stops[insertpos].position < position)
+      ++insertpos;
+
+    this.stops.insert(insertpos, position, color);
+  }
+
+  gradient() = default;
+  gradient(gradient&) = default;
+  fn =(gradient mut &, gradient &) -> gradient mut & = default;
+  ~gradient() = default;
+}
+
+pub struct linear_gradient : pub gradient
+{
+  pub gfx::point init_point;
+  pub gfx::point fini_point;
+
+  pub gfx::transform transform = gfx::transform::identity;
+
+  pub linear_gradient(gfx::point &init_point, gfx::point &fini_point)
+    : init_point(init_point), fini_point(fini_point)
+  {
+  }
+
+  pub linear_gradient() = default;
+  pub linear_gradient(linear_gradient&) = default;
+  pub fn =(linear_gradient mut &, linear_gradient &) -> linear_gradient mut & = default;
+  pub ~linear_gradient() = default;
+}
+
+#[lifetime(depend(this))]
+pub fn transform!(linear_gradient mut &this, gfx::transform &Q) -> linear_gradient mut &
+{
+  this.transform = Q * this.transform;
+
+  return &this;
+}
+
+#[nodiscard]
+pub fn transform(linear_gradient &&this, gfx::transform &Q) -> linear_gradient
+{
+  return linear_gradient(this).transform!(Q);
+}
+
+pub struct radial_gradient : pub gradient
+{
+  pub gfx::point centre_point;
+  pub gfx::point focal_point;
+  pub float outer_radius;
+  pub float inner_radius;
+
+  pub gfx::transform transform = gfx::transform::identity;
+
+  pub radial_gradient(gfx::point &centre_point, float outer_radius)
+    : centre_point(centre_point), outer_radius(outer_radius), focal_point(centre_point)
+  {
+  }
+
+  pub radial_gradient(gfx::point &centre_point, float outer_radius, gfx::point &focal_point, float inner_radius = 0.0)
+    : centre_point(centre_point), outer_radius(outer_radius), focal_point(focal_point), inner_radius(inner_radius)
+  {
+  }
+
+  pub radial_gradient() = default;
+  pub radial_gradient(radial_gradient&) = default;
+  pub fn =(radial_gradient mut &, radial_gradient &) -> radial_gradient mut & = default;
+  pub ~radial_gradient() = default;
+}
+
+#[lifetime(depend(this))]
+pub fn transform!(radial_gradient mut &this, gfx::transform &Q) -> radial_gradient mut &
+{
+  this.transform = Q * this.transform;
+
+  return &this;
+}
+
+#[nodiscard]
+pub fn transform(radial_gradient &&this, gfx::transform &Q) -> radial_gradient
+{
+  return radial_gradient(this).transform!(Q);
+}
+
+pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
+{
+  var &stops = gradient.stops;
+
+  var table = std::vector<u32>::with_size(std::clamp((stops.len - 1) * 256, 1, 1024));
+
+  var i = 0;
+  var j = 0;
+  var curr = stops[j].position;
+  var next = stops[j].position;
+  var last = stops.back.position;
+
+  var color = stops[j].color;
+
+  var p = 1.5 / cast<f32>(table.len);
+  var dp = 1.0 / cast<f32>(table.len);
+
+  table[i++] = gfx::premultiply(color.rgba);
+
+  for(; p < next; p += dp)
+  {
+    table[i++] = gfx::premultiply(color.rgba);
+  }
+
+  for(; p < last; )
+  {
+    while (stops[j + 1].position < p)
+      ++j;
+
+    next = stops[j + 1].position;
+    var next_color = stops[j + 1].color;
+
+    var q = dp / (next - p);
+    var delta = (next_color - color) * q;
+
+    for(; p < next; p += dp)
+    {
+      color += delta;
+
+      table[i++] = gfx::premultiply(color.rgba);
+    }
+
+    curr = next;
+  }
+
+  for(; i < table.len - 1; ++i)
+  {
+    table[i] = gfx::premultiply(color.rgba);
+  }
+
+  table[table.len - 1] = gfx::premultiply(color.rgba);
+
+  return table;
+}

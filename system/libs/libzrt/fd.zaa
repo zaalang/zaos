@@ -81,7 +81,7 @@ struct fd_result
 
 extern fn thread_ring() -> os::ioring mut &;
 
-extern fn fd_open(uintptr mut &fd, string path, u32 oflags, u64 rights, u32 fdflags) -> u32
+extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u64 rights, u32 fdflags) -> u32
 {
   using os;
 
@@ -120,12 +120,12 @@ extern fn fd_open(uintptr mut &fd, string path, u32 oflags, u64 rights, u32 fdfl
   if (rights & (fd::rights::read | fd::rights::write) == (fd::rights::read | fd::rights::write))
     flags |= O_RDWR;
 
-  var res = open(&mut thread_ring, os::string(path.data, path.len), flags, 0o666);
+  var rc = open(&mut thread_ring, os::string(path.data, path.len), flags, 0o666);
 
-  if (res < 0)
-    return cast(-res);
+  if (rc < 0)
+    return cast(-rc);
 
-  fd = cast(res);
+  *fd = cast(rc);
 
   return 0;
 }
@@ -133,10 +133,9 @@ extern fn fd_open(uintptr mut &fd, string path, u32 oflags, u64 rights, u32 fdfl
 extern fn fd_stat(uintptr fd, filestat mut *fs) -> u32
 {
   var buf = os::stat(void);
-  var res = os::stat(&mut thread_ring, cast(fd), &buf, 0x7f);
 
-  if (res < 0)
-    return cast(-res);
+  if (var rc = os::stat(&mut thread_ring, cast(fd), &buf, 0x7f); rc < 0)
+    return cast(-rc);
 
   fs.size = buf.size;
   fs.type = cast(buf.ftype);
@@ -153,17 +152,17 @@ extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
 
   for (var i = 0; i < n; ++i)
   {
-    var res = os::read(&mut thread_ring, cast(fd), (iovs + i).data, (iovs + i).len);
+    var bytes = os::read(&mut thread_ring, cast(fd), (iovs + i).data, (iovs + i).len);
 
-    if (res < 0)
+    if (bytes < 0)
     {
-      result.errno = cast(-res);
+      result.errno = cast(-bytes);
       break;
     }
 
-    result.length += cast(res);
+    result.length += cast(bytes);
 
-    if (cast(res) != (iovs + i).len)
+    if (cast(bytes) != (iovs + i).len)
       break;
   }
 

@@ -203,8 +203,8 @@ pub fn dispatch(driver mut &driver) -> i32
   var evts = [ os::pollevt(); 32 ];
 
   var tp = os::timespec(void);
-  if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
-    return result;
+  if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+    return rc;
 
   var count = os::epoll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, tp);
 
@@ -352,8 +352,8 @@ pub fn wait(driver mut &driver, u64 timeout = ~0) -> int
   if (driver.events.len == 0)
   {
     var tp = os::timespec(void);
-    if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
-      return result;
+    if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+      return rc;
 
     var pollset = [ os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0) ];
 

@@ -14,6 +14,7 @@ pub enum result : i32
   invalid_argument = -22,
   not_implemented = -38,
   not_supported = -95,
+  timed_out = -110,
 
   pub fn bool(result code) -> bool
   {

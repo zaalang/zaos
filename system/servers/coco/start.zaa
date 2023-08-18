@@ -44,10 +44,13 @@ pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &c
   {
     terminal.pump(chrono::milliseconds(125));
 
-    var rval = 0;
-    if (wait(pid, &rval, WNOHANG) > 0)
+    if (wait(pid, null, WNOHANG | WNOWAIT) != 0)
       break;
   }
+
+  var rval = 0;
+  if (var rc = wait(pid, &rval, 0); rc < 0)
+    return rc;
 
   return 0;
 }

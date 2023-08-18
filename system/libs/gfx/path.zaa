@@ -371,7 +371,7 @@ pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float[8] &radii) -> voi
   this.move_to(bound.left, bound.bottom - radii[1]);
   this.conic_to(bound.left, bound.bottom, bound.left + radii[0], bound.bottom, weight);
   this.line_to(bound.right - radii[2], bound.bottom);
-  this.conic_to(bound.right, bound.bottom, bound.right, bound.right - radii[3], weight);
+  this.conic_to(bound.right, bound.bottom, bound.right, bound.bottom - radii[3], weight);
   this.line_to(bound.right, bound.top + radii[5]);
   this.conic_to(bound.right, bound.top, bound.right - radii[4], bound.top, weight);
   this.line_to(bound.left + radii[6], bound.top);

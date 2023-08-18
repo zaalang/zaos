@@ -63,7 +63,7 @@ fn preload(std::string_literal name)
       }
     }
 
-    return [ font.data : font.len ];
+    return font.as_literal;
   }
   catch(std::error e)
   {

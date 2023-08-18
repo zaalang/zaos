@@ -73,7 +73,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
     return vfs::node_ptr();
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<vm::result fn(vfs::ftype, std::string_view)> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
     emit(vfs::ftype::regular_file, std::string_view("stat"));
     emit(vfs::ftype::regular_file, std::string_view("auxv"));
@@ -412,7 +412,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
     return proc_pid_node::create(path, pid);
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<vm::result fn(vfs::ftype, std::string_view)> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
     var result = vm::result::ok;
 

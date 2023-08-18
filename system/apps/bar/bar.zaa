@@ -4,18 +4,65 @@
 
 import std.stdio;
 import std.env;
-import chrono;
-import os.zaos.fcntl;
-import os.zaos.mman;
-import os.zaos.sched;
+import nix.thread;
+import nix.mutex;
+import chrono : duration;
 
-extern fn thread_ring() -> os::ioring mut &;
+using clock = chrono::steady_clock;
+
+fn test_shared_mutex()
+{
+  var m = nix::shared_mutex();
+
+  enum state { reading, writing };
+  var state = state::reading;
+
+  fn reader[m, state]()
+  {
+      var count = 0;
+      var until = clock::now() + chrono::seconds(3);
+      while (clock::now() < until)
+      {
+          m.lock_shared();
+          std::assert(state == state::reading);
+          ++count;
+          m.unlock_shared();
+      }
+      std::print("reader = ", count);
+  }
+
+  fn writer[m, state]()
+  {
+      var count = 0;
+      var until = clock::now() + chrono::seconds(3);
+      while (clock::now() < until)
+      {
+          m.lock();
+          state = state::writing;
+          std::assert(state == state::writing);
+          state = state::reading;
+          ++count;
+          m.unlock();
+      }
+      std::print("writer = ", count);
+  }
+
+  var t1 = nix::thread::spawn(reader);
+  var t2 = nix::thread::spawn(writer);
+  var t3 = nix::thread::spawn(reader);
+
+  t1.join();
+  t2.join();
+  t3.join();
+}
 
 fn main() -> int
 {
   std::print("bar");
   std::print(std::env::args);
   std::print(std::env::vars);
+
+  test_shared_mutex();
 
   std::print("bar done");
 

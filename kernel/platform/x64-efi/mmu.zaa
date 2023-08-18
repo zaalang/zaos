@@ -149,7 +149,7 @@ pub fn activate(page_table mut &this) -> void
     cpu::wrcr3(this.pml4);
 }
 
-pub fn new(page_table mut &this, physaddr_t fn() &allocate) -> void
+pub fn new(page_table mut &this, fn (&allocate)() -> physaddr_t) -> void
 {
   this.pml4 = allocate();
 
@@ -174,7 +174,7 @@ pub fn query(page_table mut &this, virtaddr_t addr) -> page_table_query
   return page_table_query(pt[pte(addr)]);
 }
 
-pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protection prot, mflags mflags, physaddr_t fn() &allocate) -> void
+pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protection prot, mflags mflags, fn (&allocate)() -> physaddr_t) -> void
 {
   var addr = baseaddr;
   var page = pages.0;
@@ -313,7 +313,7 @@ pub fn unmap(page_table mut &this, virtrange_t range) -> void
   //  cpu::flush_global_tlb();
 }
 
-pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, void fn(void mut *, virtaddr_t, physaddr_t) &callback) -> void
+pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, fn (&callback)(void mut *, virtaddr_t, physaddr_t) -> void) -> void
 {
   var addr = range.0;
 
@@ -366,7 +366,7 @@ pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, void fn(vo
   //  cpu::flush_global_tlb();
 }
 
-pub fn dispose(page_table mut &this, void mut *data, void fn(void mut *, physaddr_t) &callback) -> void
+pub fn dispose(page_table mut &this, void mut *data, fn (&callback)(void mut *, physaddr_t) -> void) -> void
 {
   var pml4 = cast<physaddr_t[512] mut *>(this.pml4 + PHYSICAL_BASE);
 

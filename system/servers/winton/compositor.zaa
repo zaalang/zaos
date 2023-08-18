@@ -201,11 +201,11 @@ pub fn create(seat::seat mut &seat, display::display mut &display) -> compositor
 
 pub fn initialise(compositor mut &compositor) -> i32
 {
-  if (var result = theme::initialise(&mut compositor.theme); result < 0)
-    return result;
+  if (var rc = theme::initialise(&mut compositor.theme); rc < 0)
+    return rc;
 
-  if (var result = scene::initialise(&mut compositor.scene); result < 0)
-    return result;
+  if (var rc = scene::initialise(&mut compositor.scene); rc < 0)
+    return rc;
 
   compositor.pointer.position.x = cast(compositor.display.width / 2);
   compositor.pointer.position.y = cast(compositor.display.height / 2);
@@ -214,7 +214,7 @@ pub fn initialise(compositor mut &compositor) -> i32
   os::clock_time(os::clock::monotonic, &now);
 
   compositor.redraw_handler.deadline = now;
-  compositor.redraw_handler.callback = &cast<void fn(app::loop mut &, app::loop::timeout_t mut *)>(redraw_handler);
+  compositor.redraw_handler.callback = &cast<fn(app::loop mut &, app::loop::timeout_t mut *)>(redraw_handler);
 
   compositor.seat.on_event = |event| input_handler(&compositor, event);
 
@@ -230,7 +230,7 @@ pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel c
   client.compositor = &compositor;
 
   client.channel = &move channel;
-  client.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+  client.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
 
   app::loop::current.begin_wait(client.channel, &client.handler);
 }
@@ -403,7 +403,7 @@ fn create_buffer(client mut *client, u32 id, zidl::buffer handle, u32 offset, i3
     return winton::errc::already_exists;
 
   var stat = os::stat();
-  if (var result = os::stat(&mut thread_ring, handle.fd, &stat, 0x7f); result < 0)
+  if (var rc = os::stat(&mut thread_ring, handle.fd, &stat, 0x7f); rc < 0)
     return winton::errc::descriptor_error;
 
   if (width <= 0 || height <= 0 || stride < width)
@@ -419,7 +419,7 @@ fn create_buffer(client mut *client, u32 id, zidl::buffer handle, u32 offset, i3
   mmvec.prot = os::prot::readonly;
 
   var addr = null<u8 mut *>();
-  if (var result = os::mmap(handle.fd, &mmvec, 1, &addr, 0); result < 0)
+  if (var rc = os::mmap(handle.fd, &mmvec, 1, &addr, 0); rc < 0)
     return winton::errc::descriptor_error;
 
   var mut &buffer = client.buffers.emplace(id);

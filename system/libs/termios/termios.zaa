@@ -112,8 +112,8 @@ extern fn thread_ring() -> os::ioring mut &;
 
 pub fn enable_raw_mode(i32 fd, termios mut &oldstate) -> i32
 {
-  if (var result = os::ioctl(&mut thread_ring, fd, tio::gettermios, &oldstate, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &oldstate, sizeof<termios>); rc < 0)
+    return rc;
 
   var raw = oldstate;
   raw.c_iflag &= ~(IFLAG::BRKINT | IFLAG::ICRNL | IFLAG::ISTRIP);
@@ -121,8 +121,8 @@ pub fn enable_raw_mode(i32 fd, termios mut &oldstate) -> i32
   raw.c_cflag |= (CFLAG::CS8);
   raw.c_lflag &= ~(LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ISIG);
 
-  if (var result = os::ioctl(&mut thread_ring, fd, tio::settermios, &raw, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::settermios, &raw, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }
@@ -134,8 +134,8 @@ pub fn enable_raw_mode(termios mut &oldstate) -> i32
 
 pub fn restore_cooked_mode(i32 fd, termios mut &oldstate) -> i32
 {
-  if (var result = os::ioctl(&mut thread_ring, fd, tio::settermios, &oldstate, sizeof<termios>); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::settermios, &oldstate, sizeof<termios>); rc < 0)
+    return rc;
 
   return 0;
 }
@@ -148,8 +148,8 @@ pub fn restore_cooked_mode(termios mut &oldstate) -> i32
 pub fn get_window_size(i32 fd, int mut &cols, int mut &rows) -> i32
 {
   var ws = winsize(void);
-  if (var result = os::ioctl(&mut thread_ring, fd, tio::getwinsize, &ws, sizeof(ws)); result < 0)
-    return result;
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::getwinsize, &ws, sizeof(ws)); rc < 0)
+    return rc;
 
   cols = cast(ws.ws_col);
   rows = cast(ws.ws_row);

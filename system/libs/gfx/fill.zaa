@@ -7,8 +7,46 @@ import gfx.path;
 import gfx.color;
 import gfx.blend;
 import gfx.transform;
+import gfx.gradient;
 import gfx.raster;
 import lml.fixed;
+
+pub union brush
+{
+  pub color(gfx::color),
+  pub linear_gradient(gfx::linear_gradient),
+  pub radial_gradient(gfx::radial_gradient),
+
+  pub brush(gfx::color &color)
+    : color(color)
+  {
+  }
+
+  pub brush(gfx::linear_gradient &gradient)
+    : linear_gradient(gradient)
+  {
+    if (gradient.stops.len == 0)
+      this = brush();
+
+    if (gradient.stops.len == 1)
+      this = brush(gradient.stops[0].color);
+  }
+
+  pub brush(gfx::radial_gradient &gradient)
+    : radial_gradient(gradient)
+  {
+    if (gradient.stops.len == 0)
+      this = brush();
+
+    if (gradient.stops.len == 1)
+      this = brush(gradient.stops[0].color);
+  }
+
+  pub brush() = default;
+  pub brush(brush&) = default;
+  pub fn =(brush mut &, brush &) -> brush mut & = default;
+  pub ~brush() = default;
+}
 
 struct state
 {
@@ -80,7 +118,7 @@ fn close(state &&state) -> void
   state.cursor = state.start;
 }
 
-pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var state = state();
 
@@ -112,28 +150,122 @@ pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::pa
 
   close(state);
 
-  var color = gfx::premultiply(color.rgba);
+  switch (brush)
+  {
+    case color[color]:
 
-  state.raster.accumulate(|scanline| {
+      var color = gfx::premultiply(color.rgba);
 
-    var row = cast<u32 mut *>(ctx.data + cast<usize>(scanline.y) * ctx.stride);
+      state.raster.accumulate(|scanline| {
 
-    for (var span : scanline)
-    {
-      var alpha = lml::clamp(lml::abs(span.alpha) * 255, 0, 255).as<u32>();
+        var row = cast<u32 mut *>(ctx.data + cast<usize>(scanline.y) * ctx.stride);
 
-      if (alpha <= 0)
-        continue;
+        for (var span : scanline)
+        {
+          var alpha = lml::clamp(lml::abs(span.alpha) * 255, 0, 255).as<u32>();
 
-      for (var x = cast<usize>(span.x), var end = cast<usize>(span.x) + span.len; x != end; ++x)
-      {
-        *(row + x) = gfx::blend(mode, *(row + x), gfx::premultiply(color, alpha));
-      }
-    }
-  });
+          if (alpha <= 0)
+            continue;
+
+          for (var x = cast<usize>(span.x), var end = cast<usize>(span.x) + span.len; x != end; ++x)
+          {
+            *(row + x) = gfx::blend(mode, *(row + x), gfx::premultiply(color, alpha));
+          }
+        }
+      });
+
+    case linear_gradient[gradient]:
+
+      var q = (Q * gradient.transform).inverse;
+
+      var r = lml::distsqr(gradient.init_point, gradient.fini_point);
+      var dx = (gradient.fini_point.x - gradient.init_point.x) / r;
+      var dy = (gradient.fini_point.y - gradient.init_point.y) / r;
+      var offset = -dx * gradient.init_point.x - dy * gradient.init_point.y;
+
+      // TODO: cache by hash
+      var table = gfx::generate_color_table(gradient);
+
+      state.raster.accumulate(|scanline| {
+
+        var row = cast<u32 mut *>(ctx.data + cast<usize>(scanline.y) * ctx.stride);
+
+        for (var span : scanline)
+        {
+          var alpha = lml::clamp(lml::abs(span.alpha) * 255, 0, 255).as<u32>();
+
+          if (alpha <= 0)
+            continue;
+
+          var tx = cast<float>(span.x) + 0.5;
+          var ty = cast<float>(scanline.y) + 0.5;
+          var rx = q[0,0] * tx + q[0,1] * ty + q[0,2];
+          var ry = q[1,0] * tx + q[1,1] * ty + q[1,2];
+          var t = dx*rx + dy*ry + offset;
+          var dt = dx * q[0,0] + dy * q[1,0];
+
+          for (var x = cast<usize>(span.x), var end = cast<usize>(span.x) + span.len; x != end; ++x)
+          {
+            var color = table[cast<usize>(std::clamp(t, 0.0, 1.0) * cast(table.len - 1))];
+
+            *(row + x) = gfx::blend(mode, *(row + x), gfx::premultiply(color, alpha));
+
+            t += dt;
+          }
+        }
+      });
+
+    case radial_gradient[gradient]:
+
+      var q = (Q * gradient.transform).inverse;
+
+      var r = gradient.inner_radius;
+      var dx = gradient.centre_point.x - gradient.focal_point.x;
+      var dy = gradient.centre_point.y - gradient.focal_point.y;
+      var dr = gradient.outer_radius - gradient.inner_radius;
+      var d = dr*dr - dx*dx - dy*dy;
+      var inv2d = 1.0 / (2.0 * d);
+
+      // TODO: cache by hash
+      var table = gfx::generate_color_table(gradient);
+
+      state.raster.accumulate(|scanline| {
+
+        var row = cast<u32 mut *>(ctx.data + cast<usize>(scanline.y) * ctx.stride);
+
+        for (var span : scanline)
+        {
+          var alpha = lml::clamp(lml::abs(span.alpha) * 255, 0, 255).as<u32>();
+
+          if (alpha <= 0)
+            continue;
+
+          for (var x = cast<usize>(span.x), var end = cast<usize>(span.x) + span.len; x != end; ++x)
+          {
+            var tx = cast<float>(x) + 0.5;
+            var ty = cast<float>(scanline.y) + 0.5;
+            var rx = q[0,0] * tx + q[0,1] * ty + q[0,2] - gradient.focal_point.x;
+            var ry = q[1,0] * tx + q[1,1] * ty + q[1,2] - gradient.focal_point.y;
+            var b = 2.0 * (dx*rx + dy*ry + dr*r);
+            var det = b*b - 4.0 * d * (r*r - rx*rx - ry*ry);
+
+            var t = (std::sqrt(std::abs(det)) - b) * inv2d;
+
+            var color = table[cast<usize>(std::clamp(t, 0.0, 1.0) * cast(table.len - 1))];
+
+            *(row + x) = gfx::blend(mode, *(row + x), gfx::premultiply(color, alpha));
+          }
+        }
+      });
+  }
 }
 
-pub fn fill_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  fill_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, color, mode);
+  fill_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, brush, mode);
+}
+
+pub fn fill_path(gfx::paint_t &&ctx, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  fill_path(ctx, gfx::transform::identity, path, brush, mode);
 }

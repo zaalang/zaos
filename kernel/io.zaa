@@ -17,8 +17,8 @@ import support.rc : Rc;
 
 struct handler
 {
-  void fn(void mut *) *entry;
-  void mut *parameter;
+  fn (*handler_routine)(void mut *) -> void;
+  void mut *handler_argument;
 
   handler mut *next;
 
@@ -67,12 +67,12 @@ pub fn allocate_vectors(usize count) -> (u8, u8)
   return platform::allocate_io_vectors(count);
 }
 
-pub fn install_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -> void
+pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mut *handler_argument) -> void
 {
   var handler = std::allocator::new<handler>();
 
-  handler.entry = entry;
-  handler.parameter = parameter;
+  handler.handler_routine = handler_routine;
+  handler.handler_argument = handler_argument;
 
   var mut &vector = intman.vectors[cast(irq)];
 
@@ -87,7 +87,7 @@ pub fn install_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) 
   }
 }
 
-pub fn remove_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -> void
+pub fn remove_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mut *handler_argument) -> void
 {
   var mut &vector = intman.vectors[cast(irq)];
 
@@ -96,7 +96,7 @@ pub fn remove_handler(u8 irq, void fn(void mut *) *entry, void mut *parameter) -
   var prev = null<handler mut *>;
   for (var handler = vector.head; handler; handler = handler.next)
   {
-    if (handler.entry == entry && handler.parameter == parameter)
+    if (handler.handler_routine == handler_routine && handler.handler_argument == handler_argument)
     {
       if (prev)
         prev = handler.next;
@@ -125,7 +125,7 @@ extern fn io_dispatch(u8 irq) -> void
 
   for (var handler = vector.head; handler; handler = handler.next)
   {
-    handler.entry(handler.parameter);
+    handler.handler_routine(handler.handler_argument);
   }
 }
 
@@ -230,14 +230,14 @@ pub fn wait(response mut &rq) -> void
   (*rq.cb).waiters.wait(&mut (*rq.cb).lock);
 }
 
-pub fn wait_until(response mut &rq, u64 timeout) -> bool
+pub fn wait_until(response mut &rq, u64 abstime) -> bool
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut (*rq.cb).lock);
 
   if (rq.outstanding <= 0)
     return true;
 
-  return (*rq.cb).waiters.wait_until((*rq.cb).lock, timeout);
+  return (*rq.cb).waiters.wait_until((*rq.cb).lock, abstime);
 }
 
 pub fn add_notify(Rc<iocb> mut &cb, ioring_pollset mut *pollset) -> void
@@ -304,7 +304,7 @@ pub fn complete(Rc<iocb> mut &cb, var result) -> void
 
     ioring::workman.trigger();
 
-    (*cb).waiters.notify_all();
+    (*cb).waiters.wake_all();
   }
 }
 

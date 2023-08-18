@@ -181,7 +181,7 @@ fn ref_physical_pages(physrange range) -> void
 
 fn map_physical_pages(page_table mut &pagetable, virtaddr baseaddr, physrange range, protection prot, mflags flags) -> virtrange
 {
-  pagetable.map(baseaddr, range, prot, flags, fn() -> platform::physaddr_t {
+  pagetable.map(baseaddr, range, prot, flags, fn () -> platform::physaddr_t {
     return mm.pageallocator.address_for_page(allocate_physical_page());
   });
 
@@ -239,6 +239,11 @@ fn lock_region(address_space mut &space, virtaddr addr) -> region mut *
 
     scheduler::sleep_yield();
   }
+}
+
+pub fn query_region(virtaddr addr) -> region mut *
+{
+  return lock_region(&mut addressspace(addr), addr);
 }
 
 pub fn create_anonymous_region(address_space mut &space, virtrange range, protection prot, usage use) -> vm::result
@@ -414,7 +419,7 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   {
     var pages = null<page mut *>();
 
-    pagetable.unmap(region.range, &pages, fn(void mut *pages, platform::virtaddr_t addr, platform::physaddr_t phys) {
+    pagetable.unmap(region.range, &pages, fn (void mut *pages, platform::virtaddr_t addr, platform::physaddr_t phys) {
       var mut &pages = *cast<page mut * mut *>(pages);
       var page = mm.pageallocator.page_from_address(phys);
 

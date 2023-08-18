@@ -88,6 +88,7 @@ isr_common:
             mov r11, [fs:tss@tpoff + 4]   # rsp0
             test qword ptr [r11], 0x2     # killed ?
             jz 1f
+            wrgsbase r11
             call terminate
 
  1:         cli

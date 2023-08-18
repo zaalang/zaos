@@ -29,7 +29,7 @@ pub struct desktop
   pub fn connect(this mut &) throws -> void
   {
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
-    this.handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
+    this.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
 
     app::loop::current.begin_wait(this.endpoint, &this.handler);
 
@@ -110,11 +110,11 @@ pub struct desktop
       mmvec.prot = os::prot::readwrite;
 
       var addr = null<u32 mut *>();
-      if (var result = os::mmap(client_end.fd, &mmvec, 1, &addr, 0); result < 0)
+      if (var rc = os::mmap(client_end.fd, &mmvec, 1, &addr, 0); rc < 0)
       {
         zidl::send<winton::compositor::buffer_destroy_request>(this.endpoint, 1);
 
-        throw std::system_error(cast<std::errc>(-result));
+        throw std::system_error(cast<std::errc>(-rc));
       }
 
       for (var i = 0; i < mmvec.length / sizeof<u32>; ++i)

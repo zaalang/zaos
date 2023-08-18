@@ -103,8 +103,8 @@ pub struct channel : pub handle
   pub fn create() throws -> (channel, channel)
   {
     var fds = [0, 0];
-    if (var result = os::channel_create(&mut thread_ring, &fds, 0); result < 0)
-      throw std::system_error(cast<std::errc>(-result));
+    if (var rc = os::channel_create(&mut thread_ring, &fds, 0); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
 
     return (channel(fds[0]), channel(fds[1]));
   }
@@ -112,8 +112,8 @@ pub struct channel : pub handle
   pub fn create(channel mut &lhs, channel mut &rhs) -> i32
   {
     var fds = [0, 0];
-    if (var result = os::channel_create(&mut thread_ring, &fds, 0); result < 0)
-      return result;
+    if (var rc = os::channel_create(&mut thread_ring, &fds, 0); rc < 0)
+      return rc;
 
     lhs = channel(fds[0]);
     rhs = channel(fds[1]);
@@ -136,8 +136,8 @@ pub struct buffer : pub handle
   pub fn create(usize size) throws -> (buffer, buffer)
   {
     var fds = [0, 0];
-    if (var result = os::buffer_create(&mut thread_ring, &fds, size, 0); result < 0)
-      throw std::system_error(cast<std::errc>(-result));
+    if (var rc = os::buffer_create(&mut thread_ring, &fds, size, 0); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
 
     return (buffer(fds[0]), buffer(fds[1]));
   }
@@ -145,8 +145,8 @@ pub struct buffer : pub handle
   pub fn create(buffer mut &lhs, buffer mut &rhs, usize size) -> i32
   {
     var fds = [0, 0];
-    if (var result = os::buffer_create(&mut thread_ring, &fds, size, 0); result < 0)
-      return result;
+    if (var rc = os::buffer_create(&mut thread_ring, &fds, size, 0); rc < 0)
+      return rc;
 
     lhs = buffer(fds[0]);
     rhs = buffer(fds[1]);

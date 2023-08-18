@@ -45,16 +45,16 @@ struct pollset
 
   fn add(this mut &pollset, os::pollevt &evt) -> i32
   {
-    if (var result = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_ADD, &evt, 0); result < 0)
-      return result;
+    if (var rc = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_ADD, &evt, 0); rc < 0)
+      return rc;
 
     return 0;
   }
 
   fn remove(this mut &pollset, os::pollevt &evt) -> i32
   {
-    if (var result = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_DEL, &evt, 0); result < 0)
-      return result;
+    if (var rc = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_DEL, &evt, 0); rc < 0)
+      return rc;
 
     for (var i = pollset.head; i < pollset.head + pollset.count; ++i)
     {
@@ -67,14 +67,14 @@ struct pollset
 
   fn wait(this mut &pollset, u64 timeout) -> i32
   {
-    var result = os::epoll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
+    var count = os::epoll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
 
-    if (result < 0)
-      return result;
+    if (count < 0)
+      return count;
 
-    pollset.count += cast(result);
+    pollset.count += cast(count);
 
-    return result;
+    return count;
   }
 
   fn pop(this mut &pollset, os::pollevt mut &evt) -> bool
@@ -130,7 +130,7 @@ pub struct loop
     u16 type;
     u16 mask;
 
-    pub void fn(loop mut &, wait_t mut *) *callback;
+    pub fn (*callback)(loop mut &, wait_t mut *) -> void;
 
     pub wait_t() = default;
     pub ~wait_t() = default;
@@ -140,7 +140,7 @@ pub struct loop
   {
     pub u64 deadline;
 
-    pub void fn(loop mut &, timeout_t mut *) *callback;
+    pub fn (*callback)(loop mut &, timeout_t mut *) -> void;
 
     timeout_t mut *next;
     timeout_t mut *prev;
@@ -161,8 +161,8 @@ pub struct loop
     handler.mask = evt.mask;
     evt.user_data = cast(handler);
 
-    if (var result = loop.pollset.add(evt); result < 0)
-      return result;
+    if (var rc = loop.pollset.add(evt); rc < 0)
+      return rc;
 
     return 0;
   }
@@ -174,8 +174,8 @@ pub struct loop
     evt.type = os::POLLFD;
     evt.mask = os::POLLIN;
 
-    if (var result = begin_wait(&mut loop, evt, handler); result < 0)
-      return result;
+    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
+      return rc;
 
     return 0;
   }
@@ -245,7 +245,7 @@ pub struct loop
     state = loop::state::shutdown;
   }
 
-  pub void fn(loop mut &, zidl::string_view, zidl::channel) *connect_handler;
+  pub fn (*connect_handler)(loop mut &, zidl::string_view, zidl::channel) -> void;
 
   state state;
   pollset pollset;
@@ -255,8 +255,8 @@ pub struct loop
 
 pub fn initialise(loop mut &loop, options flags = options::make_default | options::manage_system_service) -> i32
 {
-  if (var result = pollset::create(&mut loop.pollset); result < 0)
-    return result;
+  if (var rc = pollset::create(&mut loop.pollset); rc < 0)
+    return rc;
 
   if (flags & options::make_default)
     thread_default_loop = &loop;
@@ -268,7 +268,7 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
     evt.type = os::POLLFD;
     evt.mask = os::POLLIN;
 
-    loop.system_service_handler.callback = &cast<void fn(loop mut &, loop::wait_t mut *)>(system_service_handler);
+    loop.system_service_handler.callback = &cast<fn(loop mut &, loop::wait_t mut *)>(system_service_handler);
 
     loop.begin_wait(evt, &loop.system_service_handler);
   }
@@ -280,8 +280,8 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
 
 pub fn dispatch(loop mut &loop, u64 deadline = 0) -> i32
 {
-  if (var result = loop.pollset.wait(deadline); result < 0)
-    std::panic("pollset wait - ", cast<std::errc>(-result));
+  if (var rc = loop.pollset.wait(deadline); rc < 0)
+    std::panic("pollset wait - ", cast<std::errc>(-rc));
 
   var evt = os::pollevt();
 
@@ -292,8 +292,8 @@ pub fn dispatch(loop mut &loop, u64 deadline = 0) -> i32
   }
 
   var now = os::timespec(void);
-  if (var result = os::clock_time(os::clock::monotonic, &now); result < 0)
-    std::panic("clock time - ", cast<std::errc>(-result));
+  if (var rc = os::clock_time(os::clock::monotonic, &now); rc < 0)
+    std::panic("clock time - ", cast<std::errc>(-rc));
 
   while (loop.timeouts.next != &loop.timeouts && loop.timeouts.next.deadline < now)
   {
@@ -358,8 +358,8 @@ pub fn connect_to_service(String &service, zidl::channel mut &client_end) -> i32
 {
   var server_end = zidl::channel();
 
-  if (var result = zidl::channel::create(&mut server_end, &mut client_end); result < 0)
-    return result;
+  if (var rc = zidl::channel::create(&mut server_end, &mut client_end); rc < 0)
+    return rc;
 
   if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(service), &move server_end); !result)
     return -cast<i32>(std::errc::broken_pipe);

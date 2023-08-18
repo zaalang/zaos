@@ -19,7 +19,7 @@ pub struct blkdev
   {
     var dev = std::allocator::new<T>(&&args...);
 
-    dev.destroy = fn(blkdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
+    dev.destroy = fn (blkdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
 
     return shared_ptr(dev);
   }
@@ -44,7 +44,7 @@ pub struct blkdev
 
   i32 refcnt;
   device_operations &ops;
-  void fn(blkdev mut *) *destroy;
+  fn (*destroy)(blkdev mut *) -> void;
 }
 
 pub enum query

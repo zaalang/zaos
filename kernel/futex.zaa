@@ -1,0 +1,101 @@
+//
+// futex
+//
+
+import std.stdio;
+import vm : physaddr, virtaddr;
+import cpu;
+import platform;
+import mutex as _ : mutex;
+import process as _ : process;
+import result as _ : result;
+import waitqueue as _ : wait_queue;
+
+struct futex
+{
+  i32 refcnt;
+  wait_queue waiters;
+
+  futex() = default;
+  futex(futex&) = default;
+  ~futex() = default;
+}
+
+struct futex_table
+{
+  mutex lock;
+
+  std::flat_hash_map<physaddr, futex> entries;
+
+  fn instance()
+  {
+    static instance = #futex_table();
+
+    return &instance;
+  }
+
+  futex_table() = default;
+  futex_table(#futex_table&) = default;
+  ~futex_table() = default;
+}
+
+fn futextable()
+{
+  return &futex_table::instance;
+}
+
+pub fn wait(virtaddr addr, u32 expected, u64 abstime) -> result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(addr, sizeof<u32>), vm::protection::readonly, &mut iovec); !result)
+    return result;
+
+  var guard = std::lock_guard(&mut futextable.lock);
+
+  var value = u32(0);
+  if (var result = vm::memcpy(&value, iovec, 0, sizeof<u32>); !result)
+    return result;
+
+  if (value != expected)
+    return vm::result::would_block;
+
+  var result = result::ok;
+
+  var mut &futex = futextable.entries.emplace(iovec.host[0].addr);
+
+  futex.refcnt += 1;
+
+  {
+    var irqs = std::lock_guard(&mut cpu::irqlock);
+
+    if (!futex.waiters.wait_until(&mut futextable.lock, abstime))
+      result = result::timed_out;
+  }
+
+  if (var j = futextable.entries.find(iovec.host[0].addr); j != futextable.entries.end)
+  {
+    if (--futextable.entries[j].value.refcnt == 0)
+      futextable.entries.erase(j);
+  }
+
+  return result;
+}
+
+pub fn wake(virtaddr addr, u32 count) -> result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(addr, sizeof<u32>), vm::protection::readonly, &mut iovec); !result)
+    return result;
+
+  var guard = std::lock_guard(&mut futextable.lock);
+
+  switch (futextable.entries.get(iovec.host[0].addr))
+  {
+    case Some[futex]:
+      futex.waiters.wake_n(cast(count));
+  }
+
+  return ok;
+}

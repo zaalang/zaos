@@ -102,14 +102,14 @@ pub fn initialise(terminal mut &terminal) -> i32
   if (var result = terminal.screen.resize(columns, rows); !result)
     return cast(result);
 
-  if (var result = font::initialise(&mut terminal.font); result != 0)
-    return result;
+  if (var rc = font::initialise(&mut terminal.font); rc < 0)
+    return rc;
 
-  if (var result = pty::open_pty(&mut terminal.pty); result != 0)
-    return result;
+  if (var rc = pty::open_pty(&mut terminal.pty); rc < 0)
+    return rc;
 
-  if (var result = terminal.pty.resize(columns, rows); result != 0)
-    return result;
+  if (var rc = terminal.pty.resize(columns, rows); rc < 0)
+    return rc;
 
   terminal.clear();
 
@@ -118,8 +118,8 @@ pub fn initialise(terminal mut &terminal) -> i32
 
 pub fn set_font(terminal mut &terminal, String &path) -> i32
 {
-  if (var result = terminal.font.load(path); result != 0)
-    return result;
+  if (var rc = terminal.font.load(path); rc < 0)
+    return rc;
 
   return 0;
 }
@@ -179,8 +179,8 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
   var events = 0;
 
   var sp = os::timespec(void);
-  if (var result = os::clock_time(os::clock::monotonic, &sp); result < 0)
-    return result;
+  if (var rc = os::clock_time(os::clock::monotonic, &sp); rc < 0)
+    return rc;
 
   var buffer = [u8(0); 4096];
 
@@ -299,8 +299,8 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
       return events;
 
     var tp = os::timespec(void);
-    if (var result = os::clock_time(os::clock::monotonic, &tp); result < 0)
-      return result;
+    if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+      return rc;
 
     if (timeout.count >= 0)
     {
@@ -328,19 +328,19 @@ pub fn write(terminal mut &terminal, Span<u8> &buffer) -> i32
 
   while (remaining != 0)
   {
-    var result = terminal.pty.write_slave(buffer.data + (buffer.len - remaining), remaining);
+    var bytes = terminal.pty.write_slave(buffer.data + (buffer.len - remaining), remaining);
 
-    if (result < 0)
+    if (bytes < 0)
     {
-      if (result != os::EAGAIN)
-        return result;
+      if (bytes != os::EAGAIN)
+        return bytes;
 
       terminal.pump(0.nanoseconds);
 
-      result = 0;
+      bytes = 0;
     }
 
-    remaining -= cast(result);
+    remaining -= cast(bytes);
   }
 
   return cast(buffer.len);
@@ -350,10 +350,10 @@ pub fn read(terminal mut &terminal, Span<u8> mut &buffer) -> i32
 {
   while (true)
   {
-    var result = terminal.pty.read_slave(buffer.data, buffer.len);
+    var bytes = terminal.pty.read_slave(buffer.data, buffer.len);
 
-    if (result != os::EAGAIN)
-      return result;
+    if (bytes != os::EAGAIN)
+      return bytes;
 
     terminal.pump();
   }
@@ -365,11 +365,11 @@ pub fn read_pass(terminal mut &terminal, Span<u8> mut &buffer) -> i32
 
   pty.echo_off();
 
-  var result = terminal.read(&mut buffer);
+  var bytes = terminal.read(&mut buffer);
 
   pty.echo_on();
 
-  return result;
+  return bytes;
 }
 
 pub fn read_line(terminal mut &terminal, readline::completer mut *completer = null) -> readline::result

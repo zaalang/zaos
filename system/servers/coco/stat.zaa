@@ -40,7 +40,7 @@ pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cm
     return fd;
 
   var stat = os::stat();
-  var result = stat(&mut thread_ring, fd, &stat, 0x7f);
+  var statres = stat(&mut thread_ring, fd, &stat, 0x7f);
 
   terminal.write(std::format("  File: {}", path));
 
@@ -69,5 +69,5 @@ pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cm
 
   close(&mut thread_ring, fd);
 
-  return result;
+  return statres;
 }

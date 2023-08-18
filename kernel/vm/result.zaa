@@ -11,6 +11,7 @@ pub enum result : i32
   out_of_memory = -12,
   bad_address = -14,
   invalid_argument = -22,
+  deadlock_avoided = -35,
   not_supported = -95,
   overflow = -139,
 

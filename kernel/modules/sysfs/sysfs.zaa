@@ -30,7 +30,7 @@ pub vtable sysfs_file_operations : sysfs_node_operations
 pub vtable sysfs_directory_operations : sysfs_node_operations
 {
   pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr;
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<vm::result fn(vfs::ftype, std::string_view)> mut &emit) -> vfs::result;
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result;
 }
 
 pub vtable sysfs_symlink_operations : sysfs_node_operations
@@ -235,7 +235,7 @@ pub struct sysfs_directory_node : pub vfs::node
       if (var result = emit(vfs::ftype::directory, std::string_view("..")); !result)
         return cast(result);
 
-      if (var result = this.ops.readdir(node, &mut cursor, std::delegate<vm::result fn(vfs::ftype, std::string_view)>(emit)); !result)
+      if (var result = this.ops.readdir(node, &mut cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result>(emit)); !result)
         return result;
 
       cursor = 1;

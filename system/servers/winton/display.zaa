@@ -71,8 +71,8 @@ pub fn initialise(display mut &display) -> i32
   if (fd < 0)
     return fd;
 
-  if (var result = ioctl(&mut thread_ring, fd, fbio::screeninfo, &display.si, sizeof<screeninfo>); result < 0)
-    return result;
+  if (var rc = ioctl(&mut thread_ring, fd, fbio::screeninfo, &display.si, sizeof<screeninfo>); rc < 0)
+    return rc;
 
   var mmvec = os::mmvec();
   mmvec.offset = 0;
@@ -81,8 +81,8 @@ pub fn initialise(display mut &display) -> i32
   mmvec.prot = os::prot::readwrite;
 
   var addr = null<void mut *>();
-  if (var result = mmap(fd, &mmvec, 1, &addr, 0); result < 0)
-    return result;
+  if (var rc = mmap(fd, &mmvec, 1, &addr, 0); rc < 0)
+    return rc;
 
   display.fb = std::mutable_span(cast<u8 mut *>(addr), mmvec.length);
 

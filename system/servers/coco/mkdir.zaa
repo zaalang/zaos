@@ -29,8 +29,8 @@ pub fn mkdir(terminal::terminal mut &terminal, env::env mut &env, std::string &c
     return -22;
   }
 
-  if (var result = mkdir(&mut thread_ring, os::string(path.data, path.len), 0, 0o640); result < 0)
-    return result;
+  if (var rc = mkdir(&mut thread_ring, os::string(path.data, path.len), 0, 0o640); rc < 0)
+    return rc;
 
   return 0;
 }

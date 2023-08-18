@@ -39,8 +39,8 @@ fn spawn(service mut &service) -> i32
   var server_end = zidl::channel();
   var client_end = zidl::channel();
 
-  if (var result = zidl::channel::create(&mut server_end, &mut client_end); result < 0)
-    return result;
+  if (var rc = zidl::channel::create(&mut server_end, &mut client_end); rc < 0)
+    return rc;
 
   argv.push_back(os::arg(service.path.data, service.path.len));
   attrs.push_back(os::attr(attr::stdout, STDOUT_FILENO));
@@ -54,8 +54,8 @@ fn spawn(service mut &service) -> i32
 
   service.pid = pid;
   service.channel = &move server_end;
-  service.status_handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(service_status_handler);
-  service.channel_handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(service_channel_handler);
+  service.status_handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(service_status_handler);
+  service.channel_handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(service_channel_handler);
 
   std::print("sessiond service launched (", service.pid, ":", service.path, ")");
 
@@ -67,8 +67,8 @@ fn wait(service mut &service) -> i32
   using os;
 
   var rval = 0;
-  if (var result = wait(service.pid, &rval, 0); result < 0)
-    return result;
+  if (var rc = wait(service.pid, &rval, 0); rc < 0)
+    return rc;
 
   std::print("sessiond service exited (", service.pid, ":", service.path, ") - ", rval);
 
@@ -114,8 +114,8 @@ fn service_status_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> v
 {
   var service = cast<service mut *>(cast<uintptr>(wait) - offsetof(service::status_handler));
 
-  if (var result = service.wait(); result < 0)
-    std::panic("sessiond: service wait - ", cast<std::errc>(-result));
+  if (var rc = service.wait(); rc < 0)
+    std::panic("sessiond: service wait - ", cast<std::errc>(-rc));
 
   loop.cancel_wait(&service.channel_handler);
   loop.cancel_wait(&service.status_handler);
@@ -160,8 +160,8 @@ fn main() -> int
 {
   var loop = app::loop();
 
-  if (var result = app::initialise(&mut loop); result < 0)
-    std::panic("unable to init loop - ", cast<std::errc>(-result));
+  if (var rc = app::initialise(&mut loop); rc < 0)
+    std::panic("unable to init loop - ", cast<std::errc>(-rc));
 
   registry::instance.register("zaos.winton", "/zaos/srv/winton");
   registry::instance.register("zaos.lamina", "/zaos/srv/lamina");
@@ -172,19 +172,19 @@ fn main() -> int
 
   for (var mut &(uri, service) : registry::instance.services)
   {
-    if (var result = service.spawn(); result < 0)
-      std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-result));
+    if (var rc = service.spawn(); rc < 0)
+      std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-rc));
 
     var evt = os::pollevt();
     evt.id = service.pid;
     evt.type = os::POLLTHREAD;
     evt.mask = os::POLLIN;
 
-    if (var result = loop.begin_wait(evt, &service.status_handler); result < 0)
-      std::panic("sessiond: wait service - ", cast<std::errc>(-result));
+    if (var rc = loop.begin_wait(evt, &service.status_handler); rc < 0)
+      std::panic("sessiond: wait service - ", cast<std::errc>(-rc));
 
-    if (var result = loop.begin_wait(service.channel, &service.channel_handler); result < 0)
-      std::panic("sessiond: wait service - ", cast<std::errc>(-result));
+    if (var rc = loop.begin_wait(service.channel, &service.channel_handler); rc < 0)
+      std::panic("sessiond: wait service - ", cast<std::errc>(-rc));
   }
 
   loop.run();

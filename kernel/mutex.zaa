@@ -40,7 +40,7 @@ pub struct mutex
     return std::atomic_cmpxchg_strong(&this.holder, 0, cast(thread::current.id));
   }
 
-  pub fn try_lock_until(this mut &, u64 timeout) -> bool
+  pub fn try_lock_until(this mut &, u64 abstime) -> bool
   {
     if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
       return true;
@@ -52,7 +52,7 @@ pub struct mutex
     if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
       return true;
 
-    if (!this.waiters.wait_until(&mut this.spinlock, timeout))
+    if (!this.waiters.wait_until(&mut this.spinlock, abstime))
     {
       return false;
     }
@@ -71,7 +71,7 @@ pub struct mutex
     {
       std::atomic_store(&this.holder, cast(this.waiters.head.id) | waiting);
 
-      this.waiters.notify_one();
+      this.waiters.wake_one();
     }
     else
     {
@@ -107,7 +107,8 @@ pub struct shared_mutex
     {
       var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
-      this.writewaiters.wait(&mut this.spinlock);
+      if (this.departing > 0)
+        this.writewaiters.wait(&mut this.spinlock);
     }
   }
 
@@ -117,7 +118,7 @@ pub struct shared_mutex
 
     this.arriving -= std::atomic_add(&this.pending, max_readers) + max_readers;
 
-    this.readwaiters.notify_all();
+    this.readwaiters.wake_all();
 
     this.writelock.unlock();
   }
@@ -141,7 +142,7 @@ pub struct shared_mutex
       {
         var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
-        this.writewaiters.notify_one();
+        this.writewaiters.wake_one();
       }
     }
   }
@@ -155,28 +156,38 @@ pub struct shared_mutex
 
   pub fn unlock_upgrade_and_lock(this mut &) -> void
   {
-    if (std::atomic_load(&this.departing) != 0)
-    {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
+    if (this.departing > 0)
       this.writewaiters.wait(&mut this.spinlock);
-    }
   }
 
   pub fn unlock_upgrade_and_lock_shared(this mut &) -> void
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
+    if (this.departing > 0)
+      this.writewaiters.wait(&mut this.spinlock);
+
     this.arriving -= std::atomic_add(&this.pending, max_readers + 1) + max_readers;
 
-    this.readwaiters.notify_all();
+    this.readwaiters.wake_all();
 
     this.writelock.unlock();
   }
 
   pub fn unlock_upgrade(this mut &) -> void
   {
-    this.unlock();
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+
+    if (this.departing > 0)
+      this.writewaiters.wait(&mut this.spinlock);
+
+    this.arriving += std::atomic_add(&this.pending, max_readers) + max_readers;
+
+    this.readwaiters.wake_all();
+
+    this.writelock.unlock();
   }
 
   pub fn unlock_and_lock_upgrade(this mut &) -> void

@@ -3,8 +3,11 @@
 //
 
 import std.stdlib;
+import process as _ : process;
 
 extern fn unknown_syscall(u64 num, uintptr rip) -> void
 {
-  std::panic("unknown syscall ", num, " from ", cast<void*>(rip));
+  std::print("unknown syscall ", num, " from ", cast<void*>(rip));
+
+  process::exit(-38);
 }

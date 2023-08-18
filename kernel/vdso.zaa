@@ -36,7 +36,7 @@ struct vdso<name>
       }
     }
 
-    -> { u8[$(loadsize)] image = $([ buf.data : loadsize ]); }
+    -> { u8[$(loadsize)] image = $(buf[0 .. loadsize].as_literal); }
 
     for (var &header : image.section_headers)
     {

@@ -244,10 +244,14 @@ pub struct process
   {
     var process = current();
 
+    process.lock.lock();
+
     process.state = state::zombie;
 
     for (var thread = process.threads; thread; thread = thread.sibling)
       thread.terminate();
+
+    process.lock.unlock();
 
     thread::exit(rval);
   }
@@ -318,12 +322,12 @@ pub fn colonel()
   return &process_manager::instance.colonel;
 }
 
-pub fn create_kernel_process(void fn(void mut *) *entry, void mut *parameter) -> process mut *
+pub fn create_kernel_process(fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> process mut *
 {
   std::print("create kernel process");
 
   var process = process::create();
-  var kernelmain = create_zero_task(process, entry, parameter);
+  var kernelmain = create_zero_task(process, start_routine, start_argument);
 
   process.name = "kernel";
   process.id = kernelmain.id;
@@ -347,7 +351,7 @@ fn process_main(void *args) -> void
 pub fn create_process(process mut *parent, String &&name) -> process mut *
 {
   var process = process::create();
-  var mainthread = thread::create(process, &cast<void fn(void mut *)>(process_main), null);
+  var mainthread = thread::create(process, &cast<fn(void mut *)>(process_main), null);
 
   process.name = &&name;
   process.id = mainthread.id;
@@ -358,11 +362,11 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
     return allocation.addr;
   });
 
-  mainthread.userstack = vm::virtrange(vm::virtaddr(platform::USER_STACK_BASE), platform::USER_STACK_SIZE);
+  var userstack = vm::virtrange(vm::virtaddr(platform::USER_STACK_BASE), platform::USER_STACK_SIZE);
 
-  vm::create_anonymous_region(&mut process.userspace, mainthread.userstack, vm::protection::readwrite, vm::usage::private);
+  vm::create_anonymous_region(&mut process.userspace, userstack, vm::protection::readwrite, vm::usage::private);
 
-  process.sp = mainthread.userstack.addr + mainthread.userstack.size;
+  process.sp = userstack.addr + userstack.size;
 
   process.heaptop = vm::virtaddr(0x100000);
 
@@ -495,13 +499,13 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
 
   var base = process.sbrk(cast(stat.size));
 
-  process.auxv.push_back(elf::auxval(elf::auxval::type::BASE, base));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::PHDR, base + cast(image.ehdr.e_phoff)));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::PHENT, cast(image.ehdr.e_phentsize)));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::PHNUM, cast(image.ehdr.e_phnum)));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::RINGHDR, process.ioring.addr));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::RINGFD, 6));
-  process.auxv.push_back(elf::auxval(elf::auxval::type::ROOTFD, 4));
+  process.auxv.push_back(elf::auxval::type::BASE, base);
+  process.auxv.push_back(elf::auxval::type::PHDR, base + cast<uintptr>(image.ehdr.e_phoff));
+  process.auxv.push_back(elf::auxval::type::PHENT, cast<uintptr>(image.ehdr.e_phentsize));
+  process.auxv.push_back(elf::auxval::type::PHNUM, cast<uintptr>(image.ehdr.e_phnum));
+  process.auxv.push_back(elf::auxval::type::RINGHDR, process.ioring.addr);
+  process.auxv.push_back(elf::auxval::type::RINGFD, 6);
+  process.auxv.push_back(elf::auxval::type::ROOTFD, 4);
 
   for (var &header : image.program_headers)
   {
@@ -527,7 +531,7 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
     }
   }
 
-  var entry = base + cast<uintptr>(image.ehdr.e_entry);
+  thread.ip = base + cast<uintptr>(image.ehdr.e_entry);
 
   heap::munmap(elf);
 
@@ -538,7 +542,7 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
 
   var vdso_ehdr = vdso::create_process_mapping(process);
 
-  process.auxv.push_back(elf::auxval(elf::auxval::type::SYSINFO, vdso_ehdr));
+  process.auxv.push_back(elf::auxval::type::SYSINFO, vdso_ehdr);
 
   // auxv
 
@@ -565,11 +569,11 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
 
   // start
 
-  //vm::dump(process.userspace);
+  thread.sp = process.sp;
 
   process.state = process::state::running;
 
-  thread::transition(entry, process.sp);
+  thread::transition(thread.ip, thread.sp);
 }
 
 pub fn teardown(process mut *process) -> void
@@ -584,9 +588,19 @@ pub fn teardown(process mut *process) -> void
     vm::munmap(process, region.range);
   });
 
-  process.pagetable.dispose(null, fn(void mut *, platform::physaddr_t phys) {
+  process.pagetable.dispose(null, fn (void mut *, platform::physaddr_t phys) {
     vm::release_physical_pages(vm::physrange(phys, PAGE_SIZE));
   });
+
+  for (var thread = process.threads; thread; )
+  {
+    var next = thread.sibling;
+
+    if (thread.id != process.id)
+      thread.detach();
+
+    thread = next;
+  }
 
   {
     var guard = std::lock_guard(&mut process.lock);

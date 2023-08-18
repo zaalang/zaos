@@ -35,7 +35,10 @@
               .global __vdso_process_create
               .global __vdso_process_kill
               .global __vdso_thread_create
+              .global __vdso_thread_munmap_exit
               .global __vdso_wait
+              .global __vdso_futex_wait
+              .global __vdso_futex_wake
 
               .section .rodata
 
@@ -153,12 +156,29 @@ __vdso_process_kill: # pid
               syscall
               ret
 
-__vdso_thread_create: # void *entry, void *parameter, u64 flags
+__vdso_thread_create: # void mut *stack, fn (*start_routine)(void mut *) -> i32, void mut *start_argument, i32 priority, i32 mut *tid, u64 flags
               mov rax, 17
+              mov r10, rcx
+              syscall
+              ret
+
+__vdso_thread_munmap_exit: # void *addr, usize length
+              mov rax, 18
               syscall
               ret
 
 __vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
-              mov rax, 18
+              mov rax, 19
               syscall
               ret
+
+__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
+              mov rax, 20
+              syscall
+              ret
+
+__vdso_futex_wake: # u32 *addr, u32 count
+              mov rax, 21
+              syscall
+              ret
+

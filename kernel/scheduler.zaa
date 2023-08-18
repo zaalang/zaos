@@ -35,7 +35,7 @@ pub struct run_queue
 
   fn push_back(this mut &, thread mut *thread, thread::priority priority) -> void
   {
-    std::assert(thread.wait_timeout == 0);
+    std::assert(thread.wait_abstime == 0);
     std::assert(!thread.next && !thread.prev);
 
     thread.priority = priority;
@@ -65,19 +65,19 @@ pub struct run_queue
     this.ready_head(priority) = thread;
   }
 
-  fn insert(this mut &, thread mut *thread, thread::priority priority, u64 timeout) -> void
+  fn insert(this mut &, thread mut *thread, thread::priority priority, u64 abstime) -> void
   {
-    std::assert(timeout != 0);
-    std::assert(thread.wait_timeout == 0);
+    std::assert(abstime != 0);
+    std::assert(thread.wait_abstime == 0);
     std::assert(!thread.next && !thread.prev);
 
     thread.priority = priority;
-    thread.wait_timeout = timeout;
+    thread.wait_abstime = abstime;
 
     var prev = null<thread mut *>;
     var insertpos = &this.waiting_head(priority);
 
-    while (*insertpos && insertpos.wait_timeout < timeout)
+    while (*insertpos && insertpos.wait_abstime < abstime)
     {
       prev = *insertpos;
       insertpos = &insertpos.next;
@@ -130,7 +130,7 @@ pub struct run_queue
 
     thread.next = null;
     thread.prev = null;
-    thread.wait_timeout = 0;
+    thread.wait_abstime = 0;
 
     return thread;
   }
@@ -199,7 +199,7 @@ pub fn dump(run_queue &this) -> void
   {
     for (var thread = queue; thread; thread = thread.next)
     {
-      std::print("  ", thread.id, " ", thread.state, " ", thread.priority, " ", thread.quantum_used_time, " ", thread.wait_timeout);
+      std::print("  ", thread.id, " ", thread.state, " ", thread.priority, " ", thread.quantum_used_time, " ", thread.wait_abstime);
     }
   }
 }
@@ -224,7 +224,7 @@ extern fn thread_main(thread mut *thread) -> void
 
   std::print(*thread, "started");
 
-  thread.entry(thread.parameter);
+  thread.start_routine(thread.start_argument);
 
   thread::exit(-32);
 }
@@ -247,7 +247,7 @@ fn pick_next(run_queue mut &runqueue) -> thread mut *
   {
     std::assert(thread.cpu == cpu::current);
 
-    if (thread.wait_timeout != 0)
+    if (thread.wait_abstime != 0)
       runqueue.unblock(thread);
 
     runqueue.insert(thread, thread.priority, now);
@@ -255,7 +255,7 @@ fn pick_next(run_queue mut &runqueue) -> thread mut *
 
   for (var priority = cast<usize>(thread::priority::max); priority != 0; --priority)
   {
-    if (var waiting = runqueue.waiting[priority]; waiting && waiting.wait_timeout <= now)
+    if (var waiting = runqueue.waiting[priority]; waiting && waiting.wait_abstime <= now)
     {
       return runqueue.unblock(waiting);
     }
@@ -399,7 +399,7 @@ pub fn sleep_yield() -> void
 }
 
 #[noinline]
-pub fn sleep_until(u64 timeout) -> void
+pub fn sleep_until(u64 abstime) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
 
@@ -409,7 +409,7 @@ pub fn sleep_until(u64 timeout) -> void
   runqueue.lock.lock();
 
   current_thread.wait_status = 1;
-  runqueue.insert(current_thread, current_thread.priority, timeout);
+  runqueue.insert(current_thread, current_thread.priority, abstime);
 
   reschedule(thread::state::waiting, adopt_lock: true);
 }
@@ -447,7 +447,7 @@ pub fn block() -> i32
 }
 
 #[noinline]
-pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
+pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
 {
   lock.unlock();
 
@@ -458,7 +458,7 @@ pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
 
   if (std::atomic_cmpxchg_strong(&current_thread.wait_status, 1, 2))
   {
-    runqueue.insert(current_thread, current_thread.priority, timeout);
+    runqueue.insert(current_thread, current_thread.priority, abstime);
 
     reschedule(thread::state::waiting, adopt_lock: true);
   }
@@ -469,7 +469,7 @@ pub fn block_until<Lock>(Lock mut &lock, u64 timeout) -> i32
 
   std::assert(&runqueue == &cpu::runqueue);
   std::assert(current_thread == cpu::current_thread);
-  std::assert(current_thread.wait_timeout == 0);
+  std::assert(current_thread.wait_abstime == 0);
 
   lock.lock();
 

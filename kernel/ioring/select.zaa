@@ -41,7 +41,7 @@ struct pollevt
   ~pollevt() = default;
 }
 
-pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, usize n, u64 timeout) -> result
+pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, usize n, u64 abstime) -> result
 {
   var evts = std::vector<pollevt, N:8>::with_size(n);
 
@@ -131,12 +131,12 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
 
   if (count == 0)
   {
-    ctx.wake_time = timeout;
+    ctx.wake_time = abstime;
 
-    if (timeout == 0 && ctx.blockers.len == 0)
+    if (abstime == 0 && ctx.blockers.len == 0)
       return 0;
 
-    if (timeout != 0 && timeout < cpu::system_time)
+    if (abstime != 0 && abstime < cpu::system_time)
       return 0;
 
     return ioring::result::should_block;

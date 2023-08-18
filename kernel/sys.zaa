@@ -160,7 +160,7 @@ struct msg_queue
 {
   struct msg
   {
-    std::delegate<void fn()> delegate;
+    std::delegate<fn()> delegate;
 
     msg() = default;
     msg(#msg&) = default;
@@ -174,7 +174,7 @@ struct msg_queue
   msg[4] messages;
 
   #[lifetime(consume(delegate))]
-  fn push(this mut &, std::delegate<void fn()> mut &delegate) -> bool
+  fn push(this mut &, std::delegate<fn()> mut &delegate) -> bool
   {
     std::assert(this.messages.len & (this.messages.len - 1) == 0);
 
@@ -202,7 +202,7 @@ struct msg_queue
     return true;
   }
 
-  fn pop(this mut &, std::delegate<void fn()> mut &delegate) -> bool
+  fn pop(this mut &, std::delegate<fn()> mut &delegate) -> bool
   {
     var index = 0;
 
@@ -237,7 +237,7 @@ struct msg_queue
 
 extern fn ipi() -> void
 {
-  var delegate = std::delegate<void fn()>();
+  var delegate = std::delegate<fn()>();
 
   while (sys.ipiqueue[cast(cpu::current)].pop(&mut delegate))
     delegate();
@@ -245,7 +245,7 @@ extern fn ipi() -> void
 
 pub fn unicast_ipi_message<Callback>(int cpu, Callback &&callback) -> bool
 {
-  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<void fn()>(callback)))
+  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<fn()>(callback)))
     return false;
 
   platform::unicast_ipi_interrupt(sys.apic_ids[cast(cpu)]);
@@ -262,7 +262,7 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
     if (i == cast(cpu::current))
       continue;
 
-    while (!sys.ipiqueue[i].push(&move std::delegate<void fn()>(callback)))
+    while (!sys.ipiqueue[i].push(&move std::delegate<fn()>(callback)))
       ipi();
   }
 

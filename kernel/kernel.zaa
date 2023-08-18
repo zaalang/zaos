@@ -26,43 +26,6 @@ import platform : BootInfo;
 import syscalls;
 import ioring.workman;
 
-extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
-{
-  cpu::bootstrap(bootinfo, cpu);
-  sys::bootstrap(bootinfo, cpu);
-  heap::bootstrap(bootinfo, cpu);
-  vm::bootstrap(bootinfo, cpu);
-
-  platform::finalise_boot(bootinfo, cpu);
-
-  if (cpu == 0)
-  {
-    create_kernel_process(&cast<void fn(void mut *)>(kernel_main), null);
-  }
-
-  scheduler::start();
-}
-
-fn kernel_main(void*) -> void
-{
-  spawn_undertaker();
-
-  blk::initialise();
-  vfs::initialise();
-  ioring::initialise();
-  pci::initialise();
-  nvme::initialise();
-  ahci::initialise();
-  ps2::initialise();
-  pty::initialise();
-  video::initialise();
-  console::initialise();
-
-  bootstrap_filesystem();
-
-  launch_init();
-}
-
 fn bootstrap_filesystem() -> void
 {
   import ext2fs;
@@ -103,7 +66,7 @@ fn bootstrap_filesystem() -> void
 
 fn launch_init() -> void
 {
-  var srv = sys::cmdline("init", default: "/zaos/srv/system");
+  var srv = sys::cmdline("init", default: "/zaos/srv/coco");
 
   var init = create_process(process::current, vfs::basename(srv));
 
@@ -115,4 +78,41 @@ fn launch_init() -> void
   process_push_ioring(init, 256);
 
   process_start(init, thread::priority::normal);
+}
+
+fn kernel_main(void*) -> void
+{
+  spawn_undertaker();
+
+  blk::initialise();
+  vfs::initialise();
+  ioring::initialise();
+  pci::initialise();
+  nvme::initialise();
+  ahci::initialise();
+  ps2::initialise();
+  pty::initialise();
+  video::initialise();
+  console::initialise();
+
+  bootstrap_filesystem();
+
+  launch_init();
+}
+
+extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
+{
+  cpu::bootstrap(bootinfo, cpu);
+  sys::bootstrap(bootinfo, cpu);
+  heap::bootstrap(bootinfo, cpu);
+  vm::bootstrap(bootinfo, cpu);
+
+  platform::finalise_boot(bootinfo, cpu);
+
+  if (cpu == 0)
+  {
+    create_kernel_process(&cast<fn(void mut *)>(kernel_main), null);
+  }
+
+  scheduler::start();
 }

@@ -20,17 +20,17 @@ pub struct wait_queue
     return this.waiters.thread;
   }
 
-  pub fn notify_one(this mut &) -> void
+  pub fn wake_one(this mut &) -> void
   {
-    notify_n(&mut this, 1);
+    wake_n(&mut this, 1);
   }
 
-  pub fn notify_all(this mut &) -> void
+  pub fn wake_all(this mut &) -> void
   {
-    notify_n(&mut this, ~0);
+    wake_n(&mut this, ~0);
   }
 
-  pub fn notify_n(this mut &, usize n) -> void
+  pub fn wake_n(this mut &, usize n) -> void
   {
     for (var waiter = this.waiters; waiter && n != 0; waiter = this.waiters, n -= 1)
     {
@@ -57,7 +57,7 @@ pub struct wait_queue
     lock.lock();
   }
 
-  pub fn wait_until<Lock>(this mut &, Lock mut &lock, u64 timeout) -> bool
+  pub fn wait_until<Lock>(this mut &, Lock mut &lock, u64 abstime) -> bool
   {
     var waiter = waiter();
 
@@ -67,7 +67,7 @@ pub struct wait_queue
       scheduler::prepare_to_block();
     }
 
-    if (scheduler::block_until(&mut lock, timeout) != 0)
+    if (scheduler::block_until(&mut lock, abstime) != 0)
     {
       remove_waiter(&mut this, &waiter);
 

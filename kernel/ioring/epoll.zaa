@@ -243,7 +243,7 @@ pub fn sys_epoll_ctl(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 op, 
   return 0;
 }
 
-pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr evtsbuf, usize n, u64 timeout) -> result
+pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr evtsbuf, usize n, u64 abstime) -> result
 {
   var file = process.fd(fd);
 
@@ -287,10 +287,10 @@ pub fn sys_epoll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtadd
 
   if (evts.len == 0)
   {
-    ctx.wake_time = timeout;
+    ctx.wake_time = abstime;
     ctx.blockers.push_back(pollset.readable);
 
-    if (timeout != 0 && timeout < cpu::system_time)
+    if (abstime != 0 && abstime < cpu::system_time)
       return 0;
 
     return ioring::result::should_block;

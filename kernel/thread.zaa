@@ -60,12 +60,14 @@ pub struct thread
   pub thread mut *next;
   pub thread mut *prev;
 
-  pub void fn(void mut *) *entry;
-  pub void mut *parameter;
-  pub vm::virtrange userstack;
+  pub fn (*start_routine)(void mut *) -> void;
+  pub void mut *start_argument;
+
+  pub vm::virtaddr ip;
+  pub vm::virtaddr sp;
 
   pub i32 wait_status;
-  pub u64 wait_timeout;
+  pub u64 wait_abstime;
   pub thread mut *wakenext;
 
   pub Rc<process> process;
@@ -115,7 +117,7 @@ pub struct thread
     return &allocator;
   }
 
-  pub fn create(process mut *process, void fn(void mut *) *entry, void mut *parameter) -> thread mut *
+  pub fn create(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
   {
     var guard = std::lock_guard(&mut cpu::irqlock);
 
@@ -126,14 +128,19 @@ pub struct thread
 
     initialise(thread);
 
-    thread.entry = entry;
-    thread.parameter = parameter;
+    thread.start_routine = start_routine;
+    thread.start_argument = start_argument;
 
     process.add_thread(thread);
 
     std::atomic_add(&process.threadcount, 1);
 
     return thread;
+  }
+
+  pub fn is_detached(thread &thread) -> bool
+  {
+    return thread.task.get(platform::task::flags::detached);
   }
 
   pub fn detach(thread mut &thread) -> void
@@ -254,15 +261,15 @@ fn dump(thread_manager mut &threadman) -> void
   }
 }
 
-pub fn create_zero_task(process mut *process, void fn(void mut *) *entry, void mut *parameter) -> thread mut *
+pub fn create_zero_task(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
 {
   var thread = thread::allocator.allocate();
 
   initialise(thread);
 
   thread.id = ++threadman.nextid;
-  thread.entry = entry;
-  thread.parameter = parameter;
+  thread.start_routine = start_routine;
+  thread.start_argument = start_argument;
   thread.process = process;
   thread.process.threadcount += 1;
 
@@ -277,7 +284,7 @@ fn initialise(thread mut *this) -> void
   this.priority = thread::priority::idle;
   this.quantum_used_time = 0;
   this.wait_status = 0;
-  this.wait_timeout = 0;
+  this.wait_abstime = 0;
   this.pinned = null;
   this.next = null;
   this.cpu_time = 0;
@@ -319,8 +326,6 @@ fn undertaker(void*) -> void
 
       var process = thread.process;
 
-      vm::munmap(process, thread.userstack);
-
       if (std::atomic_sub(&process.threadcount, 1) == 1)
       {
         teardown(process);
@@ -337,7 +342,7 @@ fn undertaker(void*) -> void
 
 pub fn spawn_undertaker() -> void
 {
-  threadman.undertaker = thread::create(process::current, &cast<void fn(void mut *)>(undertaker), null);
+  threadman.undertaker = thread::create(process::current, &cast<fn(void mut *)>(undertaker), null);
 
   scheduler::enqueue(threadman.undertaker, thread::priority::high);
 }

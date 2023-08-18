@@ -14,7 +14,7 @@ pub struct seat
   input::driver driver;
   input::keymap keymap;
 
-  pub std::delegate<void fn (input::event &)> on_event;
+  pub std::delegate<fn (input::event &) -> void> on_event;
 
   app::loop::wait_t input_handler;
 
@@ -29,11 +29,11 @@ pub fn create() -> seat
 
 pub fn initialise(seat mut &seat) -> i32
 {
-  if (var result = seat.driver.initialise(); result < 0)
-    return result;
+  if (var rc = seat.driver.initialise(); rc < 0)
+    return rc;
 
-  if (var result = seat.keymap.initialise("/zaos/data/us.keymap", "/zaos/data/us.keymap"); result < 0)
-    std::print("winton: failed to initialise input keymap - ", cast<std::errc>(-result));
+  if (var rc = seat.keymap.initialise("/zaos/data/us.keymap", "/zaos/data/us.keymap"); rc < 0)
+    std::print("winton: failed to initialise input keymap - ", cast<std::errc>(-rc));
 
   seat.driver.add_device("/dev/input/keyboard/ps2/0", seat.keymap);
   seat.driver.add_device("/dev/input/mouse/ps2/0", input::mouse());
@@ -43,7 +43,7 @@ pub fn initialise(seat mut &seat) -> i32
   evt.type = os::POLLFD;
   evt.mask = os::POLLIN;
 
-  seat.input_handler.callback = &cast<void fn(app::loop mut &, app::loop::wait_t mut *)>(input_handler);
+  seat.input_handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(input_handler);
 
   app::loop::current.begin_wait(evt, &seat.input_handler);
 

@@ -101,13 +101,13 @@ pub fn remove_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t
   return true;
 }
 
-pub fn for_each_usable_memory(BootInfo &bootinfo, void fn(physrange_t&) &callback) -> void
+pub fn for_each_usable_memory(BootInfo &bootinfo, fn (&callback)(physrange_t&) -> void) -> void
 {
   for (var i = 0; i < bootinfo.usable_memory_len; ++i)
     callback(bootinfo.usable_memory_spans[i]);
 }
 
-pub fn for_each_allocated_memory(BootInfo &bootinfo, void fn(physaddr_t) &callback) -> void
+pub fn for_each_allocated_memory(BootInfo &bootinfo, fn (&callback)(physaddr_t) -> void) -> void
 {
   var pml4 = cast<physaddr_t[512] mut *>(bootinfo.pml4);
 

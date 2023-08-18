@@ -18,6 +18,11 @@ pub struct task
     pub const fn |(flags lhs, flags rhs) -> flags { return cast<flags>(cast<isize>(lhs) | cast<isize>(rhs)); }
   }
 
+  pub fn get(task &task, task::flags flag) -> bool
+  {
+    return task.flags & flag == flag;
+  }
+
   pub fn set(task mut &task, task::flags flag) -> bool
   {
     return std::atomic_or(&task.flags, flag) & flag != flag;

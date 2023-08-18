@@ -10,6 +10,45 @@ import gfx.point;
 import gfx.transform;
 import gfx.raster;
 import lml.fixed;
+import lml.geometry;
+
+pub enum cap
+{
+  flat = 0,
+  square,
+  round,
+}
+
+pub enum join
+{
+  bevel = 0,
+  miter,
+  round,
+}
+
+pub struct pen
+{
+  pub float width;
+  pub gfx::color brush;
+
+  pub join join;
+  pub float miter_limit;
+
+  pub cap cap;
+
+  pub pen(gfx::color &brush = gfx::color(0.0, 0.0, 0.0), float width = 2.0, cap cap = cap::flat, join join = join::bevel, float miter_limit = 16.0)
+    : width(width),
+      brush(brush),
+      cap(cap),
+      join(join),
+      miter_limit(miter_limit)
+  {
+  }
+
+  pub pen(pen&) = default;
+  pub fn =(pen mut &, pen &) -> pen mut & = default;
+  pub ~pen() = default;
+}
 
 struct state
 {
@@ -17,51 +56,76 @@ struct state
   gfx::point cursor;
   gfx::raster_t raster;
 
+  enum status
+  {
+    move_to = 0,
+    draw_to,
+    closed,
+  }
+
+  status status;
+  gfx::point first_left;
+  gfx::point first_right;
+  lml::vector<f64, 2> first_forward;
+  gfx::point left;
+  gfx::point right;
+  lml::vector<f64, 2> forward;
+
+  cap cap;
+  join join;
+  float miter_limit;
+
   state() = default;
   ~state() = default;
 }
 
-fn stroke_line(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
+fn stroke_line(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
 {
   using lml;
   using std;
+
+  if (coincident(v1, v2))
+    return;
 
   var halfwidth = 0.5 * width;
 
-  var oab = normalise(perp(vec(v2, v1)));
+  var a1 = state.left;
+  var a2 = state.right;
 
-  var a1 = Q * (v1 - halfwidth * oab);
-  var a2 = Q * (v1 + halfwidth * oab);
+  var oab = normalise(perp(vec(v1, v2)));
 
-  var b1 = Q * (v2 - halfwidth * oab);
-  var b2 = Q * (v2 + halfwidth * oab);
+  var b1 = Q * (v2 + halfwidth * oab);
+  var b2 = Q * (v2 - halfwidth * oab);
 
-  raster.move_to(a1.x, a1.y);
-  raster.line_to(b1.x, b1.y);
-  raster.line_to(b2.x, b2.y);
-  raster.line_to(a2.x, a2.y);
-  raster.line_to(a1.x, a1.y);
+  state.raster.move_to(a1.x, a1.y);
+  state.raster.line_to(b1.x, b1.y);
+  state.raster.move_to(b2.x, b2.y);
+  state.raster.line_to(a2.x, a2.y);
+
+  state.left = b1;
+  state.right = b2;
+  state.forward = vec(v1, v2);
 }
 
-fn stroke_quad(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float width) -> void
+fn stroke_quad(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float width) -> void
 {
   using lml;
   using std;
 
-  fn subdivide[raster, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, int n) -> void
+  fn subdivide[state, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, int n) -> void
   {
     var d = abs(v1.x - v2.x) + abs(v1.y - v2.y) + abs(v3.x - v2.x) + abs(v3.y - v2.y);
 
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_line(raster, Q, v2, v3, width);
+      stroke_line(state, Q, v2, v3, width);
 
       return;
     }
 
     if (v2.x == v3.x && v2.y == v3.y)
     {
-      stroke_line(raster, Q, v1, v2, width);
+      stroke_line(state, Q, v1, v2, width);
 
       return;
     }
@@ -70,24 +134,26 @@ fn stroke_quad(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::p
     {
       var halfwidth = 0.5 * width;
 
-      var oab = normalise(perp(vec(v2, v1)));
-      var oac = normalise(perp(vec(v3, v1)));
-      var obc = normalise(perp(vec(v3, v2)));
+      var a1 = state.left;
+      var a2 = state.right;
 
-      var a1 = Q * (v1 - halfwidth * oab);
-      var a2 = Q * (v1 + halfwidth * oab);
+      var oac = normalise(perp(vec(v1, v3)));
 
-      var b1 = Q * (v2 - halfwidth * oac);
-      var b2 = Q * (v2 + halfwidth * oac);
+      var b1 = Q * (v2 + halfwidth * oac);
+      var b2 = Q * (v2 - halfwidth * oac);
 
-      var c1 = Q * (v3 - halfwidth * obc);
-      var c2 = Q * (v3 + halfwidth * obc);
+      var obc = normalise(perp(vec(v2, v3)));
 
-      raster.move_to(a1.x, a1.y);
-      raster.quad_to(b1.x, b1.y, c1.x, c1.y);
-      raster.line_to(c2.x, c2.y);
-      raster.quad_to(b2.x, b2.y, a2.x, a2.y);
-      raster.line_to(a1.x, a1.y);
+      var c1 = Q * (v3 + halfwidth * obc);
+      var c2 = Q * (v3 - halfwidth * obc);
+
+      state.raster.move_to(a1.x, a1.y);
+      state.raster.quad_to(b1.x, b1.y, c1.x, c1.y);
+      state.raster.move_to(c2.x, c2.y);
+      state.raster.quad_to(b2.x, b2.y, a2.x, a2.y);
+
+      state.left = c1;
+      state.right = c2;
 
       return;
     }
@@ -101,27 +167,29 @@ fn stroke_quad(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::p
   }
 
   subdivide(v1, v2, v3, 2);
+
+  state.forward = vec(v2, v3);
 }
 
-fn stroke_cubic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, float width) -> void
+fn stroke_cubic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, float width) -> void
 {
   using lml;
   using std;
 
-  fn subdivide[raster, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, int n) -> void
+  fn subdivide[state, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, int n) -> void
   {
     var d = abs(v1.x + v3.x - v2.x - v2.x) + abs(v1.y + v3.y - v2.y - v2.y) + abs(v2.x + v4.x - v3.x - v3.x) + abs(v2.y + v4.y - v3.y - v3.y);
 
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_quad(raster, Q, v2, v3, v4, width);
+      stroke_quad(state, Q, v2, v3, v4, width);
 
       return;
     }
 
     if (v3.x == v4.x && v3.y == v4.y)
     {
-      stroke_quad(raster, Q, v1, v2, v3, width);
+      stroke_quad(state, Q, v1, v2, v3, width);
 
       return;
     }
@@ -130,28 +198,31 @@ fn stroke_cubic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::
     {
       var halfwidth = 0.5 * width;
 
-      var oab = normalise(perp(vec(v2, v1)));
-      var oac = normalise(perp(vec(v3, v1)));
-      var obd = normalise(perp(vec(v4, v2)));
-      var ocd = normalise(perp(vec(v4, v3)));
+      var a1 = state.left;
+      var a2 = state.right;
 
-      var a1 = Q * (v1 - halfwidth * oab);
-      var a2 = Q * (v1 + halfwidth * oab);
+      var oac = normalise(perp(vec(v1, v3)));
 
-      var b1 = Q * (v2 - halfwidth * oac);
-      var b2 = Q * (v2 + halfwidth * oac);
+      var b1 = Q * (v2 + halfwidth * oac);
+      var b2 = Q * (v2 - halfwidth * oac);
 
-      var c1 = Q * (v3 - halfwidth * obd);
-      var c2 = Q * (v3 + halfwidth * obd);
+      var obd = normalise(perp(vec(v2, v4)));
 
-      var d1 = Q * (v4 - halfwidth * ocd);
-      var d2 = Q * (v4 + halfwidth * ocd);
+      var c1 = Q * (v3 + halfwidth * obd);
+      var c2 = Q * (v3 - halfwidth * obd);
 
-      raster.move_to(a1.x, a1.y);
-      raster.cubic_to(b1.x, b1.y, c1.x, c1.y, d1.x, d1.y);
-      raster.line_to(d2.x, d2.y);
-      raster.cubic_to(c2.x, c2.y, b2.x, b2.y, a2.x, a2.y);
-      raster.line_to(a1.x, a1.y);
+      var ocd = normalise(perp(vec(v3, v4)));
+
+      var d1 = Q * (v4 + halfwidth * ocd);
+      var d2 = Q * (v4 - halfwidth * ocd);
+
+      state.raster.move_to(a1.x, a1.y);
+      state.raster.cubic_to(b1.x, b1.y, c1.x, c1.y, d1.x, d1.y);
+      state.raster.move_to(d2.x, d2.y);
+      state.raster.cubic_to(c2.x, c2.y, b2.x, b2.y, a2.x, a2.y);
+
+      state.left = d1;
+      state.right = d2;
 
       return;
     }
@@ -167,25 +238,27 @@ fn stroke_cubic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::
   }
 
   subdivide(v1, v2, v3, v4, 3);
+
+  state.forward = vec(v3, v4);
 }
 
-fn stroke_conic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, float width) -> void
+fn stroke_conic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, float width) -> void
 {
   using lml;
   using std;
 
-  fn subdivide[raster, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, int n) -> void
+  fn subdivide[state, Q, width](gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, int n) -> void
   {
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_line(raster, Q, v2, v3, width);
+      stroke_line(state, Q, v2, v3, width);
 
       return;
     }
 
     if (v2.x == v3.x && v2.y == v3.y)
     {
-      stroke_line(raster, Q, v1, v2, width);
+      stroke_line(state, Q, v1, v2, width);
 
       return;
     }
@@ -194,24 +267,26 @@ fn stroke_conic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::
     {
       var halfwidth = 0.5 * width;
 
-      var oab = normalise(perp(vec(v2, v1)));
-      var oac = normalise(perp(vec(v3, v1)));
-      var obc = normalise(perp(vec(v3, v2)));
+      var a1 = state.left;
+      var a2 = state.right;
 
-      var a1 = Q * (v1 - halfwidth * oab);
-      var a2 = Q * (v1 + halfwidth * oab);
+      var oac = normalise(perp(vec(v1, v3)));
 
-      var b1 = Q * (v2 - halfwidth * oac);
-      var b2 = Q * (v2 + halfwidth * oac);
+      var b1 = Q * (v2 + halfwidth * oac);
+      var b2 = Q * (v2 - halfwidth * oac);
 
-      var c1 = Q * (v3 - halfwidth * obc);
-      var c2 = Q * (v3 + halfwidth * obc);
+      var obc = normalise(perp(vec(v2, v3)));
 
-      raster.move_to(a1.x, a1.y);
-      raster.conic_to(b1.x, b1.y, c1.x, c1.y, w);
-      raster.line_to(c2.x, c2.y);
-      raster.conic_to(b2.x, b2.y, a2.x, a2.y, w);
-      raster.line_to(a1.x, a1.y);
+      var c1 = Q * (v3 + halfwidth * obc);
+      var c2 = Q * (v3 - halfwidth * obc);
+
+      state.raster.move_to(a1.x, a1.y);
+      state.raster.conic_to(b1.x, b1.y, c1.x, c1.y, w);
+      state.raster.move_to(c2.x, c2.y);
+      state.raster.conic_to(b2.x, b2.y, a2.x, a2.y, w);
+
+      state.left = c1;
+      state.right = c2;
 
       return;
     }
@@ -229,52 +304,186 @@ fn stroke_conic(gfx::raster_t &&raster, gfx::transform &Q, gfx::point &v1, gfx::
   }
 
   subdivide(v1, v2, v3, w, 2);
+
+  state.forward = vec(v2, v3);
+}
+
+fn stroke_join(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &left, gfx::point &right, lml::vector<f64, 2> &forward, float width) -> void
+{
+  using lml;
+  using std;
+
+  var halfwidth = 0.5 * width;
+
+  var a1 = state.left;
+  var a2 = state.right;
+
+  switch (state.join)
+  {
+    case join::miter:
+
+      var p = normalise(state.forward);
+      var q = normalise(forward);
+      var u = perp(p, -q);
+
+      state.raster.move_to(a1.x, a1.y);
+
+      if (u != 0.0)
+      {
+        var p1 = (v1 + halfwidth * perp(p));
+        var p3 = (v1 + halfwidth * perp(q));
+
+        if (var s = perp(-q, vec(p3, p1)) / u; s > 0.0 && s < state.miter_limit)
+        {
+          var b1 = Q * (p1 + s * p);
+
+          state.raster.line_to(b1.x, b1.y);
+        }
+      }
+
+      state.raster.line_to(left.x, left.y);
+
+      state.raster.move_to(right.x, right.y);
+
+      if (u != 0.0)
+      {
+        var p2 = (v1 - halfwidth * perp(p));
+        var p4 = (v1 - halfwidth * perp(q));
+
+        if (var t = perp(-q, vec(p4, p2)) / u; t > 0.0 && t < state.miter_limit)
+        {
+          var b2 = Q * (p2 + t * p);
+
+          state.raster.line_to(b2.x, b2.y);
+        }
+      }
+
+      state.raster.line_to(a2.x, a2.y);
+
+    case join::bevel:
+      state.raster.move_to(a1.x, a1.y);
+      state.raster.line_to(left.x, left.y);
+      state.raster.move_to(right.x, right.y);
+      state.raster.line_to(a2.x, a2.y);
+  }
+
+  state.left = left;
+  state.right = right;
+  state.forward = forward;
+}
+
+fn stroke_cap(state &&state, gfx::transform &Q, gfx::point &a1, gfx::point &a2) -> void
+{
+  using lml;
+  using std;
+
+  state.raster.move_to(a1.x, a1.y);
+  state.raster.line_to(a2.x, a2.y);
+}
+
+fn stroke_to(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
+{
+  using lml;
+  using std;
+
+  if (coincident(v1, v2))
+    return;
+
+  var halfwidth = 0.5 * width;
+
+  var oab = normalise(perp(vec(v1, v2)));
+
+  var a1 = Q * (v1 + halfwidth * oab);
+  var a2 = Q * (v1 - halfwidth * oab);
+
+  switch (state.status)
+  {
+    case move_to:
+      state.first_left = state.left = a1;
+      state.first_right = state.right = a2;
+      state.first_forward = state.forward = vec(v1, v2);
+
+    case draw_to:
+      stroke_join(state, Q, state.cursor, a1, a2, vec(v1, v2), width);
+  }
 }
 
 fn move_to(state &&state, gfx::transform &Q, float x, float y) -> void
 {
+  switch (state.status)
+  {
+    case draw_to:
+      stroke_cap(state, Q, state.left, state.right);
+      stroke_cap(state, Q, state.first_right, state.first_left);
+  }
+
   state.cursor = state.start = gfx::point(x, y);
+  state.status = state::status::move_to;
 }
 
-fn line_to(state &&state, gfx::transform &Q, float x, float y, float thickness) -> void
+fn line_to(state &&state, gfx::transform &Q, float x, float y, float width) -> void
 {
-  stroke_line(state.raster, Q, state.cursor, gfx::point(x, y), thickness);
+  stroke_to(state, Q, state.cursor, gfx::point(x, y), width);
+
+  stroke_line(state, Q, state.cursor, gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
+  state.status = state::status::draw_to;
 }
 
-fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float thickness) -> void
+fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float width) -> void
 {
-  stroke_quad(state.raster, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), thickness);
+  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+
+  stroke_quad(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
+  state.status = state::status::draw_to;
 }
 
-fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y, float thickness) -> void
+fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y, float width) -> void
 {
-  stroke_cubic(state.raster, Q, state.cursor, gfx::point(x1, y1), gfx::point(x2, y2), gfx::point(x, y), thickness);
+  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+
+  stroke_cubic(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x2, y2), gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
+  state.status = state::status::draw_to;
 }
 
-fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float w, float thickness) -> void
+fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float w, float width) -> void
 {
-  stroke_conic(state.raster, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), w, thickness);
+  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+
+  stroke_conic(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), w, width);
 
   state.cursor = gfx::point(x, y);
+  state.status = state::status::draw_to;
 }
 
-fn close(state &&state, gfx::transform &Q, float thickness) -> void
+fn close(state &&state, gfx::transform &Q, float width) -> void
 {
-  if (state.cursor != state.start)
-    stroke_line(state.raster, Q, state.cursor, state.start, thickness);
+  switch (state.status)
+  {
+    case draw_to:
+      if (state.cursor != state.start)
+        line_to(state, Q, state.start.x, state.start.y, width);
+
+      if (state.left != state.first_left || state.right != state.first_right)
+        stroke_join(state, Q, state.cursor, state.first_left, state.first_right, state.first_forward, width);
+  }
 
   state.cursor = state.start;
+  state.status = state::status::closed;
 }
 
-pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, float thickness, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var state = state();
+
+  state.cap = pen.cap;
+  state.join = pen.join;
+  state.miter_limit = pen.miter_limit;
 
   state.raster.clip(std::clamp(clip.left, 0.0, cast(ctx.width)), std::clamp(clip.top, 0.0, cast(ctx.height)), std::clamp(clip.right, 0.0, cast(ctx.width)), std::clamp(clip.bottom, 0.0, cast(ctx.height)));
 
@@ -286,23 +495,25 @@ pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::
         move_to(state, Q, pt.x, pt.y);
 
       case line_to[pt]:
-        line_to(state, Q, pt.x, pt.y, thickness);
+        line_to(state, Q, pt.x, pt.y, pen.width);
 
       case quad_to[pt]:
-        quad_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, thickness);
+        quad_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pen.width);
 
       case cubic_to[pt]:
-        cubic_to(state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y, thickness);
+        cubic_to(state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y, pen.width);
 
       case conic_to[pt]:
-        conic_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w, thickness);
+        conic_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w, pen.width);
 
       case close:
-        close(state, Q, thickness);
+        close(state, Q, pen.width);
     }
   }
 
-  var color = gfx::premultiply(color.rgba);
+  move_to(state, Q, state.start.x, state.start.y);
+
+  var color = gfx::premultiply(pen.brush.rgba);
 
   state.raster.accumulate(|scanline| {
 
@@ -323,7 +534,12 @@ pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::
   });
 }
 
-pub fn stroke_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, float thickness, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn stroke_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  stroke_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, thickness, color, mode);
+  stroke_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, pen, mode);
+}
+
+pub fn stroke_path(gfx::paint_t &&ctx, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  stroke_path(ctx, gfx::transform::identity, path, pen, mode);
 }

@@ -34,8 +34,8 @@ pub fn symlink(terminal::terminal mut &terminal, env::env mut &env, std::string 
     return -22;
   }
 
-  if (var result = symlink(&mut thread_ring, os::string(src.data, src.len), os::string(tgt.data, tgt.len), 0); result < 0)
-    return result;
+  if (var rc = symlink(&mut thread_ring, os::string(src.data, src.len), os::string(tgt.data, tgt.len), 0); rc < 0)
+    return rc;
 
   return 0;
 }
