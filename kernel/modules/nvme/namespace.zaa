@@ -12,7 +12,7 @@ import platform;
 pub struct namespace : pub blk::blkdev
 {
   pub namespace(nvme::controller mut &controller, u32 nsid)
-    : super(blk::device_operations()),
+    : super(&impl this),
       controller(&controller),
       nsid(nsid)
   {
@@ -38,10 +38,8 @@ pub struct namespace : pub blk::blkdev
     return std::format("{}/{}", this.controller.name, this.nsid);
   }
 
-  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+  pub fn query(this &, blk::query query, std::string mut &result) -> blk::result
   {
-    var &this = cast<namespace&>(dev);
-
     switch (query)
     {
       case device_path:
@@ -57,25 +55,21 @@ pub struct namespace : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
   {
     return not_supported;
   }
 
-  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
   {
-    var mut &this = cast<namespace mut &>(dev);
-
     if (var result = this.controller.enqueue(this.nsid, request); !result)
       return cast<blk::result>(result);
 
     return ok;
   }
 
-  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
   {
-    var mut &this = cast<namespace mut &>(dev);
-
     if (var result = this.controller.cancel(this.nsid, request); !result)
       return cast<blk::result>(result);
 

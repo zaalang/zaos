@@ -1,0 +1,134 @@
+//
+// gui painter
+//
+
+import std.stdlib;
+import std.string : String;
+import gfx;
+import gfx.blit;
+import gfx.color;
+import gfx.text;
+import gui.font;
+import gui.window;
+
+pub struct painter
+{
+  gfx::paint_t ctx;
+
+  pub painter(gui::buffer mut &buffer)
+  {
+    ctx = gfx::create_context(buffer.width, buffer.height, cast(buffer.stride), buffer.data);
+  }
+
+  pub painter(gui::buffer mut &buffer, gui::rect &region)
+  {
+    var offset = region.y * buffer.stride + region.x * sizeof<u32>;
+
+    ctx = gfx::create_context(region.width, region.height, cast(buffer.stride), buffer.data + cast(offset));
+  }
+
+  pub ~painter() = default;
+}
+
+pub fn clear(painter &&painter, gfx::color &color) -> void
+{
+  gfx::clear(painter.ctx, color);
+}
+
+pub fn fill_rect(painter &&painter, int x, int y, int width, int height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  gfx::fill_rect(painter.ctx, x, y, width, height, color, mode);
+}
+
+pub fn fill_rect(painter &&painter, gui::point &topleft, int width, int height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  gfx::fill_rect(painter.ctx, topleft.x, topleft.y, width, height, color, mode);
+}
+
+pub fn fill_rect(painter &&painter, gui::point &topleft, gui::size &size, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  gfx::fill_rect(painter.ctx, topleft.x, topleft.y, size.width, size.height, color, mode);
+}
+
+pub fn fill_rect(painter &&painter, gui::point &topleft, gui::point &bottomright, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  gfx::fill_rect(painter.ctx, topleft.x, topleft.y, bottomright.x - topleft.x, bottomright.y - topleft.y, color, mode);
+}
+
+pub fn fill_rect(painter &&painter, gui::rect &rect, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  gfx::fill_rect(painter.ctx, rect.left, rect.top, rect.width, rect.height, color, mode);
+}
+
+pub fn draw_glyph(painter &&painter, gui::font &font, gfx::transform &transform, char ch, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  if (ch == 0x20)
+    return;
+
+  switch (font.find(ch))
+  {
+    case Some[id]:
+
+      var xy = transform * gfx::point(0.0, 0.0);
+      var glyph = font.glyph(id, transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x), 0.0);
+
+      gfx::blit_glyph(painter.ctx, cast<int>(std::floor(xy.x - glyph.origin.0)), cast<int>(std::round(xy.y - glyph.origin.1)), glyph.data.data, glyph.width, glyph.height, color, mode);
+  }
+}
+
+pub fn draw_glyph(painter &&painter, gui::font &font, float x, float y, char ch, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  if (ch == 0x20)
+    return;
+
+  switch (font.find(ch))
+  {
+    case Some[id]:
+
+      var xy = gfx::point(x, y);
+      var glyph = font.glyph(id, 1.0, 0.0, 0.0, 1.0, xy.x - std::floor(xy.x), 0.0);
+
+      gfx::blit_glyph(painter.ctx, cast<int>(std::floor(xy.x - glyph.origin.0)), cast<int>(std::round(xy.y - glyph.origin.1)), glyph.data.data, glyph.width, glyph.height, color, mode);
+  }
+}
+
+pub fn draw_glyph(painter &&painter, gui::font &font, gfx::point &position, char ch, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_glyph(painter, font, position.x, position.y, ch, color, mode);
+}
+
+pub fn draw_glyph(painter &&painter, gui::font &font, int x, int y, char ch, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_glyph(painter, font, cast<float>(x) + 0.5, cast<float>(y) + 0.5, ch, color, mode);
+}
+
+pub fn draw_glyph(painter &&painter, gui::font &font, gui::point &position, char ch, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_glyph(painter, font, osition.x, position.y, ch, color, mode);
+}
+
+pub fn draw_text(painter &&painter, gui::font &font, gfx::transform &transform, std::string_view text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  var ids = std::vector<u16>::with_capacity(text.len);
+  var offsets = std::vector<float>::with_capacity(text.len + 1);
+
+  font.layout_text(text, &mut ids, &mut offsets);
+
+  for (var &(id, offset) : std::zip(ids, offsets))
+  {
+    var xy = transform * gfx::point(offset, 0.0);
+    var glyph = font.glyph(id, transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x), 0.0);
+
+    gfx::blit_glyph(painter.ctx, cast<int>(std::floor(xy.x - glyph.origin.0)), cast<int>(std::round(xy.y - glyph.origin.1)), glyph.data.data, glyph.width, glyph.height, color, mode);
+  }
+}
+
+pub fn draw_text(painter &&painter, gui::font &font, gfx::transform &transform, String &text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_text(painter, font, transform, std::string_view(text), color, mode);
+}
+
+pub fn draw_text(painter &&painter, gui::font &font, float x, float y, String &text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+{
+  draw_text(painter, font, gfx::transform::translation(x, y), std::string_view(text), color, mode);
+}

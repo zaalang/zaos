@@ -50,7 +50,7 @@ struct inode : pub vfs::node
   ~inode() = default;
 }
 
-struct ext2fs : pub vfs::file_system
+pub struct ext2fs : pub vfs::file_system
 {
   mutex lock;
   volume volume;
@@ -59,7 +59,7 @@ struct ext2fs : pub vfs::file_system
   std::flat_hash_map<ext2_ino_t, vfs::node_ptr> node_cache;
 
   ext2fs(vfs::node_ptr &dev)
-    : super(vfs::file_system_operations()), dev(dev)
+    : super(&impl this), dev(dev)
   {
   }
 
@@ -68,7 +68,7 @@ struct ext2fs : pub vfs::file_system
 
 pub fn create(vfs::file_system_context &ctx) -> ext2fs mut *
 {
-  return std::allocator::new<ext2fs>(ctx.source);
+  return new<ext2fs>(std::allocator().allocate(sizeof<ext2fs>, alignof<ext2fs>))(ctx.source);
 }
 
 fn get_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_ino_t ino) -> vfs::result
@@ -108,13 +108,13 @@ fn get_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_ino_t ino) -> vfs::res
   switch (rawinode.ptr.ftype)
   {
     case regular_file:
-      node = vfs::node::new(inode, vfs::node::type::file, &vfs::node_file_operations());
+      node = vfs::node::new(inode, vfs::node::type::file, vfs::node_file_operations());
 
     case directory:
-      node = vfs::node::new(inode, vfs::node::type::directory, &vfs::node_directory_operations());
+      node = vfs::node::new(inode, vfs::node::type::directory, vfs::node_directory_operations());
 
     case symbolic_link:
-      node = vfs::node::new(inode, vfs::node::type::symlink, &vfs::node_symlink_operations());
+      node = vfs::node::new(inode, vfs::node::type::symlink, vfs::node_symlink_operations());
 
     else:
       return not_supported;
@@ -145,10 +145,8 @@ fn unlink_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_inode mut *dir, ext
   return result;
 }
 
-pub fn mount(vfs::file_system mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
+pub fn mount(ext2fs mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
 {
-  var fs = cast<ext2fs mut *>(fs);
-
   if (!fs.dev)
     return invalid_argument;
 

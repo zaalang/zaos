@@ -318,7 +318,7 @@ fn main() -> int
   var width = 0;
   var height = 0;
 
-  if (termios::get_window_size(&mut width, &mut height) != 0)
+  if (termios::get_winsize(&mut width, &mut height) != 0)
     std::panic("unable to retreive termios size");
 
   var oldstate = termios::termios(void);

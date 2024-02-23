@@ -14,7 +14,7 @@ pub struct seat
   input::driver driver;
   input::keymap keymap;
 
-  pub std::delegate<fn (input::event &) -> void> on_event;
+  pub std::delegate<(input::event &) -> void> on_event;
 
   app::loop::wait_t input_handler;
 
@@ -38,14 +38,9 @@ pub fn initialise(seat mut &seat) -> i32
   seat.driver.add_device("/dev/input/keyboard/ps2/0", seat.keymap);
   seat.driver.add_device("/dev/input/mouse/ps2/0", input::mouse());
 
-  var evt = os::pollevt();
-  evt.id = seat.driver.fd;
-  evt.type = os::POLLFD;
-  evt.mask = os::POLLIN;
+  seat.input_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(input_handler);
 
-  seat.input_handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(input_handler);
-
-  app::loop::current.begin_wait(evt, &seat.input_handler);
+  app::loop::current.begin_wait_fd(seat.driver.fd, &seat.input_handler);
 
   return 0;
 }

@@ -1,0 +1,286 @@
+//
+// gui font
+//
+
+import std.stdlib;
+import std.string : String;
+import gui.fonts;
+import gfx;
+import gfx.text;
+import gfx.color;
+import opentype;
+
+pub struct font
+{
+  pub enum stretch
+  {
+    pub const ultra_condensed = 50;
+    pub const extra_condensed = 62;
+    pub const condensed = 75;
+    pub const semi_condensed = 87;
+    pub const normal = 100;
+    pub const semi_expanded = 112;
+    pub const expanded = 125;
+    pub const extra_expanded = 150;
+    pub const ultra_expanded = 200;
+  }
+
+  pub enum weight
+  {
+    pub const thin = 0;
+    pub const extra_light = 40;
+    pub const light = 50;
+    pub const normal = 80;
+    pub const medium = 100;
+    pub const semi_bold = 180;
+    pub const bold = 200;
+    pub const extra_bold = 205;
+    pub const black = 210;
+    pub const extra_black = 215;
+  }
+
+  pub enum slant
+  {
+    pub const normal = 0;
+    pub const italic = 100;
+    pub const oblique = 110;
+  }
+
+  pub font() = default;
+
+  pub font(String &family, float size, int weight = weight::normal, int slant = slant::normal, int stretch = stretch::normal)
+    : size(size)
+  {
+    fontfile = gui::fonts::load(family, size, weight, slant, stretch);
+
+    switch (fontfile.font)
+    {
+      case opentype[face]:
+        scale = size / cast(face.units_per_em);
+    }
+  }
+
+  pub fn family(this&) -> std::string
+  {
+    switch (this.fontfile.font)
+    {
+      case opentype[face]:
+        return face.name(opentype::name::id::family);
+    }
+
+    return "";
+  }
+
+  pub fn height(font &font) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.height) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn ascender(font &font) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.ascender) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn descender(font &font) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.descender) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn leading(font &font) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.leading) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn line_spacing(font &font) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.height + face.leading) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn advance(font &font, u16 id) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.advance(opentype::glyphid(id))) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn advance(font &font, char codepoint) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        switch (face.find(codepoint))
+        {
+          case Some[id]:
+            return cast(face.advance(id)) * font.scale;
+        }
+    }
+
+    return 0.0;
+  }
+
+  pub fn leftside_bearing(font &font, u16 id) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        return cast(face.leftside_bearing(opentype::glyphid(id))) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn leftside_bearing(font &font, char codepoint) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+        switch (face.find(codepoint))
+        {
+          case Some[id]:
+            return cast(face.leftside_bearing(id)) * font.scale;
+        }
+    }
+
+    return 0.0;
+  }
+
+  pub fn kerning(font &font, u16 last_id, u16 id) -> float
+  {
+    switch (font.fontfile.font)
+    {
+      case opentype[face]:
+
+        if (var kerning = face.kerning(opentype::glyphid(last_id), opentype::glyphid(id)); kerning)
+          return cast(kerning?!) * font.scale;
+
+        if (var layout = face.layout(opentype::gpos::tag::kern, opentype::glyphid(last_id), opentype::glyphid(id)); layout.flags & opentype::layout::flags::placement)
+          return cast(layout.x_advance) * font.scale;
+    }
+
+    return 0.0;
+  }
+
+  pub fn ==(font &, font &) -> bool = default;
+  pub fn <=>(font &, font &) -> int = default;
+
+  pub font(font &other)
+  {
+    size = other.size;
+    scale = other.scale;
+    fontfile = other.fontfile;
+
+    if (this.fontfile)
+      gui::fonts::ref(this.fontfile);
+  }
+
+  pub fn =(this mut &, font &other) -> font mut &
+  {
+    if (&this != &other)
+    {
+      this.size = other.size;
+      this.scale = other.scale;
+
+      if (this.fontfile != other.fontfile)
+      {
+        if (this.fontfile)
+          gui::fonts::unref(this.fontfile);
+
+        this.fontfile = other.fontfile;
+
+        if (this.fontfile)
+          gui::fonts::ref(this.fontfile);
+      }
+    }
+
+    return &this;
+  }
+
+  pub ~font()
+  {
+    if (fontfile)
+      gui::fonts::unref(fontfile);
+  }
+
+  float size;
+  float scale;
+  gui::fontfile *fontfile;
+}
+
+pub fn find(font &font, char codepoint) -> std::optional<u16>
+{
+  switch (font.fontfile.font)
+  {
+    case opentype[face]:
+      switch (face.find(codepoint))
+      {
+        case Some[id]:
+          return cast<u16>(id);
+      }
+  }
+
+  return None;
+}
+
+pub fn glyph(font &font, u16 id, f64 m11, f64 m12, f64 m21, f64 m22, f64 dx, f64 dy)
+{
+  return gui::fonts::glyph(font.fontfile, id, m11*font.scale, m12*font.scale, m21*font.scale, m22*font.scale, dx, dy);
+}
+
+pub fn layout_text(font &font, std::string_view text, std::vector<u16> mut &ids, std::vector<float> mut &offsets) -> void
+{
+  var last_id = u16(~0);
+  var position = gfx::point(0.0, 0.0);
+
+  for (var ch : text.chars)
+  {
+    switch (font.find(ch))
+    {
+      case Some[id]:
+
+        position.x += font.kerning(last_id, id);
+
+        ids.push_back(id);
+        offsets.push_back(position.x);
+
+        position.x += font.advance(id);
+
+        last_id = id;
+    }
+  }
+
+  offsets.push_back(position.x);
+}

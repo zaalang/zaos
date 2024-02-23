@@ -85,15 +85,8 @@ pub fn boot_frame_buffer() -> frame_buffer &
   return &sys.boot_frame_buffer;
 }
 
-pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+pub fn bootstrap(platform::BootInfo &bootinfo) -> void
 {
-  std::assert(bootinfo.cpu_count < MAX_CPU_COUNT);
-
-  cpu::set_runqueue(&sys.runqueues[cast(cpu)]);
-
-  if (cpu != 0)
-    return;
-
   sys.cpu_count = bootinfo.cpu_count;
   sys.acpi_root = bootinfo.acpi_root;
   sys.apic_ids = bootinfo.apic_ids;
@@ -160,7 +153,7 @@ struct msg_queue
 {
   struct msg
   {
-    std::delegate<fn()> delegate;
+    std::delegate<() -> void> delegate;
 
     msg() = default;
     msg(#msg&) = default;
@@ -174,7 +167,7 @@ struct msg_queue
   msg[4] messages;
 
   #[lifetime(consume(delegate))]
-  fn push(this mut &, std::delegate<fn()> mut &delegate) -> bool
+  fn push(this mut &, std::delegate<() -> void> mut &delegate) -> bool
   {
     std::assert(this.messages.len & (this.messages.len - 1) == 0);
 
@@ -202,7 +195,7 @@ struct msg_queue
     return true;
   }
 
-  fn pop(this mut &, std::delegate<fn()> mut &delegate) -> bool
+  fn pop(this mut &, std::delegate<() -> void> mut &delegate) -> bool
   {
     var index = 0;
 
@@ -217,15 +210,13 @@ struct msg_queue
         break;
     }
 
-    delegate = &move this.messages[index].delegate;
+    delegate = &move std::launder(this.messages[index].delegate);
 
     while (true)
     {
       if (std::atomic_cmpxchg_weak(&this.readhead, index, (index + 1) & (this.messages.len - 1)))
         break;
     }
-
-    std::launder(this);
 
     return true;
   }
@@ -237,7 +228,7 @@ struct msg_queue
 
 extern fn ipi() -> void
 {
-  var delegate = std::delegate<fn()>();
+  var delegate = std::delegate<() -> void>();
 
   while (sys.ipiqueue[cast(cpu::current)].pop(&mut delegate))
     delegate();
@@ -245,7 +236,7 @@ extern fn ipi() -> void
 
 pub fn unicast_ipi_message<Callback>(int cpu, Callback &&callback) -> bool
 {
-  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<fn()>(callback)))
+  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<() -> void>(callback)))
     return false;
 
   platform::unicast_ipi_interrupt(sys.apic_ids[cast(cpu)]);
@@ -262,7 +253,7 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
     if (i == cast(cpu::current))
       continue;
 
-    while (!sys.ipiqueue[i].push(&move std::delegate<fn()>(callback)))
+    while (!sys.ipiqueue[i].push(&move std::delegate<() -> void>(callback)))
       ipi();
   }
 

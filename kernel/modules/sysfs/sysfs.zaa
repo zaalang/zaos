@@ -30,7 +30,7 @@ pub vtable sysfs_file_operations : sysfs_node_operations
 pub vtable sysfs_directory_operations : sysfs_node_operations
 {
   pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr;
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result;
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result;
 }
 
 pub vtable sysfs_symlink_operations : sysfs_node_operations
@@ -43,7 +43,7 @@ struct sysfs_root_node : pub vfs::node
   sysfs mut &fs;
 
   pub sysfs_root_node(sysfs mut &fs)
-    : super(vfs::node::type::directory, &vfs::node_directory_operations()), fs(&fs)
+    : super(vfs::node::type::directory, vfs::node_directory_operations()), fs(&fs)
   {
   }
 
@@ -145,10 +145,10 @@ pub struct sysfs_directory_node : pub vfs::node
   vfs::node_ptr parent;
   sysfs_directory_operations *ops;
 
-  pub sysfs_directory_node(sysfs_directory_operations *ops, vfs::node_ptr &&parent)
-    : super(vfs::node::type::directory, &vfs::node_directory_operations()),
+  pub sysfs_directory_node(sysfs_directory_operations &ops, vfs::node_ptr &&parent)
+    : super(vfs::node::type::directory, vfs::node_directory_operations()),
       parent(&&parent),
-      ops(ops)
+      ops(&ops)
   {
     btime = chrono::system_clock::now.time_since_epoch.count;
   }
@@ -235,7 +235,7 @@ pub struct sysfs_directory_node : pub vfs::node
       if (var result = emit(vfs::ftype::directory, std::string_view("..")); !result)
         return cast(result);
 
-      if (var result = this.ops.readdir(node, &mut cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result>(emit)); !result)
+      if (var result = this.ops.readdir(node, &mut cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result>(emit)); !result)
         return result;
 
       cursor = 1;
@@ -261,10 +261,10 @@ pub struct sysfs_file_node : pub vfs::node
 
   pub std::string contents;
 
-  pub sysfs_file_node(sysfs_file_operations *ops, vfs::node_ptr &&parent)
-    : super(vfs::node::type::file, &vfs::node_file_operations()),
+  pub sysfs_file_node(sysfs_file_operations &ops, vfs::node_ptr &&parent)
+    : super(vfs::node::type::file, vfs::node_file_operations()),
       parent(&&parent),
-      ops(ops)
+      ops(&ops)
   {
   }
 
@@ -330,7 +330,7 @@ pub struct sysfs_file_node : pub vfs::node
   pub ~sysfs_file_node() = default;
 }
 
-struct sysfs : pub vfs::file_system
+pub struct sysfs : pub vfs::file_system
 {
   i64 btime;
 
@@ -338,7 +338,7 @@ struct sysfs : pub vfs::file_system
   std::flat_hash_map<std::string, vfs::node_ptr> subsystems;
 
   sysfs()
-    : super(vfs::file_system_operations())
+    : super(&impl this)
   {
     btime = chrono::system_clock::now.time_since_epoch.count;
   }
@@ -348,13 +348,11 @@ struct sysfs : pub vfs::file_system
 
 pub fn create(vfs::file_system_context &ctx = vfs::file_system_context()) -> sysfs mut *
 {
-  return std::allocator::new<sysfs>();
+  return new<sysfs>(std::allocator().allocate(sizeof<sysfs>, alignof<sysfs>))();
 }
 
-pub fn mount(vfs::file_system mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
+pub fn mount(sysfs mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
 {
-  var fs = cast<sysfs mut *>(fs);
-
   fs.root = vfs::node_ptr(std::allocator::new<sysfs_root_node>(*fs));
 
   fs.subsystems.insert("proc", proc_root_node::create(fs.root));

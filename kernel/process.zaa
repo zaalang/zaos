@@ -169,9 +169,7 @@ pub struct process
     var guard = std::lock_guard(&mut this.lock);
 
     for (var thread = this.threads; thread; thread = thread.sibling)
-    {
       callback(thread);
-    }
   }
 
   pub fn fd(this mut &, fd fd) -> vfs::fd
@@ -235,6 +233,8 @@ pub struct process
 
   pub fn terminate(this mut &) -> void
   {
+    var guard = std::lock_guard(&mut this.lock);
+
     for (var thread = this.threads; thread; thread = thread.sibling)
       thread.terminate();
   }
@@ -351,7 +351,7 @@ fn process_main(void *args) -> void
 pub fn create_process(process mut *parent, String &&name) -> process mut *
 {
   var process = process::create();
-  var mainthread = thread::create(process, &cast<fn(void mut *)>(process_main), null);
+  var mainthread = thread::create(process, &cast<fn (void mut *) -> void>(process_main), null);
 
   process.name = &&name;
   process.id = mainthread.id;
@@ -448,7 +448,7 @@ fn destroy(process mut *process) -> void
   std::assert(!process.threads);
   std::assert(!process.children);
 
-  std::print(*process, "done");
+  //std::print(*process, "done");
 
   {
     var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
@@ -591,16 +591,6 @@ pub fn teardown(process mut *process) -> void
   process.pagetable.dispose(null, fn (void mut *, platform::physaddr_t phys) {
     vm::release_physical_pages(vm::physrange(phys, PAGE_SIZE));
   });
-
-  for (var thread = process.threads; thread; )
-  {
-    var next = thread.sibling;
-
-    if (thread.id != process.id)
-      thread.detach();
-
-    thread = next;
-  }
 
   {
     var guard = std::lock_guard(&mut process.lock);

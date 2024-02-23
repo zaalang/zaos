@@ -59,7 +59,7 @@ struct connection
   fn initialise(connection mut &this) throws -> void
   {
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
-    this.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
+    this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
 
     app::loop::current.begin_wait(this.endpoint, &this.handler);
 
@@ -208,9 +208,12 @@ struct connection
               surface.callback(msg.time);
           }
 
-        case buffer_release[msg]:
-          for (var mut &(id, surface) : connection.surfaces)
-            surface.release(msg.buffer_id);
+        case surface_release[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.release(msg.buffer_id);
+          }
 
         case pointer_enter[msg]:
           switch (connection.surfaces.get(msg.surface_id))
@@ -259,6 +262,13 @@ struct connection
           {
             case Some[surface]:
               surface.keyboard_leave(*surface.user, msg.serial);
+          }
+
+        case keyboard_modifiers[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.keyboard_modifiers(*surface.user, msg.time, msg.modifiers);
           }
 
         case keyboard_key[msg]:
@@ -344,6 +354,7 @@ pub vtable isurface
   fn pointer_wheel(this mut &, u64 time, i32 dx, i32 dy) -> void;
   fn keyboard_enter(this mut &, u32 serial) -> void;
   fn keyboard_leave(this mut &, u32 serial) -> void;
+  fn keyboard_modifiers(this mut &, u64 time, winton::modifiers modifiers) -> void;
   fn keyboard_key(this mut &, u64 time, u32 key, u32 state, char sym) -> void;
   fn recursor(this mut &) -> void;
   fn resize(this mut &) -> void;
@@ -417,7 +428,7 @@ struct surface : pub isurface &
       os::clock_time(os::clock::monotonic, &now);
 
       this.update.deadline = now;
-      this.update.callback = &cast<fn(app::loop mut &, app::loop::timeout_t mut *)>(update_handler);
+      this.update.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(update_handler);
 
       app::loop::current.begin_timeout(&this.update);
 
@@ -935,6 +946,10 @@ pub struct window : pub std::box<surface>
     this.vtable.focus_event(*this.user);
   }
 
+  pub fn keyboard_modifiers(this mut &, u64 time, winton::modifiers modifiers) -> void
+  {
+  }
+
   pub fn keyboard_key(this mut &, u64 time, u32 key, u32 state, char sym) -> void
   {
     this.input.time = time;
@@ -1065,7 +1080,7 @@ pub struct window : pub std::box<surface>
     surface::destroy(&mut *this.super);
   }
 
-  fn vtable(this&) -> iwindow &
+  pub fn vtable(this&) -> iwindow &
   {
     return &cast<iwindow&>(this.super.vtable);
   }

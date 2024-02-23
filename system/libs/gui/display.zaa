@@ -1,0 +1,1169 @@
+//
+// winton
+//
+
+import std.box;
+import std.flat_hash_map;
+import app.loop;
+import os.zaos.mman;
+import os.zaos.fcntl;
+import zidl.zaos_sys;
+import zidl.zaos_winton;
+import gui.bits.frame as frame;
+import gui.rect;
+import gui.cursor;
+import gui.object;
+
+using winton = zidl::zaos_winton;
+
+pub struct connection
+{
+  u32 next_id = 1;
+
+  zidl::channel endpoint;
+  app::loop::wait_t handler;
+
+  u32 pointer;
+
+  std::flat_hash_map<u32, surface mut *> surfaces;
+
+  pub fn create_surface(this mut &) throws -> u32
+  {
+    var id = this.next_id = std::add_with_carry(this.next_id, 1).0;
+
+    zidl::send<winton::compositor::create_surface_request>(this.endpoint, id);
+
+    return id;
+  }
+
+  pub fn create_buffer(this mut &, zidl::buffer fd, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws -> u32
+  {
+    var id = this.next_id = std::add_with_carry(this.next_id, 1).0;
+
+    zidl::send<winton::compositor::create_buffer_request>(this.endpoint, id, &move fd, offset, width, height, stride, format);
+
+    return id;
+  }
+
+  pub fn surface_attach(this mut &, u32 surface_id, u32 buffer_id) -> void
+  {
+    zidl::send<winton::compositor::surface_attach_request>(this.endpoint, surface_id, buffer_id);
+  }
+
+  pub fn surface_damage(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::surface_damage_request>(this.endpoint, surface_id, x, y, width, height);
+  }
+
+  pub fn surface_commit(this mut &, u32 surface_id, bool callback = false) -> void
+  {
+    zidl::send<winton::compositor::surface_commit_request>(this.endpoint, surface_id, callback);
+  }
+
+  pub fn surface_destroy(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::surface_destroy_request>(this.endpoint, surface_id);
+  }
+
+  pub fn buffer_resize(this mut &, u32 id, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws -> void
+  {
+    zidl::send<winton::compositor::buffer_resize_request>(this.endpoint, id, offset, width, height, stride, format);
+  }
+
+  pub fn buffer_destroy(this mut &, u32 buffer_id) -> void
+  {
+    zidl::send<winton::compositor::buffer_destroy_request>(this.endpoint, buffer_id);
+  }
+
+  pub fn create_window(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::create_window_request>(this.endpoint, surface_id);
+  }
+
+  pub fn acknowledge(this mut &, u32 serial) -> void
+  {
+    zidl::send<winton::compositor::acknowledge_request>(this.endpoint, serial);
+  }
+
+  pub fn set_cursor(this mut &, u32 serial, u32 surface_id, i32 hotspot_x, i32 hotspot_y) -> void
+  {
+    zidl::send<winton::compositor::set_cursor_request>(this.endpoint, serial, surface_id, hotspot_x, hotspot_y);
+  }
+
+  pub fn set_standard_cursor(this mut &, u32 serial, u32 surface_id, winton::cursor cursor) -> void
+  {
+    zidl::send<winton::compositor::set_standard_cursor_request>(this.endpoint, serial, surface_id, cursor);
+  }
+
+  pub fn set_minimised(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::set_minimised_request>(this.endpoint, surface_id);
+  }
+
+  pub fn set_maximised(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::set_maximised_request>(this.endpoint, surface_id);
+  }
+
+  pub fn set_fullscreen(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::set_fullscreen_request>(this.endpoint, surface_id);
+  }
+
+  pub fn unset_maximised(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::unset_maximised_request>(this.endpoint, surface_id);
+  }
+
+  pub fn unset_fullscreen(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::unset_fullscreen_request>(this.endpoint, surface_id);
+  }
+
+  pub fn set_input_region(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::set_input_region_request>(this.endpoint, surface_id, x, y, width, height);
+  }
+
+  pub fn set_minimum_size(this mut &, u32 surface_id, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::set_minimum_size_request>(this.endpoint, surface_id, width, height);
+  }
+
+  pub fn set_maximum_size(this mut &, u32 surface_id, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::set_maximum_size_request>(this.endpoint, surface_id, width, height);
+  }
+
+  pub fn move(this mut &, u32 serial, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::move_request>(this.endpoint, serial, surface_id);
+  }
+
+  pub fn resize(this mut &, u32 serial, u32 surface_id, winton::tether tether) -> void
+  {
+    zidl::send<winton::compositor::resize_request>(this.endpoint, serial, surface_id, tether);
+  }
+
+  fn message_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+  {
+    var connection = cast<connection mut *>(cast<uintptr>(wait) - offsetof(connection::handler));
+
+    var result = zidl::recv<winton::compositor>(connection.endpoint, |msg, completer| {
+
+      switch (msg)
+      {
+        case surface[msg]:
+          ;
+
+        case configure_window[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.configure_window(msg.width, msg.height, msg.state);
+          }
+
+        case configure_popup[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.configure_popup(msg.x, msg.y, msg.width, msg.height);
+          }
+
+        case configure[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.configure(msg.serial);
+          }
+
+        case surface_callback[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.callback(msg.time);
+          }
+
+        case surface_release[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.release(msg.buffer_id);
+          }
+
+        case pointer_enter[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.pointer_enter(msg.serial, msg.x, msg.y);
+          }
+
+        case pointer_leave[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.pointer_leave(msg.serial);
+          }
+
+        case pointer_motion[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.pointer_motion(msg.time, msg.x, msg.y);
+          }
+
+        case pointer_button[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.pointer_button(msg.time, msg.button, msg.state);
+          }
+
+        case pointer_wheel[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.pointer_wheel(msg.time, msg.dx, msg.dy);
+          }
+
+        case keyboard_enter[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.keyboard_enter(msg.serial);
+          }
+
+        case keyboard_leave[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.keyboard_leave(msg.serial);
+          }
+
+        case keyboard_modifiers[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.keyboard_modifiers(msg.time, msg.modifiers);
+          }
+
+        case keyboard_key[msg]:
+          switch (connection.surfaces.get(msg.surface_id))
+          {
+            case Some[surface]:
+              surface.keyboard_key(msg.time, msg.key, msg.state, msg.sym);
+          }
+
+        case error[msg]:
+          std::print("winton: error response - ", msg.code);
+
+        else:
+          std::print(msg);
+          //completer.raise(zidl::errc::bad_dispatch);
+      }
+    });
+
+    if (!result)
+    {
+      std::print("baz: client error - ", cast<zidl::errc>(-cast<i32>(result)));
+
+      loop.cancel_wait(wait);
+      connection.endpoint.close();
+    }
+  }
+
+  pub connection() = default;
+  pub ~connection() = default;
+}
+
+pub fn initialise(connection mut &this) -> i32
+{
+  try
+  {
+    this.endpoint = app::connect_to_service("zaos.winton/compositor");
+    this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(connection::message_handler);
+
+    app::loop::current.begin_wait(this.endpoint, &this.handler);
+
+    this.pointer = this.create_surface();
+  }
+  catch (std::error e)
+  {
+    return -cast<i32>(e.value);
+  }
+
+  return 0;
+}
+
+pub struct buffer
+{
+  u32 id;
+  bool busy;
+
+  pub i32 width;
+  pub i32 height;
+  pub i32 stride;
+  pub u32 offset;
+  pub usize size;
+  pub u8 mut *data;
+
+  pub buffer() = default;
+  pub buffer(buffer&) = default;
+  pub fn =(buffer mut &, buffer &) -> buffer mut & = default;
+  pub ~buffer() = default;
+}
+
+pub fn blit(buffer mut &dst, buffer *src, int x, int y, int width, int height) -> i32
+{
+  var x0 = cast<usize>(x);
+  var y0 = cast<usize>(y);
+
+  var x1 = cast<usize>(x + width);
+  var y1 = cast<usize>(y + height);
+
+  var srcrow = src.data + cast<usize>(src.offset) + y0 * cast(src.stride);
+  var dstrow = dst.data + cast<usize>(dst.offset) + y0 * cast(dst.stride);
+
+  for (var y = y0; y < y1; ++y)
+  {
+    std::memcpy(cast<u32 mut *>(dstrow) + x0, cast<u32*>(srcrow) + x0, (x1 - x0) * sizeof<u32>);
+
+    srcrow += cast(src.stride);
+    dstrow += cast(dst.stride);
+  }
+
+  return 0;
+}
+
+pub enum button : u32
+{
+  primary = 0x1,
+  secondary = 0x2,
+  middle = 0x4,
+  backward = 0x8,
+  forward = 0x10,
+}
+
+pub enum modifiers : u32
+{
+  shift = 0x1,
+  control = 0x2,
+  alt = 0x4,
+  super = 0x8,
+  hyper = 010,
+  meta = 0x20,
+  capslock = 0x1000,
+  numlock = 0x2000,
+  scrolllock = 0x4000,
+
+  pub const fn bool(modifiers lhs) -> bool { return cast<u32>(lhs) != 0; }
+
+  pub const fn ~(modifiers lhs) -> modifiers { return cast<modifiers>(~cast<u32>(lhs)); }
+  pub const fn &(modifiers lhs, modifiers rhs) -> modifiers { return cast<modifiers>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(modifiers lhs, modifiers rhs) -> modifiers { return cast<modifiers>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+pub struct key_event
+{
+  pub u64 time;
+  pub u32 key;
+  pub u32 state;
+  pub char sym;
+  pub modifiers modifiers;
+
+  key_event(u64 time, u32 key, u32 state, char sym, modifiers modifiers)
+    : time(time), key(key), state(state), sym(sym), modifiers(modifiers)
+  {
+  }
+
+  pub key_event() = default;
+  pub key_event(key_event&) = default;
+  pub fn =(key_event mut &, key_event &) -> key_event mut & = default;
+  pub ~key_event() = default;
+}
+
+pub struct pointer_event
+{
+  pub u64 time;
+  pub button button;
+  pub (i32,i32) position;
+  pub modifiers modifiers;
+  pub u8[32] buttons;
+  pub (i32,i32) angle;
+
+  pointer_event(u64 time, button button, (i32,i32) position, modifiers modifiers, u8[32] &buttons, (i32,i32) angle = (0,0))
+    : time(time), button(button), position(position), modifiers(modifiers), buttons(buttons), angle(angle)
+  {
+  }
+
+  pub pointer_event() = default;
+  pub pointer_event(pointer_event&) = default;
+  pub fn =(pointer_event mut &, pointer_event &) -> pointer_event mut & = default;
+  pub ~pointer_event() = default;
+}
+
+pub struct focus_event
+{
+  enum type
+  {
+    focus_in,
+    focus_out,
+  }
+
+  pub type type;
+
+  focus_event(type type)
+    : type(type)
+  {
+  }
+
+  pub focus_event() = default;
+  pub focus_event(focus_event&) = default;
+  pub fn =(focus_event mut &, focus_event &) -> focus_event mut & = default;
+  pub ~focus_event() = default;
+}
+
+pub struct configure_event
+{
+  pub gui::size size;
+
+  configure_event(gui::size size)
+    : size(size)
+  {
+  }
+
+  pub configure_event() = default;
+  pub configure_event(configure_event&) = default;
+  pub fn =(configure_event mut &, configure_event &) -> configure_event mut & = default;
+  pub ~configure_event() = default;
+}
+
+pub struct resize_event
+{
+  pub gui::size size;
+
+  resize_event(gui::size size)
+    : size(size)
+  {
+  }
+
+  pub resize_event() = default;
+  pub resize_event(resize_event&) = default;
+  pub fn =(resize_event mut &, resize_event &) -> resize_event mut & = default;
+  pub ~resize_event() = default;
+}
+
+pub vtable isurface : gui::iobject
+{
+  fn configure_event(this mut &, configure_event &) -> void;
+  fn motion_event(this mut &, pointer_event &) -> void;
+  fn button_event(this mut &, pointer_event &) -> void;
+  fn wheel_event(this mut &, pointer_event &) -> void;
+  fn focus_event(this mut &, focus_event &) -> void;
+  fn key_event(this mut &, key_event &) -> void;
+  fn paint_event(this mut &, buffer mut &, gui::rectset &) -> void;
+  fn resize_event(this mut &, resize_event &) -> void;
+  fn close_event(this mut &) -> void;
+}
+
+pub struct surface : pub gui::object
+{
+  pub enum flags
+  {
+    close_button = 0x1000,
+    minimise_button = 0x02000,
+    maximise_button = 0x04000,
+
+    resizeable = 0x10000,
+
+    pub const fn bool(flags lhs) -> bool { return cast<isize>(lhs) != 0; }
+
+    pub const fn ~(flags lhs) -> flags { return cast<flags>(~cast<isize>(lhs)); }
+    pub const fn &(flags lhs, flags rhs) -> flags { return cast<flags>(cast<isize>(lhs) & cast<isize>(rhs)); }
+    pub const fn |(flags lhs, flags rhs) -> flags { return cast<flags>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  enum status
+  {
+    init = 0x1,
+    resize = 0x2,
+    redraw = 0x4,
+    cursor = 0x8,
+    update = 0x10,
+
+    pub const fn ~(status lhs) -> status { return cast<status>(~cast<isize>(lhs)); }
+    pub const fn &(status lhs, status rhs) -> status { return cast<status>(cast<isize>(lhs) & cast<isize>(rhs)); }
+    pub const fn |(status lhs, status rhs) -> status { return cast<status>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  u32 id;
+  status status;
+  connection mut *connection;
+
+  app::loop::timeout_t update;
+
+  gui::size size;
+  gui::size pending_size;
+  gui::rectset damage;
+
+  buffer[2] buffers;
+
+  buffer *active_buffer;
+  gui::rect previous_damage;
+
+  u32 focus_serial;
+  modifiers modifiers;
+  (i32, i32) position;
+  u8[32] buttons;
+  u32 pressed_count;
+
+  flags flags;
+  u32 title_color;
+  u32 text_color;
+  u32 hit_color;
+  u32 close_color;
+  frame::options options;
+  frame::location location;
+
+  winton::state state;
+  winton::state pending_state;
+
+  gui::cursor cursor;
+
+  pub fn create(this mut &, connection mut *connection, flags flags) throws -> void
+  {
+    var id = connection.create_surface();
+
+    this.id = id;
+    this.flags = flags;
+    this.connection = connection;
+
+    connection.surfaces.insert(id, &this);
+
+    connection.create_window(id);
+    connection.surface_commit(id);
+  }
+
+  pub fn geometry(this &) -> gui::rect
+  {
+    return gui::rect(0, 0, this.size.width, this.size.height);
+  }
+
+  pub fn interior(this &) -> gui::rect
+  {
+    if (this.is_fullscreen)
+      return gui::rect(0, 0, this.size.width, this.size.height);
+
+    if (this.is_maximised)
+      return gui::rect(gui::point(0, frame::maximised_interior_top), gui::point(this.size.width, this.size.height));
+
+    return gui::rect(gui::point(frame::interior_left, frame::interior_top), gui::point(this.size.width - frame::interior_right, this.size.height - frame::interior_bottom));
+  }
+
+  pub fn input_region(this &) -> gui::rect
+  {
+    if (this.is_fullscreen)
+      return gui::rect(0, 0, this.size.width, this.size.height);
+
+    if (this.is_maximised)
+      return gui::rect(0, 0, this.size.width, this.size.height);
+
+    if (this.flags & flags::resizeable)
+      return gui::rect(0, 0, this.size.width - 4, this.size.height - 4);
+
+    return gui::rect(gui::point(frame::interior_left, frame::interior_left), gui::point(this.size.width - frame::interior_right, this.size.height - frame::interior_bottom));
+  }
+
+  pub fn is_active(this &) -> bool
+  {
+    return this.state & winton::state::activated == winton::state::activated;
+  }
+
+  pub fn is_minimised(this &) -> bool
+  {
+    return this.state & winton::state::minimised == winton::state::minimised;
+  }
+
+  pub fn is_maximised(this &) -> bool
+  {
+    return this.state & winton::state::maximised == winton::state::maximised;
+  }
+
+  pub fn is_fullscreen(this &) -> bool
+  {
+    return this.state & winton::state::fullscreen == winton::state::fullscreen;
+  }
+
+  pub fn set_minimised(this mut &) -> void
+  {
+    this.connection.set_minimised(this.id);
+  }
+
+  pub fn set_maximised(this mut &, bool maximised) -> void
+  {
+    switch (maximised)
+    {
+      case true:
+        this.connection.set_maximised(this.id);
+
+      else:
+        this.connection.unset_maximised(this.id);
+    }
+  }
+
+  pub fn set_fullscreen(this mut &, bool fullscreen) -> void
+  {
+    switch (fullscreen)
+    {
+      case true:
+        this.connection.set_fullscreen(this.id);
+
+      else:
+        this.connection.unset_fullscreen(this.id);
+    }
+  }
+
+  pub fn set_minimum_size(this mut &, i32 width, i32 height) -> void
+  {
+    this.connection.set_minimum_size(this.id, width, height);
+  }
+
+  pub fn set_maximum_size(this mut &, i32 width, i32 height) -> void
+  {
+    this.connection.set_maximum_size(this.id, width, height);
+  }
+
+  pub fn set_cursor(this mut &, gui::cursor &cursor) -> void
+  {
+    if (this.cursor == cursor)
+      return;
+
+    this.cursor = cursor;
+
+    this.status |= surface::status::cursor;
+
+    this.schedule_update();
+  }
+
+  pub fn schedule_resize(this mut &, i32 width, i32 height) -> void
+  {
+    this.pending_size.width = width;
+    this.pending_size.height = height;
+
+    this.status |= surface::status::resize;
+
+    if (this.status & surface::status::init == surface::status::init)
+      this.schedule_update();
+  }
+
+  pub fn schedule_redraw(this mut &, gui::rect &rect) -> void
+  {
+    this.damage.add(gui::clamp(rect, this.geometry));
+
+    this.status |= surface::status::redraw;
+
+    if (this.status & surface::status::init == surface::status::init)
+      this.schedule_update();
+  }
+
+  fn acknowledge(surface mut &this, u32 serial) -> void
+  {
+    this.connection.acknowledge(serial);
+
+    if (this.status & status::init != status::init)
+      this.status |= status::init;
+
+    if (this.status & status::update != status::update)
+      update_handler(&mut *app::loop::current, &this.update);
+  }
+
+  fn callback(surface mut &this, u64 time) -> void
+  {
+    update_handler(&mut *app::loop::current, &this.update);
+  }
+
+  fn release(surface mut &this, u32 buffer_id) -> void
+  {
+    for (var mut &buffer : this.buffers)
+      if (buffer.id == buffer_id)
+        buffer.busy = false;
+  }
+
+  fn schedule_update(this mut &) -> void
+  {
+    if (this.status & status::update != status::update)
+    {
+      var now = os::timespec(void);
+      os::clock_time(os::clock::monotonic, &now);
+
+      this.update.deadline = now;
+      this.update.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(update_handler);
+
+      app::loop::current.begin_timeout(&this.update);
+
+      this.status |= status::update;
+    }
+  }
+
+  fn update_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> void
+  {
+    var surface = cast<surface mut *>(cast<uintptr>(timeout) - offsetof(surface::update));
+
+    surface.status &= ~status::update;
+
+    if (surface.status & status::resize == status::resize)
+      resize(&mut *surface);
+
+    if (surface.status & status::redraw == status::redraw)
+      redraw(&mut *surface);
+
+    if (surface.status & status::cursor == status::cursor)
+      recursor(&mut *surface);
+  }
+
+  fn get(this mut &) throws -> buffer mut &
+  {
+    for (var mut &buffer : this.buffers)
+    {
+      if (!buffer.busy)
+        return &buffer;
+    }
+
+    throw std::system_error(std::errc::device_busy);
+  }
+
+  fn prepare(this mut &, buffer mut &buffer, gui::size &allocation) throws -> void
+  {
+    var width = allocation.width;
+    var height = allocation.height;
+
+    if (buffer.width == width && buffer.height == height)
+      return;
+
+    var size = cast<usize>(std::align_up(width, 64)) * cast<usize>(std::align_up(height, 64)) * sizeof<u32>;
+
+    if (buffer.size == size)
+    {
+      buffer.width = width;
+      buffer.height = height;
+      buffer.stride = width * sizeof<u32>;
+
+      this.connection.buffer_resize(buffer.id, buffer.offset, buffer.width, buffer.height, buffer.stride, winton::format::B8G8R8A8);
+
+      return;
+    }
+
+    if (buffer.data)
+    {
+      this.connection.buffer_destroy(buffer.id);
+
+      os::munmap(buffer.data, buffer.size);
+    }
+
+    var (client_end, server_end) = zidl::buffer::create(size);
+
+    var mmvec = os::mmvec();
+    mmvec.offset = 0;
+    mmvec.length = size;
+    mmvec.flags = 0;
+    mmvec.prot = os::prot::readwrite;
+
+    var addr = null<u8 mut *>();
+    if (var rc = os::mmap(client_end.fd, &mmvec, 1, &addr, 0); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    buffer.width = width;
+    buffer.height = height;
+    buffer.stride = width * sizeof<u32>;
+    buffer.offset = 0;
+    buffer.size = mmvec.length;
+    buffer.data = addr;
+    buffer.id = this.connection.create_buffer(&move server_end, buffer.offset, buffer.width, buffer.height, buffer.stride, winton::format::B8G8R8A8);
+  }
+
+  fn swap(this mut &, buffer mut &buffer) throws -> void
+  {
+    this.connection.surface_attach(this.id, buffer.id);
+    this.connection.surface_damage(this.id, this.damage.extents.x, this.damage.extents.y, this.damage.extents.width, this.damage.extents.height);
+    this.connection.surface_commit(this.id, callback: true);
+
+    this.active_buffer = &buffer;
+    this.previous_damage = this.damage.extents;
+
+    buffer.busy = true;
+    this.damage.clear();
+    this.status |= status::update;
+  }
+
+  fn configure_window(this mut &, i32 width, i32 height, winton::state state) -> void
+  {
+    this.pending_state = state;
+
+    if (width != 0 && height != 0)
+    {
+      this.pending_size.width = width;
+      this.pending_size.height = height;
+    }
+  }
+
+  fn configure_popup(this mut &, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+  }
+
+  fn configure(this mut &, u32 serial) -> void
+  {
+    if (this.size != this.pending_size)
+    {
+      this.status |= surface::status::resize;
+    }
+
+    if (this.state != this.pending_state)
+    {
+      this.state = this.pending_state;
+      this.damage.add(gui::rect(0, 0, this.size.width, this.interior.y));
+      this.status |= surface::status::redraw;
+    }
+
+    this.vtable.configure_event(this, configure_event(this.pending_size));
+
+    this.acknowledge(serial);
+  }
+
+  fn pointer_enter(this mut &, u32 serial, i32 x, i32 y) -> void
+  {
+    this.focus_serial = serial;
+    this.status |= surface::status::cursor;
+  }
+
+  fn pointer_leave(this mut &, u32 serial) -> void
+  {
+    this.location = frame::location::exterior;
+
+    this.schedule_redraw(gui::rect(0, 0, this.size.width, this.size.height));
+  }
+
+  fn pointer_motion(this mut &, u64 time, i32 x, i32 y) -> void
+  {
+    this.position.0 = x;
+    this.position.1 = y;
+
+    var location = frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options);
+
+    if (this.pressed_count == 0)
+    {
+      switch (location)
+      {
+        case top_side:
+          this.set_cursor(gui::cursor::resize_top);
+
+        case left_side:
+          this.set_cursor(gui::cursor::resize_left);
+
+        case bottom_side:
+          this.set_cursor(gui::cursor::resize_bottom);
+
+        case right_side:
+          this.set_cursor(gui::cursor::resize_right);
+
+        case top_left_corner:
+          this.set_cursor(gui::cursor::resize_top_left);
+
+        case top_right_corner:
+          this.set_cursor(gui::cursor::resize_top_right);
+
+        case bottom_left_corner:
+          this.set_cursor(gui::cursor::resize_bottom_left);
+
+        case bottom_right_corner:
+          this.set_cursor(gui::cursor::resize_bottom_right);
+
+        case minimise:
+        case maximise:
+        case close:
+        case title:
+          this.set_cursor(gui::cursor::arrow);
+      }
+
+      if (location != this.location)
+      {
+        this.location = location;
+
+        this.schedule_redraw(gui::rect(0, 0, this.size.width, this.interior.y));
+      }
+    }
+
+    switch (this.location)
+    {
+      case title:
+      case interior:
+        this.vtable.motion_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
+    }
+
+    if (this.status & surface::status::cursor == surface::status::cursor)
+      recursor(&mut this);
+  }
+
+  fn pointer_button(this mut &, u64 time, u32 button, u32 state) -> void
+  {
+    if (button < 32)
+      this.buttons[cast(button)] = cast(state);
+
+    switch (state)
+    {
+      case 1:
+        this.pressed_count += 1;
+
+      case 0:
+        this.pressed_count -= 1;
+    }
+
+    if (this.pressed_count == 1 && state == 1)
+    {
+      switch (this.location)
+      {
+        case top_side:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::top);
+
+        case left_side:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::left);
+
+        case bottom_side:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::bottom);
+
+        case right_side:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::right);
+
+        case top_left_corner:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::top_left);
+
+        case top_right_corner:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::top_right);
+
+        case bottom_left_corner:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::bottom_left);
+
+        case bottom_right_corner:
+          this.connection.resize(this.focus_serial, this.id, winton::tether::bottom_right);
+
+        case title:
+          this.connection.move(this.focus_serial, this.id);
+      }
+    }
+
+    if (this.pressed_count == 0 && state == 0)
+    {
+      switch (this.location)
+      {
+        case close:
+          if (frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options) == this.location)
+            this.vtable.close_event(this);
+
+        case maximise:
+          if (frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options) == this.location)
+            this.set_maximised(!this.is_maximised);
+
+        case minimise:
+          if (frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options) == this.location)
+            this.set_minimised();
+      }
+    }
+
+    switch (this.location)
+    {
+      case title:
+      case interior:
+        this.vtable.button_event(this, pointer_event(time, cast(button), this.position, this.modifiers, this.buttons));
+    }
+  }
+
+  fn pointer_wheel(this mut &, u64 time, i32 dx, i32 dy) -> void
+  {
+    switch (this.location)
+    {
+      case title:
+      case interior:
+        this.vtable.wheel_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons, (dx, dy)));
+    }
+  }
+
+  fn keyboard_enter(this mut &, u32 serial) -> void
+  {
+    this.vtable.focus_event(this, focus_event(focus_event::type::focus_in));
+  }
+
+  fn keyboard_leave(this mut &, u32 serial) -> void
+  {
+    this.vtable.focus_event(this, focus_event(focus_event::type::focus_out));
+  }
+
+  fn keyboard_modifiers(this mut &, u64 time, winton::modifiers modifiers) -> void
+  {
+    this.modifiers = cast(modifiers);
+
+    switch (this.location)
+    {
+      case title:
+      case interior:
+        this.vtable.motion_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
+    }
+  }
+
+  fn keyboard_key(this mut &, u64 time, u32 key, u32 state, char sym) -> void
+  {
+    this.vtable.key_event(this, key_event(time, key, state, sym, this.modifiers));
+  }
+
+  fn resize(this mut &) -> void
+  {
+    if (this.size != this.pending_size)
+    {
+      this.size = this.pending_size;
+      this.damage = gui::rect(0, 0, this.size.width, this.size.height);
+      this.status |= surface::status::redraw;
+
+      this.vtable.resize_event(this, resize_event(this.size)) -> void;
+
+      var inputregion = this.input_region();
+      this.connection.set_input_region(this.id, inputregion.x, inputregion.y, inputregion.width, inputregion.height);
+    }
+
+    this.status &= ~surface::status::resize;
+  }
+
+  fn redraw(this mut &) -> void
+  {
+    try
+    {
+      var mut &buffer = this.get();
+
+      this.prepare(&mut buffer, this.size);
+
+      if (!this.damage.extents.contains(this.previous_damage))
+      {
+        if (this.active_buffer && this.active_buffer.width == buffer.width && this.active_buffer.height == buffer.height)
+          blit(&mut buffer, this.active_buffer, this.previous_damage.x, this.previous_damage.y, this.previous_damage.width, this.previous_damage.height);
+      }
+
+      if (this.damage.intersects(gui::rect(0, 0, this.size.width, this.interior.y)))
+      {
+        this.options = cast(0);
+
+        if (this.flags & flags::close_button)
+          this.options |= frame::options::close;
+
+        if (this.flags & flags::minimise_button)
+          this.options |= frame::options::minimise;
+
+        if (this.flags & flags::maximise_button)
+          this.options |= frame::options::maximise;
+
+        if (this.is_maximised)
+          this.options |= frame::options::maximised;
+
+        if (this.is_fullscreen)
+          this.options |= frame::options::fullscreen;
+
+        var location = this.location;
+
+        var title_color = this.title_color;
+        if (!this.is_active)
+          title_color = title_color - 0x000f0f0f;
+
+        var text_color = this.text_color;
+        if (!this.is_active)
+          text_color = text_color + 0x00555555;
+
+        var hit_color = this.hit_color;
+        if (location == frame::location::close)
+          hit_color = this.close_color;
+
+        frame::render(buffer.width, buffer.height, cast<usize>(buffer.stride), buffer.data + cast<usize>(buffer.offset), title_color, text_color, this.options, hit_color, location);
+      }
+
+      this.vtable.paint_event(this, &mut buffer, this.damage);
+
+      this.swap(&mut buffer);
+    }
+    catch(std::error e)
+    {
+      std::print("redraw - ", e);
+    }
+
+    this.status &= ~surface::status::redraw;
+  }
+
+  fn recursor(this mut &) -> void
+  {
+    switch (this.cursor)
+    {
+      case none:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::none);
+
+      case arrow:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::arrow);
+
+      case resize_top:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_top);
+
+      case resize_left:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_left);
+
+      case resize_bottom:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_bottom);
+
+      case resize_right:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_right);
+
+      case resize_top_left:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_top_left);
+
+      case resize_top_right:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_top_right);
+
+      case resize_bottom_left:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_bottom_left);
+
+      case resize_bottom_right:
+        this.connection.set_standard_cursor(this.focus_serial, this.connection.pointer, winton::cursor::resize_bottom_right);
+    }
+
+    this.connection.surface_commit(this.connection.pointer);
+
+    this.status &= ~surface::status::cursor;
+  }
+
+  pub fn destroy(this mut &) -> void
+  {
+    for (var mut &buffer : this.buffers)
+    {
+      this.connection.buffer_destroy(buffer.id);
+
+      os::munmap(buffer.data, buffer.size);
+
+      buffer.data = null;
+      buffer.size = 0;
+    }
+
+    this.connection.surface_destroy(this.id);
+    this.connection.surfaces.erase(this.id);
+
+    app::loop::current.cancel_timeout(&this.update);
+    this.status = cast(0);
+  }
+
+  fn vtable(this &) -> isurface &
+  {
+    return &cast<isurface&>(*cast<gui::iobject&>(this));
+  }
+
+  pub surface(isurface &isurface)
+    : super(isurface)
+  {
+    title_color = 0xfff0f0f0;
+    text_color = 0xff000000;
+    hit_color = 0xffcccccc;
+    close_color = 0xffcc4444;
+  }
+
+  pub ~surface() = default;
+}

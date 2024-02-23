@@ -58,7 +58,7 @@ pub struct partition
 pub struct partdev : pub blk::blkdev
 {
   pub partdev(blk::blkdev_ptr &dev, partition &part)
-    : super(blk::device_operations()),
+    : super(&impl this),
       partition(part),
       device(dev),
   {
@@ -67,10 +67,8 @@ pub struct partdev : pub blk::blkdev
     this.block_count = cast(part.end_block - part.start_block + 1);
   }
 
-  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result
+  pub fn query(this &, blk::query query, std::string mut &result) -> blk::result
   {
-    var &this = cast<partdev&>(dev);
-
     switch (query)
     {
       case device_path:
@@ -86,20 +84,18 @@ pub struct partdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
   {
     return not_supported;
   }
 
-  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
   {
-    var mut &this = cast<partdev mut &>(dev);
-
-    request.position += this.partition.start_block << dev.block_shift;
+    request.position += this.partition.start_block << this.block_shift;
 
     if (var result = this.device.enqueue(request); !result)
     {
-      request.position -= this.partition.start_block << dev.block_shift;
+      request.position -= this.partition.start_block << this.block_shift;
 
       return cast<blk::result>(result);
     }
@@ -107,10 +103,8 @@ pub struct partdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result
+  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
   {
-    var mut &this = cast<partdev mut &>(dev);
-
     if (var result = this.device.cancel(request); !result)
       return cast<blk::result>(result);
 

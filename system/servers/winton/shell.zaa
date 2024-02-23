@@ -42,7 +42,7 @@ pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) ->
   std::print("winton shell: accept connection");
 
   shell.channel = &move channel;
-  shell.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+  shell.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
 
   app::loop::current.begin_wait(shell.channel, &shell.handler);
 }

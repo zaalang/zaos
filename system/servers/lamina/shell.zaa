@@ -43,7 +43,7 @@ pub fn create() -> shell
 pub fn connect(shell mut &shell) throws -> void
 {
   shell.endpoint = app::connect_to_service("zaos.winton/shell");
-  shell.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
+  shell.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
 
   app::loop::current.begin_wait(shell.endpoint, &shell.handler);
 }
@@ -57,7 +57,7 @@ pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) ->
   client.shell = &shell;
 
   client.channel = &move channel;
-  client.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+  client.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
 
   app::loop::current.begin_wait(client.channel, &client.handler);
 }

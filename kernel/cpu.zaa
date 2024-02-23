@@ -3,6 +3,7 @@
 //
 
 import std.atomic;
+import sys;
 import scheduler : run_queue;
 import thread as _ : thread;
 import platform;
@@ -113,6 +114,7 @@ pub fn system_time() -> u64
 pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
 {
   self.id = cpu;
+  self.runqueue = &sys::runqueue(cpu);
   self.clockspeed = bootinfo.early_tsc_frequency;
   self.cyc2ns = ((1_000_000_000 << 32) / self.clockspeed) << 32;
 }

@@ -20,7 +20,7 @@ pub struct dev_t
     id = generation << IndexBits + cast<i32>(index);
   }
 
-  pub fn bool(this&) -> bool { return id > 0; }
+  pub fn bool(this&) -> bool { return this.id > 0; }
   pub fn index(this&) -> usize { return cast<usize>(this.id & ((1 << IndexBits) - 1)); }
   pub fn generation(this&) -> i32 { return this.id >> IndexBits; }
 
@@ -137,7 +137,7 @@ pub fn remove(blk::blkdev_ptr &dev) -> void
   {
     devfs::remove(node.id, node.device);
 
-    devman.nodes.erase(node);
+    node.device = device();
   }
 }
 
@@ -160,7 +160,7 @@ pub fn remove(chr::chrdev_ptr &dev) -> void
   {
     devfs::remove(node.id, node.device);
 
-    devman.nodes.erase(node);
+    node.device = device();
   }
 }
 
@@ -168,10 +168,13 @@ pub fn get(dev_t id) -> device
 {
   var guard = std::lock_shared_guard(&mut devman.lock);
 
-  var mut &node = devman.nodes[id.index];
+  if (id.index < devman.nodes.len)
+  {
+    var mut &node = devman.nodes[id.index];
 
-  if (node.id == id)
-    return node.device;
+    if (node.id == id)
+      return node.device;
+  }
 
   return device();
 }

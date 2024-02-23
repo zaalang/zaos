@@ -168,10 +168,10 @@ pub fn initialise(keymap mut &keymap, String &keys_file, String &syms_file) -> i
 {
   init(&mut keymap);
 
-  if (var rc = load_keys(&mut keymap, std::string_view(keys_file.data, keys_file.len)); rc < 0)
+  if (var rc = load_keys(&mut keymap, std::string_view(keys_file)); rc < 0)
     return rc;
 
-  if (var rc = load_syms(&mut keymap, std::string_view(syms_file.data, syms_file.len)); rc < 0)
+  if (var rc = load_syms(&mut keymap, std::string_view(syms_file)); rc < 0)
     return rc;
 
   return 0;

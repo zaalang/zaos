@@ -29,7 +29,7 @@ pub struct desktop
   pub fn connect(this mut &) throws -> void
   {
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
-    this.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(message_handler);
+    this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
 
     app::loop::current.begin_wait(this.endpoint, &this.handler);
 

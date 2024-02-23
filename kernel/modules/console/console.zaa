@@ -10,68 +10,62 @@ import vm : physrange;
 import vfs;
 import support.rc : Rc;
 
-enum op
-{
-}
-
 pub struct console : pub chr::chrdev
 {
   pub console()
-    : super(chr::device_operations())
+    : super(&impl this)
   {
     std::print("console inited");
   }
 
-  pub ~console() = default;
-}
-
-pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
-{
-  var &this = cast<console&>(dev);
-
-  switch (query)
+  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result
   {
-    case device_name:
-      result = "console";
+    switch (query)
+    {
+      case device_name:
+        result = "console";
+    }
+
+    return ok;
   }
 
-  return ok;
-}
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+  {
+    return ok;
+  }
 
-pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
-{
-  return ok;
-}
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  {
+    return not_supported;
+  }
 
-pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
-{
-  return not_supported;
-}
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  {
+    return not_supported;
+  }
 
-pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
-{
-  return not_supported;
-}
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return not_supported;
+  }
 
-pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  return not_supported;
-}
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    var fout = std::stdout.lock();
 
-pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  var mut &this = cast<console mut &>(dev);
+    buffer.foreach_region_in(offset, length, |region| {
+      fout.puts(std::string_view(cast(region.addr.ptr), region.size));
+    });
 
-  buffer.foreach_region_in(offset, length, |region| {
-    std::puts(std::string_view(cast(region.addr.ptr), region.size));
-  });
+    return cast(length);
+  }
 
-  return cast(length);
-}
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  {
+    return not_supported;
+  }
 
-pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
-{
-  return not_supported;
+  pub ~console() = default;
 }
 
 extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result

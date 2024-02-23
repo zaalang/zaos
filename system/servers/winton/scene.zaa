@@ -28,6 +28,7 @@ pub struct window
     pub i32 min_height;
     pub i32 max_width;
     pub i32 max_height;
+    pub bound input_region;
     pub zidl::zaos_winton::state flags;
 
     pub fn is_minimised(this&) -> bool
@@ -281,7 +282,7 @@ fn pick(scene &scene, node &node, vec2 position) -> (node *, vec2)
       {
         var xy = project(inverse(window.world), position);
 
-        if (contains(window.bound, xy))
+        if (contains(window.state.input_region, xy))
           return (&node, xy);
       }
   }
@@ -319,6 +320,30 @@ pub fn erase(scene mut &scene, node *node) -> void
     case cursor[cursor]:
       scene.layer(scene::layers::cursor).children.erase_if(|k| &*k == node);
   }
+}
+
+pub fn topmost(scene &scene) -> node *
+{
+  rof (var &node : scene.layers)
+  {
+    switch (node)
+    {
+      case layer[layer]:
+        rof (var &node : layer.children)
+        {
+          switch (*node)
+          {
+            case window[window]:
+              if (window.state.is_minimised)
+                continue;
+
+              return &*node;
+          }
+        }
+    }
+  }
+
+  return null;
 }
 
 fn build(scene &scene, node &node, std::vector<node*> mut &view_list) -> void

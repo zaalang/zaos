@@ -345,7 +345,7 @@ fn plumber(void*) -> void
 
 pub fn spawn_plumber() -> void
 {
-  pagecache.plumber = thread::create(process::current, &cast<fn(void mut *)>(plumber), null);
+  pagecache.plumber = thread::create(process::current, &cast<fn (void mut *) -> void>(plumber), null);
 
   scheduler::enqueue(pagecache.plumber);
 }

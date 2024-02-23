@@ -4,6 +4,10 @@
 
 library zaos.sys;
 
+protocol launcher
+{
+}
+
 protocol service
 {
   -> terminate();
@@ -12,3 +16,6 @@ protocol service
   connect_to_service(string uri, channel endpoint);
 }
 
+protocol session
+{
+}

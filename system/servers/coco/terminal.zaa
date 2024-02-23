@@ -136,28 +136,14 @@ pub fn print(terminal mut &this, String &str) -> void
 
 pub fn render(terminal mut &this) -> void
 {
-  var x = this.left;
-  var y = this.top;
+  this.screen.draw(fn [this](usize i, usize j, char ch, usize n, var attrs) {
+    var x = this.left + cast<int>(i) * 8;
+    var y = this.top + cast<int>(j) * 16;
 
-  this.screen.draw(fn [this, x, y](usize i, usize j, char ch, usize n, var attrs) {
-
-    if (x + this.font.width(ch, 0) <= this.right)
-      this.display.blit(x, y, this.font.lookup(ch), attrs.foreground_color, attrs.background_color);
-
-    x += this.font.width(ch, 0);
-
-    if (i + n >= this.screen.columns)
-    {
-      this.display.fill(x, y, this.right, y + this.font.lineheight(), this.screen.background_color);
-
-      x = this.left;
-      y += this.font.lineheight();
-    }
+    this.display.blit(x, y, this.font.lookup(ch), attrs.foreground_color, attrs.background_color);
   });
 
-  this.display.fill(this.left, y, this.right, this.bottom, this.screen.background_color);
-
-  if (this.screen.cursor_state)
+  if (this.screen.cursor_visible)
   {
     var cx = this.left + cast<int>(this.screen.cursor.0) * 8;
     var cy = this.top + cast<int>(this.screen.cursor.1) * 16;

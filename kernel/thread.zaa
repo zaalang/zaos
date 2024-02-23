@@ -10,10 +10,10 @@ import cpu;
 import sys;
 import io;
 import platform;
-import mutex as _ : mutex;
 import process as _ : process;
 import semaphore as _ : semaphore;
 import slab : slab_allocator, slab_cache;
+import mutex as _ : shared_mutex;
 import scheduler : run_queue;
 import support.rc : Rc;
 
@@ -86,7 +86,6 @@ pub struct thread
 
   pub fn find(thread::id id) -> Rc<thread>
   {
-    var irqs = std::lock_guard(&mut cpu::irqlock);
     var guard = std::lock_shared_guard(&mut threadman.lock);
 
     var j = threadman.threads.find(id);
@@ -119,9 +118,7 @@ pub struct thread
 
   pub fn create(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
   {
-    var guard = std::lock_guard(&mut cpu::irqlock);
-
-    var thread = threadman.threadcache.get();
+    var thread = threadman.get();
 
     if (!thread)
       thread = threadman.allocate();
@@ -196,7 +193,7 @@ pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, thread &thread)
 
 struct thread_manager
 {
-  std::shared_spin_lock lock;
+  shared_mutex lock;
 
   thread::id nextid;
   std::flat_hash_map<thread::id, thread mut *> threads;
@@ -229,11 +226,25 @@ fn threadman()
   return &thread_manager::instance;
 }
 
+fn get(thread_manager mut &threadman)
+{
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
+  return threadman.threadcache.get();
+}
+
+fn put(thread_manager mut &threadman, thread mut *thread)
+{
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
+  return threadman.threadcache.put(thread);
+}
+
 fn allocate(thread_manager mut &threadman) -> thread mut *
 {
-  var thread = thread::allocator.allocate();
+  var guard = std::lock_guard(&mut threadman.lock);
 
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut threadman.lock);
+  var thread = thread::allocator.allocate();
 
   while (true)
   {
@@ -243,7 +254,7 @@ fn allocate(thread_manager mut &threadman) -> thread mut *
       threadman.nextid = 0;
 
     if (!threadman.threads.contains(thread.id))
-       break;
+      break;
   }
 
   threadman.threads.insert(thread.id, thread);
@@ -298,15 +309,13 @@ fn initialise(thread mut *this) -> void
 
 fn destroy(thread mut *thread) -> void
 {
-  std::print(*thread, "done");
+  //std::print(*thread, "done");
 
   thread.state = thread::state::dead;
 
   thread.process.remove_thread(thread);
 
-  var guard = std::lock_guard(&mut cpu::irqlock);
-
-  threadman.threadcache.put(thread);
+  threadman.put(thread);
 }
 
 fn undertaker(void*) -> void
@@ -342,7 +351,7 @@ fn undertaker(void*) -> void
 
 pub fn spawn_undertaker() -> void
 {
-  threadman.undertaker = thread::create(process::current, &cast<fn(void mut *)>(undertaker), null);
+  threadman.undertaker = thread::create(process::current, &cast<fn (void mut *) -> void>(undertaker), null);
 
   scheduler::enqueue(threadman.undertaker, thread::priority::high);
 }
@@ -360,12 +369,10 @@ extern fn unhandled_exception(vm::virtaddr addr, platform::exception type, bool 
     if (!rbp)
       break;
 
-    var ret = *(rbp + 1);
+    if (var mapping = platform::pagetable.query(vm::virtaddr(rbp)); !mapping.present)
+      break;
 
-    if (ret >= extern(_BASE))
-      std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
-    else
-      std::print(cast<void*>(ret));
+    std::print("  ", cast<void*>(*(rbp + 1)));
 
     rbp = cast<uintptr*>(*rbp);
   }

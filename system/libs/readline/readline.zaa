@@ -15,7 +15,6 @@ import termios;
 pub union result
 {
   pub enter(std::string),
-  pub escape,
   pub ctrl_c,
   pub ctrl_d,
   pub error(std::errc),
@@ -46,12 +45,12 @@ pub fn create() -> context
 
 extern fn thread_ring() -> os::ioring mut &;
 
-pub fn with_history(context mut &ctx, history mut *history) -> void
+pub fn use_history(context mut &ctx, history mut *history) -> void
 {
   ctx.editor.history = history;
 }
 
-pub fn with_completion(context mut &ctx, completer mut *completer) -> void
+pub fn use_completion(context mut &ctx, completer mut *completer) -> void
 {
   ctx.editor.completer = completer;
 }
@@ -82,9 +81,13 @@ pub fn read_line(context mut &ctx, prompt &prompt) -> result
     {
       paint(&mut ctx.editor, ctx.stdout, prompt);
 
-      var pollfds = [ os::pollfd(ctx.stdin, os::POLLIN) ];
+      var tp = os::timespec(void);
+      if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+        continue;
 
-      os::select(&mut thread_ring, pollfds.data, pollfds.len, 0);
+      var pollset = [ os::pollevt(ctx.stdin, os::POLLFD, os::POLLIN, 0) ];
+
+      os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
     }
   }
 

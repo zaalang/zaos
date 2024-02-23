@@ -73,7 +73,7 @@ pub struct buffer
 
     io::initiate(&mut this.outlet.writeable.cb, 1);
 
-    return vfs::node::new(&this.outlet, vfs::node::type::buffer, &vfs::node_stream_operations());
+    return vfs::node::new(&this.outlet, vfs::node::type::buffer, vfs::node_stream_operations());
   }
 
   pub fn open_write_node(this mut &) -> vfs::node_ptr
@@ -93,7 +93,7 @@ pub struct buffer
 
     io::initiate(&mut this.inlet.readable.cb, 1);
 
-    return vfs::node::new(&this.inlet, vfs::node::type::buffer, &vfs::node_stream_operations());
+    return vfs::node::new(&this.inlet, vfs::node::type::buffer, vfs::node_stream_operations());
   }
 
   pub fn ref(this mut &) -> void

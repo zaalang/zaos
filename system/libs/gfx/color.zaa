@@ -195,7 +195,7 @@ pub const fn hsv(f32 h, f32 s, f32 v) -> color
   var q = v * (1.0 - (s * (hf - i)));
   var t = v * (1.0 - (s * (1.0 - (hf - i))));
 
-  switch(cast<int>(i))
+  switch (cast<int>(i))
   {
     case 0:
       return color(v, t, p);

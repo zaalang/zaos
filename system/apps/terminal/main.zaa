@@ -1,0 +1,464 @@
+//
+// terminal
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import termios;
+import os.zaos.sched;
+import os.zaos.fcntl : STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO, STDROOT_FILENO, STDCWD_FILENO;
+import input.keys : Key;
+import gui.application;
+import gui.window;
+import gui.painter;
+import gfx;
+import vt;
+import app.loop : STDSYS_FILENO;
+import zidl;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+const palette = [
+  0xff000000, // black
+  0xffcd0000, // red
+  0xff00cd00, // green
+  0xffcdcd00, // yellow
+  0xff0000ee, // blue
+  0xffcd00cd, // magenta
+  0xff00cdcd, // cyan
+  0xffe5e5e5, // light grey
+  0xff7f7f7f, // dark grey
+  0xffff0000, // light red
+  0xff00ff00, // light green
+  0xffffff00, // light yellow
+  0xff5c5cff, // light blue
+  0xffff00ff, // light magenta
+  0xff00ffff, // light cyan
+  0xffffffff, // white
+  0xffe5e5e5, // foreground
+  0xff000000, // background
+];
+
+pub struct pty
+{
+  i32 pid;
+
+  i32 master;
+  i32 slave;
+
+  zidl::channel channel;
+
+  pub pty() = default;
+  pub pty(pty &&) = default;
+  pub fn =(pty mut &, pty &&) -> pty mut & = default;
+  pub ~pty() = default;
+}
+
+pub struct window : pub gui::window
+{
+  gui::font font;
+  vt::screen screen;
+  gui::rect cursor_rect;
+
+  struct cell
+  {
+    char ch;
+    usize width;
+    vt::attrs attrs;
+
+    cell() = default;
+    cell(cell&&) = default;
+    ~cell() = default;
+  }
+
+  int cell_width;
+  int cell_height;
+  int font_ascender;
+  std::vector<cell> cells;
+
+  pub fn create(i32 width, i32 height) throws -> window
+  {
+    var window = window();
+
+    window.create(width, height);
+    window.screen.set_palette(palette);
+    window.screen.on_reply = fn[window](u8 *data, usize len) { window.post(data, len); };
+
+    return window;
+  }
+
+  fn update(this mut &) -> gui::rect
+  {
+    var rows = this.screen.rows;
+    var columns = this.screen.columns;
+
+    var maxx = usize(0);
+    var maxy = usize(0);
+    var minx = this.screen.columns;
+    var miny = this.screen.rows;
+
+    this.cells.resize(rows * columns);
+
+    this.screen.draw(|i, j, ch, n, attrs| {
+      var mut &cell = this.cells[j*columns + i];
+
+      if (cell.ch != ch || cell.attrs != attrs)
+      {
+        cell.ch = ch;
+        cell.width = n;
+        cell.attrs = attrs;
+
+        if (cell.width != 0)
+        {
+          if (i < minx)
+            minx = i;
+
+          if (j < miny)
+            miny = j;
+
+          if (maxx < i)
+            maxx = i;
+
+          if (maxy < j)
+            maxy = j;
+        }
+      }
+    });
+
+    return gui::rect(cast<int>(minx) * this.cell_width, cast<int>(miny) * this.cell_height, (cast<int>(maxx) - cast<int>(minx) + 1) * this.cell_width, (cast<int>(maxy) - cast<int>(miny) + 1) * this.cell_height).offset(this.interior.top_left);
+  }
+
+  fn post(this mut &, u8 *data, usize len) -> void
+  {
+    if (var rc = os::write(&mut thread_ring, this.pty.master, data, len); rc < 0)
+      std::panic("write error - ", rc);
+  }
+
+  fn on_ready(this mut &) -> void
+  {
+    var buffer = [<u8>: void; 4096];
+
+    var bytes = os::read(&mut thread_ring, this.pty.master, buffer.data, buffer.len);
+
+    if (bytes > 0)
+    {
+      if (this.screen.cursor_visible)
+      {
+        this.schedule_redraw(this.cursor_rect.offset(this.interior.top_left));
+      }
+
+      this.screen.write(buffer.data, cast(bytes));
+
+      this.schedule_redraw(this.update());
+    }
+
+    this.cursor_rect = gui::rect(cast<int>(this.screen.cursor.0) * this.cell_width, cast<int>(this.screen.cursor.1) * this.cell_height, 2, this.cell_height);
+
+    if (this.screen.cursor_visible)
+    {
+      this.schedule_redraw(this.cursor_rect.offset(this.interior.top_left));
+    }
+  }
+
+  pub fn key_event(this mut &, gui::key_event &evt) override -> void
+  {
+    if (evt.state == 1)
+    {
+      switch (evt.key)
+      {
+        case Key::Home:
+          post(&mut this, "\x1bOH".data, 3);
+
+        case Key::Left:
+          post(&mut this, "\x1bOD".data, 3);
+
+        case Key::Up:
+          post(&mut this, "\x1bOA".data, 3);
+
+        case Key::Right:
+          post(&mut this, "\x1bOC".data, 3);
+
+        case Key::Down:
+          post(&mut this, "\x1bOB".data, 3);
+
+        case Key::PageUp:
+          post(&mut this, "\x1b[5~".data, 4);
+
+        case Key::PageDown:
+          post(&mut this, "\x1b[6~".data, 4);
+
+        case Key::End:
+          post(&mut this, "\x1bOF".data, 3);
+
+        case Key::Insert:
+          post(&mut this, "\x1b[2~".data, 4);
+
+        case Key::Delete:
+          post(&mut this, "\x1b[3~".data, 4);
+
+        case Key::Enter:
+        case Key::NumEnter:
+          post(&mut this, "\r".data, 1);
+
+        case Key::F1:
+          post(&mut this, "\x1bOP".data, 3);
+
+        case Key::F2:
+          post(&mut this, "\x1bOQ".data, 3);
+
+        case Key::F3:
+          post(&mut this, "\x1bOR".data, 3);
+
+        case Key::F4:
+          post(&mut this, "\x1bOS".data, 3);
+
+        case Key::F5:
+          post(&mut this, "\x1b[15~".data, 5);
+
+        case Key::F6:
+          post(&mut this, "\x1b[17~".data, 5);
+
+        case Key::F7:
+          post(&mut this, "\x1b[18~".data, 5);
+
+        case Key::F8:
+          post(&mut this, "\x1b[19~".data, 5);
+
+        case Key::F9:
+          post(&mut this, "\x1b[20~".data, 5);
+
+        case Key::F10:
+          post(&mut this, "\x1b[21~".data, 5);
+
+        case Key::F11:
+          post(&mut this, "\x1b[23~".data, 5);
+
+        case Key::F12:
+          post(&mut this, "\x1b[24~".data, 5);
+
+        else:
+
+          var ch = evt.sym;
+
+          if (evt.modifiers & gui::modifiers::control)
+          {
+            switch (ch)
+            {
+              case ' ':
+                ch = 0;
+
+              case 'a' ..= 'z':
+                ch = ch - 'a' + 1;
+
+              case 'A' ..= 'Z':
+                ch = ch - 'A' + 1;
+            }
+          }
+
+          if (ch != 0)
+          {
+            var buf = [0; 16];
+            var str = std::ctoa(buf.begin, buf.end, ch);
+
+            post(&mut this, str.ptr, str.len);
+          }
+      }
+    }
+  }
+
+  pub fn paint_event(this mut &, gui::buffer mut &buffer, gui::rectset &region) override -> void
+  {
+    var painter = gui::painter(&mut buffer, this.interior);
+
+    var j0 = cast<usize>(std::max((region.extents.top - this.interior.top) / 16, 0));
+    var j1 = cast<usize>(std::min(std::ceil_div(region.extents.bottom - this.interior.top, 16), cast(this.screen.rows)));
+
+    for (var j = j0; j < j1; ++j)
+    {
+      var row = this.cells.data + j * this.screen.columns;
+
+      for (var i = 0; i < this.screen.columns; ++i)
+      {
+        var cell = row + i;
+
+        var x = cast<int>(i) * this.cell_width;
+        var y = cast<int>(j) * this.cell_height;
+        var w = cast<int>(cell.width) * this.cell_width;
+        var h = this.cell_height;
+
+        painter.fill_rect(x, y, w, h, gfx::rgba(cell.attrs.background_color));
+        painter.draw_glyph(this.font, x, y + this.font_ascender, cell.ch, gfx::rgba(cell.attrs.foreground_color));
+      }
+    }
+
+    if (this.screen.cursor_visible)
+    {
+      painter.fill_rect(this.cursor_rect, gfx::color(1.0, 1.0, 1.0, 1.0));
+    }
+
+    var right = cast<int>(this.screen.columns) * this.cell_width;
+    var bottom = cast<int>(this.screen.rows) * this.cell_height;
+
+    painter.fill_rect(right, 0, this.interior.width - right, bottom, gfx::rgba(this.screen.background_color));
+    painter.fill_rect(0, bottom, this.interior.width, this.interior.height - bottom, gfx::rgba(this.screen.background_color));
+  }
+
+  pub fn resize_event(this mut &, gui::resize_event &evt) override -> void
+  {
+    var rows = cast<usize>(this.interior.height / this.cell_height);
+    var columns = cast<usize>(this.interior.width / this.cell_width);
+
+    if (var result = this.screen.resize(columns, rows); !result)
+      std::print("cannot resize vt - ", result);
+
+    if (var rc = termios::set_winsize(this.pty.master, columns, rows); rc < 0)
+      std::print("cannot resize pty - ", rc);
+
+    update(&mut this);
+  }
+
+  pub fn close_event(this mut &) override -> void
+  {
+    //this.destroy();
+    app::loop::current.quit();
+  }
+
+  pub window()
+    : super(&impl this)
+  {
+    font = gui::font("Liberation Mono", 10.0 * (96.0/72.0));
+
+    var leading = std::ceil(font.leading);
+    var ascender = font.ascender;
+    var descender = font.descender;
+
+    cell_width = cast(font.advance('M'));
+    cell_height = cast(std::ceil(ascender - descender) + leading);
+    font_ascender = cast(std::ceil(ascender));
+
+    if (var rc = this.screen.resize(80, 24); !rc)
+      std::print("cannot resize vt - ", rc);
+  }
+
+  pty pty;
+  app::loop::wait_t read_handler;
+  app::loop::wait_t status_handler;
+  app::loop::wait_t channel_handler;
+
+  pub ~window() = default;
+}
+
+fn launch(String &path) throws -> pty
+{
+  var pty = pty();
+
+  if (var rc = termios::openpty(&mut pty.master, &mut pty.slave); rc < 0)
+    throw std::system_error(cast<std::errc>(-rc));
+
+  var argv = std::vector<os::arg>();
+  var envp = std::vector<os::arg>();
+  var attrs = std::vector<os::attr>();
+
+  var server_end = zidl::channel();
+  var client_end = zidl::channel();
+
+  if (var rc = zidl::channel::create(&mut server_end, &mut client_end); rc < 0)
+    throw std::system_error(cast<std::errc>(-rc));
+
+  argv.push_back(os::arg(path.data, path.len));
+
+  for (var arg : std::env::vars)
+    envp.push_back(os::arg(arg.data, arg.len));
+
+  attrs.push_back(os::attr(os::attr::stdin, pty.slave));
+  attrs.push_back(os::attr(os::attr::stdout, pty.slave));
+  attrs.push_back(os::attr(os::attr::stderr, pty.slave));
+  attrs.push_back(os::attr(os::attr::stdroot, STDROOT_FILENO));
+  attrs.push_back(os::attr(os::attr::stdcwd, STDCWD_FILENO));
+  attrs.push_back(os::attr(os::attr::dupfd(7), client_end.fd));
+
+  var pid = os::process_create(argv.data, argv.len, envp.data, envp.len, attrs.data, attrs.len, 0);
+
+  if (pid < 0)
+    throw std::system_error(cast<std::errc>(-pid));
+
+  pty.pid = pid;
+  pty.channel = &move server_end;
+
+  return pty;
+}
+
+fn read_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var window = cast<window mut *>(cast<uintptr>(wait) - offsetof(window::read_handler));
+
+  window.on_ready();
+}
+
+fn status_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var window = cast<window mut *>(cast<uintptr>(wait) - offsetof(window::status_handler));
+
+  var rval = 0;
+  if (var rc = os::wait(window.pty.pid, &rval, 0); rc < 0)
+    std::panic("shell wait - ", cast<std::errc>(-rc));
+
+  app::loop::current.quit();
+}
+
+fn channel_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var window = cast<window mut *>(cast<uintptr>(wait) - offsetof(window::channel_handler));
+
+  var result = zidl::recv<zidl::zaos_sys::service>(window.pty.channel.fd, |msg, completer| {
+    switch (msg)
+    {
+      case connect_to_service[msg]:
+        zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, msg.uri, &move msg.endpoint);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+  });
+
+  if (!result)
+  {
+    loop.cancel_wait(wait);
+  }
+}
+
+fn main() -> int
+{
+  try
+  {
+    var app = gui::application::create();
+
+    var window = window::create(480, 360);
+
+    window.pty = launch("/zaos/bin/shell");
+
+    window.read_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(read_handler);
+
+    if (var rc = app::loop::current.begin_wait_fd(window.pty.master, &window.read_handler); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    window.status_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(status_handler);
+
+    if (var rc = app::loop::current.begin_wait_pid(window.pty.pid, &window.status_handler); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    window.channel_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(channel_handler);
+
+    if (var rc = app::loop::current.begin_wait(window.pty.channel, &window.channel_handler); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    app.run();
+  }
+  catch (std::error e)
+  {
+    std::panic(e);
+  }
+
+  return 0;
+}

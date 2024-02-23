@@ -5,6 +5,9 @@
 import std.math;
 import std.span : Span;
 import std.string : String;
+import std.vector;
+import std.flat_hash_map;
+import std.arc;
 import gfx.blit;
 import gfx.color;
 import gfx.blend;

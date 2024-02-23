@@ -32,98 +32,92 @@ struct screeninfo
 pub struct bootfb : pub chr::chrdev
 {
   pub bootfb(sys::frame_buffer &fb)
-    : super(chr::device_operations()),
+    : super(&impl this),
       fb(fb)
   {
     std::printf("boot frame buffer {}x{}x{}\n", fb.width, fb.height, fb.depth);
   }
 
+  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result
+  {
+    switch (query)
+    {
+      case device_name:
+        result = "fb0";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  {
+    switch (op)
+    {
+      case fbio::screeninfo:
+        if (buffer.length != sizeof<screeninfo>)
+          return invalid_argument;
+
+        var screeninfo = screeninfo();
+        screeninfo.caps = 0;
+        screeninfo.width = this.fb.width;
+        screeninfo.height = this.fb.height;
+        screeninfo.depth = this.fb.depth;
+        screeninfo.pitch = this.fb.pitch;
+
+        if (var result = vm::memcpy(buffer, 0, &screeninfo, sizeof<screeninfo>); !result)
+          return cast(result);
+
+        return ok;
+    }
+
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  {
+    if (offset != 0)
+      return invalid_argument;
+
+    if (range.size != this.fb.pitch * this.fb.height)
+      return invalid_argument;
+
+    if (use != vm::usage::shared)
+      return device_busy;
+
+    var framebuffer = std::vector<physrange, N:1>::from([ physrange(this.fb.address, range.size) ]);
+
+    if (var result = vm::create_physical_region(range, framebuffer, prot, vm::usage::shared | vm::usage::foreign); !result)
+      return cast(result);
+
+    if (var result = vm::set_memory_type(range, vm::mtype::write_combine); !result)
+      return cast(result);
+
+    return ok;
+  }
+
   pub ~bootfb() = default;
 
   sys::frame_buffer fb;
-}
-
-pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
-{
-  var &this = cast<bootfb&>(dev);
-
-  switch (query)
-  {
-    case device_name:
-      result = "fb0";
-  }
-
-  return ok;
-}
-
-pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
-{
-  return ok;
-}
-
-pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
-{
-  var &this = cast<bootfb mut &>(dev);
-
-  switch (op)
-  {
-    case fbio::screeninfo:
-      if (buffer.length != sizeof<screeninfo>)
-        return invalid_argument;
-
-      var screeninfo = screeninfo();
-      screeninfo.caps = 0;
-      screeninfo.width = this.fb.width;
-      screeninfo.height = this.fb.height;
-      screeninfo.depth = this.fb.depth;
-      screeninfo.pitch = this.fb.pitch;
-
-      if (var result = vm::memcpy(buffer, 0, &screeninfo, sizeof<screeninfo>); !result)
-        return cast(result);
-
-      return ok;
-  }
-
-  return not_supported;
-}
-
-pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
-{
-  return not_supported;
-}
-
-pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  return not_supported;
-}
-
-pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  return not_supported;
-}
-
-pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
-{
-  var &this = cast<bootfb mut &>(dev);
-
-  if (offset != 0)
-    return invalid_argument;
-
-  if (range.size != this.fb.pitch * this.fb.height)
-    return invalid_argument;
-
-  if (use != vm::usage::shared)
-    return device_busy;
-
-  var framebuffer = std::vector<physrange, N:1>::from([ physrange(this.fb.address, range.size) ]);
-
-  if (var result = vm::create_physical_region(range, framebuffer, prot, vm::usage::shared | vm::usage::foreign); !result)
-    return cast(result);
-
-  if (var result = vm::set_memory_type(range, vm::mtype::write_combine); !result)
-    return cast(result);
-
-  return ok;
 }
 
 pub fn initialise() -> void

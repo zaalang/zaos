@@ -26,7 +26,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
   }
 
   pub proc_pid_node(vfs::node_ptr &&parent, process::id pid)
-    : super(&sysfs::sysfs_directory_operations(), &&parent),
+    : super(&impl this, &&parent),
       pid(pid)
   {
   }
@@ -73,7 +73,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
     return vfs::node_ptr();
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
     emit(vfs::ftype::regular_file, std::string_view("stat"));
     emit(vfs::ftype::regular_file, std::string_view("auxv"));
@@ -103,7 +103,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
   }
 
   pub proc_stat_node(vfs::node_ptr &&parent, process::id pid)
-    : super(&sysfs::sysfs_file_operations(), &&parent),
+    : super(&impl this, &&parent),
       pid(pid)
   {
   }
@@ -177,7 +177,7 @@ pub struct proc_auxv_node : pub sysfs::sysfs_file_node
   }
 
   pub proc_auxv_node(vfs::node_ptr &&parent, process::id pid)
-    : super(&sysfs::sysfs_file_operations(), &&parent),
+    : super(&impl this, &&parent),
       pid(pid)
   {
   }
@@ -239,7 +239,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
   }
 
   pub proc_environ_node(vfs::node_ptr &&parent, process::id pid)
-    : super(&sysfs::sysfs_file_operations(), &&parent),
+    : super(&impl this, &&parent),
       pid(pid)
   {
   }
@@ -310,7 +310,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
   }
 
   pub proc_cmdline_node(vfs::node_ptr &&parent, process::id pid)
-    : super(&sysfs::sysfs_file_operations(), &&parent),
+    : super(&impl this, &&parent),
       pid(pid)
   {
   }
@@ -379,7 +379,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
   }
 
   pub proc_root_node(vfs::node_ptr &&parent)
-    : super(&sysfs::sysfs_directory_operations(), &&parent)
+    : super(&impl this, &&parent)
   {
   }
 
@@ -412,7 +412,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
     return proc_pid_node::create(path, pid);
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<fn (vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
     var result = vm::result::ok;
 
@@ -450,7 +450,7 @@ pub struct proc_list_node : pub sysfs::sysfs_file_node
   }
 
   pub proc_list_node(vfs::node_ptr &&parent)
-    : super(&sysfs::sysfs_file_operations(), &&parent)
+    : super(&impl this, &&parent)
   {
   }
 

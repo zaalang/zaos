@@ -82,11 +82,29 @@ image:
         - cp:
             src: data/NotoSans-Regular.ttf
             dest: /data/NotoSans-Regular.ttf
+        - cp:
+            src: data/NotoSansMono-Regular.ttf
+            dest: /data/NotoSansMono-Regular.ttf
+        - cp:
+            src: data/LiberationMono-Regular.ttf
+            dest: /data/LiberationMono-Regular.ttf
+        - cp:
+            src: data/LiberationMono-Italic.ttf
+            dest: /data/LiberationMono-Italic.ttf
+        - cp:
+            src: data/LiberationMono-Bold.ttf
+            dest: /data/LiberationMono-Bold.ttf
+        - cp:
+            src: data/LiberationMono-BoldItalic.ttf
+            dest: /data/LiberationMono-BoldItalic.ttf
+        - cp:
+            src: data/system.fontmap
+            dest: /data/system.fontmap
         - md:
             dest: /srv
         - cp:
-            src: build/system/servers/system/system
-            dest: /srv/system
+            src: build/system/servers/init/init
+            dest: /srv/init
         - cp:
             src: build/system/servers/session/session
             dest: /srv/session
@@ -99,6 +117,17 @@ image:
         - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco
+        - md:
+            dest: /bin
+        - cp:
+            src: build/system/apps/shell/shell
+            dest: /bin/shell
+        - cp:
+            src: build/system/apps/terminal/terminal
+            dest: /bin/terminal
+        - cp:
+            src: build/system/apps/binutils/ls
+            dest: /bin/ls
         - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar

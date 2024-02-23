@@ -112,7 +112,8 @@ pub struct driver
 
   std::circular_buffer<event> events;
 
-  u8[256] key_state;
+  u8[256] keys;
+  u8[32] buttons;
   f64[9] motion;
 
   pub driver() = default;
@@ -251,24 +252,24 @@ pub fn dispatch(driver mut &driver) -> i32
 
                   var key = keymap.keys[cast(input.code)];
 
-                  if (driver.key_state[cast(key)] == 0)
+                  if (driver.keys[cast(key)] == 0)
                     continue;
 
-                  driver.key_state[cast(key)] -= 1;
+                  driver.keys[cast(key)] -= 1;
 
-                  if (driver.key_state[cast(key)] == 0)
+                  if (driver.keys[cast(key)] == 0)
                     driver.post_event(event::keyboard_key(input.time, key, key_state::released));
 
                 case mouse[config]:
 
                   var key = config.buttons[cast(input.code - 0x100)];
 
-                  if (driver.key_state[cast(key)] == 0)
+                  if (driver.buttons[cast(key)] == 0)
                     continue;
 
-                  driver.key_state[cast(key)] -= 1;
+                  driver.buttons[cast(key)] -= 1;
 
-                  if (driver.key_state[cast(key)] == 0)
+                  if (driver.buttons[cast(key)] == 0)
                     driver.post_event(event::pointer_button(input.time, key, button_state::released));
               }
 
@@ -283,27 +284,27 @@ pub fn dispatch(driver mut &driver) -> i32
                   var sym = 0;
                   var map = 0;
 
-                  if (driver.key_state[cast(Key::LeftShift)] != 0 || driver.key_state[cast(Key::RightShift)] != 0)
+                  if (driver.keys[cast(Key::LeftShift)] != 0 || driver.keys[cast(Key::RightShift)] != 0)
                     map = 1;
 
-                  if (driver.key_state[cast(Key::LeftControl)] != 0 || driver.key_state[cast(Key::RightControl)] != 0)
+                  if (driver.keys[cast(Key::LeftControl)] != 0 || driver.keys[cast(Key::RightControl)] != 0)
                     map = 2;
 
                   if (cast(key) < keymap.syms.len)
                     sym = keymap.syms[cast(key)][map];
 
-                  driver.key_state[cast(key)] += 1;
+                  driver.keys[cast(key)] += 1;
 
-                  if (driver.key_state[cast(key)] == 1)
+                  if (driver.keys[cast(key)] == 1)
                     driver.post_event(event::keyboard_key(input.time, key, key_state::pressed, sym));
 
                 case mouse[config]:
 
                   var key = config.buttons[cast(input.code - 0x100)];
 
-                  driver.key_state[cast(key)] += 1;
+                  driver.buttons[cast(key)] += 1;
 
-                  if (driver.key_state[cast(key)] == 1)
+                  if (driver.buttons[cast(key)] == 1)
                     driver.post_event(event::pointer_button(input.time, key, button_state::pressed));
               }
           }

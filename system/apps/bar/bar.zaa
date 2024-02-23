@@ -4,52 +4,52 @@
 
 import std.stdio;
 import std.env;
-import nix.thread;
-import nix.mutex;
+import sys.thread;
+import sys.mutex;
 import chrono : duration;
 
 using clock = chrono::steady_clock;
 
 fn test_shared_mutex()
 {
-  var m = nix::shared_mutex();
+  var m = sys::shared_mutex();
 
   enum state { reading, writing };
   var state = state::reading;
 
   fn reader[m, state]()
   {
-      var count = 0;
-      var until = clock::now() + chrono::seconds(3);
-      while (clock::now() < until)
-      {
-          m.lock_shared();
-          std::assert(state == state::reading);
-          ++count;
-          m.unlock_shared();
-      }
-      std::print("reader = ", count);
+    var count = 0;
+    var until = clock::now() + chrono::seconds(3);
+    while (clock::now() < until)
+    {
+      m.lock_shared();
+      std::assert(state == state::reading);
+      ++count;
+      m.unlock_shared();
+    }
+    std::print("reader = ", count);
   }
 
   fn writer[m, state]()
   {
-      var count = 0;
-      var until = clock::now() + chrono::seconds(3);
-      while (clock::now() < until)
-      {
-          m.lock();
-          state = state::writing;
-          std::assert(state == state::writing);
-          state = state::reading;
-          ++count;
-          m.unlock();
-      }
-      std::print("writer = ", count);
+    var count = 0;
+    var until = clock::now() + chrono::seconds(3);
+    while (clock::now() < until)
+    {
+      m.lock();
+      state = state::writing;
+      std::assert(state == state::writing);
+      state = state::reading;
+      ++count;
+      m.unlock();
+    }
+    std::print("writer = ", count);
   }
 
-  var t1 = nix::thread::spawn(reader);
-  var t2 = nix::thread::spawn(writer);
-  var t3 = nix::thread::spawn(reader);
+  var t1 = sys::thread::spawn(reader);
+  var t2 = sys::thread::spawn(writer);
+  var t3 = sys::thread::spawn(reader);
 
   t1.join();
   t2.join();

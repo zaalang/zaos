@@ -5,6 +5,7 @@
 import std.stdio;
 import std.string : String;
 import std.flat_hash_map;
+import std.box;
 import os.zaos.fcntl;
 import os.zaos.sched;
 import os.zaos.time;
@@ -167,6 +168,32 @@ pub struct loop
     return 0;
   }
 
+  pub fn begin_wait_fd(this mut &loop, i32 fd, wait_t mut *handler) -> i32
+  {
+    var evt = os::pollevt();
+    evt.id = fd;
+    evt.type = os::POLLFD;
+    evt.mask = os::POLLIN;
+
+    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
+      return rc;
+
+    return 0;
+  }
+
+  pub fn begin_wait_pid(this mut &loop, i32 tid, wait_t mut *handler) -> i32
+  {
+    var evt = os::pollevt();
+    evt.id = tid;
+    evt.type = os::POLLTHREAD;
+    evt.mask = os::POLLIN;
+
+    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
+      return rc;
+
+    return 0;
+  }
+
   pub fn begin_wait(this mut &loop, zidl::channel &channel, wait_t mut *handler) -> i32
   {
     var evt = os::pollevt();
@@ -253,6 +280,32 @@ pub struct loop
   wait_t system_service_handler;
 }
 
+fn system_service_handler(loop mut &loop, loop::wait_t mut *wait) -> void
+{
+  var result = zidl::recv<zidl::zaos_sys::service>(STDSYS_FILENO, |msg, completer| {
+    switch (msg)
+    {
+      case terminate:
+        loop.quit();
+
+      case detach:
+        loop.cancel_wait(wait);
+
+      case connect_to_service[msg]:
+        if (loop.connect_handler)
+          loop.connect_handler(&mut loop, msg.uri, &mut msg.endpoint);
+
+      else:
+        completer.raise(zidl::errc::bad_dispatch);
+    }
+  });
+
+  if (!result)
+  {
+    loop.quit();
+  }
+}
+
 pub fn initialise(loop mut &loop, options flags = options::make_default | options::manage_system_service) -> i32
 {
   if (var rc = pollset::create(&mut loop.pollset); rc < 0)
@@ -268,7 +321,7 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
     evt.type = os::POLLFD;
     evt.mask = os::POLLIN;
 
-    loop.system_service_handler.callback = &cast<fn(loop mut &, loop::wait_t mut *)>(system_service_handler);
+    loop.system_service_handler.callback = &cast<fn (loop mut &, loop::wait_t mut *) -> void>(system_service_handler);
 
     loop.begin_wait(evt, &loop.system_service_handler);
   }
@@ -318,32 +371,6 @@ pub fn run(loop mut &loop) -> i32
   return 0;
 }
 
-pub fn system_service_handler(loop mut &loop, loop::wait_t mut *wait) -> void
-{
-  var result = zidl::recv<zidl::zaos_sys::service>(STDSYS_FILENO, |msg, completer| {
-    switch (msg)
-    {
-      case terminate:
-        loop.quit();
-
-      case detach:
-        loop.cancel_wait(wait);
-
-      case connect_to_service[msg]:
-        if (loop.connect_handler)
-          loop.connect_handler(&mut loop, msg.uri, &move msg.endpoint);
-
-      else:
-        completer.raise(zidl::errc::bad_dispatch);
-    }
-  });
-
-  if (!result)
-  {
-    loop.quit();
-  }
-}
-
 pub fn connect_to_service(String &uri) throws -> zidl::channel
 {
   var (server_end, client_end) = zidl::channel::create();
@@ -366,4 +393,3 @@ pub fn connect_to_service(String &service, zidl::channel mut &client_end) -> i32
 
   return 0;
 }
-

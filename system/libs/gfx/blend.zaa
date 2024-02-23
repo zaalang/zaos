@@ -112,7 +112,7 @@ fn overlay(gfx::color &src, gfx::color &dst) -> gfx::color
 
   var rgb = gfx::color();
 
-  #for(const k = 0; k < 3; ++k)
+  #for (const k = 0; k < 3; ++k)
   {
     if (2.0 * dst.#k <= dst.a)
       rgb.#k = 2.0 * src.#k * dst.#k + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
@@ -182,7 +182,7 @@ fn colordodge(gfx::color &src, gfx::color &dst) -> gfx::color
 
   var rgb = gfx::color();
 
-  #for(const k = 0; k < 3; ++k)
+  #for (const k = 0; k < 3; ++k)
   {
     if (dst.#k == 0.0)
       rgb.#k = src.#k * (1.0 - dst.a);
@@ -210,7 +210,7 @@ fn colorburn(gfx::color &src, gfx::color &dst) -> gfx::color
 
   var rgb = gfx::color();
 
-  #for(const k = 0; k < 3; ++k)
+  #for (const k = 0; k < 3; ++k)
   {
     if (dst.#k == dst.a)
       rgb.#k = src.a * dst.a + dst.#k * (1.0 - src.a);
@@ -236,7 +236,7 @@ fn hardlight(gfx::color &src, gfx::color &dst) -> gfx::color
 
   var rgb = gfx::color();
 
-  #for(const k = 0; k < 3; ++k)
+  #for (const k = 0; k < 3; ++k)
   {
     if (2.0 * src.#k < src.a)
       rgb.#k = 2.0 * src.a * dst.a + src.#k * (1.0 - dst.a) + dst.#k * (1.0 - src.a);
@@ -262,7 +262,7 @@ fn softlight(gfx::color &src, gfx::color &dst) -> gfx::color
 
   var rgb = gfx::color();
 
-  #for(const k = 0; k < 3; ++k)
+  #for (const k = 0; k < 3; ++k)
   {
     var dda = (dst.a != 0.0) ? dst.#k / dst.a : 0.0;
 

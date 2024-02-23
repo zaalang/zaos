@@ -43,13 +43,13 @@ pub struct screen
   pub fn rows(this&) { return this.rows; }
   pub fn columns(this&) { return this.columns; }
 
-  pub std::delegate<fn(u8*, usize)> on_reply;
+  pub std::delegate<(u8*, usize) -> void> on_reply;
 
   vte state;
 
   usize cursor_x;
   usize cursor_y;
-  bool cursor_state = true;
+  bool cursor_visible = true;
 
   usize margin_top;
   usize margin_bottom;
@@ -128,8 +128,8 @@ pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
 
   screen.rows = rows;
   screen.columns = columns;
-
-  set_scroll_region(&mut screen, screen.margin_top, screen.margin_bottom);
+  screen.margin_top = 0;
+  screen.margin_bottom = rows;
 
   return 0;
 }
@@ -138,11 +138,11 @@ pub fn draw(screen mut &screen, var callback) -> vt::result
 {
   var attrs = attrs(void);
 
-  for (var y = 0; y < screen.rows; ++y)
+  for (var y = usize(0); y < screen.rows; ++y)
   {
     var &line = screen.lines[(screen.head + y) % screen.lines.len];
 
-    for (var x = 0; x < screen.columns; ++x)
+    for (var x = usize(0); x < screen.columns; ++x)
     {
       var &cell = line.cells[x];
 
@@ -271,14 +271,14 @@ pub fn backspace(screen mut &screen) -> vt::result
   return 0;
 }
 
-pub fn cursor_state(screen &screen) -> bool
+pub fn cursor_visible(screen &screen) -> bool
 {
-  return screen.cursor_state;
+  return screen.cursor_visible;
 }
 
-pub fn set_cursor_state(screen mut &screen, bool state) -> vt::result
+pub fn set_cursor_visible(screen mut &screen, bool visible) -> vt::result
 {
-  screen.cursor_state = state;
+  screen.cursor_visible = visible;
 
   return 0;
 }

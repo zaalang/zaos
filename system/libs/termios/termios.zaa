@@ -2,7 +2,9 @@
 // termios
 //
 
-import os.zaos.fcntl;
+import std.stdio;
+import os.zaos.unistd;
+import os.zaos.fcntl : STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO;
 
 pub enum tio
 {
@@ -78,6 +80,18 @@ pub enum CC
   pub const VEOL2 = 16;
 }
 
+pub struct grantpt
+{
+  pub u32 uid;
+  pub u32 gid;
+  pub u32 mode;
+
+  pub grantpt() = default;
+  pub grantpt(grantpt&) = default;
+  pub fn =(grantpt mut &, grantpt &) -> grantpt mut & = default;
+  pub ~grantpt() = default;
+}
+
 pub struct termios
 {
   pub u32 c_iflag;
@@ -110,6 +124,129 @@ pub struct winsize
 
 extern fn thread_ring() -> os::ioring mut &;
 
+pub fn isatty(i32 fd) -> bool
+{
+  var state = termios(void);
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return false;
+
+  return true;
+}
+
+pub fn openpty(i32 mut &master, i32 mut &slave) -> i32
+{
+  using os;
+
+  master = open(&mut thread_ring, 4, os::string("/dev/pts/ptmx"), O_RDWR, 0);
+
+  if (master < 0)
+    return master;
+
+  var grantpt = grantpt();
+  grantpt.uid = os::getuid();
+  grantpt.gid = os::getgid();
+  grantpt.mode = 0o660;
+
+  if (var rc = ioctl(&mut thread_ring, master, tio::grantpt, &grantpt, sizeof<grantpt>); rc < 0)
+    return rc;
+
+  var ptn = 0;
+  if (var rc = ioctl(&mut thread_ring, master, tio::getptn, &ptn, sizeof<int>); rc < 0)
+    return rc;
+
+  var buffer = [0; 64];
+  var len = std::sprintf(&mut buffer, "/dev/pts/{}", ptn);
+
+  slave = open(&mut thread_ring, 4, os::string(buffer.data, len), O_RDWR, 0);
+
+  if (slave < 0)
+    return slave;
+
+  return 0;
+}
+
+pub fn get_termios(i32 fd, termios mut &state) -> i32
+{
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  return 0;
+}
+
+pub fn get_termios(termios mut &state) -> i32
+{
+  return get_termios(STDIN_FILENO, &mut state);
+}
+
+pub fn set_termios(i32 fd, termios &state) -> i32
+{
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::settermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  return 0;
+}
+
+pub fn get_winsize(i32 fd, int mut &cols, int mut &rows) -> i32
+{
+  var ws = winsize(void);
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::getwinsize, &ws, sizeof<winsize>); rc < 0)
+    return rc;
+
+  cols = cast(ws.ws_col);
+  rows = cast(ws.ws_row);
+
+  return 0;
+}
+
+pub fn get_winsize(int mut &cols, int mut &rows) -> i32
+{
+  return get_winsize(STDIN_FILENO, &mut cols, &mut rows);
+}
+
+pub fn set_winsize(i32 fd, usize width, usize height) -> i32
+{
+  var ws = winsize(void);
+
+  ws.ws_col = cast(width);
+  ws.ws_row = cast(height);
+  ws.ws_xpixel = 0;
+  ws.ws_ypixel = 0;
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::setwinsize, &ws, sizeof<winsize>); rc < 0)
+    return rc;
+
+  return 0;
+}
+
+pub fn echo_off(i32 fd) -> i32
+{
+  var state = termios(void);
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  state.c_lflag &= ~LFLAG::ECHO;
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::settermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  return 0;
+}
+
+pub fn echo_on(i32 fd) -> i32
+{
+  var state = termios(void);
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  state.c_lflag |= LFLAG::ECHO;
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, tio::settermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  return 0;
+}
+
 pub fn enable_raw_mode(i32 fd, termios mut &oldstate) -> i32
 {
   if (var rc = os::ioctl(&mut thread_ring, fd, tio::gettermios, &oldstate, sizeof<termios>); rc < 0)
@@ -129,7 +266,7 @@ pub fn enable_raw_mode(i32 fd, termios mut &oldstate) -> i32
 
 pub fn enable_raw_mode(termios mut &oldstate) -> i32
 {
-  return enable_raw_mode(os::STDIN_FILENO, &mut oldstate);
+  return enable_raw_mode(STDIN_FILENO, &mut oldstate);
 }
 
 pub fn restore_cooked_mode(i32 fd, termios mut &oldstate) -> i32
@@ -142,22 +279,5 @@ pub fn restore_cooked_mode(i32 fd, termios mut &oldstate) -> i32
 
 pub fn restore_cooked_mode(termios mut &oldstate) -> i32
 {
-  return restore_cooked_mode(os::STDIN_FILENO, &mut oldstate);
-}
-
-pub fn get_window_size(i32 fd, int mut &cols, int mut &rows) -> i32
-{
-  var ws = winsize(void);
-  if (var rc = os::ioctl(&mut thread_ring, fd, tio::getwinsize, &ws, sizeof(ws)); rc < 0)
-    return rc;
-
-  cols = cast(ws.ws_col);
-  rows = cast(ws.ws_row);
-
-  return 0;
-}
-
-pub fn get_window_size(int mut &cols, int mut &rows) -> i32
-{
-  return get_window_size(os::STDIN_FILENO, &mut cols, &mut rows);
+  return restore_cooked_mode(STDIN_FILENO, &mut oldstate);
 }

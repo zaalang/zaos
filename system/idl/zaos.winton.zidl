@@ -31,6 +31,19 @@ bits state
   activated = 8,
 }
 
+bits modifiers
+{
+  shift = 0x1,
+  control = 0x2,
+  alt = 0x4,
+  super = 0x8,
+  hyper = 010,
+  meta = 0x20,
+  capslock = 0x1000,
+  numlock = 0x2000,
+  scrolllock = 0x4000,
+}
+
 enum tether
 {
   top = 1,
@@ -76,10 +89,10 @@ protocol compositor
   surface_damage(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
   surface_commit(u32 surface_id, bool callback);
   -> surface_callback(u32 surface_id, u64 time);
+  -> surface_release(u32 surface_id, u32 buffer_id);
 
   buffer_resize(u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, format format);
   buffer_destroy(u32 buffer_id);
-  -> buffer_release(u32 buffer_id);
 
   create_window(u32 surface_id);
   create_popup(u32 surface_id, u32 parent_id);
@@ -99,6 +112,7 @@ protocol compositor
 
   -> keyboard_enter(u32 serial, u32 surface_id);
   -> keyboard_leave(u32 serial, u32 surface_id);
+  -> keyboard_modifiers(u32 surface_id, u64 time, modifiers modifiers);
   -> keyboard_key(u32 surface_id, u64 time, u32 key, u32 state, char sym);
 
   set_cursor(u32 serial, u32 surface_id, i32 hotspot_x, i32 hotspot_y);
@@ -109,6 +123,11 @@ protocol compositor
   set_fullscreen(u32 surface_id);
   unset_maximised(u32 surface_id);
   unset_fullscreen(u32 surface_id);
+
+  set_minimum_size(u32 surface_id, i32 width, i32 height);
+  set_maximum_size(u32 surface_id, i32 width, i32 height);
+
+  set_input_region(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
 
   move(u32 serial, u32 surface_id);
   resize(u32 serial, u32 surface_id, tether tether);

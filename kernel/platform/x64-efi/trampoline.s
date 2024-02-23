@@ -153,7 +153,7 @@ _trampoline:
             pop rdi
             mov rdx, [rdi + 16]           # kernel_base
             lea rcx, [rip + _BASE]
-            lea rax, [rip + kernel_start]
+            lea rax, [rip + kernel_auxap]
             sub rax, rcx
             add rax, rdx
             jmp rax

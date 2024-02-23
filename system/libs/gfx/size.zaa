@@ -12,6 +12,8 @@ pub struct dim
   {
   }
 
+  pub fn ==(dim &lhs, dim &rhs) -> bool = default;
+
   pub dim() = default;
   pub dim(dim &) = default;
   pub fn =(dim mut &, dim &) -> dim mut & = default;
@@ -27,6 +29,8 @@ pub struct halfdim
     : width(width), height(height)
   {
   }
+
+  pub fn ==(halfdim &lhs, halfdim &rhs) -> bool = default;
 
   pub halfdim() = default;
   pub halfdim(halfdim &) = default;

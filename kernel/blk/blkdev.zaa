@@ -56,12 +56,12 @@ pub enum query
 
 pub vtable device_operations
 {
-  pub fn query(blk::blkdev &dev, blk::query query, std::string mut &result) -> blk::result;
+  pub fn query(this &dev, blk::query query, std::string mut &result) -> blk::result;
 
-  pub fn ioctl(blk::blkdev mut &dev, u32 op, vm::iovec &buffer) -> blk::result;
+  pub fn ioctl(this mut &dev, u32 op, vm::iovec &buffer) -> blk::result;
 
-  pub fn enqueue(blk::blkdev mut &dev, blk::request mut *request) -> blk::result;
-  pub fn cancel(blk::blkdev mut &dev, blk::request mut *request) -> blk::result;
+  pub fn enqueue(this mut &dev, blk::request mut *request) -> blk::result;
+  pub fn cancel(this mut &dev, blk::request mut *request) -> blk::result;
 }
 
 pub struct blkdev_ptr : pub Rc<blkdev>

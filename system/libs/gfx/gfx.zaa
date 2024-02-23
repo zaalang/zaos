@@ -14,6 +14,7 @@ pub struct paint_t
   {
   }
 
+  pub paint_t() = default;
   pub paint_t(paint_t &) = default;
   pub fn =(paint_t mut &, paint_t &) -> paint_t mut & = default;
   pub ~paint_t() = default;

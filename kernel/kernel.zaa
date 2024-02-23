@@ -66,7 +66,7 @@ fn bootstrap_filesystem() -> void
 
 fn launch_init() -> void
 {
-  var srv = sys::cmdline("init", default: "/zaos/srv/coco");
+  var srv = sys::cmdline("init", default: "/zaos/srv/init");
 
   var init = create_process(process::current, vfs::basename(srv));
 
@@ -100,19 +100,26 @@ fn kernel_main(void*) -> void
   launch_init();
 }
 
-extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
+extern fn kernel_auxap(BootInfo &bootinfo, int cpu) -> void
 {
   cpu::bootstrap(bootinfo, cpu);
-  sys::bootstrap(bootinfo, cpu);
-  heap::bootstrap(bootinfo, cpu);
-  vm::bootstrap(bootinfo, cpu);
 
   platform::finalise_boot(bootinfo, cpu);
 
-  if (cpu == 0)
-  {
-    create_kernel_process(&cast<fn(void mut *)>(kernel_main), null);
-  }
+  scheduler::start();
+}
+
+extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
+{
+  cpu::bootstrap(bootinfo, cpu);
+
+  sys::bootstrap(bootinfo);
+  heap::bootstrap(bootinfo);
+  vm::bootstrap(bootinfo);
+
+  platform::finalise_boot(bootinfo, cpu);
+
+  create_kernel_process(&cast<fn (void mut *) -> void>(kernel_main), null);
 
   scheduler::start();
 }

@@ -1,0 +1,954 @@
+//
+// gui rect
+//
+
+import std.math;
+
+pub struct size
+{
+  pub i32 width;
+  pub i32 height;
+
+  pub size(i32 width, i32 height)
+    : width(width), height(height)
+  {
+  }
+
+  pub fn ==(size &lhs, size &rhs) -> bool = default;
+
+  pub size() = default;
+  pub size(size &) = default;
+  pub fn =(size mut &, size &) -> size mut & = default;
+  pub ~size() = default;
+}
+
+pub struct point
+{
+  pub i32 x;
+  pub i32 y;
+
+  pub point(i32 x, i32 y)
+    : x(x), y(y)
+  {
+  }
+
+  pub fn ==(point &lhs, point &rhs) -> bool = default;
+  pub fn <=>(point &lhs, point &rhs) -> int = default;
+
+  pub point() = default;
+  pub point(point &) = default;
+  pub fn =(point mut &, point &) -> point mut & = default;
+  pub ~point() = default;
+}
+
+pub fn -(point &pt) -> point
+{
+  return point(-pt.x, -pt.y);
+}
+
+pub struct rect
+{
+  i32[2] lo;
+  i32[2] hi;
+
+  pub fn x(this &) -> i32
+  {
+    return this.lo[0];
+  }
+
+  pub fn y(this &) -> i32
+  {
+    return this.lo[1];
+  }
+
+  pub fn width(this &) -> i32
+  {
+    return this.hi[0] - this.lo[0];
+  }
+
+  pub fn height(this &) -> i32
+  {
+    return this.hi[1] - this.lo[1];
+  }
+
+  pub fn empty(this &) -> bool
+  {
+    return this.lo[0] >= this.hi[0] || this.lo[1] >= this.hi[1];
+  }
+
+  pub fn size(this &) -> size
+  {
+    return size(this.hi[0] - this.lo[0], this.hi[1] - this.lo[1]);
+  }
+
+  pub fn centre(this &) -> point
+  {
+    return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
+  }
+
+  pub fn left(this &) -> i32
+  {
+    return this.lo[0];
+  }
+
+  pub fn right(this &) -> i32
+  {
+    return this.hi[0];
+  }
+
+  pub fn top(this &) -> i32
+  {
+    return this.lo[1];
+  }
+
+  pub fn bottom(this &) -> i32
+  {
+    return this.hi[1];
+  }
+
+  pub fn top_left(this &) -> point
+  {
+    return point(this.lo[0], this.lo[1]);
+  }
+
+  pub fn top_centre(this &) -> point
+  {
+    return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, this.lo[1]);
+  }
+
+  pub fn top_right(this &) -> point
+  {
+    return point(this.hi[0], this.lo[1]);
+  }
+
+  pub fn centre_left(this &) -> point
+  {
+    return point(this.lo[0], (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
+  }
+
+  pub fn centre_right(this &) -> point
+  {
+    return point(this.hi[0], (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
+  }
+
+  pub fn bottom_left(this &) -> point
+  {
+    return point(this.lo[0], this.hi[1]);
+  }
+
+  pub fn bottom_centre(this &) -> point
+  {
+    return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, this.hi[1]);
+  }
+
+  pub fn bottom_right(this &) -> point
+  {
+    return point(this.hi[0], this.hi[1]);
+  }
+
+  #[nodiscard]
+  pub fn inset(this &, i32 dx, i32 dy) -> rect
+  {
+    var rect = this;
+    rect.inset!(dx, dy);
+    return rect;
+  }
+
+  #[nodiscard]
+  pub fn outset(this &, i32 dx, i32 dy) -> rect
+  {
+    var rect = this;
+    rect.outset!(dx, dy);
+    return rect;
+  }
+
+  #[nodiscard]
+  pub fn offset(this &, i32 dx, i32 dy) -> rect
+  {
+    var rect = this;
+    rect.offset!(dx, dy);
+    return rect;
+  }
+
+  #[nodiscard]
+  pub fn offset(this &, point &xy) -> rect
+  {
+    var rect = this;
+    rect.offset!(xy);
+    return rect;
+  }
+
+  #[nodiscard]
+  pub fn adjust(this &, i32 dx1, i32 dy1, i32 dx2, i32 dy2) -> rect
+  {
+    var rect = this;
+    rect.adjust!(dx1, dy1, dx2, dy2);
+    return rect;
+  }
+
+  pub fn inset!(this mut &, i32 dx, i32 dy) -> void
+  {
+    this.lo[0] += dx;
+    this.lo[1] += dy;
+    this.hi[0] -= dx;
+    this.hi[1] -= dy;
+  }
+
+  pub fn outset!(this mut &, i32 dx, i32 dy) -> void
+  {
+    this.lo[0] -= dx;
+    this.lo[1] -= dy;
+    this.hi[0] += dx;
+    this.hi[1] += dy;
+  }
+
+  pub fn offset!(this mut &, i32 dx, i32 dy) -> void
+  {
+    this.lo[0] += dx;
+    this.lo[1] += dy;
+    this.hi[0] += dx;
+    this.hi[1] += dy;
+  }
+
+  pub fn offset!(this mut &, point &xy) -> void
+  {
+    this.lo[0] += xy.x;
+    this.lo[1] += xy.y;
+    this.hi[0] += xy.x;
+    this.hi[1] += xy.y;
+  }
+
+  pub fn adjust!(this mut &, i32 dx1, i32 dy1, i32 dx2, i32 dy2) -> void
+  {
+    this.lo[0] += dx1;
+    this.lo[1] += dy1;
+    this.hi[0] += dx2;
+    this.hi[1] += dy2;
+  }
+
+  pub rect(i32 x, i32 y, i32 width, i32 height)
+    : lo([x, y]), hi([x + width, y + height])
+  {
+  }
+
+  pub rect(point &topleft, i32 width, i32 height)
+    : lo([topleft.x, topleft.y]), hi([origin.x + width, origin.y + height])
+  {
+  }
+
+  pub rect(point &topleft, size &size)
+    : lo([topleft.x, topleft.y]), hi([topleft.x + size.width, topleft.y + size.height])
+  {
+  }
+
+  pub rect(point &topleft, point &bottomright)
+    : lo([topleft.x, topleft.y]), hi([bottomright.x, bottomright.y])
+  {
+  }
+
+  pub rect(i32[2] &lo, i32[2] &hi)
+    : lo(lo), hi(hi)
+  {
+  }
+
+  pub fn ==(rect &lhs, rect &rhs) -> bool = default;
+
+  pub rect() = default;
+  pub rect(rect&) = default;
+  pub fn =(rect mut &, rect &) -> rect mut & = default;
+  pub ~rect() = default;
+}
+
+#[nodiscard]
+pub fn expand(rect &lhs, point &rhs) -> rect
+{
+  var xmin = std::min(lhs.lo[0], rhs.x);
+  var ymin = std::min(lhs.lo[1], rhs.y);
+  var xmax = std::max(lhs.hi[0], rhs.x);
+  var ymax = std::max(lhs.hi[1], rhs.y);
+
+  return rect(point(xmin, ymin), point(xmax, ymax));
+}
+
+#[nodiscard]
+pub fn expand(rect &lhs, rect &rhs) -> rect
+{
+  var xmin = std::min(lhs.lo[0], rhs.lo[0]);
+  var ymin = std::min(lhs.lo[1], rhs.lo[1]);
+  var xmax = std::max(lhs.hi[0], rhs.hi[0]);
+  var ymax = std::max(lhs.hi[1], rhs.hi[1]);
+
+  return rect(point(xmin, ymin), point(xmax, ymax));
+}
+
+#[nodiscard]
+pub fn clamp(rect &lhs, rect &rhs) -> rect
+{
+  var xmin = std::max(lhs.lo[0], rhs.lo[0]);
+  var ymin = std::max(lhs.lo[1], rhs.lo[1]);
+  var xmax = std::min(lhs.hi[0], rhs.hi[0]);
+  var ymax = std::min(lhs.hi[1], rhs.hi[1]);
+
+  return rect(point(xmin, ymin), point(xmax, ymax));
+}
+
+#[nodiscard]
+pub fn clamp(point &pt, rect &rect) -> point
+{
+  return point(std::clamp(pt.x, rect.lo[0], rect.hi[0]), std::clamp(pt.y, rect.lo[1], rect.hi[1]));
+}
+
+pub fn contains(rect &rect, point &pt) -> bool
+{
+  return rect.left <= pt.x && pt.x < rect.right && rect.top <= pt.y && pt.y < rect.bottom;
+}
+
+pub fn contains(rect &rect, rect &other) -> bool
+{
+  return rect.left <= other.left && other.right <= rect.right && rect.top <= other.top && other.bottom <= rect.bottom;
+}
+
+pub fn intersects(rect &rect, rect &other) -> bool
+{
+  return rect.left <= other.right && other.left < rect.right && rect.top <= other.bottom && other.top < rect.bottom;
+}
+
+pub fn intersection(rect &lhs, rect &rhs) -> rect
+{
+  return clamp(lhs, rhs);
+}
+
+pub struct rectset
+{
+  rect extents;
+  std::vector<rect, N:1> rects;
+
+  pub fn empty(this &) -> bool
+  {
+    return this.extents.empty;
+  }
+
+  pub fn extents(this &) -> rect &
+  {
+    return &this.extents;
+  }
+
+  pub fn rects(this &) -> std::vector<rect, N:1> &
+  {
+    return &this.rects;
+  }
+
+  pub fn add(this mut &, rect &rect) -> void
+  {
+    if (rect.empty)
+      return;
+
+    rectset_union(&mut this, rectset(rect));
+  }
+
+  pub fn add(this mut &, rectset &rs) -> void
+  {
+    if (&this == &rs)
+      return;
+
+    rectset_union(&mut this, rs);
+  }
+
+  pub fn subtract(this mut &, rect &rect) -> void
+  {
+    if (rect.empty)
+      return;
+
+    rectset_subtract(&mut this, rectset(rect));
+  }
+
+  pub fn subtract(this mut &, rectset &rs) -> void
+  {
+    if (&this == &rs)
+      return;
+
+    rectset_subtract(&mut this, rs);
+  }
+
+  pub fn clear(this mut &) -> void
+  {
+    this.rects.clear();
+    this.extents = rect();
+  }
+
+  pub rectset(rect &rect)
+    : extents(rect)
+  {
+    rects.push_back(rect);
+  }
+
+  pub fn =(this mut &, rect &rect) -> rectset mut &
+  {
+    this = rectset(rect);
+
+    return &this;
+  }
+
+  pub fn ==(rectset &lhs, rectset &rhs) -> bool = default;
+
+  pub rectset() = default;
+  pub rectset(rectset &&) = default;
+  pub fn =(rectset mut &, rectset &&) -> rectset mut & = default;
+  pub ~rectset() = default;
+}
+
+pub fn contains(rectset &rs, point &pt) -> bool
+{
+  if (!rs.extents.contains(pt))
+    return false;
+
+  if (rs.rects.len == 1)
+    return true;
+
+  for (var &box : rs.rects)
+    if (box.contains(pt))
+      return true;
+
+  return false;
+}
+
+pub fn contains(rectset &rs, rect &rect) -> bool
+{
+  if (!rs.extents.contains(rect))
+    return false;
+
+  if (rs.rects.len == 1)
+    return true;
+
+  var part_in = false;
+  var part_out = false;
+
+  var x = rect.left;
+  var y = rect.top;
+
+  for (var &box : rs.rects)
+  {
+    if (box.bottom <= y)
+      continue;
+
+    if (box.top > y)
+    {
+      part_out = true;
+
+      if (part_in || box.top >= rect.bottom)
+        break;
+
+      y = box.top;
+    }
+
+    if (box.right <= x)
+      continue;
+
+    if (box.left > x)
+    {
+      part_out = true;
+
+      if (part_in)
+        break;
+    }
+
+    if (box.left < rect.right)
+    {
+      part_in = true;
+
+      if (part_out)
+        break;
+
+      x = rect.left;
+    }
+    else
+    {
+      break;
+    }
+  }
+
+  return part_in;
+}
+
+pub fn intersects(rectset &rs, rect &rect) -> bool
+{
+  if (!intersects(rs.extents, rect))
+    return false;
+
+  if (rs.rects.len == 1)
+    return true;
+
+  for (var &box : rs.rects)
+    if (intersects(box, rect))
+      return true;
+
+  return false;
+}
+
+pub fn intersects(rectset &rs, rectset &other) -> bool
+{
+  if (!intersects(rs.extents, other.extents))
+    return false;
+
+  if (rs.rects.len == 1 && other.rects.len == 1)
+    return true;
+
+  for (var &lhs : rs.rects)
+    for (var &rhs: other.rects)
+      if (intersects(lhs, rhs))
+        return true;
+
+  return false;
+}
+
+/*
+ * pixman-region.c
+ *
+ * Copyright 1987, 1988, 1989, 1998  The Open Group
+ *
+ * Permission to use, copy, modify, distribute, and sell this software and its
+ * documentation for any purpose is hereby granted without fee, provided that
+ * the above copyright notice appear in all copies and that both that
+ * copyright notice and this permission notice appear in supporting
+ * documentation.
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * Copyright 1987, 1988, 1989 by
+ * Digital Equipment Corporation, Maynard, Massachusetts.
+ *
+ * Copyright © 1998 Keith Packard
+ */
+
+using overlapfunc = fn (std::vector<rect, N:32> mut &, rect *, rect *, rect *, rect *, i32, i32) -> void;
+
+fn rectset_append_non_o(std::vector<rect, N:32> mut &dst, rect *beg, rect *end, i32 y1, i32 y2) -> void
+{
+  for (var r = beg; r != end; ++r)
+  {
+    dst.push_back(rect(point(r.left, y1), point(r.right, y2)));
+  }
+}
+
+fn rectset_union_o(std::vector<rect, N:32> mut &dst, rect *r1, rect *r1_end, rect *r2, rect *r2_end, i32 y1, i32 y2) -> void
+{
+  var x1 = 0;
+  var x2 = 0;
+
+  fn merge_rect[dst, x1, y1, x2, y2](rect *r) -> void
+  {
+    if (r.left <= x2)
+    {
+      if (x2 < r.right)
+        x2 = r.right;
+    }
+    else
+    {
+      dst.push_back(rect(point(x1, y1), point(x2, y2)));
+
+      x1 = r.left;
+      x2 = r.right;
+    }
+  }
+
+  if (r1.left < r2.left)
+  {
+    x1 = r1.left;
+    x2 = r1.right;
+    ++r1;
+  }
+  else
+  {
+    x1 = r2.left;
+    x2 = r2.right;
+    ++r2;
+  }
+
+  while (r1 != r1_end && r2 != r2_end)
+  {
+    if (r1.left < r2.left)
+    {
+      merge_rect(r1++);
+    }
+    else
+    {
+      merge_rect(r2++);
+    }
+  }
+
+  while (r1 != r1_end)
+  {
+    merge_rect(r1++);
+  }
+
+  while (r2 != r2_end)
+  {
+    merge_rect(r2++);
+  }
+
+  dst.push_back(rect(point(x1, y1), point(x2, y2)));
+}
+
+fn rectset_subtract_o(std::vector<rect, N:32> mut &dst, rect *r1, rect *r1_end, rect *r2, rect *r2_end, i32 y1, i32 y2) -> void
+{
+  var x1 = r1.left;
+
+  while (r1 != r1_end && r2 != r2_end)
+  {
+    if (r2.right <= x1)
+    {
+      ++r2;
+    }
+
+    else if (r2.left <= x1)
+    {
+      x1 = r2.right;
+
+      if (x1 >= r1.right)
+      {
+        ++r1;
+
+        if (r1 != r1_end)
+          x1 = r1.left;
+      }
+      else
+      {
+        ++r2;
+      }
+    }
+
+    else if (r2.left < r1.right)
+    {
+      dst.push_back(rect(point(x1, y1), point(r2.left, y2)));
+
+      x1 = r2.right;
+
+      if (x1 >= r1.right)
+      {
+        ++r1;
+
+        if (r1 != r1_end)
+          x1 = r1.left;
+      }
+      else
+      {
+        ++r2;
+      }
+    }
+
+    else
+    {
+      if (r1.right > x1)
+        dst.push_back(rect(point(x1, y1), point(r1.right, y2)));
+
+      ++r1;
+
+      if (r1 != r1_end)
+        x1 = r1.left;
+    }
+  }
+
+  while (r1 != r1_end)
+  {
+    dst.push_back(rect(point(x1, y1), point(r1.right, y2)));
+
+    ++r1;
+
+    if (r1 != r1_end)
+      x1 = r1.left;
+  }
+}
+
+fn rectset_intersect_o(std::vector<rect, N:32> mut &dst, rect *r1, rect *r1_end, rect *r2, rect *r2_end, i32 y1, i32 y2) -> void
+{
+  while (r1 != r1_end && r2 != r2_end)
+  {
+    var x1 = std::max(r1.left, r2.left);
+    var x2 = std::min(r1.right, r2.right);
+
+    if (x1 < x2)
+    {
+      dst.push_back(rect(point(x1, y1), point(x2, y2)));
+    }
+
+    if (r1.right == x2)
+      ++r1;
+
+    if (r2.right == x2)
+      ++r2;
+  }
+}
+
+fn rectset_coalesce(std::vector<rect, N:32> mut &dst, usize prev_start, usize curr_start) -> usize
+{
+  var prev = dst.data + prev_start;
+  var curr = dst.data + curr_start;
+
+  if (prev.bottom != curr.top)
+    return curr_start;
+
+  var y2 = curr.bottom;
+
+  for (var k = curr_start - prev_start; k != 0; --k)
+  {
+    if (prev.left != curr.left || prev.right != curr.right)
+      return curr_start;
+
+    ++prev;
+    ++curr;
+  }
+
+  for (var k = prev_start; k < curr_start; ++k)
+  {
+    dst[k] = rect(point(dst[k].left, dst[k].top), point(dst[k].right, y2));
+  }
+
+  dst.erase(dst.begin + curr_start, curr_start - prev_start);
+
+  return prev_start;
+}
+
+fn rectset_op(rectset mut &lhs, rectset &rhs, overlapfunc &overlapfunc, bool append_non1, bool append_non2) -> bool
+{
+  var r1 = lhs.rects.begin;
+  var r1_end = lhs.rects.end;
+
+  var r2 = rhs.rects.begin;
+  var r2_end = rhs.rects.end;
+
+  var dst = std::vector<rect, N:32>();
+
+  var ytop = 0;
+  var ybot = std::min(r1.top, r2.top);
+
+  var curr_band = 0;
+  var prev_band = 0;
+
+  for (;;)
+  {
+    var r1_band_end = r1 + 1;
+    while (r1_band_end != r1_end && r1_band_end.y == r1.y)
+      ++r1_band_end;
+
+    var r2_band_end = r2 + 1;
+    while (r2_band_end != r2_end && r2_band_end.y == r2.y)
+      ++r2_band_end;
+
+    if (r1.top < r2.top)
+    {
+      var top = std::max(r1.top, ybot);
+      var bot = std::min(r1.bottom, r2.top);
+
+      if (top != bot && append_non1)
+      {
+        curr_band = dst.len;
+
+        rectset_append_non_o(&mut dst, r1, r1_band_end, top, bot);
+
+        if (curr_band - prev_band == dst.len - curr_band)
+          prev_band = rectset_coalesce(&mut dst, prev_band, curr_band);
+        else
+          prev_band = curr_band;
+      }
+
+      ytop = r2.top;
+    }
+
+    else if (r2.top < r1.top)
+    {
+      var top = std::max(r2.top, ybot);
+      var bot = std::min(r2.bottom, r1.top);
+
+      if (top != bot && append_non2)
+      {
+        curr_band = dst.len;
+
+        rectset_append_non_o(&mut dst, r2, r2_band_end, top, bot);
+
+        if (curr_band - prev_band == dst.len - curr_band)
+          prev_band = rectset_coalesce(&mut dst, prev_band, curr_band);
+        else
+          prev_band = curr_band;
+      }
+
+      ytop = r1.top;
+    }
+
+    else
+    {
+      ytop = r1.top;
+    }
+
+    ybot = std::min(r1.bottom, r2.bottom);
+
+    if (ybot > ytop)
+    {
+      curr_band = dst.len;
+
+      overlapfunc(&mut dst, r1, r1_band_end, r2, r2_band_end, ytop, ybot);
+
+      if (curr_band - prev_band == dst.len - curr_band)
+        prev_band = rectset_coalesce(&mut dst, prev_band, curr_band);
+      else
+        prev_band = curr_band;
+    }
+
+    if (r1.bottom == ybot)
+      r1 = r1_band_end;
+
+    if (r2.bottom == ybot)
+      r2 = r2_band_end;
+
+    if (r1 == r1_end || r2 == r2_end)
+      break;
+  }
+
+  if (r1 != r1_end && append_non1)
+  {
+    var r1_band_end = r1 + 1;
+    while (r1_band_end != r1_end && r1_band_end.y == r1.y)
+      ++r1_band_end;
+
+    curr_band = dst.len;
+
+    rectset_append_non_o(&mut dst, r1, r1_band_end, std::max(r1.top, ybot), r1.bottom);
+
+    if (curr_band - prev_band == dst.len - curr_band)
+      rectset_coalesce(&mut dst, prev_band, curr_band);
+
+    dst.append(r1_band_end, r1_end);
+  }
+
+  if (r2 != r2_end && append_non2)
+  {
+    var r2_band_end = r2 + 1;
+    while (r2_band_end != r2_end && r2_band_end.y == r2.y)
+      ++r2_band_end;
+
+    curr_band = dst.len;
+
+    rectset_append_non_o(&mut dst, r2, r2_band_end, std::max(r2.top, ybot), r2.bottom);
+
+    if (curr_band - prev_band == dst.len - curr_band)
+      rectset_coalesce(&mut dst, prev_band, curr_band);
+
+    dst.append(r2_band_end, r2_end);
+  }
+
+  lhs.rects = dst;
+
+  return true;
+}
+
+fn rectset_bounds(rectset &rs) -> rect
+{
+  if (rs.rects.empty)
+    return rect();
+
+  var xmin = rs.rects.front.left;
+  var ymin = rs.rects.front.top;
+  var xmax = rs.rects.back.right;
+  var ymax = rs.rects.back.bottom;
+
+  for (var &box : rs.rects)
+  {
+    if (box.left < xmin)
+      xmin = box.left;
+
+    if (box.right > xmax)
+      xmax = box.right;
+  }
+
+  return rect(point(xmin, ymin), point(xmax, ymax));
+}
+
+fn rectset_union(rectset mut &lhs, rectset &rhs) -> void
+{
+  if (rhs == lhs)
+    return;
+
+  if (rhs.empty)
+    return;
+
+  if (lhs.rects.len == 1 && lhs.extents.contains(rhs.extents))
+    return;
+
+  if (lhs.empty)
+  {
+    lhs = rhs;
+
+    return;
+  }
+
+  if (rhs.rects.len == 1 && rhs.extents.contains(lhs.extents))
+  {
+    lhs = rhs;
+
+    return;
+  }
+
+  rectset_op(&mut lhs, rhs, cast<overlapfunc>(rectset_union_o), true, true);
+
+  lhs.extents = expand(lhs.extents, rhs.extents);
+}
+
+fn rectset_subtract(rectset mut &lhs, rectset &rhs) -> void
+{
+  if (rhs.empty)
+    return;
+
+  if (lhs.empty)
+    return;
+
+  if (!intersects(lhs.extents, rhs.extents))
+    return;
+
+  if (rhs == lhs)
+  {
+    lhs.clear();
+
+    return;
+  }
+
+  rectset_op(&mut lhs, rhs, cast<overlapfunc>(rectset_subtract_o), true, false);
+
+  lhs.extents = rectset_bounds(lhs);
+}
+
+pub fn intersection(rectset &lhs, rect &rhs) -> rectset
+{
+  return intersection(lhs, rectset(rhs));
+}
+
+pub fn intersection(rectset &lhs, rectset &rhs) -> rectset
+{
+  if (rhs.empty)
+    return rectset();
+
+  if (lhs.empty)
+    return rectset();
+
+  if (!intersects(lhs.extents, rhs.extents))
+    return rectset();
+
+  if (rhs == lhs)
+    return lhs;
+
+  if (lhs.rects.len == 1 && rhs.rects.len == 1)
+    return intersection(lhs.extents, rhs.extents);
+
+  if (lhs.rects.len == 1 && lhs.extents.contains(rhs.extents))
+    return rhs;
+
+  if (rhs.rects.len == 1 && rhs.extents.contains(lhs.extents))
+    return lhs;
+
+  var result = lhs;
+
+  rectset_op(&mut result, rhs, cast<overlapfunc>(rectset_intersect_o), false, false);
+
+  result.extents = rectset_bounds(result);
+
+  return result;
+}

@@ -312,7 +312,7 @@ pub fn initialise() -> void
 {
   blkman.ioqueue.last = &blkman.ioqueue.head;
 
-  blkman.kblockd = thread::create(process::current, &cast<fn(void mut *)>(kblockd), null);
+  blkman.kblockd = thread::create(process::current, &cast<fn (void mut *) -> void>(kblockd), null);
 
   scheduler::enqueue(blkman.kblockd);
 

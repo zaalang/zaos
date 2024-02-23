@@ -24,7 +24,7 @@ struct inode : pub vfs::node
   rootfs mut &fs;
   vfs::node_ptr parent;
 
-  inode(rootfs mut &fs, vfs::node::type type, vfs::node_operations *ops, vfs::node_ptr &&parent, u32 uid, u32 gid, u32 mode)
+  inode(rootfs mut &fs, vfs::node::type type, vfs::node_operations &ops, vfs::node_ptr &&parent, u32 uid, u32 gid, u32 mode)
     : super(type, ops), fs(&fs), parent(&&parent), uid(uid), gid(gid), mode(mode)
   {
     this.btime = chrono::system_clock::now.time_since_epoch.count;
@@ -48,7 +48,7 @@ struct directory : pub inode
   }
 
   directory(rootfs mut &fs, vfs::node_ptr &&parent, u32 uid, u32 gid, u32 mode)
-    : super(&mut fs, vfs::node::type::directory, &vfs::node_directory_operations(), &&parent, uid, gid, mode)
+    : super(&mut fs, vfs::node::type::directory, vfs::node_directory_operations(), &&parent, uid, gid, mode)
   {
   }
 
@@ -70,7 +70,7 @@ struct symlink : pub inode
   }
 
   symlink(rootfs mut &fs, vfs::node_ptr &&parent, std::string_view target, u32 uid, u32 gid, u32 mode)
-    : super(&mut fs, vfs::node::type::symlink, &vfs::node_symlink_operations(), &&parent, uid, gid, mode),
+    : super(&mut fs, vfs::node::type::symlink, vfs::node_symlink_operations(), &&parent, uid, gid, mode),
       target(target)
   {
   }
@@ -78,13 +78,13 @@ struct symlink : pub inode
   ~symlink() = default;
 }
 
-struct rootfs : pub vfs::file_system
+pub struct rootfs : pub vfs::file_system
 {
   shared_mutex lock;
   vfs::node_ptr root;
 
   rootfs()
-    : super(vfs::file_system_operations())
+    : super(&impl this)
   {
     root = directory::create(&mut this, vfs::node_ptr(), u32(0), u32(0), u32(0o40755));
   }
@@ -94,13 +94,11 @@ struct rootfs : pub vfs::file_system
 
 pub fn create(vfs::file_system_context &ctx = vfs::file_system_context()) -> rootfs mut *
 {
-  return std::allocator::new<rootfs>();
+  return new<rootfs>(std::allocator().allocate(sizeof<rootfs>, alignof<rootfs>))();
 }
 
-pub fn mount(vfs::file_system mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
+pub fn mount(rootfs mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
 {
-  var fs = cast<rootfs mut *>(fs);
-
   dentry = fs.root;
 
   return ok;

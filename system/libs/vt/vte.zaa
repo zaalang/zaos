@@ -85,6 +85,8 @@ pub struct attrs
   pub u32 foreground_color;
   pub u32 background_color;
 
+  pub fn ==(attrs &, attrs &) -> bool = default;
+
   pub attrs() = default;
   pub attrs(attrs&) = default;
   pub fn =(attrs mut &, attrs &) -> attrs mut & = default;
@@ -298,7 +300,7 @@ fn reset(vt::screen mut &screen, vte mut &vte) -> void
 
   screen.move_to(0, 0);
   screen.erase_screen();
-  screen.set_cursor_state(true);
+  screen.set_cursor_visible(true);
   vte.attrs.foreground_color = vte.palette[cast(color::foreground)];
   vte.attrs.background_color = vte.palette[cast(color::background)];
 }
@@ -426,7 +428,7 @@ fn csi_mode(vt::screen mut &screen, vte mut &vte, bool active) -> void
           vte.mode = (vte.mode & ~mode::nowrap) | (cast(!active) * mode::nowrap);
 
         case 25: // cursor state
-          screen.set_cursor_state(active);
+          screen.set_cursor_visible(active);
 
         else:
           log("unknown csi dec mode: ", vte.argv[i]);

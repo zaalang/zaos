@@ -631,6 +631,7 @@ fn codegen_bits(context &&ctx, zidl::bits &bits) throws -> void
   std::fprintf(ctx.fout, "    pub const fn ~({} lhs) -> {} {{ return cast(~cast<u32>(lhs)); }}\n", bits.name, bits.name);
   std::fprintf(ctx.fout, "    pub const fn &({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) & cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
   std::fprintf(ctx.fout, "    pub const fn |({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) | cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+  std::fprintf(ctx.fout, "    pub const fn ^({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) ^ cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
 
   std::fprintf(ctx.fout, "  }}\n");
   std::fprintf(ctx.fout, "\n");

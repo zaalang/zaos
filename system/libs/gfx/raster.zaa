@@ -339,7 +339,7 @@ pub fn quad_to(raster_t &&ctx, float x1, float y1, float x2, float y2) -> void
   var ddx = dx * 2.0 * du*du;
   var ddy = dy * 2.0 * du*du;
 
-  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  for (var i = 0; i < cast<int>(n) - 1; ++i)
   {
     x += dxdu;
     y += dydu;
@@ -377,7 +377,7 @@ pub fn cubic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float x3
   var dddx = dx2 * 6.0 * du*du*du;
   var dddy = dy2 * 6.0 * du*du*du;
 
-  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  for (var i = 0; i < cast<int>(n) - 1; ++i)
   {
     x += dxdu;
     y += dydu;

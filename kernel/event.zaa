@@ -33,7 +33,7 @@ pub fn create_event(process mut *process) -> vfs::node_ptr
 {
   var event = event::create();
 
-  return vfs::node::new(event, vfs::node::type::event, &vfs::node_stream_operations());
+  return vfs::node::new(event, vfs::node::type::event, vfs::node_stream_operations());
 }
 
 pub fn setup_event(vfs::node_ptr &event, u64 value, u64 maxvalue) -> vfs::result

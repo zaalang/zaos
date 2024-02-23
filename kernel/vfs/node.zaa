@@ -45,15 +45,15 @@ pub struct node
       destroy(&this);
   }
 
-  pub node(type type, node_operations *ops)
-    : type(type), ops(ops)
+  pub node(type type, node_operations &ops)
+    : type(type), ops(&ops)
   {
   }
 
-  pub fn new(node mut *this, type type, node_operations *ops) -> vfs::node_ptr
+  pub fn new(node mut *this, type type, node_operations &ops) -> vfs::node_ptr
   {
     this.type = type;
-    this.ops = ops;
+    this.ops = &ops;
 
     return vfs::node_ptr(this);
   }

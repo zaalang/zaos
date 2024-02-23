@@ -35,6 +35,11 @@ pub struct rect
     return this.hi[1] - this.lo[1];
   }
 
+  pub fn empty(this &) -> bool
+  {
+    return this.lo[0] >= this.hi[0] || this.lo[1] >= this.hi[1];
+  }
+
   pub fn origin(this &) -> gfx::point
   {
     return gfx::point(this.lo[0], this.lo[1]);
@@ -115,11 +120,6 @@ pub struct rect
     return gfx::point(this.hi[0], this.hi[1]);
   }
 
-  pub fn empty(this &) -> bool
-  {
-    return this.lo[0] >= this.hi[0] || this.lo[1] >= this.hi[1];
-  }
-
   pub rect(float x, float y, float width, float height)
     : lo([x, y]), hi([x + width, y + height])
   {
@@ -159,6 +159,8 @@ pub struct rect
   {
     return this.hi[i];
   }
+
+  pub fn ==(rect &lhs, rect &rhs) -> bool = default;
 
   pub rect() = default;
   pub rect(rect &) = default;

@@ -34,5 +34,5 @@ pub vtable file_system_type
 
 pub vtable file_system_operations
 {
-  pub fn mount(file_system mut *fs, vfs::node_ptr mut &dentry) -> vfs::result;
+  pub fn mount(this mut *fs, vfs::node_ptr mut &dentry) -> vfs::result;
 }

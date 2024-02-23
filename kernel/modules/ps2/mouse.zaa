@@ -16,80 +16,74 @@ import support.rc : Rc;
 pub struct mouse : pub chr::chrdev
 {
   pub mouse(ps2::port mut &port)
-    : super(chr::device_operations()),
+    : super(&impl this),
       port(&port)
   {
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result
+  {
+    switch (query)
+    {
+      case device_name:
+        result = "input/mouse/ps2/0";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  {
+    readable = this.port.readable.cb;
+
+    return ok;
+  }
+
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    var count = 0;
+
+    while (count + sizeof<input::event> <= length)
+    {
+      var event = input::event(void);
+
+      if (!this.port.pop(&mut event))
+        break;
+
+      if (var result = vm::memcpy(buffer, offset, &event, sizeof(event)); !result)
+        return cast(result);
+
+      count += sizeof(event);
+      offset += sizeof(event);
+    }
+
+    if (count == 0)
+      return would_block;
+
+    return cast(count);
+  }
+
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  {
+    return not_supported;
   }
 
   pub ~mouse() = default;
 
   ps2::port mut &port;
-}
-
-pub fn query(chr::chrdev &dev, chr::query query, std::string mut &result) -> chr::result
-{
-  var &this = cast<mouse&>(dev);
-
-  switch (query)
-  {
-    case device_name:
-      result = "input/mouse/ps2/0";
-  }
-
-  return ok;
-}
-
-pub fn open(chr::chrdev mut &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
-{
-  return ok;
-}
-
-pub fn ioctl(chr::chrdev mut &dev, u32 op, vm::iovec &buffer) -> chr::result
-{
-  return not_supported;
-}
-
-pub fn poll(chr::chrdev mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
-{
-  var mut &this = cast<mouse mut &>(dev);
-
-  readable = this.port.readable.cb;
-
-  return ok;
-}
-
-pub fn read(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  var mut &this = cast<mouse mut &>(dev);
-
-  var count = 0;
-
-  while (count + sizeof<input::event> <= length)
-  {
-    var event = input::event(void);
-
-    if (!this.port.pop(&mut event))
-      break;
-
-    if (var result = vm::memcpy(buffer, offset, &event, sizeof(event)); !result)
-      return cast(result);
-
-    count += sizeof(event);
-    offset += sizeof(event);
-  }
-
-  if (count == 0)
-    return would_block;
-
-  return cast(count);
-}
-
-pub fn write(chr::chrdev mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
-{
-  return not_supported;
-}
-
-pub fn mmap(chr::chrdev mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
-{
-  return not_supported;
 }

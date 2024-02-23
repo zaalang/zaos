@@ -1,0 +1,225 @@
+//
+// ls
+//
+
+import std.stdio;
+import std.env;
+import std.algorithm;
+import os.zaos.fcntl : O_RDONLY, O_DIRECTORY, O_NOFOLLOW;
+import chrono : duration;
+import termios;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn main() -> i32
+{
+  var long_mode = false;
+  var human_readable = false;
+  var show_hidden = false;
+
+  var rows = 24;
+  var cols = 80;
+  if (var rc = termios::get_winsize(&mut cols, &mut rows); rc < 0)
+    std::printf("ls: unable to get winsize {}\n", std::errc(cast(-rc)));
+
+  var paths = std::vector<std::string>();
+
+  for (var arg : std::env::args.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+    {
+      for (var ch : arg.chars)
+      {
+        if (ch == 'l')
+          long_mode = true;
+
+        if (ch == 'h')
+          human_readable = true;
+
+        if (ch == 'a')
+          show_hidden = true;
+      }
+
+      continue;
+    }
+
+    paths.push_back(arg);
+  }
+
+  if (paths.empty)
+    paths.push_back(".");
+
+  std::sort(&mut paths);
+
+  for (var &path : paths)
+  {
+    var dir = os::open(&mut thread_ring, os::string(path.data, path.len), O_RDONLY | O_DIRECTORY, 0);
+
+    if (dir < 0)
+    {
+      std::printf("ls: unable to open {} - {}\n", path, std::errc(cast(-dir)));
+
+      continue;
+    }
+
+    if (paths.len != 1)
+    {
+      if (&path != &paths.front)
+        std::printf("\n");
+
+      std::printf("{}:\n", path);
+    }
+
+    var files = std::vector<std::string>();
+
+    var buffer = [u8(0); 4096];
+
+    for (;;)
+    {
+      var dirres = os::read(&mut thread_ring, dir, buffer.data, buffer.len);
+
+      if (dirres <= 0)
+      {
+        if (dirres < 0)
+          std::printf("ls: error reading directory - {}\n", std::errc(cast(-dirres)));
+
+        break;
+      }
+
+      for (var pos = 0; pos < cast(dirres); )
+      {
+        var entry = cast<os::dirent*>(buffer.data + cast(pos));
+
+        if (!entry.name.starts_with(".") || show_hidden)
+        {
+          files.push_back(entry.name);
+        }
+
+        pos += entry.rec_len;
+      }
+    }
+
+    if (long_mode)
+    {
+      for (var &file : files)
+      {
+        var fd = os::open(&mut thread_ring, dir, os::string(file.data, file.len), O_NOFOLLOW, 0);
+
+        if (fd < 0)
+          std::printf("ls: error opening file {} - {}\n", file, std::errc(cast(-fd)));
+
+        if (fd < 0)
+          continue;
+
+        var stat = os::stat();
+        var statres = os::stat(&mut thread_ring, fd, &stat, 0x7f);
+
+        if (statres < 0)
+          std::printf("ls: error stating file {} - {}\n", file, std::errc(cast(-statres)));
+
+        var attrs = std::string("----------");
+
+        switch (stat.ftype)
+        {
+          case block_device:
+            attrs[0] = cast('b');
+
+          case character_device:
+            attrs[0] = cast('c');
+
+          case directory:
+            attrs[0] = cast('d');
+
+          case symbolic_link:
+            attrs[0] = cast('l');
+        }
+
+        if (stat.mode & 0o400 != 0)
+          attrs[1] = cast('r');
+
+        if (stat.mode & 0o200 != 0)
+          attrs[2] = cast('w');
+
+        if (stat.mode & 0o100 != 0)
+          attrs[3] = cast('x');
+
+        if (stat.mode & 0o040 != 0)
+          attrs[4] = cast('r');
+
+        if (stat.mode & 0o020 != 0)
+          attrs[5] = cast('w');
+
+        if (stat.mode & 0o010 != 0)
+          attrs[6] = cast('x');
+
+        if (stat.mode & 0o004 != 0)
+          attrs[7] = cast('r');
+
+        if (stat.mode & 0o002 != 0)
+          attrs[8] = cast('w');
+
+        if (stat.mode & 0o001 != 0)
+          attrs[9] = cast('x');
+
+        var date = std::string();
+        var mtime = chrono::system_time(stat.mtime.nanoseconds);
+
+        if (mtime < chrono::system_clock::now - 1.years)
+          date = chrono::format("%b %e  %Y", mtime);
+        else
+          date = chrono::format("%b %e %H:%M", mtime);
+
+        std::printf("{} {:>5d} {:>5d} {:>10} {:6} {}", attrs, stat.uid, stat.gid, stat.size, date, file);
+
+        if (stat.ftype == os::ftype::symbolic_link)
+        {
+          var linkres = os::read(&mut thread_ring, fd, buffer.data, buffer.len);
+
+          if (linkres < 0)
+            std::printf("ls: error on readlink {} - {}\n", file, std::errc(cast(-linkres)));
+
+          if (linkres > 0)
+            std::printf(" -> {}", std::string_view(buffer.data, cast<usize>(linkres)));
+        }
+
+        std::printf("\n");
+
+        os::close(&mut thread_ring, fd);
+      }
+    }
+    else
+    {
+      var x = 0;
+      var maxwidth = 0;
+
+      for (var &file : files)
+        if (var len = file.chars.len; maxwidth < len)
+          maxwidth = len;
+
+      for (var &file : files)
+      {
+        std::printf("{:*s}", maxwidth, file);
+
+        if (x + maxwidth + 2 < cast(cols))
+          std::printf("  ");
+
+        x += maxwidth + 2;
+
+        if (x + maxwidth >= cast(cols))
+        {
+          std::printf("\n");
+          x = 0;
+        }
+      }
+
+      if (x != 0)
+      {
+        std::printf("\n");
+      }
+    }
+
+    os::close(&mut thread_ring, dir);
+  }
+
+  return 0;
+}

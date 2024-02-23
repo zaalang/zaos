@@ -163,7 +163,7 @@ pub struct controller
     return "ps2";
   }
 
-  ~controller() = default;
+  pub ~controller() = default;
 
   port mut *[2] ports;
 }

@@ -1,0 +1,80 @@
+//
+// gui application
+//
+
+import std.stdlib;
+import app.loop;
+import gui.fonts;
+import gui.display as display;
+
+pub struct application
+{
+  pub app::loop loop;
+  pub display::connection connection;
+
+  fn instance() -> application mut * mut &
+  {
+    static instance = null<application mut *>();
+
+    return &instance;
+  }
+
+  pub fn create() throws -> application
+  {
+    var app = application();
+
+    if (var rc = initialise(&mut app); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    return app;
+  }
+
+  pub fn quit(application mut &app) -> void
+  {
+    app.loop.quit();
+  }
+
+  pub application() = default;
+  pub ~application() = default;
+}
+
+pub fn app() -> application mut &
+{
+  return &*application::instance;
+}
+
+pub fn conn() -> display::connection mut *
+{
+  return &application::instance.connection;
+}
+
+pub fn initialise(application mut &app) -> i32
+{
+  std::assert(!application::instance);
+
+  if (var rc = app::initialise(&mut app.loop); rc < 0)
+    return rc;
+
+  if (var rc = display::initialise(&mut app.connection); rc < 0)
+    return rc;
+
+  gui::fonts::initialise(64*1024*1024);
+
+  try
+  {
+    gui::fonts::populate("/zaos/data/system.fontmap");
+  }
+  catch(std::error e)
+  {
+    std::print("font initialisation error - ", e);
+  }
+
+  application::instance = &app;
+
+  return 0;
+}
+
+pub fn run(application mut &app) -> i32
+{
+  return app.loop.run();
+}

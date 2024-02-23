@@ -58,8 +58,6 @@ struct surface
   scene::node *node;
 
   u32 configure_serial;
-  scene::window::state configure_state;
-
   scene::window::state pending_state;
   scene::window::state incomming_state;
   winton::tether resize_tether;
@@ -155,6 +153,15 @@ struct keyboard
 
   u32 focus_serial;
 
+  u8 shift_state;
+  u8 control_state;
+  u8 alt_state;
+  u8 super_state;
+  u8 hyper_state;
+  u8 meta_state;
+
+  winton::modifiers modifiers;
+
   keyboard() = default;
   ~keyboard() = default;
 }
@@ -191,6 +198,8 @@ pub struct compositor
 
   app::loop::timeout_t redraw_handler;
 
+  vec2 placement = vec2(100.0, 100.0);
+
   pub ~compositor() = default;
 }
 
@@ -214,7 +223,7 @@ pub fn initialise(compositor mut &compositor) -> i32
   os::clock_time(os::clock::monotonic, &now);
 
   compositor.redraw_handler.deadline = now;
-  compositor.redraw_handler.callback = &cast<fn(app::loop mut &, app::loop::timeout_t mut *)>(redraw_handler);
+  compositor.redraw_handler.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(redraw_handler);
 
   compositor.seat.on_event = |event| input_handler(&compositor, event);
 
@@ -230,7 +239,7 @@ pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel c
   client.compositor = &compositor;
 
   client.channel = &move channel;
-  client.handler.callback = &cast<fn(app::loop mut &, app::loop::wait_t mut *)>(client_handler);
+  client.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
 
   app::loop::current.begin_wait(client.channel, &client.handler);
 }
@@ -348,6 +357,15 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
       case unset_fullscreen[msg]:
         result = unset_fullscreen(client, msg.surface_id);
 
+      case set_input_region[msg]:
+        result = set_input_region(client, msg.surface_id, msg.x, msg.y, msg.width, msg.height);
+
+      case set_minimum_size[msg]:
+        result = set_minimum_size(client, msg.surface_id, msg.width, msg.height);
+
+      case set_maximum_size[msg]:
+        result = set_maximum_size(client, msg.surface_id, msg.width, msg.height);
+
       case move[msg]:
         result = move(client, msg.serial, msg.surface_id);
 
@@ -370,7 +388,7 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   {
     std::print("winton compositor: client error - ", cast<zidl::errc>(-cast<i32>(result)));
 
-    disconnect_client(client.compositor, client);
+    close(client.compositor, client);
   }
 }
 
@@ -476,7 +494,7 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
 
       if (surface.active)
       {
-        release(client, &*surface.active.unwrap);
+        release(client, &*surface, &*surface.active.unwrap);
 
         surface.active.clear();
       }
@@ -616,6 +634,8 @@ fn create_window(client mut *client, u32 surface_id) -> result
 
       surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::normal);
 
+      surface.pending_state.input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
+
     else:
       return winton::errc::invalid_surface;
   }
@@ -637,9 +657,8 @@ fn configure(client mut *client, surface mut *surface) -> result
   {
     case window[window]:
       surface.configure_serial = serial;
-      surface.configure_state = surface.incomming_state;
 
-      zidl::send<winton::compositor::configure_window_response>(client.channel, surface.id, surface.configure_state.width, surface.configure_state.height, surface.configure_state.flags);
+      zidl::send<winton::compositor::configure_window_response>(client.channel, surface.id, surface.incomming_state.width, surface.incomming_state.height, surface.incomming_state.flags);
   }
 
   zidl::send<winton::compositor::configure_response>(client.channel, serial, surface.id);
@@ -656,14 +675,24 @@ fn acknowledge(client mut *client, u32 serial) -> result
     if (surface.configure_serial != serial)
       continue;
 
-    surface.pending_state.flags = surface.configure_state.flags;
+    surface.pending_state.flags = surface.incomming_state.flags;
 
     if (surface.state & surface::state::mapped != surface::state::mapped)
     {
       switch (*surface.node)
       {
         case window[window]:
-          compositor.scene.set(window, transform::translation(100.0, 100.0, 0.0));
+
+          if (cast(compositor.placement.x) + window.state.width > compositor.display.width)
+            compositor.placement.x = 20.0;
+
+          if (cast(compositor.placement.y) + window.state.height > compositor.display.height)
+            compositor.placement.y = 50.0;
+
+          compositor.scene.set(window, transform::translation(compositor.placement.x, compositor.placement.x, 0.0));
+
+          compositor.placement.x += 20.0;
+          compositor.placement.y += 20.0;
       }
 
       keyboard_activate(compositor, surface.node);
@@ -675,11 +704,11 @@ fn acknowledge(client mut *client, u32 serial) -> result
   return 0;
 }
 
-fn release(client mut *client, buffer mut *buffer) -> result
+fn release(client mut *client, surface mut *surface, buffer mut *buffer) -> result
 {
   if (buffer.id != 0)
   {
-    zidl::send<winton::compositor::buffer_release_response>(client.channel, buffer.id);
+    zidl::send<winton::compositor::surface_release_response>(client.channel, surface.id, buffer.id);
   }
 
   return 0;
@@ -759,6 +788,13 @@ fn keyboard_leave(client mut *client, surface mut *surface) -> result
   surface.incomming_state.flags &= ~winton::state::activated;
 
   configure(client, surface);
+
+  return 0;
+}
+
+fn keyboard_modifiers(client mut *client, surface mut *surface, u64 time, winton::modifiers modifiers) -> result
+{
+  zidl::send<winton::compositor::keyboard_modifiers_response>(client.channel, surface.id, time, modifiers);
 
   return 0;
 }
@@ -986,6 +1022,69 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
     else:
       return winton::errc::invalid_surface;
   }
+
+  return 0;
+}
+
+fn set_input_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.pending_state.input_region = bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height)));
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_minimum_size(client mut *client, u32 surface_id, i32 width, i32 height) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.pending_state.min_width = width;
+      surface.pending_state.min_height = height;
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_maximum_size(client mut *client, u32 surface_id, i32 width, i32 height) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.pending_state.max_width = width;
+      surface.pending_state.max_height = height;
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
   return 0;
 }
 
@@ -1079,6 +1178,16 @@ fn destroy(surface mut *surface) -> void
 
     compositor.scene.erase(surface.node);
 
+    if (compositor.keyboard.focus == surface.node)
+    {
+      compositor.keyboard.focus = null;
+
+      if (var topmost = compositor.scene.topmost)
+      {
+        keyboard_activate(compositor, topmost);
+      }
+    }
+
     if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
       schedule_redraw(compositor, surface);
 
@@ -1108,7 +1217,7 @@ fn destroy(client mut *client) -> void
   app::loop::current.cancel_wait(&client.handler);
 }
 
-fn disconnect_client(compositor mut *compositor, client mut *client) -> void
+fn close(compositor mut *compositor, client mut *client) -> void
 {
   compositor.clients.erase_if(|k| &*k == client);
 }
@@ -1198,9 +1307,6 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
         var surface = cast<surface mut *>(pointer.focus.surface);
 
         pointer_leave(surface.client, surface);
-
-        if (pointer.surface)
-          destroy(pointer.surface);
       }
 
       pointer.focus = node;
@@ -1208,6 +1314,8 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
       if (pointer.focus)
       {
         var surface = cast<surface mut *>(pointer.focus.surface);
+
+        keyboard_modifiers(surface.client, surface, time, compositor.keyboard.modifiers);
 
         pointer_enter(surface.client, surface, xy);
       }
@@ -1350,6 +1458,72 @@ fn keyboard_key(compositor mut *compositor, u64 time, u32 key, u32 state, char s
 {
   var mut &keyboard = compositor.keyboard;
 
+  var modifiers = keyboard.modifiers;
+
+  switch (key)
+  {
+    case input::Key::LeftShift:
+    case input::Key::RightShift:
+
+      if (state == 0 && keyboard.shift_state != 0 && (keyboard.shift_state -= 1) == 0)
+        modifiers &= ~winton::modifiers::shift;
+
+      if (state == 1 && (keyboard.shift_state += 1) == 1)
+        modifiers |= winton::modifiers::shift;
+
+    case input::Key::LeftControl:
+    case input::Key::RightControl:
+
+      if (state == 0 && keyboard.control_state != 0 && (keyboard.control_state -= 1) == 0)
+        modifiers &= ~winton::modifiers::control;
+
+      if (state == 1 && (keyboard.control_state += 1) == 1)
+        modifiers |= winton::modifiers::control;
+
+    case input::Key::LeftAlt:
+    case input::Key::RightAlt:
+
+      if (state == 0 && keyboard.alt_state != 0 && (keyboard.alt_state -= 1) == 0)
+        modifiers &= ~winton::modifiers::alt;
+
+      if (state == 1 && (keyboard.alt_state += 1) == 1)
+        modifiers |= winton::modifiers::alt;
+
+    case input::Key::CapsLock:
+
+      if (state == 1)
+        modifiers ^= winton::modifiers::capslock;
+
+    case input::Key::NumLock:
+
+      if (state == 1)
+        modifiers ^= winton::modifiers::numlock;
+
+    case input::Key::ScrollLock:
+
+      if (state == 1)
+        modifiers ^= winton::modifiers::scrolllock;
+  }
+
+  if (modifiers != keyboard.modifiers)
+  {
+    if (keyboard.focus)
+    {
+      var surface = cast<surface mut *>(keyboard.focus.surface);
+
+      keyboard_modifiers(surface.client, surface, time, modifiers);
+    }
+
+    if (compositor.pointer.focus && compositor.pointer.focus != keyboard.focus)
+    {
+      var surface = cast<surface mut *>(compositor.pointer.focus.surface);
+
+      keyboard_modifiers(surface.client, surface, time, modifiers);
+    }
+
+    keyboard.modifiers = modifiers;
+  }
+
   if (keyboard.focus)
   {
     var surface = cast<surface mut *>(keyboard.focus.surface);
@@ -1423,6 +1597,8 @@ pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> r
         surface.incomming_state.width = compositor.display.width;
         surface.incomming_state.height = compositor.display.height;
         surface.incomming_state.flags |= winton::state::fullscreen;
+
+        surface.pending_state.input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
       }
     }
   }

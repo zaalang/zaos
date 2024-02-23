@@ -1,0 +1,32 @@
+//
+// gui cursor
+//
+
+pub union cursor
+{
+  pub none,
+  pub arrow,
+  pub resize_top,
+  pub resize_left,
+  pub resize_bottom,
+  pub resize_right,
+  pub resize_top_left,
+  pub resize_top_right,
+  pub resize_bottom_left,
+  pub resize_bottom_right,
+
+  pub fn ==(cursor &lhs, cursor &rhs) -> bool
+  {
+    if (lhs.kind == rhs.kind)
+    {
+      return true;
+    }
+
+    return false;
+  }
+
+  pub cursor() = default;
+  pub cursor(cursor&&) = default;
+  pub fn =(cursor mut &, cursor &) -> cursor mut & = default;
+  pub ~cursor() = default;
+}

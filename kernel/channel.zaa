@@ -96,7 +96,7 @@ pub struct channel
     if (this.node0.buffer.len == 0)
       io::initiate(&mut this.node0.readable.cb, 1);
 
-    return vfs::node::new(&this.node0, vfs::node::type::channel, &vfs::node_stream_operations());
+    return vfs::node::new(&this.node0, vfs::node::type::channel, vfs::node_stream_operations());
   }
 
   pub fn open_node1(this mut &) -> vfs::node_ptr
@@ -122,7 +122,7 @@ pub struct channel
     if (this.node1.buffer.len == 0)
       io::initiate(&mut this.node1.readable.cb, 1);
 
-    return vfs::node::new(&this.node1, vfs::node::type::channel, &vfs::node_stream_operations());
+    return vfs::node::new(&this.node1, vfs::node::type::channel, vfs::node_stream_operations());
   }
 
   pub fn ref(this mut &) -> void
@@ -345,6 +345,8 @@ pub fn query_transaction(vfs::node_ptr &node, i32 sid, std::vector<u8> mut &byte
 
       bytes = &move tx.msg.bytes;
       fds = &move tx.msg.fds;
+
+      std::launder(tx);
 
     else:
       return vfs::result::broken_pipe;

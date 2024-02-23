@@ -214,7 +214,7 @@ fn quad_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
   var ddx = dx * 2.0 * du*du;
   var ddy = dy * 2.0 * du*du;
 
-  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  for (var i = 0; i < cast<int>(n) - 1; ++i)
   {
     x += dxdu;
     y += dydu;
@@ -252,7 +252,7 @@ fn cubic_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> vo
   var dddx = dx2 * 6.0 * du*du*du;
   var dddy = dy2 * 6.0 * du*du*du;
 
-  for(var i = 0; i < cast<int>(n) - 1; ++i)
+  for (var i = 0; i < cast<int>(n) - 1; ++i)
   {
     x += dxdu;
     y += dydu;
@@ -296,8 +296,8 @@ pub struct bitmap
   }
 
   pub bitmap() = default;
-  pub bitmap(bitmap &) = default;
-  pub fn =(bitmap mut &, bitmap &) -> bitmap mut & = default;
+  pub bitmap(bitmap &&) = default;
+  pub fn =(bitmap mut &, bitmap &&) -> bitmap mut & = default;
   pub ~bitmap() = default;
 }
 
@@ -335,6 +335,11 @@ pub struct transform
   {
   }
 
+  pub transform(opentype::f16dot16[6] &mat)
+    : this(mat[0].value, mat[1].value, mat[2].value, mat[3].value, mat[4].value, mat[5].value)
+  {
+  }
+
   pub transform(transform &) = default;
   pub fn =(transform mut &, transform &) -> transform mut & = default;
   pub ~transform() = default;
@@ -356,7 +361,7 @@ pub fn *(transform &lhs, transform &rhs) -> transform
   var m22 = lhs.mat[3] * rhs.mat[1] + lhs.mat[4] * rhs.mat[4];
   var dy  = lhs.mat[3] * rhs.mat[2] + lhs.mat[4] * rhs.mat[5] + lhs.mat[5];
 
-  return [m11, m12, dx, m21, m22, dy];
+  return [ m11, m12, dx, m21, m22, dy ];
 }
 
 pub fn *(transform &tx, (f64, f64) &pt) -> (f64, f64)

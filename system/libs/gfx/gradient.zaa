@@ -149,12 +149,12 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
 
   table[i++] = gfx::premultiply(color.rgba);
 
-  for(; p < next; p += dp)
+  for (; p < next; p += dp)
   {
     table[i++] = gfx::premultiply(color.rgba);
   }
 
-  for(; p < last; )
+  for (; p < last; )
   {
     while (stops[j + 1].position < p)
       ++j;
@@ -165,7 +165,7 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
     var q = dp / (next - p);
     var delta = (next_color - color) * q;
 
-    for(; p < next; p += dp)
+    for (; p < next; p += dp)
     {
       color += delta;
 
@@ -175,7 +175,7 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
     curr = next;
   }
 
-  for(; i < table.len - 1; ++i)
+  for (; i < table.len - 1; ++i)
   {
     table[i] = gfx::premultiply(color.rgba);
   }

@@ -70,7 +70,7 @@ extern fn sys_thread_create(virtaddr stack, virtaddr start_routine, uintptr star
   stack -= sizeof<uintptr>;
   vm::write_process_memory(stack, &start_argument, sizeof(start_argument));
 
-  var thread = thread::create(process, &cast<fn(void mut *)>(thread_main), null);
+  var thread = thread::create(process, &cast<fn (void mut *) -> void>(thread_main), null);
 
   thread.sp = stack;
   thread.ip = start_routine;

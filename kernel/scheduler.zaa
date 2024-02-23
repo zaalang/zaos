@@ -471,11 +471,13 @@ pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
   std::assert(current_thread == cpu::current_thread);
   std::assert(current_thread.wait_abstime == 0);
 
+  var status = std::volatile_load(&current_thread.wait_status);
+
   lock.lock();
 
   runqueue.purge(current_thread);
 
-  return std::volatile_load(&current_thread.wait_status);
+  return status;
 }
 
 #[noinline]

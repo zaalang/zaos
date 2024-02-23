@@ -79,11 +79,8 @@ fn order_for_size(usize size) -> usize
   return std::ceil_log2(std::align_up(size, heap.blocksize) >> heap.blockshift);
 }
 
-pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
+pub fn bootstrap(platform::BootInfo &bootinfo) -> void
 {
-  if (cpu != 0)
-    return;
-
   var mut &heap = heap();
 
   heap.base = virtaddr(bootinfo.heap_base);

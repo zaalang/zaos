@@ -238,7 +238,7 @@ pub fn initialise() -> void
 
   for (var mut &worker : workman.workers)
   {
-    worker.kworkd = thread::create(process::current, &cast<fn(worker mut *)>(kworkd), &worker);
+    worker.kworkd = thread::create(process::current, &cast<fn (worker mut *) -> void>(kworkd), &worker);
   }
 
   platform::disable_interrupts();

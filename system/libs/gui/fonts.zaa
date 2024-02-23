@@ -1,0 +1,327 @@
+//
+// gui fonts
+//
+
+import toml;
+import std.atomic;
+import std.string : String;
+import std.list;
+import std.flat_hash_map;
+import std.range;
+import sys.mutex;
+import lml.fixed;
+import opentype;
+import mmap;
+
+pub struct face
+{
+  pub std::string name;
+
+  pub int slant;
+  pub int stretch;
+  pub int weight;
+
+  fontfile mut *fontfile;
+
+  pub face(String &&name, int stretch, int slant, int weight, fontfile mut *fontfile)
+    : name(&&name), stretch(stretch), slant(slant), weight(weight), fontfile(fontfile)
+  {
+  }
+
+  pub face(face&&) = default;
+  pub ~face() = default;
+}
+
+pub struct family
+{
+  pub std::vector<face> faces;
+
+  pub family()
+  {
+  }
+
+  pub family(family&&) = default;
+  pub ~family() = default;
+}
+
+pub struct fontfile
+{
+  pub union typeface
+  {
+    opentype(opentype::face),
+
+    typeface() = default;
+    fn =(typeface mut &, typeface &&) -> typeface mut & = default;
+    ~typeface() = default;
+  }
+
+  pub struct glyph
+  {
+    pub usize width;
+    pub usize height;
+    pub std::vector<u8> data;
+
+    pub (f64, f64) origin;
+
+    pub fn [](this &, usize i, usize j) -> u8
+    {
+      return this.data[j*this.width + i];
+    }
+
+    pub glyph() = default;
+    pub glyph(glyph &&) = default;
+    pub fn =(glyph mut &, glyph &&) -> glyph mut & = default;
+    pub ~glyph() = default;
+  }
+
+  struct key
+  {
+    u16 glyphid;
+    lml::fixed<i32, -16> m11;
+    lml::fixed<i32, -16> m12;
+    lml::fixed<i32, -16> m21;
+    lml::fixed<i32, -16> m22;
+    lml::fixed<u8, -6> dx;
+    lml::fixed<u8, -6> dy;
+
+    fn ==(key &, key &) -> bool = default;
+
+    key(u16 glyphid, f64 m11, f64 m12, f64 m21, f64 m22, f64 dx, f64 dy)
+      : glyphid(glyphid), m11(m11), m12(m12), m21(m21), m22(m22), dx(dx), dy(dy)
+    {
+    }
+
+    key(key &) = default;
+    ~key() = default;
+  }
+
+  struct entry
+  {
+    key key;
+    std::arc<glyph> glyph;
+    fontfile mut *fontfile;
+
+    entry(fontfile mut *fontfile, key &key, glyph &&glyph)
+      : fontfile(fontfile), key(key), glyph(&&glyph)
+    {
+    }
+
+    entry(entry &&) = default;
+    ~entry() = default;
+  }
+
+  std::string path;
+
+  mmap::file data;
+  pub typeface font;
+
+  std::flat_hash_map<key, std::list<entry>::iterator> glyphs;
+
+  i32 refcnt;
+
+  pub fontfile(String &&path)
+    : path(&&path)
+  {
+  }
+
+  pub fontfile(fontfile&&) = default;
+  pub ~fontfile() = default;
+}
+
+pub struct fonts
+{
+  sys::mutex lock;
+
+  std::flat_hash_map<std::string, family> families;
+
+  usize cache_bytes;
+  usize max_cache_bytes;
+  std::list<fontfile::entry> mut *cache;
+
+  fn instance() -> fonts mut &
+  {
+    static instance = #fonts();
+
+    return &instance;
+  }
+
+  pub fn initialise(usize max_cache_bytes)
+  {
+    instance.cache = std::allocator::new<std::list<fontfile::entry>>();
+    instance.max_cache_bytes = max_cache_bytes;
+  }
+
+  pub fn families()
+  {
+    return &instance.families.as_const;
+  }
+
+  pub fn familiy(String &name)
+  {
+    return instance.families.as_const.get(name);
+  }
+
+  pub fn populate(String &fontmap) throws -> void
+  {
+    instance.populate(std::string_view(fontmap));
+  }
+
+  pub fn load(String &family, float size, int weight, int slant, int stretch) -> fontfile *
+  {
+    return instance.load(std::string_view(family), size, weight, slant, stretch);
+  }
+
+  pub fn ref(fontfile *fontfile) -> void
+  {
+    instance.ref(cast<fontfile mut *>(fontfile));
+  }
+
+  pub fn unref(fontfile *fontfile) -> void
+  {
+    instance.unref(cast<fontfile mut *>(fontfile));
+  }
+
+  pub fn glyph(fontfile *fontfile, u16 id, f64 m11, f64 m12, f64 m21, f64 m22, f64 dx, f64 dy) -> std::arc<const fontfile::glyph>
+  {
+    return instance.glyph(cast<fontfile mut *>(fontfile), id, m11, m12, m21, m22, dx, dy);
+  }
+
+  fonts() = default;
+  fonts(#fonts&) = default;
+  ~fonts() = default;
+}
+
+fn populate(fonts mut &fonts, std::string_view fontmap) throws -> void
+{
+  var toml = toml::load_from_file(fontmap);
+
+  if (toml.error)
+    throw std::system_error(std::errc::format_error);
+
+  var &faces = toml.doc["Font"];
+
+  if (!faces.is_map)
+    throw std::system_error(std::errc::format_error);
+
+  for (var &(k, v) : faces.as_map)
+  {
+    if (!k.is_string || !v.is_map)
+      throw std::system_error(std::errc::format_error);
+
+    var file = std::allocator::new<fontfile>(k.as_string);
+
+    var slant = v["slant"].as<int>;
+    var stretch = v["stretch"].as<int>;
+    var weight = v["weight"].as<int>;
+
+    for (var &(family, style) : std::zip(v["family"].as_array, v["style"].as_array))
+    {
+      var mut &font = fonts.families.emplace(family.as_string);
+
+      font.faces.push_back(style.as_string, stretch, slant, weight, file);
+    }
+  }
+}
+
+fn load(fonts mut &fonts, fontfile mut *fontfile) -> fontfile *
+{
+  var guard = std::lock_guard(&mut fonts.lock);
+
+  if (!fontfile.data)
+  {
+    try
+    {
+      fontfile.data = mmap::file::open(fontfile.path);
+      fontfile.font = fontfile::typeface::opentype(opentype::face::parse(fontfile.data));
+    }
+    catch (std::error e)
+    {
+      std::print("error loading font file ", fontfile.path, " - ", e);
+    }
+  }
+
+  fontfile.refcnt += 1;
+
+  return fontfile;
+}
+
+fn load(fonts mut &fonts, std::string_view family, float size, int weight, int slant, int stretch) -> fontfile *
+{
+  switch (fonts.families.get(family))
+  {
+    case Some[family]:
+
+      for (var mut &face : family.faces)
+      {
+        if (face.stretch == stretch && face.slant == slant && face.weight == weight)
+          return fonts.load(face.fontfile);
+      }
+  }
+
+  // TODO: closest family font
+  // TODO: default font
+  return null;
+}
+
+fn ref(fonts mut &fonts, fontfile mut *fontfile) -> void
+{
+  var guard = std::lock_guard(&mut fonts.lock);
+
+  fontfile.refcnt += 1;
+}
+
+fn unref(fonts mut &fonts, fontfile mut *fontfile) -> void
+{
+  var guard = std::lock_guard(&mut fonts.lock);
+
+  if (--fontfile.refcnt == 0)
+  {
+    fontfile.data = mmap::file();
+    fontfile.font = fontfile::typeface();
+  }
+}
+
+fn glyph(fonts mut &fonts, fontfile mut *fontfile, u16 id, f64 m11, f64 m12, f64 m21, f64 m22, f64 dx, f64 dy) -> std::arc<const fontfile::glyph>
+{
+  var guard = std::lock_guard(&mut fonts.lock);
+
+  var key = fontfile::key(id, m11, m12, m21, m22, dx, dy);
+
+  var mut &index = fontfile.glyphs.emplace(key);
+
+  if (index == std::list<fontfile::entry>::iterator())
+  {
+    var glyph = fontfile::glyph();
+
+    switch (fontfile.font)
+    {
+      case opentype[face]:
+        var bitmap = opentype::bitmap();
+
+        opentype::render(face, opentype::glyphid(key.glyphid), opentype::transform(key.m11.as<f64>, key.m12.as<f64>, key.m21.as<f64>, key.m22.as<f64>, key.dx.as<f64>, key.dy.as<f64>), &mut bitmap);
+
+        glyph.width = bitmap.width;
+        glyph.height = bitmap.height;
+        glyph.origin = bitmap.origin;
+        glyph.data = &move bitmap.data;
+    }
+
+    while (fonts.cache_bytes + glyph.data.len > fonts.max_cache_bytes)
+    {
+      var lru = fonts.cache.take_front;
+
+      lru.fontfile.glyphs.erase(lru.key);
+      fonts.cache_bytes -= lru.glyph.data.len;
+    }
+
+    fonts.cache_bytes += glyph.data.len;
+
+    index = fonts.cache.insert(fonts.cache.end, fontfile, key, &move glyph);
+  }
+  else
+  {
+    fonts.cache.splice(fonts.cache.end, &mut *fonts.cache, index);
+  }
+
+  return fonts.cache[index].glyph;
+}

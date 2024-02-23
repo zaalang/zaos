@@ -10,5 +10,6 @@ HOSTZFLAGS ?= -I$(current_dir)/build/toolchain/std -L$(current_dir)/build/toolch
 TARGETZFLAGS ?= --target=x86_64-pc-zaos-gnu -I$(current_dir)/build/toolchain/std -I$(current_dir)/build/system/generated
 ZIDLC ?= $(current_dir)/build/toolchain/zidlc/zidlc
 OBJCOPY ?= objcopy
+OBJDUMP ?= objdump
 ROOT ?= $(current_dir)
 BUILDROOT ?= $(current_dir)/build

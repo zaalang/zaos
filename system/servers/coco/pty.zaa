@@ -172,24 +172,6 @@ pub fn write_slave(pty mut &pty, u8 *data, usize len) -> i32
   return os::write(&mut thread_ring, pty.slave, data, len);
 }
 
-pub fn get_winsize(pty mut &pty) -> winsize
-{
-  var ws = winsize(void);
-
-  os::ioctl(&mut thread_ring, pty.slave, tio::getwinsize, &ws, sizeof(ws));
-
-  return ws;
-}
-
-pub fn get_termios(pty mut &pty) -> termios
-{
-  var ts = termios(void);
-
-  os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &ts, sizeof(ts));
-
-  return ts;
-}
-
 pub fn resize(pty mut &pty, usize width, usize height) -> i32
 {
   var ws = winsize(void);
@@ -199,7 +181,7 @@ pub fn resize(pty mut &pty, usize width, usize height) -> i32
   ws.ws_xpixel = 0;
   ws.ws_ypixel = 0;
 
-  if (var rc = os::ioctl(&mut thread_ring, pty.master, tio::setwinsize, &ws, sizeof(ws)); rc < 0)
+  if (var rc = os::ioctl(&mut thread_ring, pty.master, tio::setwinsize, &ws, sizeof<winsize>); rc < 0)
     return rc;
 
   return 0;

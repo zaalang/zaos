@@ -23,6 +23,11 @@ pub struct string_view
     return std::string_view(this.data, this.len);
   }
 
+  pub fn ==(this &lhs, String &rhs) -> bool
+  {
+    return std::string_view(lhs.data, lhs.len) == rhs;
+  }
+
   pub string_view() = default;
   pub string_view(string_view &that) = default;
   pub fn =(this mut &, string_view &that) -> string_view mut & = default;

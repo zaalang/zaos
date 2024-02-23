@@ -55,6 +55,13 @@ pub struct f2dot14 : pub i16
   {
   }
 
+  pub fn =(this mut &, i16 v) -> f2dot14 mut &
+  {
+    this.super = v;
+
+    return &this;
+  }
+
   pub fn value(this&) -> f64
   {
     return cast<f64>(this.super) / 16384.0;
@@ -65,11 +72,18 @@ pub struct f2dot14 : pub i16
   pub ~f2dot14() = default;
 }
 
-pub struct fixed : pub u32
+pub struct f16dot16 : pub i32
 {
-  pub fixed(u32 v = 0)
+  pub f16dot16(i32 v = 0)
     : super(v)
   {
+  }
+
+  pub fn =(this mut &, i32 v) -> f16dot16 mut &
+  {
+    this.super = v;
+
+    return &this;
   }
 
   pub fn value(this&) -> f64
@@ -77,9 +91,9 @@ pub struct fixed : pub u32
     return cast<f64>(this.super) / 65536.0;
   }
 
-  pub fixed(fixed &&) = default;
-  pub fn =(fixed mut &, fixed &&) -> fixed mut & = default;
-  pub ~fixed() = default;
+  pub f16dot16(f16dot16 &&) = default;
+  pub fn =(f16dot16 mut &, f16dot16 &&) -> f16dot16 mut & = default;
+  pub ~f16dot16() = default;
 }
 
 pub struct rect
@@ -791,12 +805,6 @@ struct stream
     where __is_same<T, f2dot14>
   {
     return this.read<i16>();
-  }
-
-  fn read<T>(this mut &) throws -> T
-    where __is_same<T, fixed>
-  {
-    return this.read<u32>();
   }
 
   fn read<T>(this mut &) throws -> T
@@ -2078,7 +2086,7 @@ fn parse_head(std::span<u8> &data) throws -> head
 
   var major_version = stream.read<u16>();
   var minor_version = stream.read<u16>();
-  var font_revision = stream.read<fixed>();
+  var font_revision = stream.read<u32>();
   var checksum_adjustment = stream.read<u32>();
   var magic_number = stream.read<u32>();
   var flags = stream.read<u16>();
@@ -2317,7 +2325,7 @@ pub struct component
 {
   u16 flags;
   pub glyphid glyph_id;
-  pub f64[6] transform;
+  pub f16dot16[6] transform;
 
   pub component() = default;
   pub component(component&) = default;
@@ -2331,37 +2339,37 @@ fn read(stream mut &stream, component mut &component) -> void
     component.flags = stream.read<u16>();
     component.glyph_id = stream.read<glyphid>();
 
-    component.transform = [ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 ];
+    component.transform = [ f16dot16(65536), f16dot16(0), f16dot16(0), f16dot16(0), f16dot16(65536), f16dot16(0) ];
 
     if (component.flags & glyf::component_glyph_flags::args_are_xy_values != 0)
     {
       if (component.flags & glyf::component_glyph_flags::arg_1_and_2_are_words != 0)
       {
-        component.transform[2] = cast<f64>(stream.read<i16>());
-        component.transform[5] = cast<f64>(stream.read<i16>());
+        component.transform[2] = cast<i32>(stream.read<i16>());
+        component.transform[5] = cast<i32>(stream.read<i16>());
       }
       else
       {
-        component.transform[2] = cast<f64>(stream.read<i8>());
-        component.transform[5] = cast<f64>(stream.read<i8>());
+        component.transform[2] = cast<i32>(stream.read<i8>());
+        component.transform[5] = cast<i32>(stream.read<i8>());
       }
     }
 
     if (component.flags & glyf::component_glyph_flags::we_have_a_scale != 0)
     {
-      component.transform[0] = component.transform[4] = stream.read<f2dot14>().value;
+      component.transform[0] = component.transform[4] = cast<i32>(stream.read<f2dot14>()) << 2;
     }
     else if (component.flags & glyf::component_glyph_flags::we_have_an_x_and_y_scale != 0)
     {
-      component.transform[0] = stream.read<f2dot14>().value;
-      component.transform[4] = stream.read<f2dot14>().value;
+      component.transform[0] = cast<i32>(stream.read<f2dot14>()) << 2;
+      component.transform[4] = cast<i32>(stream.read<f2dot14>()) << 2;
     }
     else if (component.flags & glyf::component_glyph_flags::we_have_a_two_by_two != 0)
     {
-      component.transform[0] = stream.read<f2dot14>().value;
-      component.transform[1] = stream.read<f2dot14>().value;
-      component.transform[3] = stream.read<f2dot14>().value;
-      component.transform[4] = stream.read<f2dot14>().value;
+      component.transform[0] = cast<i32>(stream.read<f2dot14>()) << 2;
+      component.transform[1] = cast<i32>(stream.read<f2dot14>()) << 2;
+      component.transform[3] = cast<i32>(stream.read<f2dot14>()) << 2;
+      component.transform[4] = cast<i32>(stream.read<f2dot14>()) << 2;
     }
   }
   catch(errc)

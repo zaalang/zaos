@@ -85,7 +85,7 @@ pub fn create_pollset(process mut *process) -> vfs::node_ptr
 {
   var pollset = ioring_pollset::create();
 
-  return vfs::node::new(pollset, vfs::node::type::pollset, &vfs::node_operations());
+  return vfs::node::new(pollset, vfs::node::type::pollset, vfs::node_operations());
 }
 
 fn add(ioring_pollset mut &this, process mut *process, pollevt &evt) -> result

@@ -162,6 +162,8 @@ $(BUILD)/kernel.efi: kernel.ld $(OBJS)
 	@echo "LD kernel"
 	@$(LD) -T kernel.ld -pie --no-dynamic-linker -Bsymbolic -znocombreloc -nostdlib -o $(BUILD)/kernel.elf $(OBJS) 
 	@$(OBJCOPY) -j .text -j .data -j .tls -j .dynamic -j .rela -j .reloc --output-target pei-x86-64 --subsystem=efi-app $(BUILD)/kernel.elf $(BUILD)/kernel.efi
+	@$(OBJDUMP) -dC -Mintel -S $(BUILD)/kernel.elf > $(BUILD)/kernel.asm
+	@$(OBJDUMP) -t $(BUILD)/kernel.elf | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(BUILD)/kernel.sym
 
 $(BUILD)/%.s.o: %.s 
 	@echo "AS $<"

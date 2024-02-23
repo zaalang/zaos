@@ -1,0 +1,119 @@
+//
+// gui object
+//
+
+import std.stdlib;
+
+pub vtable iobject
+{
+}
+
+pub struct object : iobject &
+{
+  struct stub
+  {
+    i32 refcnt;
+    object mut *self;
+
+    stub() = default;
+    ~stub() = default;
+  }
+
+  stub mut *stub;
+
+  pub struct weak<T>
+  {
+    stub mut *stub;
+
+    pub weak() = default;
+
+    pub weak(T &&object)
+      where requires (T object) { object.stub; }
+      : stub(cast<stub mut *>(object.stub))
+    {
+      std::atomic_add(&stub.refcnt, 1, std::memory_order::relaxed);
+    }
+
+    pub weak(weak &&other)
+      : stub(cast<stub mut *>(other.stub))
+    {
+      if (stub)
+      {
+        #if (__is_rvalue<typeof(other)>)
+          other.stub = null;
+        #else
+          std::atomic_add(&stub.refcnt, 1, std::memory_order::relaxed);
+      }
+    }
+
+    pub fn =(weak mut &this, weak &&other) -> weak mut &
+    {
+      if (&this != &other)
+      {
+        reset(&mut this, cast<stub mut *>(other.stub));
+
+        if (this.stub)
+        {
+          #if (__is_rvalue<typeof(other)>)
+            other.stub = null;
+          #else
+            std::atomic_add(&this.stub.refcnt, 1, std::memory_order::relaxed);
+        }
+      }
+
+      return &this;
+    }
+
+    pub fn get(this &) -> T mut *
+    {
+      return cast<T mut *>(this.stub.self);
+    }
+
+    pub fn bool(this &) -> bool
+    {
+      return this.stub.self != null;
+    }
+
+    pub fn ==(weak &lhs, weak &rhs) -> bool
+    {
+      return lhs.get == rhs.get;
+    }
+
+    pub fn <=>(weak &lhs, weak &rhs) -> int
+    {
+      return lhs.get <=> rhs.get;
+    }
+
+    pub static fn reset(this mut &, stub mut *ptr = null) -> void
+    {
+      if (this.stub)
+      {
+        if (std::atomic_sub(&this.stub.refcnt, 1) == 1)
+          std::allocator().free(this.stub, sizeof<stub>);
+      }
+
+      this.stub = ptr;
+    }
+
+    pub ~weak()
+    {
+      reset(&mut this);
+    }
+  }
+
+  pub object(iobject &iobject)
+    : super(&iobject),
+      stub(new<stub>(std::allocator().allocate(sizeof<stub>, alignof<stub>)))
+  {
+    stub.refcnt = 1;
+    stub.self = &this;
+  }
+
+  pub ~object()
+  {
+    stub.self = null;
+
+    if (std::atomic_sub(&stub.refcnt, 1) == 1)
+      std::allocator().free(stub, sizeof<stub>);
+  }
+}

@@ -219,7 +219,7 @@ pub fn create_ioring(process mut *process) -> vfs::node_ptr
 {
   var ring = io_ring::create(process);
 
-  return vfs::node::new(ring, vfs::node::type::ioring, &vfs::node_operations());
+  return vfs::node::new(ring, vfs::node::type::ioring, vfs::node_operations());
 }
 
 pub fn setup_ioring(vfs::node_ptr &ring, virtrange buffer) -> result

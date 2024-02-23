@@ -22,7 +22,7 @@ struct ctx
   os::ioring ring;
 
   ctx() = default;
-  ctx(obj&) = default;
+  ctx(ctx&) = default;
   ~ctx() = default;
 }
 
@@ -324,7 +324,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
 
   reloc(main, libs);
 
-std::printf("loader: {:#x}\n", main.base);
+std::printf("loader: {} {:#x}\n", std::string_view((argv + 0).beg, (argv + 0).end), main.base);
 
   return start;
 }

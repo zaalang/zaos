@@ -493,7 +493,7 @@ fn initialise(controller mut &controller) -> result
   if (var result = controller.reset(); !result)
     return result;
 
-  io::install_handler(irq, &cast<fn(controller mut *)>(ahci_io_handler), &controller);
+  io::install_handler(irq, &cast<fn (controller mut *) -> void>(ahci_io_handler), &controller);
 
   var port_count = 1 + cast<usize>(hba.cap & 0b11111);
 

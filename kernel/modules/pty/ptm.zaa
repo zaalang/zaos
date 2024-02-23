@@ -49,7 +49,7 @@ pub struct ptm : pub vfs::node
 
     ptm.ptty = &move ptty;
 
-    return vfs::node::new(ptm, vfs::node::type::device, &vfs::node_device_operations());
+    return vfs::node::new(ptm, vfs::node::type::device, vfs::node_device_operations());
   }
 
   pub ptm() = default;
