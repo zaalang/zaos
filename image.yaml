@@ -129,6 +129,9 @@ image:
             src: build/system/apps/binutils/ls
             dest: /bin/ls
         - cp:
+            src: build/system/apps/binutils/cat
+            dest: /bin/cat
+        - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar
         - cp:

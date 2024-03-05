@@ -13,7 +13,7 @@ import vfs.fd;
 import blk;
 import heap;
 import scheduler;
-import ioring;
+import ioring : io_ring;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import slab : slab_allocator;
@@ -49,8 +49,10 @@ pub struct process
   pub vm::address_space userspace;
   pub platform::page_table pagetable;
 
-  thread mut *threads;
+  pub thread mut *threads;
   pub usize threadcount;
+
+  pub io_ring mut *iorings;
 
   std::vector<vfs::fd> fds;
 
@@ -62,7 +64,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[32] reserved;
+  u8[24] reserved;
 
   pub fn current() -> process mut *
   {
@@ -136,42 +138,6 @@ pub struct process
     return allocator.allocate();
   }
 
-  pub fn add_thread(this mut &, thread mut *thread) -> void
-  {
-    this.lock.lock();
-
-    thread.sibling = this.threads;
-    thread.process = &this;
-    this.threads = thread;
-
-    this.lock.unlock();
-  }
-
-  pub fn remove_thread(this mut &, thread mut *thread) -> void
-  {
-    this.lock.lock();
-
-    var curr = &this.threads;
-
-    while (*curr != thread)
-      curr = &curr.sibling;
-
-    *curr = thread.sibling;
-
-    this.lock.unlock();
-
-    thread.sibling = null;
-    thread.process = null;
-  }
-
-  pub fn enumerate_threads(this mut &, var &&callback) -> void
-  {
-    var guard = std::lock_guard(&mut this.lock);
-
-    for (var thread = this.threads; thread; thread = thread.sibling)
-      callback(thread);
-  }
-
   pub fn fd(this mut &, fd fd) -> vfs::fd
   {
     var guard = std::lock_guard(&mut this.lock);
@@ -202,7 +168,7 @@ pub struct process
 
     this.fds[slot] = &move fd;
 
-    return cast<i32>(slot);
+    return cast<fd>(slot);
   }
 
   pub fn new_fd(this mut &, fd fd, vfs::fd newfd) -> fd
@@ -222,6 +188,31 @@ pub struct process
     var guard = std::lock_guard(&mut this.lock);
 
     this.fds[cast<usize>(fd)] = vfs::fd();
+  }
+
+  pub fn enumerate_threads(this mut &, var &&callback) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for (var thread = this.threads; thread; thread = thread.sibling)
+      callback(thread);
+  }
+
+  pub fn enumerate_iorings(this mut &, var &&callback) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for (var ring = this.iorings; ring; ring = ring.sibling)
+      callback(ring);
+  }
+
+  pub fn enumerate_fds(this mut &, var &&callback) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for (var i = 0; i < this.fds.len; ++i)
+      if (this.fds[i])
+        callback(cast<fd>(i), this.fds[i]);
   }
 
   pub fn sbrk(this mut &, usize size) -> vm::virtaddr
@@ -351,7 +342,7 @@ fn process_main(void *args) -> void
 pub fn create_process(process mut *parent, String &&name) -> process mut *
 {
   var process = process::create();
-  var mainthread = thread::create(process, &cast<fn (void mut *) -> void>(process_main), null);
+  var mainthread = create_thread(process, &cast<fn (void mut *) -> void>(process_main), null);
 
   process.name = &&name;
   process.id = mainthread.id;
@@ -376,8 +367,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
     var guard = std::lock_guard(&mut parent.lock, &mut process.lock);
 
     process.parent = parent;
-    process.sibling = parent.children;
-    parent.children = process;
+    process.sibling = std::exchange(&mut parent.children, process);
   }
 
   process.state = process::state::starting;
@@ -423,9 +413,9 @@ pub fn process_push_ioring(process mut *process, usize size) -> i32
   process.sp -= size;
   process.ioring = vm::virtrange(process.sp, size);
 
-  var ring = ioring::create_ioring(process);
+  var ring = create_ioring();
 
-  if (var result = ioring::setup_ioring(ring, process.ioring); !result)
+  if (var result = setup_ioring(ring, process, process.ioring); !result)
     return cast(result);
 
   process.new_fd(6, vfs::file_descriptor::create(ring));
@@ -441,32 +431,6 @@ pub fn process_start(process mut *process, thread::priority priority) -> process
     scheduler::enqueue(thread, priority);
 
   return process.id;
-}
-
-fn destroy(process mut *process) -> void
-{
-  std::assert(!process.threads);
-  std::assert(!process.children);
-
-  //std::print(*process, "done");
-
-  {
-    var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
-
-    var curr = &process.parent.children;
-
-    while (*curr != process)
-      curr = &curr.sibling;
-
-    *curr = process.sibling;
-  }
-
-  process.parent = null;
-  process.sibling = null;
-
-  procman.unregister(process);
-
-  process::allocator.free(process);
 }
 
 fn execute(process mut *process, thread mut *thread, void *args) -> i32
@@ -576,13 +540,43 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
   thread::transition(thread.ip, thread.sp);
 }
 
-pub fn teardown(process mut *process) -> void
+fn destroy(process mut *process) -> void
 {
-  process.fds.clear();
+  std::assert(!process.threads);
+  std::assert(!process.children);
+  std::assert(!process.iorings);
 
+  //std::print(*process, "done");
+
+  {
+    var guard = std::lock_guard(&mut process.parent.lock, &mut process.lock);
+
+    var curr = &process.parent.children;
+
+    while (*curr != process)
+      curr = &curr.sibling;
+
+    *curr = process.sibling;
+  }
+
+  process.parent = null;
+  process.sibling = null;
+
+  process.name.clear();
   process.argv.clear();
   process.envp.clear();
   process.auxv.clear();
+
+  procman.unregister(process);
+
+  process::allocator.free(process);
+}
+
+pub fn teardown(process mut *process) -> void
+{
+  ioring::shutdown(process);
+
+  process.fds.clear();
 
   process.userspace.each(|region| {
     vm::munmap(process, region.range);

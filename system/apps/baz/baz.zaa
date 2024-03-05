@@ -4,104 +4,71 @@
 
 import std.stdio;
 import std.string : String;
-import app.loop;
-import winton;
-import mmap;
-import opentype;
-import gfx.blit;
-import gfx.text;
-
-struct test : pub winton::window
-{
-  mmap::file font_data;
-  opentype::face font_face;
-
-  pub fn create(winton::display &&display, winton::window::flags flags) throws -> test
-  {
-    return test(winton::window::create(display, flags, winton::iwindow()));
-  }
-
-  pub fn set_font(this mut &, String &path) throws -> void
-  {
-    this.font_data = mmap::file::open(path);
-    this.font_face = opentype::face::parse(this.font_data);
-
-    if (this.font_face.error)
-      std::print("Error loading font - ", this.font_face.error);
-  }
-
-  pub fn button_event(this mut &, winton::input &input) override -> void
-  {
-    std::print(input);
-  }
-
-  pub fn key_event(this mut &, winton::input &input) override -> void
-  {
-    std::print(input);
-
-    if (input.last_key == 122 && input.key_state[cast(input.last_key)] == 0)
-      this.set_fullscreen(!this.is_fullscreen);
-  }
-
-  pub fn paint_event(this mut &, winton::buffer mut &buffer) override -> void
-  {
-    var rect = this.interior;
-
-    var painter = gfx::create_context(buffer.width, buffer.height, cast(buffer.stride), buffer.data);
-
-    painter.fill_rect(rect.x, rect.y, rect.width, rect.height, gfx::color(1.0, 1.0, 1.0));
-
-    var x = 10.0;
-    var y = 60.0;
-    var h = 0.032;
-
-    for (var i = 1; i < 16; ++i)
-    {
-      var s = std::floor(1000.0 * h) / 1000.0;
-
-      painter.draw_text(gfx::transform::translation(x, y) * gfx::transform::scale(s, s), this.font_face, "The quick brown fox jumps over the lazy dog", gfx::color(0.0, 0.0, 0.0));
-
-      y += 1125.0 * h;
-      h *= 0.96*0.96;
-    }
-  }
-
-  pub fn close_event(this mut &) override -> void
-  {
-    this.destroy();
-  }
-
-  test(winton::window &&window)
-    : super(&move window)
-  {
-  }
-
-  ~test() = default;
-}
+import os.zaos.mman;
+import os.zaos.fcntl;
+import os.zaos.sched;
 
 fn main() -> int
 {
-  var loop = app::loop();
+  std::print("baz");
 
-  if (var rc = app::initialise(&mut loop); rc < 0)
-    std::panic("baz unable to init loop - ", cast<std::errc>(-rc));
+  var ring = os::ioring();
 
-  try
+  var mmvec = os::mmvec();
+  mmvec.offset = 0;
+  mmvec.length = 1024*1024;
+  mmvec.flags = os::mmap::anonymous;
+  mmvec.prot = os::prot::readwrite;
+
+  if (var rc = os::mmap(-1, &mmvec, 1, &ring.header, 0); rc < 0)
+    std::panic("mmap: ", rc);
+
+  if (ring.fd = os::ioring_setup(ring.header, mmvec.length, 0); ring.fd < 0)
+    std::panic("setup: ", ring.fd);
+
+  std::print(ring);
+
+  var stat = os::stat();
+  var buffer = [<u8>: void; 2048];
+
+  for (var i = 0; i < 1000000; ++i)
   {
-    var display = winton::display::create();
+    std::print(i);
 
-    var window = test::create(display, winton::window::flags::close_button | winton::window::flags::minimise_button | winton::window::flags::maximise_button);
+    var fd = os::open(&mut ring, os::STDROOT_FILENO, os::string("/zaos/root/test.txt"), 1, 0);
+    if (fd < 0)
+      std::panic("open: ", fd);
 
-    window.set_font("/zaos/data/NotoSans-Regular.ttf");
+    var sqe1 = os::ioring_get_sqe(&mut ring);
+    os::ioring_prep_sqe_stat(sqe1, fd, &stat, 0);
+    os::ioring_advance_sqe(&mut ring);
 
-    window.schedule_resize(800, 400);
+    var sqe2 = os::ioring_get_sqe(&mut ring);
+    os::ioring_prep_sqe_read(sqe2, fd, buffer.data, buffer.len);
+    sqe2.flags = 0;
+    os::ioring_advance_sqe(&mut ring);
 
-    loop.run();
+    var sqe3 = os::ioring_get_sqe(&mut ring);
+    os::ioring_prep_sqe_read(sqe3, fd, buffer.data, buffer.len);
+    os::ioring_advance_sqe(&mut ring);
+
+    if (var rc = os::ioring_enter(ring.fd, 3, 3, 0); rc < 0)
+      std::panic("sqe1: ", rc);
+
+    for (var k = 0; k < 3; ++k)
+    {
+      var cqe = os::ioring_get_cqe(&mut ring);
+      std::print(*cqe);
+      os::ioring_advance_cqe(&mut ring);
+    }
+
+    std::print(stat);
+    std::print(std::string_view(buffer.data, 30));
+
+    os::close(&mut ring, fd);
   }
-  catch(std::error e)
-  {
-    std::print("baz error - ", e);
-  }
+
+  std::print("done");
 
   return 0;
 }

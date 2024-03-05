@@ -19,7 +19,7 @@ pub fn sys_event_create(process mut *process, ioring_ctx mut &ctx, u64 value, u6
   var event = create_event(process::current);
 
   if (var result = setup_event(event, value, maxvalue); !result)
-    return cast(result);
+    return result;
 
   return process::current.new_fd(vfs::file_descriptor::create(event));
 }

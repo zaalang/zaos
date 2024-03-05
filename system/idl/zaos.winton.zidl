@@ -127,6 +127,8 @@ protocol compositor
   set_minimum_size(u32 surface_id, i32 width, i32 height);
   set_maximum_size(u32 surface_id, i32 width, i32 height);
 
+  set_visible_region(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
+  set_opaque_region(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
   set_input_region(u32 surface_id, i32 x, i32 y, i32 width, i32 height);
 
   move(u32 serial, u32 surface_id);

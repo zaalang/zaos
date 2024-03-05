@@ -141,7 +141,7 @@ fn erase(buffer mut &buffer, usize count) -> void
   buffer.head = (buffer.head + count) % buffer.capacity;
 }
 
-pub fn create_buffer(process mut *process) -> Rc<buffer>
+pub fn create_buffer() -> Rc<buffer>
 {
   return buffer::create();
 }

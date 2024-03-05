@@ -7,8 +7,6 @@ TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
 
 SRCS=\
 baz.zaa\
-frame.zaa\
-winton.zaa\
 $(BUILDROOT)/system/generated/zidl/zaos_sys.zaa\
 $(BUILDROOT)/system/generated/zidl/zaos_winton.zaa\
 

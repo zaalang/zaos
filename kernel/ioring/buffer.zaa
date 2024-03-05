@@ -16,10 +16,10 @@ enum flags
 
 pub fn sys_buffer_create(process mut *process, ioring_ctx mut &ctx, virtaddr fdsbuf, usize size, u64 flags) -> result
 {
-  var buffer = create_buffer(process::current);
+  var buffer = create_buffer();
 
   if (var result = setup_buffer(&mut buffer, size); !result)
-    return cast(result);
+    return result;
 
   var fds = [0, 0];
 

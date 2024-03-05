@@ -28,7 +28,7 @@ struct io_queue
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-    var result = std::tuple(this.head, this.last);
+    var result = (this.head, this.last);
 
     this.head = null;
     this.last = &this.head;
@@ -60,31 +60,19 @@ struct io_queue
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-    var prev = null<request mut *>;
-
-    for (var curr = this.head; curr; curr = curr.next)
+    for (var curr = &this.head; *curr; curr = &curr.next)
     {
-      if (curr == rq)
+      if (*curr == rq)
       {
-        if (prev)
-        {
-          prev.next = rq.next;
+        *curr = curr.next;
 
-          if (!rq.next)
-            this.last = &prev.next;
-        }
-        else
-        {
-          this.head = rq.next;
+        if (!*curr)
+          this.last = curr;
 
-          if (!rq.next)
-            this.last = &this.head;
-        }
+        rq.next = null;
 
         return true;
       }
-
-      prev = curr;
     }
 
     return false;
@@ -248,6 +236,7 @@ pub fn complete(request mut *rq, request::status status) -> void
   rq.cb = Rc<io::iocb>();
   rq.device = blk::blkdev_ptr();
   rq.status = status;
+  rq.next = null;
 
   rq.unref();
 }
@@ -312,7 +301,7 @@ pub fn initialise() -> void
 {
   blkman.ioqueue.last = &blkman.ioqueue.head;
 
-  blkman.kblockd = thread::create(process::current, &cast<fn (void mut *) -> void>(kblockd), null);
+  blkman.kblockd = create_thread(process::current, &cast<fn (void mut *) -> void>(kblockd), null);
 
   scheduler::enqueue(blkman.kblockd);
 

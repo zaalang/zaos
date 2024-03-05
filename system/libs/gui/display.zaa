@@ -120,6 +120,16 @@ pub struct connection
     zidl::send<winton::compositor::unset_fullscreen_request>(this.endpoint, surface_id);
   }
 
+  pub fn set_visible_region(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::set_visible_region_request>(this.endpoint, surface_id, x, y, width, height);
+  }
+
+  pub fn set_opaque_region(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
+  {
+    zidl::send<winton::compositor::set_opaque_region_request>(this.endpoint, surface_id, x, y, width, height);
+  }
+
   pub fn set_input_region(this mut &, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> void
   {
     zidl::send<winton::compositor::set_input_region_request>(this.endpoint, surface_id, x, y, width, height);
@@ -265,7 +275,7 @@ pub struct connection
 
     if (!result)
     {
-      std::print("baz: client error - ", cast<zidl::errc>(-cast<i32>(result)));
+      std::print("display: client error - ", cast<zidl::errc>(-cast<i32>(result)));
 
       loop.cancel_wait(wait);
       connection.endpoint.close();
@@ -546,7 +556,13 @@ pub struct surface : pub gui::object
 
   pub fn geometry(this &) -> gui::rect
   {
-    return gui::rect(0, 0, this.size.width, this.size.height);
+    if (this.is_fullscreen)
+      return gui::rect(0, 0, this.size.width, this.size.height);
+
+    if (this.is_maximised)
+      return gui::rect(0, 0, this.size.width, this.size.height);
+
+    return gui::rect(gui::point(frame::interior_left, frame::interior_left), gui::point(this.size.width - frame::interior_right, this.size.height - frame::interior_bottom));
   }
 
   pub fn interior(this &) -> gui::rect
@@ -673,8 +689,7 @@ pub struct surface : pub gui::object
     if (this.status & status::init != status::init)
       this.status |= status::init;
 
-    if (this.status & status::update != status::update)
-      update_handler(&mut *app::loop::current, &this.update);
+    this.schedule_update();
   }
 
   fn callback(surface mut &this, u64 time) -> void
@@ -709,13 +724,13 @@ pub struct surface : pub gui::object
   {
     var surface = cast<surface mut *>(cast<uintptr>(timeout) - offsetof(surface::update));
 
-    surface.status &= ~status::update;
-
     if (surface.status & status::resize == status::resize)
       resize(&mut *surface);
 
     if (surface.status & status::redraw == status::redraw)
       redraw(&mut *surface);
+    else
+      surface.status &= ~status::update;
 
     if (surface.status & status::cursor == status::cursor)
       recursor(&mut *surface);
@@ -790,9 +805,9 @@ pub struct surface : pub gui::object
     this.active_buffer = &buffer;
     this.previous_damage = this.damage.extents;
 
-    buffer.busy = true;
     this.damage.clear();
-    this.status |= status::update;
+
+    buffer.busy = true;
   }
 
   fn configure_window(this mut &, i32 width, i32 height, winton::state state) -> void
@@ -825,6 +840,13 @@ pub struct surface : pub gui::object
     }
 
     this.vtable.configure_event(this, configure_event(this.pending_size));
+
+    var region = gui::rect(0, 0, this.pending_size.width, this.pending_size.height);
+
+    if (!this.is_fullscreen && !this.is_maximised)
+      region = gui::rect(gui::point(frame::interior_left, frame::interior_left), gui::point(this.pending_size.width - frame::interior_right, this.pending_size.height - frame::interior_bottom));
+
+    this.connection.set_visible_region(this.id, region.x, region.y, region.width, region.height);
 
     this.acknowledge(serial);
   }
@@ -1025,6 +1047,9 @@ pub struct surface : pub gui::object
 
       var inputregion = this.input_region();
       this.connection.set_input_region(this.id, inputregion.x, inputregion.y, inputregion.width, inputregion.height);
+
+      var opaqueregion = this.interior();
+      this.connection.set_opaque_region(this.id, opaqueregion.x, opaqueregion.y, opaqueregion.width, opaqueregion.height);
     }
 
     this.status &= ~surface::status::resize;
@@ -1067,7 +1092,7 @@ pub struct surface : pub gui::object
 
         var title_color = this.title_color;
         if (!this.is_active)
-          title_color = title_color - 0x000f0f0f;
+          title_color = title_color - 0x00222222;
 
         var text_color = this.text_color;
         if (!this.is_active)

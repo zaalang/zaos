@@ -767,9 +767,6 @@ extern fn page_fault(virtaddr addr, bool write, bool fetch, bool user) -> void
 
   if (region)
   {
-if (status != result::ok)
-  std::print(write, fetch, user, *region);
-
     region.unlock();
   }
 

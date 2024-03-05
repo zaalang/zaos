@@ -24,6 +24,7 @@
               .global __vdso_munmap
               .global __vdso_ioring_setup
               .global __vdso_ioring_enter
+              .global __vdso_ioring_destroy
               .global __vdso_clock_res
               .global __vdso_clock_time
               .global __vdso_get_pid
@@ -84,8 +85,13 @@ __vdso_ioring_enter: # i32 fd, u32 to_submit, u32 min_complete, u64 flags
               syscall
               ret
 
-__vdso_clock_res: # i32 clockid, u64 mut *res
+__vdso_ioring_destroy: # i32 fd
               mov rax, 7
+              syscall
+              ret
+
+__vdso_clock_res: # i32 clockid, u64 mut *res
+              mov rax, 8
               syscall
               ret
 
@@ -110,32 +116,32 @@ __vdso_clock_time: # i32 clockid, u64 mut *tp
               ret
 
 __vdso_get_pid:
-              mov rax, 9
-              syscall
-              ret
-
-__vdso_get_tid:
               mov rax, 10
               syscall
               ret
 
-__vdso_get_uid:
+__vdso_get_tid:
               mov rax, 11
               syscall
               ret
 
-__vdso_get_euid:
+__vdso_get_uid:
               mov rax, 12
               syscall
               ret
 
-__vdso_get_gid:
+__vdso_get_euid:
               mov rax, 13
               syscall
               ret
 
-__vdso_get_egid:
+__vdso_get_gid:
               mov rax, 14
+              syscall
+              ret
+
+__vdso_get_egid:
+              mov rax, 15
               syscall
               ret
 
@@ -143,7 +149,7 @@ __vdso_process_create: # arg *argv, usize argc, arg *envp, usize envc, attr *att
               push rbp
               mov rbp, rsp
               push r12
-              mov rax, 15
+              mov rax, 16
               mov r10, rcx
               mov r12, [rbp + 0x10]
               syscall
@@ -152,33 +158,33 @@ __vdso_process_create: # arg *argv, usize argc, arg *envp, usize envc, attr *att
               ret
 
 __vdso_process_kill: # pid
-              mov rax, 16
+              mov rax, 17
               syscall
               ret
 
 __vdso_thread_create: # void mut *stack, fn (*start_routine)(void mut *) -> i32, void mut *start_argument, i32 priority, i32 mut *tid, u64 flags
-              mov rax, 17
+              mov rax, 18
               mov r10, rcx
               syscall
               ret
 
 __vdso_thread_munmap_exit: # void *addr, usize length
-              mov rax, 18
-              syscall
-              ret
-
-__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
               mov rax, 19
               syscall
               ret
 
-__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
+__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
               mov rax, 20
               syscall
               ret
 
-__vdso_futex_wake: # u32 *addr, u32 count
+__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
               mov rax, 21
+              syscall
+              ret
+
+__vdso_futex_wake: # u32 *addr, u32 count
+              mov rax, 22
               syscall
               ret
 

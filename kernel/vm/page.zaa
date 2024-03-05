@@ -306,9 +306,7 @@ pub struct page_cache
     if (!page)
       return null;
 
-    this.head = page.next;
-
-    page.next = null;
+    this.head = std::exchange(&mut page.next, null);
 
     return page;
   }
@@ -317,9 +315,7 @@ pub struct page_cache
   {
     std::assert(cpu::interrupts_disabled);
 
-    page.next = this.head;
-
-    this.head = page;
+    page.next = std::exchange(&mut this.head, page);
   }
 
   page mut *head;

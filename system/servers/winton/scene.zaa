@@ -20,45 +20,25 @@ pub struct window
 {
   void *surface;
 
-  pub struct state
-  {
-    pub i32 width;
-    pub i32 height;
-    pub i32 min_width;
-    pub i32 min_height;
-    pub i32 max_width;
-    pub i32 max_height;
-    pub bound input_region;
-    pub zidl::zaos_winton::state flags;
+  pub i32 width;
+  pub i32 height;
+  pub zidl::zaos_winton::state flags;
 
-    pub fn is_minimised(this&) -> bool
-    {
-      return this.flags & zidl::zaos_winton::state::minimised == zidl::zaos_winton::state::minimised;
-    }
+  pub i32 min_width;
+  pub i32 min_height;
+  pub i32 max_width;
+  pub i32 max_height;
 
-    pub fn is_maximised(this&) -> bool
-    {
-      return this.flags & zidl::zaos_winton::state::maximised == zidl::zaos_winton::state::maximised;
-    }
+  pub bound visible_region;
+  pub bound opaque_region;
+  pub bound input_region;
 
-    pub fn is_fullscreen(this&) -> bool
-    {
-      return this.flags & zidl::zaos_winton::state::fullscreen == zidl::zaos_winton::state::fullscreen;
-    }
-
-    pub state() = default;
-    pub state(state&&) = default;
-    pub fn =(state mut &, state &) -> state mut & = default;
-    pub ~state() = default;
-  }
-
-  pub state state;
   pub transform local;
   pub transform world;
 
   pub node *parent;
 
-  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.state.width), cast(this.state.height))); }
+  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   window() = default;
   window(window&&) = default;
@@ -216,21 +196,54 @@ pub fn create_cursor(scene mut &scene, void *surface, vec2 position, i32 hotspot
   return scene.insert(scene::layers::cursor, node::cursor(cursor));
 }
 
-pub fn set(scene mut &scene, window &window, window::state &state) -> void
+pub fn set_state(scene mut &scene, window &window, i32 width, i32 height, zidl::zaos_winton::state flags) -> void
 {
   var mut &window = cast<window mut &>(window);
 
-  window.state = state;
+  window.width = width;
+  window.height = height;
+  window.flags = flags;
 }
 
-pub fn set(scene mut &scene, window &window, transform &local) -> void
+pub fn set_constraints(scene mut &scene, window &window, i32 min_width, i32 min_height, i32 max_width, i32 max_height) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.min_width = min_width;
+  window.min_height = min_height;
+  window.max_width = max_width;
+  window.max_height = max_height;
+}
+
+pub fn set_visible_region(scene mut &scene, window &window, bound &visible_region) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.visible_region = visible_region;
+}
+
+pub fn set_opaque_region(scene mut &scene, window &window, bound &opaque_region) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.opaque_region = opaque_region;
+}
+
+pub fn set_input_region(scene mut &scene, window &window, bound &input_region) -> void
+{
+  var mut &window = cast<window mut &>(window);
+
+  window.input_region = input_region;
+}
+
+pub fn set_transform(scene mut &scene, window &window, transform &local) -> void
 {
   var mut &window = cast<window mut &>(window);
 
   window.local = local;
 }
 
-pub fn set(scene mut &scene, cursor &cursor, i32 width, i32 height) -> void
+pub fn set_size(scene mut &scene, cursor &cursor, i32 width, i32 height) -> void
 {
   var mut &cursor = cast<cursor mut &>(cursor);
 
@@ -238,7 +251,7 @@ pub fn set(scene mut &scene, cursor &cursor, i32 width, i32 height) -> void
   cursor.height = height;
 }
 
-pub fn set(scene mut &scene, cursor &cursor, vec2 &position) -> void
+pub fn set_position(scene mut &scene, cursor &cursor, vec2 &position) -> void
 {
   var mut &cursor = cast<cursor mut &>(cursor);
 
@@ -278,11 +291,11 @@ fn pick(scene &scene, node &node, vec2 position) -> (node *, vec2)
       }
 
     case window[window]:
-      if (!window.state.is_minimised && contains(window.world * window.bound, position))
+      if (contains(window.world * window.bound, position))
       {
         var xy = project(inverse(window.world), position);
 
-        if (contains(window.state.input_region, xy))
+        if (contains(window.input_region, xy))
           return (&node, xy);
       }
   }
@@ -334,9 +347,6 @@ pub fn topmost(scene &scene) -> node *
           switch (*node)
           {
             case window[window]:
-              if (window.state.is_minimised)
-                continue;
-
               return &*node;
           }
         }
@@ -357,8 +367,7 @@ fn build(scene &scene, node &node, std::vector<node*> mut &view_list) -> void
       }
 
     case window[window]:
-      if (!window.state.is_minimised)
-        view_list.push_back(&node);
+      view_list.push_back(&node);
 
     case cursor:
       view_list.push_back(&node);

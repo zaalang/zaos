@@ -77,7 +77,10 @@ pub struct request
 
 fn destroy(request mut *rq) -> void
 {
-  rq.next = null;
+  std::assert(!rq.next);
+  std::assert(!rq.device);
+  std::assert(!rq.cb);
+
   rq.status = request::status::pending;
   rq.host.clear();
 

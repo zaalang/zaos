@@ -140,8 +140,6 @@ fn reloc(obj &obj, obj &lib)
 
 fn load(ctx mut &ctx, std::string_view path) -> obj
 {
-  std::print("loader: loading '", path, "'");
-
   var page_mask = os::get_pagesize() - 1;
 
   var fd = os::open(&mut ctx.ring, ctx.rootfd, os::string(path.data, path.len), 0, 0);
@@ -269,7 +267,7 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
 
   reloc(self, libs);
 
-  #if (1)
+  #if (0)
   {
     for (var i = 0; i < cast<usize>(argc); ++i)
       std::print("loader: arg ", i, ": ", std::string_view((argv + i).beg, (argv + i).end));
@@ -323,8 +321,6 @@ extern fn main(int argc, arg *argv, arg *envp) -> uintptr
   }
 
   reloc(main, libs);
-
-std::printf("loader: {} {:#x}\n", std::string_view((argv + 0).beg, (argv + 0).end), main.base);
 
   return start;
 }

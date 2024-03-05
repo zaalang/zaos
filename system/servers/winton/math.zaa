@@ -226,6 +226,9 @@ pub struct bound
   pub fn low(this&, usize axis) -> f32 { return this.lo[axis]; }
   pub fn high(this&, usize axis) -> f32 { return this.hi[axis]; }
 
+  pub fn width(this&) -> f32 { return this.hi[0] - this.lo[0]; }
+  pub fn height(this&) -> f32 { return this.hi[1] - this.lo[1]; }
+
   pub fn ==(bound &lhs, bound &rhs) -> bool = default;
   pub fn <=>(bound &lhs, bound &rhs) -> int = default;
 

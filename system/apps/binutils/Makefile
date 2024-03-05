@@ -5,12 +5,16 @@ include ../../../mkspec.mk
 BUILD:=$(BUILDROOT)/system/apps/binutils
 TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
 
-default: $(BUILD)/ls
+BINS=\
+$(BUILD)/ls\
+$(BUILD)/cat\
 
-$(BUILD)/ls: ls.zaa
+default: $(BINS)
+
+$(BUILD)/%: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ ls.zaa
+	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ $^
 
 clean:
-	rm -f $(BUILD)/ls $(BUILD)/*.o
+	rm -f $(BINS) $(BUILD)/*.o

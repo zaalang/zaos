@@ -116,23 +116,9 @@ pub struct thread
     return &allocator;
   }
 
-  pub fn create(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
+  fn create() -> thread mut *
   {
-    var thread = threadman.get();
-
-    if (!thread)
-      thread = threadman.allocate();
-
-    initialise(thread);
-
-    thread.start_routine = start_routine;
-    thread.start_argument = start_argument;
-
-    process.add_thread(thread);
-
-    std::atomic_add(&process.threadcount, 1);
-
-    return thread;
+    return allocator.allocate();
   }
 
   pub fn is_detached(thread &thread) -> bool
@@ -244,7 +230,7 @@ fn allocate(thread_manager mut &threadman) -> thread mut *
 {
   var guard = std::lock_guard(&mut threadman.lock);
 
-  var thread = thread::allocator.allocate();
+  var thread = thread::create();
 
   while (true)
   {
@@ -274,7 +260,7 @@ fn dump(thread_manager mut &threadman) -> void
 
 pub fn create_zero_task(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
 {
-  var thread = thread::allocator.allocate();
+  var thread = thread::create();
 
   initialise(thread);
 
@@ -285,6 +271,30 @@ pub fn create_zero_task(process mut *process, fn (*start_routine)(void mut *) ->
   thread.process.threadcount += 1;
 
   threadman.threads.insert(thread.id, thread);
+
+  return thread;
+}
+
+pub fn create_thread(process mut *process, fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> thread mut *
+{
+  var thread = threadman.get();
+
+  if (!thread)
+    thread = threadman.allocate();
+
+  initialise(thread);
+
+  thread.start_routine = start_routine;
+  thread.start_argument = start_argument;
+
+  process.lock.lock();
+
+  thread.process = process;
+  thread.sibling = std::exchange(&mut process.threads, thread);
+
+  process.lock.unlock();
+
+  std::atomic_add(&process.threadcount, 1);
 
   return thread;
 }
@@ -309,11 +319,24 @@ fn initialise(thread mut *this) -> void
 
 fn destroy(thread mut *thread) -> void
 {
+  var process = thread.process;
+
   //std::print(*thread, "done");
 
-  thread.state = thread::state::dead;
+  process.lock.lock();
 
-  thread.process.remove_thread(thread);
+  var curr = &process.threads;
+
+  while (*curr != thread)
+    curr = &curr.sibling;
+
+  *curr = thread.sibling;
+
+  process.lock.unlock();
+
+  thread.sibling = null;
+  thread.process = null;
+  thread.state = thread::state::dead;
 
   threadman.put(thread);
 }
@@ -351,7 +374,7 @@ fn undertaker(void*) -> void
 
 pub fn spawn_undertaker() -> void
 {
-  threadman.undertaker = thread::create(process::current, &cast<fn (void mut *) -> void>(undertaker), null);
+  threadman.undertaker = create_thread(process::current, &cast<fn (void mut *) -> void>(undertaker), null);
 
   scheduler::enqueue(threadman.undertaker, thread::priority::high);
 }

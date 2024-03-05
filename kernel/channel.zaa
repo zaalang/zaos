@@ -180,7 +180,7 @@ fn deliver(endpoint mut &endpoint, message &&msg) -> vfs::result
   return cast(1);
 }
 
-pub fn create_channel(process mut *process) -> Rc<channel>
+pub fn create_channel() -> Rc<channel>
 {
   return channel::create();
 }

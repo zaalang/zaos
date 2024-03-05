@@ -110,21 +110,24 @@ pub struct wait_queue
   fn remove_waiter(this mut &, waiter mut *waiter) -> void
   {
     var prev = null<waiter mut *>;
-    var curr = &this.waiters;
 
-    while (*curr != waiter)
+    for (var curr = &this.waiters; *curr; curr = &curr.next)
     {
+      if (*curr == waiter)
+      {
+        if (waiter.next)
+          waiter.next.last = waiter.last;
+
+        if (this.waiters.last == waiter)
+          this.waiters.last = prev;
+
+        *curr = waiter.next;
+
+        break;
+      }
+
       prev = *curr;
-      curr = &curr.next;
     }
-
-    if (waiter.next)
-      waiter.next.last = waiter.last;
-
-    if (this.waiters.last == waiter)
-      this.waiters.last = prev;
-
-    *curr = waiter.next;
   }
 
   pub wait_queue() = default;

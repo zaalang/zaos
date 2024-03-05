@@ -73,6 +73,9 @@ pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
   if (rows == screen.rows && columns == screen.columns)
     return 0;
 
+  if (rows < 1)
+    rows = 1;
+
   if (screen.lines.len < rows)
   {
     var lines = std::vector<line>::with_capacity(rows);

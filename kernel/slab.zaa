@@ -20,9 +20,7 @@ pub struct slab_allocator<T>
 
     var entry = this.slabs.firstfree;
 
-    this.slabs.firstfree = entry.nextfree;
-
-    entry.nextfree = null;
+    this.slabs.firstfree = std::exchange(&mut entry.nextfree, null);
 
     if (!this.slabs.firstfree)
       this.slabs = this.slabs.next;
@@ -37,8 +35,7 @@ pub struct slab_allocator<T>
     var entry = cast<kmem_slab_entry mut *>(item);
     var slab = cast<kmem_slab mut *>(std::align_down(cast<uintptr>(entry) + SLAB_SIZE, SLAB_SIZE)- sizeof<kmem_slab>);
 
-    entry.nextfree = slab.firstfree;
-    slab.firstfree = entry;
+    entry.nextfree = std::exchange(&mut slab.firstfree, entry);
   }
 
   struct kmem_slab_entry
@@ -117,9 +114,7 @@ pub struct slab_cache<T>
     if (!entry)
       return null;
 
-    this.head = entry.nextfree;
-
-    entry.nextfree = null;
+    this.head = std::exchange(&mut entry.nextfree, null);
 
     return &entry.item;
   }
@@ -130,9 +125,7 @@ pub struct slab_cache<T>
 
     var entry = cast<slab_allocator<T>::kmem_slab_entry mut *>(item);
 
-    entry.nextfree = this.head;
-
-    this.head = entry;
+    entry.nextfree = std::exchange(&mut this.head, entry);
   }
 
   pub fn siphon(this mut &, slab_allocator<T> mut &slab) -> T mut *
@@ -146,18 +139,14 @@ pub struct slab_cache<T>
 
     var entry = slab.slabs.firstfree;
 
-    slab.slabs.firstfree = entry.nextfree;
+    slab.slabs.firstfree = std::exchange(&mut entry.nextfree, null);
 
-    if (this.head == null)
+    if (!this.head)
     {
-      this.head = slab.slabs.firstfree;
-
-      slab.slabs.firstfree = null;
+      this.head = std::exchange(&mut slab.slabs.firstfree, null);
 
       slab.slabs = slab.slabs.next;
     }
-
-    entry.nextfree = null;
 
     return &entry.item;
   }
@@ -207,4 +196,3 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
     next = slab.next;
   }
 }
-

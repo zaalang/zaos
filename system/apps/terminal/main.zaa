@@ -37,7 +37,7 @@ const palette = [
   0xff00ffff, // light cyan
   0xffffffff, // white
   0xffe5e5e5, // foreground
-  0xff000000, // background
+  0xff2d2e2f, // background
 ];
 
 pub struct pty
@@ -88,7 +88,7 @@ pub struct window : pub gui::window
     return window;
   }
 
-  fn update(this mut &) -> gui::rect
+  fn update(this mut &) -> void
   {
     var rows = this.screen.rows;
     var columns = this.screen.columns;
@@ -126,7 +126,9 @@ pub struct window : pub gui::window
       }
     });
 
-    return gui::rect(cast<int>(minx) * this.cell_width, cast<int>(miny) * this.cell_height, (cast<int>(maxx) - cast<int>(minx) + 1) * this.cell_width, (cast<int>(maxy) - cast<int>(miny) + 1) * this.cell_height).offset(this.interior.top_left);
+    this.cursor_rect = gui::rect(cast<int>(this.screen.cursor.0) * this.cell_width, cast<int>(this.screen.cursor.1) * this.cell_height, 2, this.cell_height);
+
+    this.schedule_redraw(gui::rect(cast<int>(minx) * this.cell_width, cast<int>(miny) * this.cell_height, (cast<int>(maxx) - cast<int>(minx) + 1) * this.cell_width, (cast<int>(maxy) - cast<int>(miny) + 1) * this.cell_height).offset(this.interior.top_left));
   }
 
   fn post(this mut &, u8 *data, usize len) -> void
@@ -150,10 +152,8 @@ pub struct window : pub gui::window
 
       this.screen.write(buffer.data, cast(bytes));
 
-      this.schedule_redraw(this.update());
+      update(&mut this);
     }
-
-    this.cursor_rect = gui::rect(cast<int>(this.screen.cursor.0) * this.cell_width, cast<int>(this.screen.cursor.1) * this.cell_height, 2, this.cell_height);
 
     if (this.screen.cursor_visible)
     {
@@ -434,7 +434,7 @@ fn main() -> int
   {
     var app = gui::application::create();
 
-    var window = window::create(480, 360);
+    var window = window::create(480, 240);
 
     window.pty = launch("/zaos/bin/shell");
 

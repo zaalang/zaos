@@ -29,7 +29,7 @@ struct msg
 
 pub fn sys_channel_create(process mut *process, ioring_ctx mut &ctx, virtaddr fdsbuf, u64 flags) -> result
 {
-  var channel = create_channel(process::current);
+  var channel = create_channel();
 
   var fds = [0, 0];
 

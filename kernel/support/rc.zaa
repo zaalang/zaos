@@ -2,7 +2,6 @@
 // rc
 //
 
-
 pub struct Rc<T> : pub T mut *
 {
   pub Rc() = default;

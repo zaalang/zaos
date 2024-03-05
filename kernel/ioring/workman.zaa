@@ -24,7 +24,7 @@ struct ring_queue
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-    var result = std::tuple(this.head, this.last);
+    var result = (this.head, this.last);
 
     this.head = null;
     this.last = &this.head;
@@ -35,8 +35,6 @@ struct ring_queue
   fn append(this mut &, io_ring mut *ring) -> void
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
-
-    std::assert(!ring.next);
 
     *this.last = ring;
     this.last = &ring.next;
@@ -114,7 +112,7 @@ pub fn trigger(work_manager mut &workman) -> void
   worker.doorbell.release();
 }
 
-pub fn wake_from_stall(work_manager mut &workman) -> void
+pub fn wake_from_stall() -> void
 {
   workman.trigger();
 }
@@ -238,7 +236,7 @@ pub fn initialise() -> void
 
   for (var mut &worker : workman.workers)
   {
-    worker.kworkd = thread::create(process::current, &cast<fn (worker mut *) -> void>(kworkd), &worker);
+    worker.kworkd = create_thread(process::current, &cast<fn (worker mut *) -> void>(kworkd), &worker);
   }
 
   platform::disable_interrupts();

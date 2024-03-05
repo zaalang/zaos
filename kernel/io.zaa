@@ -78,8 +78,7 @@ pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void m
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
 
-  handler.next = vector.head;
-  vector.head = handler;
+  handler.next = std::exchange(&mut vector.head, handler);
 
   if (!vector.head.next)
   {
@@ -93,22 +92,16 @@ pub fn remove_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mu
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
 
-  var prev = null<handler mut *>;
-  for (var handler = vector.head; handler; handler = handler.next)
+  for (var curr = &vector.head; *curr; curr = &curr.next)
   {
-    if (handler.handler_routine == handler_routine && handler.handler_argument == handler_argument)
+    if (curr.handler_routine == handler_routine && curr.handler_argument == handler_argument)
     {
-      if (prev)
-        prev = handler.next;
-      else
-        vector.head = handler.next;
+      var handler = std::exchange(&mut *curr, curr.next);
 
       std::allocator::delete(handler);
 
       break;
     }
-
-    prev = handler;
   }
 
   if (!vector.head)
@@ -147,7 +140,7 @@ pub struct iocb
     return &allocator;
   }
 
-  pub fn create() -> iocb mut *
+  fn create() -> iocb mut *
   {
     return allocator.allocate();
   }

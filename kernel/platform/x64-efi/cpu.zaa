@@ -33,7 +33,7 @@ pub fn out8(u16 port, u8 value) -> void
 
 pub fn cpuid(u32 eax, u32 ecx = 0) -> (u32, u32, u32, u32)
 {
-  var regs = std::tuple(0, 0, 0, 0);
+  var regs = (0, 0, 0, 0);
 
   __asm("xchg rbx,${1:q}; cpuid; xchg rbx,${1:q}", "=*{ax},=*r,=*{cx},=*{dx},0,2", &regs.0, &regs.1, &regs.2, &regs.3, eax, ecx);
 

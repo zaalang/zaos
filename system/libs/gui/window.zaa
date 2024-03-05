@@ -4,6 +4,7 @@
 
 import gui.application;
 import gui.display as display;
+import gui.bits.frame as frame;
 
 pub using display::button;
 pub using display::modifiers;
@@ -32,6 +33,9 @@ pub struct window : pub display::surface
   pub fn create(this mut &, i32 width, i32 height) throws -> void
   {
     var flags = display::surface::flags::close_button | display::surface::flags::minimise_button | display::surface::flags::maximise_button | display::surface::flags::resizeable;
+
+    width += frame::interior_left + frame::interior_right;
+    height += frame::interior_top + frame::interior_bottom;
 
     this.create(gui::conn, flags);
     this.set_minimum_size(128, 42);

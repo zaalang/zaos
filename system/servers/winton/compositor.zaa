@@ -58,12 +58,30 @@ struct surface
   scene::node *node;
 
   u32 configure_serial;
-  scene::window::state pending_state;
-  scene::window::state incomming_state;
-  winton::tether resize_tether;
 
+  i32 pending_width;
+  i32 incoming_width;
+
+  i32 pending_height;
+  i32 incoming_height;
+
+  zidl::zaos_winton::state pending_flags;
+  zidl::zaos_winton::state incoming_flags;
+
+  i32 pending_min_width;
+  i32 pending_min_height;
+  i32 pending_max_width;
+  i32 pending_max_height;
+
+  bound pending_visible_region;
+  bound pending_opaque_region;
+  bound pending_input_region;
+
+  i32 restore_width;
+  i32 restore_height;
   transform restore_local;
-  scene::window::state restore_state;
+
+  winton::tether resize_tether;
 
   enum state
   {
@@ -107,14 +125,11 @@ struct buffer
   buffer() = default;
 }
 
-pub struct sprite
+enum grab
 {
-  std::arc<buffer> buffer;
-
-  pub sprite() = default;
-  pub sprite(sprite&&) = default;
-  pub fn =(sprite mut &, sprite &&) -> sprite mut & = default;
-  pub ~sprite() = default;
+  none,
+  move,
+  resize,
 }
 
 struct pointer
@@ -128,13 +143,6 @@ struct pointer
   u32 pressed_count;
 
   bool dirty_focus;
-
-  enum grab
-  {
-    none,
-    move,
-    resize,
-  }
 
   grab grab_op;
   vec2 grab_pos;
@@ -164,6 +172,16 @@ struct keyboard
 
   keyboard() = default;
   ~keyboard() = default;
+}
+
+pub struct sprite
+{
+  std::arc<buffer> buffer;
+
+  pub sprite() = default;
+  pub sprite(sprite&&) = default;
+  pub fn =(sprite mut &, sprite &&) -> sprite mut & = default;
+  pub ~sprite() = default;
 }
 
 pub struct compositor
@@ -357,6 +375,12 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
       case unset_fullscreen[msg]:
         result = unset_fullscreen(client, msg.surface_id);
 
+      case set_visible_region[msg]:
+        result = set_visible_region(client, msg.surface_id, msg.x, msg.y, msg.width, msg.height);
+
+      case set_opaque_region[msg]:
+        result = set_opaque_region(client, msg.surface_id, msg.x, msg.y, msg.width, msg.height);
+
       case set_input_region[msg]:
         result = set_input_region(client, msg.surface_id, msg.x, msg.y, msg.width, msg.height);
 
@@ -501,8 +525,8 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
 
       if (surface.pending)
       {
-        surface.pending_state.width = surface.pending.value.width;
-        surface.pending_state.height = surface.pending.value.height;
+        surface.pending_width = surface.pending.value.width;
+        surface.pending_height = surface.pending.value.height;
         surface.damage = expand(surface.damage, clamp(surface.pending_damage, surface.pending.value.bound));
         surface.pending_damage.clear();
 
@@ -515,30 +539,27 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
       switch (*surface.node)
       {
         case window[window]:
-          if (window.state.flags != surface.pending_state.flags)
+          if (window.flags != surface.pending_flags)
           {
-            if (surface.pending_state.is_maximised || surface.pending_state.is_fullscreen)
-              compositor.scene.set(window, transform::translation(0.0, 0.0, 0.0));
+            if (surface.pending_flags & (winton::state::maximised | winton::state::fullscreen))
+              compositor.scene.set_transform(window, transform::translation(0.0, 0.0, 0.0));
 
-            if (!surface.pending_state.is_maximised && window.state.is_maximised)
-              compositor.scene.set(window, surface.restore_local);
+            if ((window.flags & winton::state::maximised) && !(surface.pending_flags & winton::state::maximised))
+              compositor.scene.set_transform(window, surface.restore_local);
 
-            if (!surface.pending_state.is_fullscreen && window.state.is_fullscreen)
-              compositor.scene.set(window, surface.restore_local);
-
-            if (surface.pending_state.is_minimised)
-              keyboard_activate(compositor, null);
+            if ((window.flags & winton::state::fullscreen) && !(surface.pending_flags & winton::state::fullscreen))
+              compositor.scene.set_transform(window, surface.restore_local);
 
             surface.resize_tether = cast(0);
           }
 
-          if (window.state.width != surface.pending_state.width || window.state.height != surface.pending_state.height || window.state.flags != surface.pending_state.flags)
+          if (window.width != surface.pending_width || window.height != surface.pending_height || window.flags != surface.pending_flags)
           {
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::left) != 0)
-              compositor.scene.set(window, window.local * transform::translation(cast(window.state.width - surface.pending_state.width), 0.0, 0.0));
+              compositor.scene.set_transform(window, window.local * transform::translation(cast(window.width - surface.pending_width), 0.0, 0.0));
 
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::top) != 0)
-              compositor.scene.set(window, window.local * transform::translation(0.0, cast(window.state.height - surface.pending_state.height), 0.0));
+              compositor.scene.set_transform(window, window.local * transform::translation(0.0, cast(window.height - surface.pending_height), 0.0));
 
             if (!window.bound.empty)
               compositor.damage = expand(compositor.damage, window.world * window.bound);
@@ -546,13 +567,34 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
             compositor.pointer.dirty_focus = true;
           }
 
-          compositor.scene.set(window, surface.pending_state);
+          compositor.scene.set_state(window, surface.pending_width, surface.pending_height, surface.pending_flags);
+          compositor.scene.set_constraints(window, surface.pending_min_width, surface.pending_min_height, surface.pending_max_width, surface.pending_max_height);
+          compositor.scene.set_visible_region(window, surface.pending_visible_region);
+          compositor.scene.set_opaque_region(window, surface.pending_opaque_region);
+          compositor.scene.set_input_region(window, surface.pending_input_region);
 
         case cursor[cursor]:
-          if (cursor.width != surface.pending_state.width || cursor.height != surface.pending_state.height)
+          if (cursor.width != surface.pending_width || cursor.height != surface.pending_height)
             compositor.damage = expand(compositor.damage, cursor.world * cursor.bound);
 
-          compositor.scene.set(cursor, surface.pending_state.width, surface.pending_state.height);
+          compositor.scene.set_size(cursor, surface.pending_width, surface.pending_height);
+      }
+
+      if (surface.pending_flags & winton::state::minimised)
+      {
+        compositor.scene.erase(surface.node);
+
+        if (compositor.keyboard.focus == surface.node)
+        {
+          compositor.keyboard.focus = null;
+
+          keyboard_activate(compositor, compositor.scene.topmost);
+        }
+
+        if (compositor.pointer.focus == surface.node)
+          compositor.pointer.focus = null;
+
+        surface.node = null;
       }
 
       if (surface.state & surface::state::mapped != surface::state::mapped)
@@ -634,7 +676,7 @@ fn create_window(client mut *client, u32 surface_id) -> result
 
       surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::normal);
 
-      surface.pending_state.input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
+      surface.pending_input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
 
     else:
       return winton::errc::invalid_surface;
@@ -658,7 +700,7 @@ fn configure(client mut *client, surface mut *surface) -> result
     case window[window]:
       surface.configure_serial = serial;
 
-      zidl::send<winton::compositor::configure_window_response>(client.channel, surface.id, surface.incomming_state.width, surface.incomming_state.height, surface.incomming_state.flags);
+      zidl::send<winton::compositor::configure_window_response>(client.channel, surface.id, surface.incoming_width, surface.incoming_height, surface.incoming_flags);
   }
 
   zidl::send<winton::compositor::configure_response>(client.channel, serial, surface.id);
@@ -675,7 +717,7 @@ fn acknowledge(client mut *client, u32 serial) -> result
     if (surface.configure_serial != serial)
       continue;
 
-    surface.pending_state.flags = surface.incomming_state.flags;
+    surface.pending_flags = surface.incoming_flags;
 
     if (surface.state & surface::state::mapped != surface::state::mapped)
     {
@@ -683,16 +725,21 @@ fn acknowledge(client mut *client, u32 serial) -> result
       {
         case window[window]:
 
-          if (cast(compositor.placement.x) + window.state.width > compositor.display.width)
-            compositor.placement.x = 20.0;
+          var x = compositor.placement.x;
+          var y = compositor.placement.y;
+          var width = surface.pending_visible_region.width;
+          var height = surface.pending_visible_region.height;
 
-          if (cast(compositor.placement.y) + window.state.height > compositor.display.height)
-            compositor.placement.y = 50.0;
+          if (x + width + 10.0 > cast(compositor.display.width))
+            x = 20.0;
 
-          compositor.scene.set(window, transform::translation(compositor.placement.x, compositor.placement.x, 0.0));
+          if (y + height + 10.0 > cast(compositor.display.height))
+            y = 50.0;
 
-          compositor.placement.x += 20.0;
-          compositor.placement.y += 20.0;
+          compositor.scene.set_transform(window, transform::translation(x, y, 0.0));
+
+          compositor.placement.x = x + width + 20.0;
+          compositor.placement.y = y + 20.0;
       }
 
       keyboard_activate(compositor, surface.node);
@@ -772,7 +819,7 @@ fn keyboard_enter(client mut *client, surface mut *surface) -> result
 
   client.compositor.keyboard.focus_serial = serial;
 
-  surface.incomming_state.flags |= winton::state::activated;
+  surface.incoming_flags |= winton::state::activated;
 
   configure(client, surface);
 
@@ -785,7 +832,7 @@ fn keyboard_leave(client mut *client, surface mut *surface) -> result
 
   zidl::send<winton::compositor::keyboard_leave_response>(client.channel, serial, surface.id);
 
-  surface.incomming_state.flags &= ~winton::state::activated;
+  surface.incoming_flags &= ~winton::state::activated;
 
   configure(client, surface);
 
@@ -909,7 +956,7 @@ fn set_minimised(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
-      surface.incomming_state.flags |= winton::state::minimised;
+      surface.incoming_flags |= winton::state::minimised;
 
       configure(client, &*surface);
 
@@ -931,11 +978,12 @@ fn set_maximised(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
+      surface.restore_width = surface.pending_width;
+      surface.restore_height = surface.pending_height;
       surface.restore_local = surface.node.transform;
-      surface.restore_state = surface.pending_state;
-      surface.incomming_state.width = compositor.display.width;
-      surface.incomming_state.height = compositor.display.height;
-      surface.incomming_state.flags |= winton::state::maximised;
+      surface.incoming_width = compositor.display.width;
+      surface.incoming_height = compositor.display.height;
+      surface.incoming_flags |= winton::state::maximised;
 
       configure(client, &*surface);
 
@@ -957,11 +1005,12 @@ fn set_fullscreen(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
+      surface.restore_width = surface.pending_width;
+      surface.restore_height = surface.pending_height;
       surface.restore_local = surface.node.transform;
-      surface.restore_state = surface.pending_state;
-      surface.incomming_state.width = compositor.display.width;
-      surface.incomming_state.height = compositor.display.height;
-      surface.incomming_state.flags |= winton::state::fullscreen;
+      surface.incoming_width = compositor.display.width;
+      surface.incoming_height = compositor.display.height;
+      surface.incoming_flags |= winton::state::fullscreen;
 
       configure(client, &*surface);
 
@@ -983,12 +1032,12 @@ fn unset_maximised(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
-      if (!surface.incomming_state.is_maximised)
+      if (!(surface.incoming_flags & winton::state::maximised))
         return 0;
 
-      surface.incomming_state.width = surface.restore_state.width;
-      surface.incomming_state.height = surface.restore_state.height;
-      surface.incomming_state.flags &= ~winton::state::maximised;
+      surface.incoming_width = surface.restore_width;
+      surface.incoming_height = surface.restore_height;
+      surface.incoming_flags &= ~winton::state::maximised;
 
       configure(client, &*surface);
 
@@ -1010,14 +1059,54 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
       if (!surface.node)
         return winton::errc::not_configured;
 
-      if (!surface.incomming_state.is_fullscreen)
+      if (!(surface.incoming_flags & winton::state::fullscreen))
         return 0;
 
-      surface.incomming_state.width = surface.restore_state.width;
-      surface.incomming_state.height = surface.restore_state.height;
-      surface.incomming_state.flags &= ~winton::state::fullscreen;
+      surface.incoming_width = surface.restore_width;
+      surface.incoming_height = surface.restore_height;
+      surface.incoming_flags &= ~winton::state::fullscreen;
 
       configure(client, &*surface);
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_visible_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.pending_visible_region = bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height)));
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return 0;
+}
+
+fn set_opaque_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (!surface.node)
+        return winton::errc::not_configured;
+
+      surface.pending_opaque_region = bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height)));
 
     else:
       return winton::errc::invalid_surface;
@@ -1037,7 +1126,7 @@ fn set_input_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width,
       if (!surface.node)
         return winton::errc::not_configured;
 
-      surface.pending_state.input_region = bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height)));
+      surface.pending_input_region = bound::from(vec2(cast(x), cast(y)), vec2(cast(x + width), cast(y + height)));
 
     else:
       return winton::errc::invalid_surface;
@@ -1057,8 +1146,8 @@ fn set_minimum_size(client mut *client, u32 surface_id, i32 width, i32 height) -
       if (!surface.node)
         return winton::errc::not_configured;
 
-      surface.pending_state.min_width = width;
-      surface.pending_state.min_height = height;
+      surface.pending_min_width = width;
+      surface.pending_min_height = height;
 
     else:
       return winton::errc::invalid_surface;
@@ -1078,8 +1167,8 @@ fn set_maximum_size(client mut *client, u32 surface_id, i32 width, i32 height) -
       if (!surface.node)
         return winton::errc::not_configured;
 
-      surface.pending_state.max_width = width;
-      surface.pending_state.max_height = height;
+      surface.pending_max_width = width;
+      surface.pending_max_height = height;
 
     else:
       return winton::errc::invalid_surface;
@@ -1108,10 +1197,13 @@ fn move(client mut *client, u32 serial, u32 surface_id) -> result
       if (compositor.pointer.pressed_count == 0)
         return 0;
 
-      if (compositor.pointer.grab_op != pointer::grab::none)
+      if (compositor.pointer.grab_op != grab::none)
         return 0;
 
-      compositor.pointer.grab_op = pointer::grab::move;
+      if (surface.pending_flags & (winton::state::maximised | winton::state::fullscreen))
+        return 0;
+
+      compositor.pointer.grab_op = grab::move;
       compositor.pointer.grab_offset = project(inverse(surface.node.transform), compositor.pointer.grab_pos);
 
     else:
@@ -1141,10 +1233,10 @@ fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether)
       if (compositor.pointer.pressed_count == 0)
         return 0;
 
-      if (compositor.pointer.grab_op != pointer::grab::none)
+      if (compositor.pointer.grab_op != grab::none)
         return 0;
 
-      compositor.pointer.grab_op = pointer::grab::resize;
+      compositor.pointer.grab_op = grab::resize;
       compositor.pointer.grab_bound = surface.active.value.bound;
       surface.resize_tether = tether;
 
@@ -1182,10 +1274,7 @@ fn destroy(surface mut *surface) -> void
     {
       compositor.keyboard.focus = null;
 
-      if (var topmost = compositor.scene.topmost)
-      {
-        keyboard_activate(compositor, topmost);
-      }
+      keyboard_activate(compositor, compositor.scene.topmost);
     }
 
     if (compositor.status & compositor::status::scheduled != compositor::status::scheduled)
@@ -1207,8 +1296,6 @@ fn destroy(surface mut *surface) -> void
   surface.active.clear();
   surface.pending.clear();
   surface.callback = false;
-  surface.pending_state = scene::window::state();
-  surface.incomming_state = scene::window::state();
   surface.state = cast(0);
 }
 
@@ -1334,7 +1421,7 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
           case window[window]:
             var dp = project(inverse(window.parent.transform * window.local), pointer.position) - pointer.grab_offset;
 
-            compositor.scene.set(window, window.local * transform::translation(dp.x, dp.y, 0.0));
+            compositor.scene.set_transform(window, window.local * transform::translation(dp.x, dp.y, 0.0));
 
             compositor.damage = expand(compositor.damage, window.world * window.bound);
             compositor.damage = expand(compositor.damage, window.parent.transform * window.local * window.bound);
@@ -1349,38 +1436,38 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
           case window[window]:
             var dp = project(inverse(window.world), pointer.position) - project(inverse(window.world), pointer.grab_pos);
 
-            surface.incomming_state.width = cast(pointer.grab_bound.high(0));
-            surface.incomming_state.height = cast(pointer.grab_bound.high(1));
+            surface.incoming_width = cast(pointer.grab_bound.high(0));
+            surface.incoming_height = cast(pointer.grab_bound.high(1));
 
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::left) != 0)
-              surface.incomming_state.width -= cast(dp.x);
+              surface.incoming_width -= cast(dp.x);
 
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::right) != 0)
-              surface.incomming_state.width += cast(dp.x);
+              surface.incoming_width += cast(dp.x);
 
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::top) != 0)
-              surface.incomming_state.height -= cast(dp.y);
+              surface.incoming_height -= cast(dp.y);
 
             if (cast<i32>(surface.resize_tether) & cast<i32>(winton::tether::bottom) != 0)
-              surface.incomming_state.height += cast(dp.y);
+              surface.incoming_height += cast(dp.y);
 
-            if (surface.incomming_state.width < 1)
-              surface.incomming_state.width = 1;
+            if (surface.incoming_width < 1)
+              surface.incoming_width = 1;
 
-            if (window.state.min_width != 0 && surface.incomming_state.width < window.state.min_width)
-              surface.incomming_state.width = window.state.min_width;
+            if (window.min_width != 0 && surface.incoming_width < window.min_width)
+              surface.incoming_width = window.min_width;
 
-            if (window.state.max_width != 0 && surface.incomming_state.width > window.state.max_width)
-              surface.incomming_state.width = window.state.max_width;
+            if (window.max_width != 0 && surface.incoming_width > window.max_width)
+              surface.incoming_width = window.max_width;
 
-            if (surface.incomming_state.height < 1)
-              surface.incomming_state.height = 1;
+            if (surface.incoming_height < 1)
+              surface.incoming_height = 1;
 
-            if (window.state.min_height != 0 && surface.incomming_state.height < window.state.min_height)
-              surface.incomming_state.height = window.state.min_height;
+            if (window.min_height != 0 && surface.incoming_height < window.min_height)
+              surface.incoming_height = window.min_height;
 
-            if (window.state.max_height != 0 && surface.incomming_state.height > window.state.max_height)
-              surface.incomming_state.height = window.state.max_height;
+            if (window.max_height != 0 && surface.incoming_height > window.max_height)
+              surface.incoming_height = window.max_height;
 
             configure(surface.client, surface);
         }
@@ -1394,7 +1481,7 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
   {
     var &cursor = pointer.surface.node.cursor;
 
-    compositor.scene.set(cursor, pointer.position);
+    compositor.scene.set_position(cursor, pointer.position);
 
     compositor.damage = expand(compositor.damage, transform::translation(oldpos.x - cursor.hotspot_x, oldpos.y - cursor.hotspot_y, 0.0) * cursor.bound);
     compositor.damage = expand(compositor.damage, transform::translation(pointer.position.x - cursor.hotspot_x, pointer.position.y - cursor.hotspot_y, 0.0) * cursor.bound);
@@ -1423,7 +1510,7 @@ fn pointer_button(compositor mut *compositor, u64 time, u32 button, u32 state) -
       pointer.pressed_count -= 1;
 
       if (pointer.pressed_count == 0)
-        pointer.grab_op = pointer::grab::none;
+        pointer.grab_op = grab::none;
   }
 
   if (pointer.focus)
@@ -1594,11 +1681,11 @@ pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> r
 
         surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::desktop);
 
-        surface.incomming_state.width = compositor.display.width;
-        surface.incomming_state.height = compositor.display.height;
-        surface.incomming_state.flags |= winton::state::fullscreen;
+        surface.incoming_width = compositor.display.width;
+        surface.incoming_height = compositor.display.height;
+        surface.incoming_flags |= winton::state::fullscreen;
 
-        surface.pending_state.input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
+        surface.pending_input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
       }
     }
   }
