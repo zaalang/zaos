@@ -85,6 +85,9 @@ pub struct window : pub gui::window
     window.screen.set_palette(palette);
     window.screen.on_reply = fn[window](u8 *data, usize len) { window.post(data, len); };
 
+    if (var rc = window.screen.resize(80, 24); !rc)
+      std::print("cannot resize vt - ", rc);
+
     return window;
   }
 
@@ -171,16 +174,28 @@ pub struct window : pub gui::window
           post(&mut this, "\x1bOH".data, 3);
 
         case Key::Left:
-          post(&mut this, "\x1bOD".data, 3);
+          if (evt.modifiers & gui::modifiers::control)
+            post(&mut this, "\x1b[1;5D".data, 6);
+          else
+            post(&mut this, "\x1bOD".data, 3);
 
         case Key::Up:
-          post(&mut this, "\x1bOA".data, 3);
+          if (evt.modifiers & gui::modifiers::control)
+            post(&mut this, "\x1b[1;5A".data, 6);
+          else
+            post(&mut this, "\x1bOA".data, 3);
 
         case Key::Right:
-          post(&mut this, "\x1bOC".data, 3);
+          if (evt.modifiers & gui::modifiers::control)
+            post(&mut this, "\x1b[1;5C".data, 6);
+          else
+            post(&mut this, "\x1bOC".data, 3);
 
         case Key::Down:
-          post(&mut this, "\x1bOB".data, 3);
+          if (evt.modifiers & gui::modifiers::control)
+            post(&mut this, "\x1b[1;5B".data, 6);
+          else
+            post(&mut this, "\x1bOB".data, 3);
 
         case Key::PageUp:
           post(&mut this, "\x1b[5~".data, 4);
@@ -271,8 +286,8 @@ pub struct window : pub gui::window
   {
     var painter = gui::painter(&mut buffer, this.interior);
 
-    var j0 = cast<usize>(std::max((region.extents.top - this.interior.top) / 16, 0));
-    var j1 = cast<usize>(std::min(std::ceil_div(region.extents.bottom - this.interior.top, 16), cast(this.screen.rows)));
+    var j0 = cast<usize>(std::max((region.extents.top - this.interior.top) / this.cell_height, 0));
+    var j1 = cast<usize>(std::min(std::ceil_div(region.extents.bottom - this.interior.top, this.cell_height), cast(this.screen.rows)));
 
     for (var j = j0; j < j1; ++j)
     {
@@ -329,16 +344,14 @@ pub struct window : pub gui::window
   {
     font = gui::font("Liberation Mono", 10.0 * (96.0/72.0));
 
-    var leading = std::ceil(font.leading);
+    var leading = font.leading;
     var ascender = font.ascender;
     var descender = font.descender;
 
     cell_width = cast(font.advance('M'));
-    cell_height = cast(std::ceil(ascender - descender) + leading);
-    font_ascender = cast(std::ceil(ascender));
+    cell_height = cast(ascender - descender + leading);
 
-    if (var rc = this.screen.resize(80, 24); !rc)
-      std::print("cannot resize vt - ", rc);
+    font_ascender = cast(ascender) - 1;
   }
 
   pty pty;
@@ -404,7 +417,11 @@ fn status_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   if (var rc = os::wait(window.pty.pid, &rval, 0); rc < 0)
     std::panic("shell wait - ", cast<std::errc>(-rc));
 
-  app::loop::current.quit();
+  loop.cancel_wait(&window.channel_handler);
+  loop.cancel_wait(&window.status_handler);
+  loop.cancel_wait(&window.read_handler);
+
+  //app::loop::current.quit();
 }
 
 fn channel_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void

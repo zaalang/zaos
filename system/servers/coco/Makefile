@@ -25,6 +25,7 @@ symlink.zaa\
 rm.zaa\
 ps.zaa\
 start.zaa\
+test.zaa\
 $(ROOT)/system/libs/input/driver.zaa\
 $(ROOT)/system/libs/input/keymap.zaa\
 $(ROOT)/system/libs/vt/result.zaa\

@@ -227,7 +227,7 @@ pub fn complete(request mut *rq, request::status status) -> void
       io::complete(&mut rq.cb, blk::result::io_error);
 
     case request::status::cancelled:
-      io::complete(&mut rq.cb, blk::result::operation_cancelled);
+      io::complete(&mut rq.cb, blk::result::cancelled);
 
     else:
       std::panic("bad_status");

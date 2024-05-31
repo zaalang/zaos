@@ -4,8 +4,8 @@
 
 import std.stdio;
 import std.string : String;
-import zidl.diag : diag;
 import zidl.lexer : source_text, source_location, token, lex_cursor;
+import diag;
 
 pub struct ast
 {
@@ -119,12 +119,225 @@ pub union decl
   pub ~decl() = default;
 }
 
+union ParseError
+{
+  struct ExpectedLibrary : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0001]";
+      super.message = "Expected Library";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, tok.text.len, "expected library");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedDeclaration : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0002]";
+      super.message = "Expected Declaration";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, tok.text.len, "expected a declaration");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedIdentifier : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0003]";
+      super.message = "Expected Identifier";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, tok.text.len, "expected an identifier");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedAssignment : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0004]";
+      super.message = "Expected Assignment";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected '='");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedArraySize : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0005]";
+      super.message = "Expected Array Size";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected a number");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedOrdinal : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0006]";
+      super.message = "Expected Ordinal";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected a number");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedConstraint : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0007]";
+      super.message = "Expected Constraint";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected a number");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedParameterList : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0008]";
+      super.message = "Expected Parameter List";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected a parameter list");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedReturnsList : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0009]";
+      super.message = "Expected Returns List";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected a returns list");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedClosingBracket : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0010]";
+      super.message = "Expected Closing Bracket";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected ']'");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedClosingParen : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0011]";
+      super.message = "Expected Closing Paren";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected ')'");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedOpeningBrace : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0012]";
+      super.message = "Expected Opening Brace";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected '{'");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedClosingBrace : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0013]";
+      super.message = "Expected Closing Brace";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected '}'");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedSemi : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[E0014]";
+      super.message = "Expected Semi";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "expected ';'");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExtraSemi : pub diag::diagnostic
+  {
+    this(source_text &text, token &tok)
+    {
+      super.code = "[W0015]";
+      super.message = "Extra Semi";
+      super.loc = std::format("{}:{}:{}", text.path, tok.loc.lineno, tok.loc.charpos);
+      super.source = diag::source_file(text.path);
+      super.add_label(tok.text.data - text.head, 1, "extra ';'");
+    }
+
+    ~this() = default;
+  }
+}
+
 struct parse_context
 {
   token tok;
   lex_cursor lexcursor;
 
-  diag mut *diag;
+  diag::diag mut *diag;
   source_text text;
 
   fn consume_token(this mut &ctx) -> void
@@ -205,14 +418,14 @@ fn parse_qualified_name(parse_context &&ctx) -> std::string
   var name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   while (ctx.try_consume_token(token::type::period))
   {
     name = std::string_view(name.data, name.len + ctx.tok.text.len + 1);
 
     if (!ctx.try_consume_token(token::type::identifier))
-      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
   }
 
   return name;
@@ -227,18 +440,18 @@ fn parse_const_declaration(parse_context &&ctx) -> decl
   constant.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::equal))
-    ctx.diag.error("expected equals", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedAssignment(ctx.text, ctx.tok));
 
   constant.value = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::numeric_constant))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::semi))
-    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.text, ctx.tok));
 
   return decl::constant(&move constant);
 }
@@ -250,7 +463,7 @@ fn parse_variable_declaration(parse_context &&ctx) -> decl
   variable.type = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (ctx.try_consume_token(token::type::l_square))
   {
@@ -259,10 +472,10 @@ fn parse_variable_declaration(parse_context &&ctx) -> decl
     variable.type += ']';
 
     if (!ctx.try_consume_token(token::type::numeric_constant))
-      ctx.diag.error("expected array size", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedArraySize(ctx.text, ctx.tok));
 
     if (!ctx.try_consume_token(token::type::r_square))
-      ctx.diag.error("expected bracket", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedClosingBracket(ctx.text, ctx.tok));
   }
 
   if (ctx.try_consume_token(token::type::colon))
@@ -270,13 +483,13 @@ fn parse_variable_declaration(parse_context &&ctx) -> decl
     std::sscan(ctx.tok.text, &mut variable.constraint);
 
     if (!ctx.try_consume_token(token::type::numeric_constant))
-      ctx.diag.error("expected constraint", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedConstraint(ctx.text, ctx.tok));
   }
 
   variable.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   return decl::variable(&move variable);
 }
@@ -297,7 +510,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
       ctx.consume_token(token::type::identifier);
 
       if (!ctx.try_consume_token(token::type::l_paren))
-        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+        ctx.diag.error(ParseError::ExpectedParameterList(ctx.text, ctx.tok));
 
       while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
       {
@@ -311,14 +524,14 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
       }
 
       if (!ctx.try_consume_token(token::type::r_paren))
-        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+        ctx.diag.error(ParseError::ExpectedClosingParen(ctx.text, ctx.tok));
 
       if (ctx.try_consume_token(token::type::arrow))
       {
         method.type = method::type::twoway;
 
         if (!ctx.try_consume_token(token::type::l_paren))
-          ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+          ctx.diag.error(ParseError::ExpectedReturnsList(ctx.text, ctx.tok));
 
         while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
         {
@@ -332,7 +545,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
         }
 
         if (!ctx.try_consume_token(token::type::r_paren))
-          ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+          ctx.diag.error(ParseError::ExpectedClosingParen(ctx.text, ctx.tok));
       }
 
     case arrow:
@@ -345,10 +558,10 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
       method.ordinal = cast<i32>(std::hash()(method.name) & 0x7ffffff);
 
       if (!ctx.try_consume_token(token::type::identifier))
-        ctx.diag.error("expected idendifier", ctx.text, ctx.tok.loc);
+        ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
       if (!ctx.try_consume_token(token::type::l_paren))
-        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+        ctx.diag.error(ParseError::ExpectedReturnsList(ctx.text, ctx.tok));
 
       while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
       {
@@ -362,10 +575,10 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
       }
 
       if (!ctx.try_consume_token(token::type::r_paren))
-        ctx.diag.error("expected paren", ctx.text, ctx.tok.loc);
+        ctx.diag.error(ParseError::ExpectedClosingParen(ctx.text, ctx.tok));
 
     else:
-      ctx.diag.error("expected method declaration", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedDeclaration(ctx.text, ctx.tok));
       ctx.consume_til_resumable();
   }
 
@@ -374,11 +587,11 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
     std::sscan(ctx.tok.text, &mut method.ordinal);
 
     if (!ctx.try_consume_token(token::type::numeric_constant))
-      ctx.diag.error("expected ordinal", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedOrdinal(ctx.text, ctx.tok));
   }
 
   if (!ctx.try_consume_token(token::type::semi))
-    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.text, ctx.tok));
 
   return decl::method(method);
 }
@@ -392,10 +605,10 @@ fn parse_protocol_declaration(parse_context &&ctx) -> decl
   protocol.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::l_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedOpeningBrace(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
@@ -406,7 +619,7 @@ fn parse_protocol_declaration(parse_context &&ctx) -> decl
   }
 
   if (!ctx.try_consume_token(token::type::r_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedClosingBrace(ctx.text, ctx.tok));
 
   return decl::protocol(&move protocol);
 }
@@ -420,10 +633,10 @@ fn parse_bits_declaration(parse_context &&ctx) -> decl
   bits.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::l_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedOpeningBrace(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
@@ -432,15 +645,15 @@ fn parse_bits_declaration(parse_context &&ctx) -> decl
     constant.name = ctx.tok.text;
 
     if (!ctx.try_consume_token(token::type::identifier))
-      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
     if (!ctx.try_consume_token(token::type::equal))
-      ctx.diag.error("expected equals", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedAssignment(ctx.text, ctx.tok));
 
     constant.value = ctx.tok.text;
 
     if (!ctx.try_consume_token(token::type::numeric_constant))
-      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
     bits.constants.push_back(&move decl::constant(&move constant));
 
@@ -449,7 +662,7 @@ fn parse_bits_declaration(parse_context &&ctx) -> decl
   }
 
   if (!ctx.try_consume_token(token::type::r_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedClosingBrace(ctx.text, ctx.tok));
 
   return decl::bits(&move bits);
 }
@@ -463,10 +676,10 @@ fn parse_enum_declaration(parse_context &&ctx) -> decl
   enumerator.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::l_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedOpeningBrace(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
@@ -475,15 +688,15 @@ fn parse_enum_declaration(parse_context &&ctx) -> decl
     constant.name = ctx.tok.text;
 
     if (!ctx.try_consume_token(token::type::identifier))
-      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
     if (!ctx.try_consume_token(token::type::equal))
-      ctx.diag.error("expected equals", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedAssignment(ctx.text, ctx.tok));
 
     constant.value = ctx.tok.text;
 
     if (!ctx.try_consume_token(token::type::numeric_constant))
-      ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
     enumerator.constants.push_back(&move decl::constant(&move constant));
 
@@ -492,7 +705,7 @@ fn parse_enum_declaration(parse_context &&ctx) -> decl
   }
 
   if (!ctx.try_consume_token(token::type::r_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedClosingBrace(ctx.text, ctx.tok));
 
   return decl::enumerator(&move enumerator);
 }
@@ -506,10 +719,10 @@ fn parse_struct_declaration(parse_context &&ctx) -> decl
   structure.name = ctx.tok.text;
 
   if (!ctx.try_consume_token(token::type::identifier))
-    ctx.diag.error("expected identifier", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
   if (!ctx.try_consume_token(token::type::l_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedOpeningBrace(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
@@ -523,7 +736,7 @@ fn parse_struct_declaration(parse_context &&ctx) -> decl
   }
 
   if (!ctx.try_consume_token(token::type::r_brace))
-    ctx.diag.error("expected brace", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedClosingBrace(ctx.text, ctx.tok));
 
   return decl::structure(&move structure);
 }
@@ -535,7 +748,7 @@ fn parse_toplevel_declaration(parse_context &&ctx) -> decl
   switch (ctx.tok.type)
   {
     case semi:
-      ctx.diag.warn("extra semi", ctx.text, ctx.tok.loc);
+      ctx.diag.warn(ParseError::ExtraSemi(ctx.text, ctx.tok));
       ctx.consume_token(token::type::semi);
 
     case kw_const:
@@ -554,14 +767,14 @@ fn parse_toplevel_declaration(parse_context &&ctx) -> decl
       return parse_struct_declaration(ctx);
 
     else:
-      ctx.diag.error("expected toplevel declaration", ctx.text, ctx.tok.loc);
+      ctx.diag.error(ParseError::ExpectedDeclaration(ctx.text, ctx.tok));
       ctx.consume_til_resumable();
   }
 
   return decl();
 }
 
-pub fn parse(String &path, diag mut &diag) throws -> ast
+pub fn parse(String &path, diag::diag mut &diag) throws -> ast
 {
   var ast = ast();
 
@@ -573,12 +786,12 @@ pub fn parse(String &path, diag mut &diag) throws -> ast
   ast.file = path;
 
   if (!ctx.try_consume_token(token::type::kw_library))
-    diag.error("expected library declaration", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedLibrary(ctx.text, ctx.tok));
 
   ast.name = parse_qualified_name(ctx);
 
   if (!ctx.try_consume_token(token::type::semi))
-    ctx.diag.error("expected semi", ctx.text, ctx.tok.loc);
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::eof)
   {

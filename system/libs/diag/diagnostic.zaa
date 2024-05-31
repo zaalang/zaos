@@ -1,0 +1,66 @@
+//
+// diagnostic
+//
+
+import std.string : String;
+import std.algorithm;
+import std.optional;
+import std.dyn;
+import diag.source;
+import diag.report;
+
+pub enum severity
+{
+  error,
+  warning,
+  note,
+}
+
+pub struct label
+{
+  pub usize pos;
+  pub usize len;
+  pub std::string text;
+
+  pub label(usize pos, usize len, String &&text = "")
+    : pos(pos), len(len), text(&&text)
+  {
+  }
+
+  pub label() = default;
+  pub label(label &&) = default;
+  pub ~label() = default;
+}
+
+pub struct diagnostic
+{
+  pub std::string loc;
+  pub severity severity;
+  pub std::string_literal code;
+  pub std::string_literal message;
+  pub std::optional<std::dyn<diag::source>> source;
+  pub std::vector<label> labels;
+  pub std::string text;
+
+  pub diagnostic() = default;
+  pub diagnostic(diagnostic &&) = default;
+  pub fn =(diagnostic mut &, diagnostic &&) -> diagnostic mut & = default;
+  pub ~diagnostic() = default;
+}
+
+pub fn add_label(diagnostic mut &diagnostic, label &&label) -> void
+{
+  diagnostic.labels.insert(std::upper_bound(diagnostic.labels, label, |a, b| a.pos < b.pos), &&label);
+}
+
+pub fn add_label(diagnostic mut &diagnostic, usize pos, usize len, String &&text = "") -> void
+{
+  diagnostic.add_label(label(pos, len, &&text));
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, diagnostic &diagnostic) throws -> void
+{
+  var opts = diag::term_report_opts();
+
+  diag::report_to(&mut os, diagnostic, opts);
+}

@@ -116,7 +116,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
         var attrs = std::string("----------");
 
-        switch (stat.ftype)
+        switch (stat.type)
         {
           case block_device:
             attrs[0] = cast('b');
@@ -127,7 +127,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
           case directory:
             attrs[0] = cast('d');
 
-          case symbolic_link:
+          case symlink:
             attrs[0] = cast('l');
         }
 
@@ -168,7 +168,7 @@ pub fn ls(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
 
         terminal.write(std::format("{} {:>5d} {:>5d} {:>10} {:6} {}", attrs, stat.uid, stat.gid, stat.size, date, file));
 
-        if (stat.ftype == os::ftype::symbolic_link)
+        if (stat.type == os::filetype::symlink)
         {
           var linkres = read(&mut thread_ring, fd, buffer.data, buffer.len);
 

@@ -1,0 +1,225 @@
+//
+// report
+//
+
+import std.io;
+import std.stdio;
+import std.algorithm;
+import diag.diagnostic;
+
+using std::OutputStream;
+
+struct snippet
+{
+  usize lineno;
+  usize position;
+
+  std::string data;
+
+  snippet() = default;
+  snippet(snippet &&) = default;
+  fn =(snippet mut &, snippet &&) -> snippet mut & = default;
+  ~snippet() = default;
+}
+
+pub struct term_report_opts
+{
+  pub term_report_opts() = default;
+  pub term_report_opts(term_report_opts &&) = default;
+  pub fn =(term_report_opts mut &, term_report_opts &&) -> term_report_opts mut & = default;
+  pub ~term_report_opts() = default;
+}
+
+pub struct json_report_opts
+{
+  pub json_report_opts() = default;
+  pub json_report_opts(json_report_opts &&) = default;
+  pub fn =(json_report_opts mut &, json_report_opts &&) -> json_report_opts mut & = default;
+  pub ~json_report_opts() = default;
+}
+
+fn render(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws -> void
+{
+  switch (diagnostic.severity)
+  {
+    case error:
+      std::print_to(&mut os, "\x1b[01;37m");
+      std::print_to(&mut os, diagnostic.loc, ": ");
+      std::print_to(&mut os, "\x1b[01;31m");
+
+    case warning:
+      std::print_to(&mut os, "\x1b[01;37m");
+      std::print_to(&mut os, diagnostic.loc, ": ");
+      std::print_to(&mut os, "\x1b[0m");
+
+    else:
+      std::print_to(&mut os, "\x1b[0m", " ");
+  }
+
+  std::print_to(&mut os, diagnostic.severity);
+  std::print_to(&mut os, diagnostic.code, ": ");
+
+  std::print_to(&mut os, "\x1b[0m");
+  std::print_to(&mut os, diagnostic.message, "\n");
+
+  var snippets = std::vector<snippet>::with_capacity(diagnostic.labels.len);
+
+  switch (diagnostic.source)
+  {
+    case Some[source]:
+
+      for (var &label : diagnostic.labels)
+      {
+        try
+        {
+          var snippet = snippet();
+          snippet.data = source.read_span(source.self, label, 2, 2, &mut snippet.lineno, &mut snippet.position);
+
+          snippets.push_back(snippet);
+        }
+        catch (std::error)
+        {
+          std::print_to(&mut os, "\x1b[01;36m");
+          std::format_to(&mut os, "  failed to read source for label {}:{}: {}\n", label.pos, label.len, label.text);
+        }
+      }
+
+      for (var i = 0; i + 1 < snippets.len; )
+      {
+        if (snippets[i + 1].position <= snippets[i].position + snippets[i].data.len)
+        {
+          var overlapped = snippets.take_erase(snippets.begin + i + 1);
+
+          snippets[i].data.replace(overlapped.position - snippets[i].position, snippets[i].data.len, overlapped.data);
+        }
+        else
+        {
+          ++i;
+        }
+      }
+  }
+
+  for (var &snippet : snippets)
+  {
+    var n = snippet.lineno + 1;
+    var max_n = snippet.lineno + std::count(snippet.data.lines);
+
+    var gutter = 1;
+    for (var k = max_n; k > 9; k /= 10)
+      ++gutter;
+
+    std::print_to(&mut os, "\x1b[01;37m");
+    std::format_to(&mut os, " {:*} {}{}{}\n", gutter, " ", "╭", "─", "─");
+
+    for (var line : snippet.data.lines)
+    {
+      std::print_to(&mut os, "\x1b[01;37m");
+      std::format_to(&mut os, " {:*} {}", gutter, n, "│");
+
+      std::print_to(&mut os, "\x1b[01;36m");
+      std::format_to(&mut os, " {}\n", line);
+
+      var i = 0;
+      var j = 0;
+
+      var beg = snippet.position + (line.data - snippet.data.data);
+      var len = line.len + 1;
+
+      for (var &label : diagnostic.labels)
+      {
+        if (beg <= label.pos && label.pos < beg + len)
+        {
+          if (i == 0)
+          {
+            std::print_to(&mut os, "\x1b[01;37m");
+            std::format_to(&mut os, " {:*} . ", gutter, " ");
+            std::print_to(&mut os, "\x1b[01;32m");
+          }
+
+          for (; i < label.pos - beg; ++i)
+            std::print_to(&mut os, " ");
+
+          if (!label.text.empty)
+          {
+            for (; i < (label.pos + 1) - beg; ++i)
+              std::print_to(&mut os, "┬");
+
+            j += 1;
+          }
+
+          for (; i < (label.pos + label.len) - beg && i < len; ++i)
+            std::print_to(&mut os, "─");
+        }
+      }
+
+      if (i != 0)
+      {
+        while (j != 0)
+        {
+          i = 0;
+          var k = 1;
+
+          std::print_to(&mut os, "\n");
+          std::print_to(&mut os, "\x1b[01;37m");
+          std::format_to(&mut os, " {:*} . ", gutter, " ");
+          std::print_to(&mut os, "\x1b[01;32m");
+
+          for (var &label : diagnostic.labels)
+          {
+            if (label.text.empty)
+              continue;
+
+            if (beg <= label.pos && label.pos < beg + len)
+            {
+              if (k < j)
+              {
+                for (; i < label.pos - beg; ++i)
+                  std::print_to(&mut os, " ");
+
+                std::print_to(&mut os, "│");
+
+                i += 1;
+              }
+
+              if (k == j)
+              {
+                for (; i < label.pos - beg; ++i)
+                  std::print_to(&mut os, " ");
+
+                std::format_to(&mut os, "{}{} {}", "╰", "─", label.text);
+              }
+
+              k += 1;
+            }
+          }
+
+          j -= 1;
+        }
+
+        std::print_to(&mut os, "\n");
+      }
+
+      n += 1;
+    }
+
+    std::print_to(&mut os, "\x1b[01;37m");
+    std::format_to(&mut os, " {:*} {}{}{}\n", gutter, " ", "╰", "─", "─");
+  }
+
+  std::print_to(&mut os, "\x1b[0m");
+  std::print_to(&mut os, diagnostic.text);
+}
+
+pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws -> void
+{
+  var os = std::output_stream(&mut os);
+
+  render(&mut os, diagnostic, opts);
+}
+
+pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, json_report_opts &opts) throws -> void
+{
+  var os = std::output_stream(&mut os);
+
+  render(&mut os, diagnostic, opts);
+}

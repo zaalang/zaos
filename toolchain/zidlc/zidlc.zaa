@@ -8,9 +8,9 @@ import std.string : String;
 import std.hash;
 import std.box;
 import std.env;
-import zidl.diag;
 import zidl.types;
 import zidl.parser;
+import diag;
 
 struct builtin_type
 {
@@ -74,37 +74,42 @@ union type
 struct context
 {
   std::file fout;
-  zidl::diag mut *diag;
+  diag::diag mut *diag;
 
   type *i32type;
 
   std::vector<std::box<type>> typetable;
 
-  fn initialise(context mut &ctx, zidl::diag mut *diag) -> void
+  fn initialise(context mut &ctx, diag::diag mut *diag) -> void
   {
     ctx.diag = diag;
 
-    ctx.typetable.push_back(type::builtin("i8", sizeof<i8>, alignof<i8>));
-    ctx.typetable.push_back(type::builtin("i16", sizeof<i16>, alignof<i16>));
-    ctx.typetable.push_back(type::builtin("i32", sizeof<i32>, alignof<i32>));
-    ctx.typetable.push_back(type::builtin("i64", sizeof<i64>, alignof<i64>));
-    ctx.typetable.push_back(type::builtin("u8", sizeof<u8>, alignof<u8>));
-    ctx.typetable.push_back(type::builtin("u16", sizeof<u16>, alignof<u16>));
-    ctx.typetable.push_back(type::builtin("u32", sizeof<u32>, alignof<u32>));
-    ctx.typetable.push_back(type::builtin("u64", sizeof<u64>, alignof<u64>));
-    ctx.typetable.push_back(type::builtin("f32", sizeof<f32>, alignof<f32>));
-    ctx.typetable.push_back(type::builtin("f64", sizeof<f64>, alignof<f64>));
-    ctx.typetable.push_back(type::builtin("bool", sizeof<bool>, alignof<bool>));
-    ctx.typetable.push_back(type::builtin("char", sizeof<char>, alignof<char>));
-    ctx.typetable.push_back(type::string());
-    ctx.typetable.push_back(type::channel());
-    ctx.typetable.push_back(type::buffer());
+    ctx.add_type(type::builtin("i8", sizeof<i8>, alignof<i8>));
+    ctx.add_type(type::builtin("i16", sizeof<i16>, alignof<i16>));
+    ctx.add_type(type::builtin("i32", sizeof<i32>, alignof<i32>));
+    ctx.add_type(type::builtin("i64", sizeof<i64>, alignof<i64>));
+    ctx.add_type(type::builtin("u8", sizeof<u8>, alignof<u8>));
+    ctx.add_type(type::builtin("u16", sizeof<u16>, alignof<u16>));
+    ctx.add_type(type::builtin("u32", sizeof<u32>, alignof<u32>));
+    ctx.add_type(type::builtin("u64", sizeof<u64>, alignof<u64>));
+    ctx.add_type(type::builtin("f32", sizeof<f32>, alignof<f32>));
+    ctx.add_type(type::builtin("f64", sizeof<f64>, alignof<f64>));
+    ctx.add_type(type::builtin("bool", sizeof<bool>, alignof<bool>));
+    ctx.add_type(type::builtin("char", sizeof<char>, alignof<char>));
+    ctx.add_type(type::string());
+    ctx.add_type(type::channel());
+    ctx.add_type(type::buffer());
 
-    ctx.i32type = &*ctx.typetable[2];
+    ctx.i32type = ctx.resolve_type("i32");
   }
 
   context() = default;
   ~context() = default;
+}
+
+fn add_type(context &&ctx, type &&type) -> type *
+{
+  return &*ctx.typetable.push_back(&&type);
 }
 
 fn resolve_type(context &&ctx, std::string_view name) -> type *
@@ -150,12 +155,12 @@ fn resolve_type(context &&ctx, std::string_view name) -> type *
     }
   }
 
-  ctx.diag.error(std::format("unknown type - {}", name));
+  ctx.diag.error("unknown type");
 
   return null;
 }
 
-fn resolve_type(context &&ctx, std::string &name) -> type *
+fn resolve_type(context &&ctx, String &name) -> type *
 {
   return resolve_type(ctx, std::string_view(name));
 }
@@ -703,10 +708,10 @@ fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
     }
   }
 
-  ctx.typetable.push_back(type::tag(structure.name, fields));
+  ctx.add_type(type::tag(structure.name, fields));
 }
 
-fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throws -> void
+fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throws -> void
 {
   var ctx = context();
   ctx.initialise(&diag);
@@ -750,7 +755,7 @@ fn codegen(zidl::ast &ast, std::string_view outfile, zidl::diag mut &diag) throw
 
 fn main
 {
-  var diag = zidl::diag("zidlc");
+  var diag = diag::diag("zidlc");
 
   if (std::env::args.len != 4 || std::env::args[1] != "-o")
   {

@@ -52,16 +52,16 @@ pub const S_IFDIR = 0x4000;  // directory
 pub const S_IFCHR = 0x2000;  // character device
 pub const S_IFIFO = 0x1000;  // fifo
 
-pub enum ftype
+pub enum filetype
 {
   unknown,
   block_device,
   character_device,
   directory,
-  regular_file,
+  regular,
   socket_dgram,
   socket_stream,
-  symbolic_link,
+  symlink,
 }
 
 pub enum stats
@@ -110,12 +110,12 @@ pub struct dirent
     return std::string_view(this.file_name.data, cast<usize>(this.name_len));
   }
 
-  pub fn ftype(this&) -> ftype
+  pub fn type(this&) -> filetype
   {
-    return cast<ftype>(this.file_type);
+    return cast<filetype>(this.file_type);
   }
 
-  pub fn ftype=(this mut &, ftype type) -> void
+  pub fn type=(this mut &, filetype type) -> void
   {
     this.file_type = cast<u16>(type);
   }

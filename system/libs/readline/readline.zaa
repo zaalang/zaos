@@ -3,8 +3,6 @@
 //
 
 import std.stdlib;
-import os.zaos.time;
-import os.zaos.fcntl;
 import readline.event : termin;
 import readline.prompt : prompt;
 import readline.history : history;
@@ -43,8 +41,6 @@ pub fn create() -> context
   return context();
 }
 
-extern fn thread_ring() -> os::ioring mut &;
-
 pub fn use_history(context mut &ctx, history mut *history) -> void
 {
   ctx.editor.history = history;
@@ -81,13 +77,7 @@ pub fn read_line(context mut &ctx, prompt &prompt) -> result
     {
       paint(&mut ctx.editor, ctx.stdout, prompt);
 
-      var tp = os::timespec(void);
-      if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
-        continue;
-
-      var pollset = [ os::pollevt(ctx.stdin, os::POLLFD, os::POLLIN, 0) ];
-
-      os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+      termios::poll(ctx.stdin);
     }
   }
 
@@ -96,10 +86,10 @@ pub fn read_line(context mut &ctx, prompt &prompt) -> result
   switch (status)
   {
     case accepted:
-      render(&mut ctx.editor, ctx.stdout, prompt);
+      render(ctx.editor, ctx.stdout, prompt);
 
     case canceled[signal]:
-      flush(&mut ctx.editor, ctx.stdout, prompt);
+      flush(ctx.editor, ctx.stdout, prompt);
 
       switch (signal)
       {
@@ -117,5 +107,5 @@ pub fn read_line(context mut &ctx, prompt &prompt) -> result
       }
   }
 
-  return result::enter(&move std::launder(ctx.editor.buffer));
+  return result::enter(ctx.editor.take_buffer);
 }

@@ -1,0 +1,298 @@
+//
+// ast
+//
+
+import std.stdio;
+import std.string;
+import std.vector;
+import std.box;
+import chrono;
+
+pub struct Null
+{
+  pub std::string_view span;
+
+  pub Null(std::string_view span)
+    : span(span)
+  {
+  }
+
+  pub Null(Null &&) = default;
+  pub ~Null() = default;
+}
+
+pub struct Number
+{
+  pub f64 value;
+  pub std::string_view span;
+
+  pub Number(f64 value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Number(Number &&) = default;
+  pub ~Number() = default;
+}
+
+pub struct Integer
+{
+  pub i64 value;
+  pub std::string_view span;
+
+  pub Integer(i64 value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Integer(Integer &&) = default;
+  pub ~Integer() = default;
+}
+
+pub struct Boolean
+{
+  pub bool value;
+  pub std::string_view span;
+
+  pub Boolean(bool value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Boolean(Boolean &&) = default;
+  pub ~Boolean() = default;
+}
+
+pub struct String
+{
+  pub std::string value;
+  pub std::string_view span;
+
+  pub String(std::string &&value, std::string_view span)
+    : value(&&value), span(span)
+  {
+  }
+
+  pub String(String &&) = default;
+  pub ~String() = default;
+}
+
+pub struct Duration
+{
+  pub chrono::nanoseconds value;
+  pub std::string_view span;
+
+  pub Duration<R, P>(chrono::duration<R, P> &value, std::string_view span)
+    : value(value.nanoseconds), span(span)
+  {
+  }
+
+  pub Duration(Duration &&) = default;
+  pub ~Duration() = default;
+}
+
+pub struct FileSize
+{
+  pub i64 value;
+  pub std::string_view span;
+
+  pub FileSize(i64 value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub FileSize(FileSize &&) = default;
+  pub ~FileSize() = default;
+}
+
+pub union Argument
+{
+  pub Flag(String),
+  pub Named((String, Expression)),
+  pub Free(Expression),
+
+  pub fn span(this &) -> std::string_view
+  {
+    switch (this)
+    {
+      case Flag[flag]:
+        return flag.span;
+
+      case Named[named]:
+        return std::string_view(named.0.span.begin, named.1.span.end);
+
+      case Free[free]:
+        return free.span;
+    }
+
+    std::panic("unhandled");
+  }
+
+  pub Argument(Argument &&) = default;
+  pub ~Argument() = default;
+}
+
+pub struct Call
+{
+  pub String cmd;
+  pub std::vector<Argument> arguments;
+
+  pub fn span(this &) -> std::string_view
+  {
+    var span = this.cmd.span;
+
+    for (var &arg : this.arguments)
+      span.len += arg.span.end - span.end;
+
+    return span;
+  }
+
+  pub Call(String cmd, std::vector<Argument> arguments)
+    : cmd(&move cmd), arguments(&move arguments)
+  {
+  }
+
+  pub Call(Call &&) = default;
+  pub ~Call() = default;
+}
+
+pub struct UnaryOp
+{
+  pub enum Type
+  {
+    Plus,
+    Minus,
+    LNot,
+    Paren,
+  }
+
+  pub Type op;
+  pub std::box<Expression> subexpr;
+
+  pub fn span(this &) -> std::string_view
+  {
+    return this.subexpr.span;
+  }
+
+  pub UnaryOp(Type op, Expression &&subexpr)
+    : op(op), subexpr(&&subexpr)
+  {
+  }
+
+  pub UnaryOp(UnaryOp &&) = default;
+  pub ~UnaryOp() = default;
+}
+
+pub struct BinaryOp
+{
+  pub enum Type
+  {
+    Add,
+    Sub,
+    Div,
+    IDiv,
+    Mul,
+    Rem,
+    Pow,
+    LAnd,
+    LOr,
+    LT,
+    GT,
+    LE,
+    GE,
+    EQ,
+    NE,
+    Rescue,
+    Assign,
+    Pipe,
+    Semi,
+  }
+
+  pub Type op;
+  pub std::box<Expression> lhs;
+  pub std::box<Expression> rhs;
+
+  pub fn span(this &) -> std::string_view
+  {
+    return std::string_view(this.lhs.span.begin, this.rhs.span.end);
+  }
+
+  pub BinaryOp(Type op, Expression &&lhs, Expression &&rhs)
+    : op(op), lhs(&&lhs), rhs(&&rhs)
+  {
+  }
+
+  pub BinaryOp(BinaryOp &&) = default;
+  pub ~BinaryOp() = default;
+}
+
+pub union Expression
+{
+  pub Null(Null),
+  pub Number(Number),
+  pub Integer(Integer),
+  pub Boolean(Boolean),
+  pub String(String),
+  pub Duration(Duration),
+  pub FileSize(FileSize),
+  pub Call(Call),
+  pub UnaryOp(UnaryOp),
+  pub BinaryOp(BinaryOp),
+
+  pub fn span(this &) -> std::string_view
+  {
+    switch (this)
+    {
+      case Null[nill]:
+        return nill.span;
+
+      case Number[number]:
+        return number.span;
+
+      case Integer[integer]:
+        return integer.span;
+
+      case Boolean[boolean]:
+        return boolean.span;
+
+      case String[string]:
+        return string.span;
+
+      case Duration[duration]:
+        return duration.span;
+
+      case FileSize[filesize]:
+        return filesize.span;
+
+      case Call[call]:
+        return call.span;
+
+      case UnaryOp[unaryop]:
+        return unaryop.span;
+
+      case BinaryOp[binaryop]:
+        return binaryop.span;
+    }
+
+    std::panic("unhandled");
+  }
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub Expression() = default;
+  pub Expression(Expression &&) = default;
+  pub fn =(Expression mut &, Expression &&) -> Expression mut & = default;
+  pub ~Expression() = default;
+}
+
+pub struct Block
+{
+  pub std::vector<Expression> exprs;
+
+  pub Block() = default;
+  pub Block(Block &&) = default;
+  pub ~Block() = default;
+}

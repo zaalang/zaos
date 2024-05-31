@@ -155,6 +155,16 @@ pub struct connection
     zidl::send<winton::compositor::resize_request>(this.endpoint, serial, surface_id, tether);
   }
 
+  fn register(this mut &, u32 id, surface mut *surface) -> void
+  {
+    this.surfaces.insert(id, surface);
+  }
+
+  fn unregister(this mut &, u32 id) -> void
+  {
+    this.surfaces.erase(id);
+  }
+
   fn message_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   {
     var connection = cast<connection mut *>(cast<uintptr>(wait) - offsetof(connection::handler));
@@ -548,7 +558,7 @@ pub struct surface : pub gui::object
     this.flags = flags;
     this.connection = connection;
 
-    connection.surfaces.insert(id, &this);
+    connection.register(id, &this);
 
     connection.create_window(id);
     connection.surface_commit(id);
@@ -675,6 +685,9 @@ pub struct surface : pub gui::object
   pub fn schedule_redraw(this mut &, gui::rect &rect) -> void
   {
     this.damage.add(gui::clamp(rect, this.geometry));
+
+    if (this.damage.empty)
+      return;
 
     this.status |= surface::status::redraw;
 
@@ -1170,7 +1183,7 @@ pub struct surface : pub gui::object
     }
 
     this.connection.surface_destroy(this.id);
-    this.connection.surfaces.erase(this.id);
+    this.connection.unregister(this.id);
 
     app::loop::current.cancel_timeout(&this.update);
     this.status = cast(0);

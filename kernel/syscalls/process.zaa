@@ -39,7 +39,7 @@ struct attr
   const enddup = 255;
 
   i32 type;
-  i32 value;
+  uintptr value;
 
   attr() = default;
   attr(attr&) = default;
@@ -136,7 +136,7 @@ extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usi
     {
       case 0 ..= attr::enddup:
 
-        var file = process::current.fd(attr.value);
+        var file = process::current.fd(cast(attr.value & 0x7fffffff));
 
         if (!file)
           return vfs::result::bad_descriptor;

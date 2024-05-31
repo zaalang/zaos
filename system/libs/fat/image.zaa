@@ -131,7 +131,7 @@ pub struct image
     enum type
     {
       directory,
-      regular_file,
+      regular,
     }
 
     type type;
@@ -151,7 +151,7 @@ pub struct image
         case directory:
           return 0x4000;
 
-        case regular_file:
+        case regular:
           return 0x8000;
       }
 
@@ -469,7 +469,7 @@ pub fn open(image &this, image::inode &dir, std::string_view name, image::inode 
     if (entry == name)
     {
       fd = node;
-      fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular_file;
+      fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular;
       fd.cluster = entry.first_cluster;
       fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
       fd.dentry = entry;
@@ -484,7 +484,7 @@ pub fn open(image &this, image::inode &dir, std::string_view name, image::inode 
 
 pub fn read(image &this, image::inode mut &fd, std::span<u8> mut &view) -> result
 {
-  if (fd.type != image::inode::type::regular_file)
+  if (fd.type != image::inode::type::regular)
     return result::bad_descriptor;
 
   view.len = 0;
@@ -593,7 +593,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u8 attr
     entry.first_cluster = 0;
 
     fd = node;
-    fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular_file;
+    fd.type = entry.isdir ? image::inode::type::directory : image::inode::type::regular;
     fd.cluster = 0x0fffffff;
     fd.data = fd.base + cast<usize>(fd.cluster - 2) * cast<usize>(fd.bytes_per_cluster);
     fd.dentry = entry;
@@ -608,7 +608,7 @@ pub fn expand(image mut &this, image::inode mut &fd, u64 len) -> result
   if (!this.mutdata)
     return result::readonly_file_system;
 
-  if (fd.type != image::inode::type::regular_file)
+  if (fd.type != image::inode::type::regular)
     return result::bad_descriptor;
 
   if (len < cast(fd.cursor))
@@ -681,7 +681,7 @@ pub fn truncate(image mut &this, image::inode mut &fd) -> result
   if (!this.mutdata)
     return result::readonly_file_system;
 
-  if (fd.type != image::inode::type::regular_file)
+  if (fd.type != image::inode::type::regular)
     return result::bad_descriptor;
 
   var vol = this.volume_info;
@@ -726,7 +726,7 @@ pub fn write(image mut &this, image::inode mut &fd, void *data, usize len) -> re
   if (!this.mutdata)
     return result::readonly_file_system;
 
-  if (fd.type != image::inode::type::regular_file)
+  if (fd.type != image::inode::type::regular)
     return result::bad_descriptor;
 
   if (fd.filesize < fd.cursor + cast(len))

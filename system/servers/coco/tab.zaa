@@ -58,7 +58,7 @@ pub struct completer : pub readline::completer
           {
             var match = std::string(base) + entry.name + " ";
 
-            if (entry.ftype == ftype::directory)
+            if (entry.type == filetype::directory)
               match.back = cast('/');
 
             results.push_back(completer::suggestion(match, matcher.len));

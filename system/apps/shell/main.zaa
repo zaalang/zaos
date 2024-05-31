@@ -5,39 +5,32 @@
 import std.stdio;
 import std.env;
 import readline;
+import engine;
+import parser;
+import diag;
 
-fn test(std::String &cmdline)
+fn test(std::string &input)
 {
-  import os.zaos.sched;
-  import os.zaos.fcntl : STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO, STDROOT_FILENO, STDCWD_FILENO;
+  var diag = diag::diag("");
+  var engine = engine::create();
 
-  var argv = std::vector<os::arg>();
-  var envp = std::vector<os::arg>();
-  var attrs = std::vector<os::attr>();
+  var src = engine.add_source("repl", input);
+  var block = parser::parse(src, &mut diag);
 
-  for (var arg : cmdline.words)
-    argv.push_back(os::arg(arg.data, arg.len));
+  if (diag.has_errored)
+  {
+    std::print(diag.first);
 
-  for (var arg : std::env::vars)
-    envp.push_back(os::arg(arg.data, arg.len));
+    return;
+  }
 
-  attrs.push_back(os::attr(os::attr::stdin, STDIN_FILENO));
-  attrs.push_back(os::attr(os::attr::stdout, STDOUT_FILENO));
-  attrs.push_back(os::attr(os::attr::stderr, STDERR_FILENO));
-  attrs.push_back(os::attr(os::attr::stdroot, STDROOT_FILENO));
-  attrs.push_back(os::attr(os::attr::stdcwd, STDCWD_FILENO));
-  attrs.push_back(os::attr(os::attr::dupfd(7), 7));
+  var value = engine.evaluate(block, &mut diag);
 
-  var pid = os::process_create(argv.data, argv.len, envp.data, envp.len, attrs.data, attrs.len, 0);
+  if (diag.has_errored)
+    std::print(diag.first);
 
-  if (pid < 0)
-    return pid;
-
-  var rval = 0;
-  if (var rc = os::wait(pid, &rval, 0); rc < 0)
-    return rc;
-
-  return 0;
+  if (value.is_some)
+    std::print(value);
 }
 
 fn main() -> int
@@ -55,8 +48,8 @@ fn main() -> int
 
     switch (line)
     {
-      case enter[cmdline]:
-        test(cmdline);
+      case enter[input]:
+        test(input);
 
       case ctrl_d:
         break;

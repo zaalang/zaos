@@ -1003,7 +1003,7 @@ pub fn create(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
     return entry.result;
 
   entry.set_name(name);
-  entry.set_type(ext2_ftype::regular_file);
+  entry.set_type(ext2_ftype::regular);
 
   var ino = 0;
   if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFREG); !result)
@@ -1041,7 +1041,7 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
     return entry.result;
 
   entry.set_name(name);
-  entry.set_type(ext2_ftype::symbolic_link);
+  entry.set_type(ext2_ftype::symlink);
 
   var ino = 0;
   if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFLNK); !result)
@@ -1112,7 +1112,7 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
     return entry.result;
 
   entry.set_name(name);
-  entry.set_type(ext2_ftype::regular_file);
+  entry.set_type(ext2_ftype::regular);
 
   var ino = 0;
   if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFDIR); !result)
@@ -1154,7 +1154,7 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
   var dotentry = cast<ext2_dir_entry mut *>(block.ptr);
 
   dotentry.inode = ino;
-  dotentry.ftype = ext2_ftype::directory;
+  dotentry.type = ext2_ftype::directory;
   dotentry.file_name[0] = cast('.');
   dotentry.name_len = 1;
   dotentry.rec_len = 12;
@@ -1164,7 +1164,7 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
   var dotdotentry = cast<ext2_dir_entry mut *>(block.ptr + 12);
 
   dotdotentry.inode = parent.ptr.inode;
-  dotdotentry.ftype = ext2_ftype::directory;
+  dotdotentry.type = ext2_ftype::directory;
   dotdotentry.file_name[0] = cast('.');
   dotdotentry.file_name[1] = cast('.');
   dotdotentry.name_len = 2;

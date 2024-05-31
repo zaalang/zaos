@@ -397,10 +397,10 @@ pub fn read_line(terminal mut &terminal, readline::completer mut *completer = nu
   switch (status)
   {
     case accepted:
-      readline::render(&mut editor, pty.slave, prompt);
+      readline::render(editor, pty.slave, prompt);
 
     case canceled[signal]:
-      readline::flush(&mut editor, pty.slave, prompt);
+      readline::flush(editor, pty.slave, prompt);
 
       switch (signal)
       {
@@ -418,7 +418,7 @@ pub fn read_line(terminal mut &terminal, readline::completer mut *completer = nu
       }
   }
 
-  return readline::result::enter(&move std::launder(editor.buffer));
+  return readline::result::enter(editor.take_buffer);
 }
 
 pub fn flush(terminal mut &terminal) -> i32

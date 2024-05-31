@@ -790,7 +790,7 @@ struct stream
 
     std::memcpy(&value, this.data.data, bytes);
 
-    this.data.remove_prefix!(bytes);
+    this.data.drop_front!(bytes);
 
     return std::byteswap(value);
   }
@@ -975,7 +975,7 @@ struct stream
 
     var data = this.data[0 .. len];
 
-    this.data.remove_prefix!(len);
+    this.data.drop_front!(len);
 
     return data;
   }
@@ -985,7 +985,7 @@ struct stream
     if (this.data.len < len)
       throw errc::insufficient_data;
 
-    this.data.remove_prefix!(len);
+    this.data.drop_front!(len);
   }
 
   stream() = default;
@@ -1204,7 +1204,7 @@ fn cmap_format_4(stream table, char codepoint) throws -> std::optional<glyphid>
 
 fn find(cmap &cmap, encoding_record &record, char codepoint) throws -> std::optional<glyphid>
 {
-  var table = stream(cmap.data.remove_prefix(cast<usize>(record.offset)));
+  var table = stream(cmap.data.drop_front(cast<usize>(record.offset)));
 
   switch (cast<cmap::format>(table.read<u16>()))
   {
@@ -1477,7 +1477,7 @@ fn gpos_single_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var pos_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
@@ -1496,14 +1496,14 @@ fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var pos_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
     var value_format1 = subtable.read<u16>();
     var value_format2 = subtable.read<u16>();
 
-    var coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     switch (pos_format)
     {
@@ -1516,7 +1516,7 @@ fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable
         if (j.is_none || j.value >= pairset_offsets.len)
           continue;
 
-        var pairsets  = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(pairset_offsets[j.value])));
+        var pairsets  = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(pairset_offsets[j.value])));
 
         var pairvalue_count = pairsets.read<u16>();
         var pairvalues = stream(pairsets.read(cast<usize>(pairvalue_count) * sizeof<pairvalue_record>));
@@ -1541,14 +1541,14 @@ fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable
         var classdef1_count = subtable.read<u16>();
         var classdef2_count = subtable.read<u16>();
 
-        var classdef1 = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef1_offset)));
+        var classdef1 = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef1_offset)));
 
         var j = classdef_lookup(classdef1, left);
 
         if (j.is_none || j.value >= classdef1_count)
           continue;
 
-        var classdef2 = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef2_offset)));
+        var classdef2 = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(classdef2_offset)));
 
         var k = classdef_lookup(classdef2, right);
 
@@ -1576,14 +1576,14 @@ fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subta
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var pos_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
     var entryexit_count = subtable.read<u16>();
     var entryexits = view<entryexit_record>(subtable.read(cast<usize>(entryexit_count) * sizeof<entryexit_record>));
 
-    var coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     var j = coverage_lookup(coverage, right);
 
@@ -1594,7 +1594,7 @@ fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subta
 
     if (entryexit.entry_anchor_offset != 0)
     {
-      var entry_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.entry_anchor_offset)));
+      var entry_anchor_table = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.entry_anchor_offset)));
 
       layout.anchor[0] = anchor_lookup(entry_anchor_table);
       layout.flags |= layout::flags::entry_anchor;
@@ -1602,7 +1602,7 @@ fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subta
 
     if (entryexit.exit_anchor_offset != 0)
     {
-      var exit_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.exit_anchor_offset)));
+      var exit_anchor_table = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(entryexit.exit_anchor_offset)));
 
       layout.anchor[1] = anchor_lookup(exit_anchor_table);
       layout.flags |= layout::flags::exit_anchor;
@@ -1614,7 +1614,7 @@ fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var pos_format = subtable.read<u16>();
     var mark_coverage_offset = subtable.read<u16>();
@@ -1623,12 +1623,12 @@ fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
     var mark_array_offset = subtable.read<u16>();
     var base_array_offset = subtable.read<u16>();
 
-    var markarray = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset)));
+    var markarray = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset)));
 
     var mark_count = markarray.read<u16>();
     var marks = view<mark_record>(markarray.read(cast<usize>(mark_count) * sizeof<mark_record>));
 
-    var mark_coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_coverage_offset)));
+    var mark_coverage = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_coverage_offset)));
 
     var j = coverage_lookup(mark_coverage, right);
 
@@ -1637,17 +1637,17 @@ fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
 
     var mark = marks[j.value];
 
-    var mark_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset) + cast<usize>(mark.mark_anchor_offset)));
+    var mark_anchor_table = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(mark_array_offset) + cast<usize>(mark.mark_anchor_offset)));
 
     layout.anchor[1] = anchor_lookup(mark_anchor_table);
     layout.flags |= layout::flags::mark_anchor;
 
-    var basearray = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset)));
+    var basearray = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset)));
 
     var base_count = basearray.read<u16>();
     var bases = view<u16>(basearray.read(cast<usize>(base_count) * sizeof<u16> * cast(mark_class_count)));
 
-    var base_coverage = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_coverage_offset)));
+    var base_coverage = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_coverage_offset)));
 
     var k = coverage_lookup(base_coverage, left);
 
@@ -1656,7 +1656,7 @@ fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
 
     var anchor_table_offset = bases[k.value * cast(mark_count) + cast(mark.mark_class)];
 
-    var base_anchor_table = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset) + cast<usize>(anchor_table_offset)));
+    var base_anchor_table = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(base_array_offset) + cast<usize>(anchor_table_offset)));
 
     layout.anchor[0] = anchor_lookup(base_anchor_table);
     layout.flags |= layout::flags::base_anchor;
@@ -1672,11 +1672,11 @@ pub fn layout(face &face, gpos::tag tag, glyphid left, glyphid right) -> layout
     case Some[gpos]:
       try
       {
-        var features = stream(gpos.data.remove_prefix(cast<usize>(gpos.featurelist_offset)));
+        var features = stream(gpos.data.drop_front(cast<usize>(gpos.featurelist_offset)));
 
         var num_features = features.read<u16>();
 
-        var lookups = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset)));
+        var lookups = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset)));
 
         var num_lookups = lookups.read<u16>();
 
@@ -1688,7 +1688,7 @@ pub fn layout(face &face, gpos::tag tag, glyphid left, glyphid right) -> layout
           if (cast<gpos::tag>(feature_tag) != tag)
             continue;
 
-          var feature = stream(gpos.data.remove_prefix(cast<usize>(gpos.featurelist_offset) + cast<usize>(feature_offset)));
+          var feature = stream(gpos.data.drop_front(cast<usize>(gpos.featurelist_offset) + cast<usize>(feature_offset)));
 
           var params_offset = feature.read<u16>();
           var indices_count = feature.read<u16>();
@@ -1698,7 +1698,7 @@ pub fn layout(face &face, gpos::tag tag, glyphid left, glyphid right) -> layout
           {
             var lookup_offset = view<u16>(lookups.data)[cast<usize>(indices[j])];
 
-            var lookup = stream(gpos.data.remove_prefix(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset)));
+            var lookup = stream(gpos.data.drop_front(cast<usize>(gpos.lookuplist_offset) + cast<usize>(lookup_offset)));
 
             var lookup_type = lookup.read<u16>();
             var lookup_flag = lookup.read<u16>();
@@ -1750,12 +1750,12 @@ fn gsub_single_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets,
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var subst_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
 
-    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     switch (subst_format)
     {
@@ -1791,21 +1791,21 @@ fn gsub_multiple_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offset
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var subst_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
     var sequence_count = subtable.read<u16>();
     var sequences = view<u16>(subtable.read(cast<usize>(sequence_count) * sizeof<u16>));
 
-    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     var j = coverage_lookup(coverage, input[0]);
 
     if (j.is_none || j.value >= sequences.len)
       continue;
 
-    var sequence_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(sequences[j.value])));
+    var sequence_table  = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(sequences[j.value])));
 
     var glyph_count = sequence_table.read<u16>();
     var glyphs = view<glyphid>(sequence_table.read(cast<usize>(glyph_count) * sizeof<glyphid>));
@@ -1822,21 +1822,21 @@ fn gsub_alternate_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offse
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var subst_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
     var alternate_count = subtable.read<u16>();
     var alternates = view<u16>(subtable.read(cast<usize>(alternate_count) * sizeof<u16>));
 
-    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     var j = coverage_lookup(coverage, input[0]);
 
     if (j.is_none || j.value >= alternates.len)
       continue;
 
-    var alternates_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(alternates[j.value])));
+    var alternates_table  = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(alternates[j.value])));
 
     var glyph_count = alternates_table.read<u16>();
     var glyphs = view<glyphid>(alternates_table.read(cast<usize>(glyph_count) * sizeof<glyphid>));
@@ -1853,28 +1853,28 @@ fn gsub_ligature_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offset
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
-    var subtable = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
+    var subtable = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i])));
 
     var subst_format = subtable.read<u16>();
     var coverage_offset = subtable.read<u16>();
     var ligature_set_count = subtable.read<u16>();
     var ligature_sets = view<u16>(subtable.read(cast<usize>(ligature_set_count) * sizeof<u16>));
 
-    var coverage = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
+    var coverage = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(coverage_offset)));
 
     var j = coverage_lookup(coverage, input[0]);
 
     if (j.is_none || j.value >= ligature_sets.len)
       continue;
 
-    var ligatures_table  = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value])));
+    var ligatures_table  = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value])));
 
     var ligature_count = ligatures_table.read<u16>();
     var ligatures = view<u16>(ligatures_table.read(cast<usize>(ligature_count) * sizeof<glyphid>));
 
     for (var k = 0; k < ligatures.len; ++k)
     {
-      var ligature = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value]) + cast<usize>(ligatures[k])));
+      var ligature = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset) + cast<usize>(subtable_offsets[i]) + cast<usize>(ligature_sets[j.value]) + cast<usize>(ligatures[k])));
 
       var glyph = ligature.read<glyphid>();
       var component_count = ligature.read<u16>();
@@ -1907,11 +1907,11 @@ pub fn substitution(face &face, gsub::tag tag, std::span<glyphid> &input) -> sub
     case Some[gsub]:
       try
       {
-        var features = stream(gsub.data.remove_prefix(cast<usize>(gsub.featurelist_offset)));
+        var features = stream(gsub.data.drop_front(cast<usize>(gsub.featurelist_offset)));
 
         var num_features = features.read<u16>();
 
-        var lookups = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset)));
+        var lookups = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset)));
 
         var num_lookups = lookups.read<u16>();
 
@@ -1923,7 +1923,7 @@ pub fn substitution(face &face, gsub::tag tag, std::span<glyphid> &input) -> sub
           if (cast<gsub::tag>(feature_tag) != tag)
             continue;
 
-          var feature = stream(gsub.data.remove_prefix(cast<usize>(gsub.featurelist_offset) + cast<usize>(feature_offset)));
+          var feature = stream(gsub.data.drop_front(cast<usize>(gsub.featurelist_offset) + cast<usize>(feature_offset)));
 
           var params_offset = feature.read<u16>();
           var indices_count = feature.read<u16>();
@@ -1933,7 +1933,7 @@ pub fn substitution(face &face, gsub::tag tag, std::span<glyphid> &input) -> sub
           {
             var lookup_offset = view<u16>(lookups.data)[cast<usize>(indices[j])];
 
-            var lookup = stream(gsub.data.remove_prefix(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset)));
+            var lookup = stream(gsub.data.drop_front(cast<usize>(gsub.lookuplist_offset) + cast<usize>(lookup_offset)));
 
             var lookup_type = lookup.read<u16>();
             var lookup_flag = lookup.read<u16>();
@@ -2157,7 +2157,7 @@ fn parse_name(std::span<u8> &data) throws -> name
   var storage_offset = stream.read<u16>();
 
   name.records = stream.read(cast<usize>(num_records) * sizeof<name_record>);
-  name.storage = data.remove_prefix(cast<usize>(storage_offset));
+  name.storage = data.drop_front(cast<usize>(storage_offset));
 
   return name;
 }

@@ -73,14 +73,14 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
     return vfs::node_ptr();
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
-    emit(vfs::ftype::regular_file, std::string_view("stat"));
-    emit(vfs::ftype::regular_file, std::string_view("auxv"));
-    emit(vfs::ftype::regular_file, std::string_view("environ"));
-    emit(vfs::ftype::regular_file, std::string_view("cmdline"));
-    emit(vfs::ftype::regular_file, std::string_view("pagemap"));
-    emit(vfs::ftype::symbolic_link, std::string_view("exe"));
+    emit(vfs::filetype::regular, std::string_view("stat"));
+    emit(vfs::filetype::regular, std::string_view("auxv"));
+    emit(vfs::filetype::regular, std::string_view("environ"));
+    emit(vfs::filetype::regular, std::string_view("cmdline"));
+    emit(vfs::filetype::regular, std::string_view("pagemap"));
+    emit(vfs::filetype::symlink, std::string_view("exe"));
 
     return ok;
   }
@@ -264,7 +264,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
       {
         stream.begin('"');
 
-        json.reserve(json.len + arg.size);
+        stream.reserve(arg.size);
 
         if (var result = vm::read_process_memory(process, arg.addr, json.end, arg.size); !result)
           return cast(result);
@@ -335,7 +335,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
       {
         stream.begin('"');
 
-        json.reserve(json.len + arg.size);
+        stream.reserve(arg.size);
 
         if (var result = vm::read_process_memory(process, arg.addr, json.end, arg.size); !result)
           return cast(result);
@@ -412,7 +412,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
     return proc_pid_node::create(path, pid);
   }
 
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::ftype, std::string_view) -> vm::result> mut &emit) -> vfs::result
+  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) -> vfs::result
   {
     var result = vm::result::ok;
 
@@ -423,13 +423,13 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
       var buf = [0; 64];
       var len = std::sprint(&mut buf, process.id);
 
-      if (result = emit(vfs::ftype::directory, std::string_view(buf.data, len)); !result)
+      if (result = emit(vfs::filetype::directory, std::string_view(buf.data, len)); !result)
         return;
 
       cursor += 1;
     });
 
-    emit(vfs::ftype::regular_file, std::string_view("list"));
+    emit(vfs::filetype::regular, std::string_view("list"));
 
     return cast(result);
   }

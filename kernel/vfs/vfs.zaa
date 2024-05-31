@@ -131,7 +131,7 @@ fn lookup(virtual_file_system mut &vfs, vfs::node_ptr mut &base, std::string_vie
   var end = path.end;
 
   if (!base)
-    return vfs::node_ptr();
+    return node_ptr();
 
   var dentry = base;
 
@@ -161,6 +161,8 @@ fn lookup(virtual_file_system mut &vfs, vfs::node_ptr mut &base, std::string_vie
     {
       if (ch == end)
         base = &move dentry;
+
+      std::launder(dentry);
 
       return node_ptr();
     }

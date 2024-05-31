@@ -119,7 +119,7 @@ pub fn main() -> i32
 
         var attrs = std::string("----------");
 
-        switch (stat.ftype)
+        switch (stat.type)
         {
           case block_device:
             attrs[0] = cast('b');
@@ -130,7 +130,7 @@ pub fn main() -> i32
           case directory:
             attrs[0] = cast('d');
 
-          case symbolic_link:
+          case symlink:
             attrs[0] = cast('l');
         }
 
@@ -171,7 +171,7 @@ pub fn main() -> i32
 
         std::printf("{} {:>5d} {:>5d} {:>10} {:6} {}", attrs, stat.uid, stat.gid, stat.size, date, file);
 
-        if (stat.ftype == os::ftype::symbolic_link)
+        if (stat.type == os::filetype::symlink)
         {
           var linkres = os::read(&mut thread_ring, fd, buffer.data, buffer.len);
 

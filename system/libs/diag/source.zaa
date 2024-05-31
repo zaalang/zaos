@@ -1,0 +1,91 @@
+//
+// source
+//
+
+import std.string : String;
+import std.circular_buffer;
+import diag.diagnostic;
+
+pub vtable source
+{
+  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string;
+}
+
+pub struct source_view
+{
+  std::string_view text;
+
+  pub source_view(String &text)
+    : text(text)
+  {
+  }
+
+  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+  {
+    return read_span(this.text, label, before, after, &mut lineno, &mut position);
+  }
+
+  pub source_view(source_view &&) = default;
+  pub ~source_view() = default;
+}
+
+pub struct source_file
+{
+  std::string path;
+
+  pub source_file(String &&path)
+    : path(&&path)
+  {
+  }
+
+  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+  {
+    return read_span(std::readfile(this.path).view, label, before, after, &mut lineno, &mut position);
+  }
+
+  pub source_file(source_file &&) = default;
+  pub ~source_file() = default;
+}
+
+pub fn read_span(std::string_view text, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+{
+  var pos = 0;
+  var line_starts = std::circular_buffer<usize, N:8>::with_capacity(before);
+  var after_lines = 0;
+
+  lineno = 1;
+  line_starts.push_back(pos);
+
+  for (var ch : text)
+  {
+    switch (ch)
+    {
+      case '\n':
+
+        if (pos < label.pos)
+        {
+          line_starts.push_back(pos + 1);
+
+          if (line_starts.len > before)
+            line_starts.pop_front();
+
+          lineno += 1;
+        }
+
+        if (label.pos + label.len <= pos)
+        {
+          after_lines += 1;
+
+          if (after <= after_lines)
+            break;
+        }
+    }
+
+    pos += 1;
+  }
+
+  lineno -= line_starts.len;
+  position = line_starts.front;
+
+  return text[line_starts.front .. pos];
+}

@@ -147,6 +147,12 @@ fn main()
             result = start(&mut terminal, &mut env, cmdline);
           }
 
+          if (args.front == "test")
+          {
+            import test : *;
+            result = test(&mut terminal, &mut env, cmdline);
+          }
+
           terminal.flush();
 
           if (terminal.x != 0)

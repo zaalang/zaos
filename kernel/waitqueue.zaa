@@ -49,6 +49,8 @@ pub struct wait_queue
 
       scheduler::prepare_to_block();
 
+      std::launder(this);
+
       lock.unlock();
     }
 
@@ -65,6 +67,8 @@ pub struct wait_queue
       append_waiter(&mut this, &waiter);
 
       scheduler::prepare_to_block();
+
+      std::launder(this);
     }
 
     if (scheduler::block_until(&mut lock, abstime) != 0)

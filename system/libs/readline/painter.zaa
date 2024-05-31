@@ -3,11 +3,8 @@
 //
 
 import std.stdlib;
-import os.zaos.fcntl;
 import std.string : String;
 import termios;
-
-extern fn thread_ring() -> os::ioring mut &;
 
 pub struct painter
 {
@@ -53,7 +50,7 @@ pub struct painter
 
   pub fn flush(this mut &) -> void
   {
-    os::write(&mut thread_ring, this.fd, this.buffer.data, this.len);
+    termios::write(this.fd, this.buffer.data, this.len);
 
     this.len = 0;
   }
@@ -253,6 +250,9 @@ pub fn cell_width(String &str) -> int
 pub fn text(painter mut &painter, String &str) -> void
 {
   painter.write(str.data, str.len);
+
+  if (painter.width == 0)
+    return;
 
   for (var ch = str.chars.begin, var end = str.end; ch != end; ++ch)
   {

@@ -167,6 +167,87 @@ pub fn move_char_right(editor mut &this) -> void
   this.cursor += utf::len_next(this.buffer.begin + this.cursor, this.buffer.end);
 }
 
+pub fn move_word_left(editor mut &this) -> void
+{
+  if (this.cursor == 0)
+    return;
+
+  var sv = this.buffer[this.buffer.begin .. this.buffer.begin + this.cursor];
+
+  var i = sv.chars.end;
+
+  for (--i; i != sv.begin; --i)
+  {
+    if (!std::is_whitespace(*i))
+      break;
+  }
+
+  if (i != sv.begin)
+  {
+    if (std::is_whitespace(*i) || std::is_alphanumeric(*i))
+    {
+      for (--i; i != sv.begin; --i)
+      {
+        if (!std::is_alphanumeric(*i))
+        {
+          ++i;
+
+          break;
+        }
+      }
+    }
+    else
+    {
+      for (--i; i != sv.begin; --i)
+      {
+        if (std::is_whitespace(*i) || std::is_alphanumeric(*i))
+        {
+          ++i;
+
+          break;
+        }
+      }
+    }
+  }
+
+  this.cursor = i - this.buffer.begin;
+}
+
+pub fn move_word_right(editor mut &this) -> void
+{
+  if (this.cursor == this.buffer.len)
+    return;
+
+  var sv = this.buffer[this.buffer.begin + this.cursor .. this.buffer.end];
+
+  var i = sv.chars.begin;
+
+  if (std::is_whitespace(*i) || std::is_alphanumeric(*i))
+  {
+    for (; i != sv.end; ++i)
+    {
+      if (!std::is_alphanumeric(*i))
+        break;
+    }
+  }
+  else
+  {
+    for (; i != sv.end; ++i)
+    {
+      if (std::is_whitespace(*i) || std::is_alphanumeric(*i))
+        break;
+    }
+  }
+
+  for (; i != sv.end; ++i)
+  {
+    if (!std::is_whitespace(*i))
+      break;
+  }
+
+  this.cursor = i - this.buffer.begin;
+}
+
 pub fn move_line_up(editor mut &this) -> void
 {
   var line = this.current_line();
@@ -385,7 +466,7 @@ pub fn completion_accept(editor mut &this) -> void
 {
   var &suggestion = this.completions[this.completion_index];
 
-  this.buffer.insert(this.cursor, suggestion.value.remove_prefix(suggestion.matched));
+  this.buffer.insert(this.cursor, suggestion.value.drop_front(suggestion.matched));
   this.cursor += suggestion.value.len - suggestion.matched;
 
   this.completions.clear();
@@ -407,6 +488,16 @@ pub fn clear(editor mut &this) -> void
   this.cursor = 0;
   this.buffer.clear();
   this.completions.clear();
+}
+
+pub fn take_buffer(editor mut &this) -> std::string
+{
+  var buffer = &move this.buffer;
+
+  this.cursor = 0;
+  this.buffer.clear();
+
+  return buffer;
 }
 
 pub fn process(editor mut &this, event &event) -> status
@@ -514,6 +605,14 @@ pub fn process(editor mut &this, event &event) -> status
         case key_modifiers::control:
           switch (evt.key)
           {
+            case left:
+              move_word_left(&mut this);
+              return dirty;
+
+            case right:
+              move_word_right(&mut this);
+              return dirty;
+
             case sym[ch]:
               switch (ch)
               {
@@ -642,7 +741,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
 
       if (line.end != text.end)
         painter.text("\r\n");
-   }
+    }
 
     ++y;
   }
@@ -757,7 +856,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
   painter.flush();
 }
 
-pub fn render(editor mut &this, int fd, prompt &prompt) -> void
+pub fn render(editor &this, int fd, prompt &prompt) -> void
 {
   var painter = painter(fd);
 
@@ -775,7 +874,7 @@ pub fn render(editor mut &this, int fd, prompt &prompt) -> void
   painter.flush();
 }
 
-pub fn flush(editor mut &this, int fd, prompt &prompt) -> void
+pub fn flush(editor &this, int fd, prompt &prompt) -> void
 {
   var painter = painter(fd);
 

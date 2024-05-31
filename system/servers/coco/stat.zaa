@@ -44,7 +44,7 @@ pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cm
 
   terminal.write(std::format("  File: {}", path));
 
-  if (stat.ftype == os::ftype::symbolic_link)
+  if (stat.type == os::filetype::symlink)
   {
     var buffer = [u8(0); 4096];
 
@@ -59,7 +59,7 @@ pub fn stat(terminal::terminal mut &terminal, env::env mut &env, std::string &cm
 
   terminal.write("\n");
 
-  terminal.write(std::format("  Size: {:14}  Type: {}\n", stat.size, std::meta::enumerator_name(stat.ftype)));
+  terminal.write(std::format("  Size: {:14}  Type: {}\n", stat.size, std::meta::enumerator_name(stat.type)));
 
   terminal.write(std::format("Access: {:#14o}   Uid: {:14}   Gid: {:14}\n", stat.mode & 0xfff, stat.uid, stat.gid));
 

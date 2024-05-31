@@ -1,0 +1,593 @@
+//
+// lexer
+//
+
+import std.string;
+import std.vector;
+import std.bits.utf as utf;
+
+pub struct token
+{
+  pub enum type
+  {
+    unknown,
+
+    question,
+    l_square,
+    r_square,
+    l_paren,
+    r_paren,
+    l_brace,
+    r_brace,
+    period,
+    dotdot,
+    amp,
+    star,
+    starstar,
+    plus,
+    minus,
+    minusminus,
+    arrow,
+    exclaim,
+    exclaimequal,
+    slash,
+    slashslash,
+    percent,
+    less,
+    lessequal,
+    greater,
+    greaterequal,
+    caret,
+    pipe,
+    colon,
+    equal,
+    equalequal,
+    comma,
+    semi,
+    string_literal,
+    partial_string_literal,
+    numeric_constant,
+    comment,
+    eol,
+    eof,
+
+    kw_null,
+    kw_true,
+    kw_false,
+    kw_or,
+    kw_and,
+    kw_rescue,
+
+    block,
+    partial_block,
+  }
+
+  pub type type;
+  pub std::string_view span;
+
+  token(type type, std::string_view span)
+    : type(type), span(span)
+  {
+  }
+
+  pub fn ==(token &tok, type type) -> bool
+  {
+    return tok.type == type;
+  }
+
+  pub token() = default;
+  pub token(token&) = default;
+  pub fn =(token mut &, token &) -> token mut & = default;
+  pub ~token() = default;
+}
+
+fn lex_comment(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor;
+
+  while (idx < src.len)
+  {
+    switch (src[idx])
+    {
+      case '\n':
+        break;
+
+      else:
+        idx += 1;
+    }
+  }
+
+  tok = token(token::type::comment, src[beg .. idx].strip_suffix("\r"));
+
+  return idx;
+}
+
+fn lex_string_literal(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + 1;
+
+  while (idx < src.len)
+  {
+    switch (src[idx])
+    {
+      case '\'':
+      case '"':
+        if (src[idx] == src[beg])
+        {
+          idx += 1;
+
+          tok = token(token::type::string_literal, src[beg .. idx]);
+
+          return idx;
+        }
+
+      case '\\':
+        if (src[beg] == cast('"'))
+        {
+          idx += 1;
+
+          if (idx == src.len)
+            break;
+        }
+    }
+
+    idx += 1;
+  }
+
+  tok = token(token::type::partial_string_literal, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_numeric_constant(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + 1;
+
+  while (idx < src.len && (std::is_alphanumeric(src[idx]) || src[idx] == cast('_')))
+    idx += 1;
+
+  if (idx + 1 < src.len && src[idx] == cast('.') && std::is_digit(src[idx + 1]) && !std::is_alpha(src[beg + 1]))
+  {
+    idx += 1;
+
+    while (idx < src.len && (std::is_alphanumeric(src[idx]) || src[idx] == cast('_')))
+      idx += 1;
+  }
+
+  if (idx < src.len && (src[idx] == cast('-') || src[idx] == cast('+')) && (src[idx - 1] == cast('e') || src[idx - 1] == cast('E')) && (src[beg + 1] != cast('x') && src[beg + 1] != cast('X')))
+  {
+    idx += 1;
+
+    while (idx < src.len && (std::is_alphanumeric(src[idx]) || src[idx] == cast('_')))
+      idx += 1;
+  }
+
+  if (idx < src.len && (src[idx] == cast('-') || src[idx] == cast('+')) && (src[idx - 1] == cast('p') || src[idx - 1] == cast('P')) && (src[beg + 1] != cast('x') && src[beg + 1] != cast('X')))
+  {
+    idx += 1;
+
+    while (idx < src.len && (std::is_alphanumeric(src[idx]) || src[idx] == cast('_')))
+      idx += 1;
+  }
+
+  if (idx < src.len && src[idx] == cast('[') && std::is_alpha(src[beg + 1]))
+  {
+    idx += 1;
+
+    while (idx < src.len && src[idx - 1] != cast(']'))
+      idx += 1;
+  }
+
+  tok = token(token::type::numeric_constant, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_punctuators(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor;
+  var type = token::type::unknown;
+
+  switch (src[idx])
+  {
+    case '?':
+      idx += 1;
+      type = token::type::question;
+
+    case '[':
+      idx += 1;
+      type = token::type::l_square;
+
+    case ']':
+      idx += 1;
+      type = token::type::r_square;
+
+    case '(':
+      idx += 1;
+      type = token::type::l_paren;
+
+    case ')':
+      idx += 1;
+      type = token::type::r_paren;
+
+    case '{':
+      idx += 1;
+      type = token::type::l_brace;
+
+    case '}':
+      idx += 1;
+      type = token::type::r_brace;
+
+    case '.':
+      if (idx + 1 < src.len && src[idx + 1] == cast('.'))
+      {
+        idx += 2;
+        type = token::type::dotdot;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::period;
+      }
+
+    case '&':
+      idx += 1;
+      type = token::type::amp;
+
+    case '*':
+      if (idx + 1 < src.len && src[idx + 1] == cast('*'))
+      {
+        idx += 2;
+        type = token::type::starstar;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::star;
+      }
+
+    case '+':
+      idx += 1;
+      type = token::type::plus;
+
+    case '-':
+      if (idx + 1 < src.len && src[idx + 1] == cast('-'))
+      {
+        idx += 2;
+        type = token::type::minusminus;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::minus;
+      }
+
+    case '!':
+      if (idx + 1 < src.len && src[idx + 1] == cast('='))
+      {
+        idx += 2;
+        type = token::type::exclaimequal;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::exclaim;
+      }
+
+    case '/':
+      if (idx + 1 < src.len && src[idx + 1] == cast('/'))
+      {
+        idx += 2;
+        type = token::type::slashslash;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::slash;
+      }
+
+    case '%':
+      idx += 1;
+      type = token::type::percent;
+
+    case '<':
+      if (idx + 1 < src.len && src[idx + 1] == cast('='))
+      {
+        idx += 2;
+        type = token::type::lessequal;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::less;
+      }
+
+    case '>':
+      if (idx + 1 < src.len && src[idx + 1] == cast('='))
+      {
+        idx += 2;
+        type = token::type::greaterequal;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::greater;
+      }
+
+    case '^':
+      idx += 1;
+      type = token::type::caret;
+
+    case '|':
+      idx += 1;
+      type = token::type::pipe;
+
+    case ':':
+      idx += 1;
+      type = token::type::colon;
+
+    case '=':
+      if (idx + 1 < src.len && src[idx + 1] == cast('='))
+      {
+        idx += 2;
+        type = token::type::equalequal;
+      }
+      else
+      {
+        idx += 1;
+        type = token::type::equal;
+      }
+
+    case ',':
+      idx += 1;
+      type = token::type::comma;
+
+    case ';':
+      idx += 1;
+      type = token::type::semi;
+
+    else:
+      std::panic("unknown punctuator");
+  }
+
+  tok = token(type, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + 1;
+
+  while (idx < src.len)
+  {
+    switch (src[idx])
+    {
+      case '0' ..= '9':
+      case 'a' ..= 'z':
+      case 'A' ..= 'Z':
+      case 0xc0 ..= 0xff:
+        idx += 1;
+
+      case '\\':
+        idx += 1;
+
+        if (idx != src.len)
+          idx += 1;
+
+      else:
+        break;
+    }
+  }
+
+  var type = token::type::string_literal;
+
+  switch (src[beg .. idx])
+  {
+    case "null":
+      type = token::type::kw_null;
+
+    case "true":
+      type = token::type::kw_true;
+
+    case "false":
+      type = token::type::kw_false;
+
+    case "or":
+      type = token::type::kw_or;
+
+    case "and":
+      type = token::type::kw_and;
+
+    case "rescue":
+      type = token::type::kw_rescue;
+  }
+
+  tok = token(type, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_block(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + 1;
+  var indent = 1;
+
+  while (idx < src.len)
+  {
+    switch (src[idx])
+    {
+      case '[':
+      case '(':
+      case '{':
+        idx += 1;
+        indent += 1;
+
+      case ']':
+      case ')':
+      case '}':
+        idx += 1;
+        indent -= 1;
+
+        if (indent == 0)
+        {
+          switch (src[beg])
+          {
+            case '[':
+              if (src[idx - 1] != cast(']'))
+                break;
+
+            case '(':
+              if (src[idx - 1] != cast(')'))
+                break;
+
+            case '{':
+              if (src[idx - 1] != cast('}'))
+                break;
+          }
+
+          tok = token(token::type::block, src[beg .. idx]);
+
+          return idx;
+        }
+
+      case '\'':
+      case '"':
+        idx = lex_string_literal(src, idx, &mut tok);
+
+      case '\\':
+        idx += 1;
+
+        if (idx != src.len)
+          idx += 1;
+
+      else:
+        idx += 1;
+    }
+  }
+
+  tok = token(token::type::partial_block, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_eol(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + 1;
+
+  tok = token(token::type::eol, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex_unknown(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  let beg = cursor;
+  var idx = cursor + utf::len_next(src.begin + cursor, src.end);
+
+  tok = token(token::type::unknown, src[beg .. idx]);
+
+  return idx;
+}
+
+fn lex(std::string_view src, usize cursor, token mut &tok) -> usize
+{
+  while (cursor < src.len)
+  {
+    switch (src[cursor])
+    {
+      case ' ': case '\t': case '\r':
+        cursor += 1;
+
+      case '\n':
+        return lex_eol(src, cursor, &mut tok);
+
+      case '#':
+        return lex_comment(src, cursor, &mut tok);
+
+      case '\'':
+        return lex_string_literal(src, cursor, &mut tok);
+
+      case '"':
+        return lex_string_literal(src, cursor, &mut tok);
+
+      case '?':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '[': case ']':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '(': case ')':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '{': case '}':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '.':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '+': case '-': case '*': case '/': case '%':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '&': case '|': case '~': case '!': case '^': case '<': case '>': case '=':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case ':': case ',': case ';':
+        return lex_punctuators(src, cursor, &mut tok);
+
+      case '0' ..= '9':
+        return lex_numeric_constant(src, cursor, &mut tok);
+
+      case '$':
+      case '\\':
+      case 'a' ..= 'z':
+      case 'A' ..= 'Z':
+      case 0xc0 ..= 0xff:
+        return lex_identifier(src, cursor, &mut tok);
+
+      else:
+        return lex_unknown(src, cursor, &mut tok);
+    }
+  }
+
+  tok = token(token::type::eof, std::string_view());
+
+  return cursor;
+}
+
+#[lifetime(depends(*src))]
+pub fn lex(std::string_view src) -> std::vector<token>
+{
+  var cursor = 0;
+  var tokens = std::vector<token>();
+
+  for (var tok = token(); tok.type != token::type::eof; )
+  {
+    cursor = lex(src, cursor, &mut tok);
+
+    switch (tok.type)
+    {
+      case token::type::l_square:
+      case token::type::l_paren:
+      case token::type::l_brace:
+        cursor = lex_block(src, cursor - 1, &mut tok);
+    }
+
+    tokens.push_back(tok);
+  }
+
+  return tokens;
+}
+
+#[lifetime(depends(src))]
+pub fn lex(std::string &src) -> std::vector<token>
+{
+  return lex(std::string_view(src));
+}

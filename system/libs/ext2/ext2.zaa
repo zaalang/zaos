@@ -374,9 +374,9 @@ pub const EXT2_IFIFO = 0o00010000;  // fifo
 pub enum ext2_ftype
 {
   unknown,
-  regular_file,
+  regular,
   directory,
-  symbolic_link,
+  symlink,
 }
 
 #[packed]
@@ -426,18 +426,18 @@ pub struct ext2_inode
     return this.i_mode;
   }
 
-  pub fn ftype(this&) -> ext2_ftype
+  pub fn type(this&) -> ext2_ftype
   {
     switch (this.i_mode & EXT2_IFMT)
     {
       case EXT2_IFREG:
-        return ext2_ftype::regular_file;
+        return ext2_ftype::regular;
 
       case EXT2_IFDIR:
         return ext2_ftype::directory;
 
       case EXT2_IFLNK:
-        return ext2_ftype::symbolic_link;
+        return ext2_ftype::symlink;
     }
 
     return ext2_ftype::unknown;
@@ -536,12 +536,12 @@ pub struct ext2_dir_entry
     return std::string_view(this.file_name.data, cast<usize>(this.name_len));
   }
 
-  pub fn ftype(this&) -> ext2_ftype
+  pub fn type(this&) -> ext2_ftype
   {
     return cast<ext2_ftype>(this.file_type);
   }
 
-  pub fn ftype=(this mut &, ext2_ftype type) -> void
+  pub fn type=(this mut &, ext2_ftype type) -> void
   {
     this.file_type = cast<u8>(type);
   }

@@ -64,14 +64,14 @@ pub struct json_stream
   int depth = 0;
   pub std::string mut &str;
 
-  pub fn begin(this mut &, char mark)
+  pub fn begin(this mut &, char mark) -> void
   {
     this.str += cast<u8>(mark);
 
     this.depth += 1;
   }
 
-  pub fn begin(this mut &, String &key, char mark)
+  pub fn begin(this mut &, String &key, char mark) -> void
   {
     this.append(key);
     this.str.back = cast<u8>(':');
@@ -80,7 +80,7 @@ pub struct json_stream
     this.depth += 1;
   }
 
-  pub fn append(this mut &, String &value)
+  pub fn append(this mut &, String &value) -> void
   {
     this.str += cast<u8>('"');
     this.str.append(value);
@@ -91,7 +91,7 @@ pub struct json_stream
       this.str += cast<u8>(',');
   }
 
-  pub fn append<T>(this mut &, T value)
+  pub fn append<T>(this mut &, T value) -> void
   {
     this.str.append(value);
 
@@ -99,14 +99,14 @@ pub struct json_stream
       this.str += cast<u8>(',');
   }
 
-  pub fn append<T>(this mut &, String &key, T &value)
+  pub fn append<T>(this mut &, String &key, T &value) -> void
   {
     this.append(key);
     this.str.back = cast<u8>(':');
     this.append(value);
   }
 
-  pub fn append_from_capacity(this mut &, usize size)
+  pub fn append_from_capacity(this mut &, usize size) -> void
   {
     this.str.append_from_capacity(size);
     json_escape_inplace(&mut this.str, this.str.end - size, this.str.end);
@@ -115,7 +115,7 @@ pub struct json_stream
       this.str += cast<u8>(',');
   }
 
-  pub fn end(this mut &, char mark)
+  pub fn end(this mut &, char mark) -> void
   {
     this.depth -= 1;
     this.str.strip_suffix!(",");
@@ -123,6 +123,11 @@ pub struct json_stream
 
     if (this.depth != 0)
       this.str += cast<u8>(',');
+  }
+
+  pub fn reserve(this mut &, usize capacity) -> void
+  {
+    this.str.reserve(this.str.len + capacity);
   }
 
   pub json_stream(std::string mut &buffer)

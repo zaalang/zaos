@@ -518,7 +518,7 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
 
       if (surface.active)
       {
-        release(client, &*surface, &*surface.active.unwrap);
+        release(client, &*surface, &*surface.active.value);
 
         surface.active.clear();
       }

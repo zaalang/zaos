@@ -10,10 +10,10 @@ enum filetype
   block_device,
   character_device,
   directory,
-  regular_file,
+  regular,
   socket_dgram,
   socket_stream,
-  symbolic_link,
+  symlink,
 }
 
 struct filestat
@@ -138,7 +138,7 @@ extern fn fd_stat(uintptr fd, filestat mut *fs) -> u32
     return cast(-rc);
 
   fs.size = buf.size;
-  fs.type = cast(buf.ftype);
+  fs.type = cast(buf.type);
   fs.atime = cast(buf.mtime);
   fs.ctime = cast(buf.ctime);
   fs.mtime = cast(buf.mtime);
@@ -156,8 +156,21 @@ extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
 
     if (bytes < 0)
     {
-      result.errno = cast(-bytes);
-      break;
+      while (bytes == os::EAGAIN)
+      {
+        var pollset = [ os::pollevt(cast(fd), os::POLLFD, os::POLLIN, 0) ];
+
+        os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+
+        bytes = os::read(&mut thread_ring, cast(fd), (iovs + i).data, (iovs + i).len);
+      }
+
+      if (bytes < 0)
+      {
+        result.errno = cast(-bytes);
+
+        break;
+      }
     }
 
     result.length += cast(bytes);
@@ -184,28 +197,31 @@ extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
   {
     for (var data = (iovs + i).data, var len = (iovs + i).len; len != 0; )
     {
-      var cnt = os::write(&mut thread_ring, cast(fd), data, len);
+      var bytes = os::write(&mut thread_ring, cast(fd), data, len);
 
-      if (cnt < 0)
+      if (bytes < 0)
       {
-        if (cnt == os::EAGAIN)
+        while (bytes == os::EAGAIN)
         {
           var pollset = [ os::pollevt(cast(fd), os::POLLFD, os::POLLOUT, 0) ];
 
           os::select(&mut thread_ring, pollset.data, pollset.len, 0);
 
-          continue;
+          bytes = os::write(&mut thread_ring, cast(fd), data, len);;
         }
 
-        result.errno = cast(-cnt);
+        if (bytes < 0)
+        {
+          result.errno = cast(-bytes);
 
-        return result;
+          return result;
+        }
       }
 
-      result.length += cast(cnt);
+      result.length += cast(bytes);
 
-      data += cast(cnt);
-      len -= cast(cnt);
+      data += cast(bytes);
+      len -= cast(bytes);
     }
   }
 

@@ -1,0 +1,237 @@
+//
+// value
+//
+
+import std.vector;
+import std.string : String;
+import chrono;
+
+pub union Value
+{
+  pub Null,
+  pub Number(f64),
+  pub Integer(i64),
+  pub Boolean(bool),
+  pub String(std::string),
+  pub Duration(chrono::nanoseconds),
+  pub FileSize(i64),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn is_some(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn is_null(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Null;
+  }
+
+  pub fn is_number(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Number;
+  }
+
+  pub fn is_integer(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Integer;
+  }
+
+  pub fn is_boolean(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Boolean;
+  }
+
+  pub fn is_string(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::String;
+  }
+
+  pub fn is_duration(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Duration;
+  }
+
+  pub fn is_filesize(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::FileSize;
+  }
+
+  pub fn as<T>(this &)
+  {
+    switch (this)
+    {
+      case Number[number]:
+        #if (__is_arithmetic<T>)
+          return cast<T>(number);
+        #if (requires { T(f64()); })
+          return T(number);
+
+      case Integer[integer]:
+        #if (__is_arithmetic<T>)
+          return cast<T>(integer);
+        #if (requires { T(i64()); })
+          return T(integer);
+
+      case Boolean[boolean]:
+        #if (requires { T(bool()); })
+          return T(boolean);
+
+      case String[string]:
+        #if (__is_same<T, std::string&>)
+          return &string;
+        #if (requires { T(std::string()); })
+          return T(string);
+
+      case Duration[duration]:
+        #if (__is_arithmetic<T>)
+          return cast<T>(duration.count);
+        #if (__is_instance<chrono::duration<var, var>, T>)
+          return chrono::duration_cast<T>(duration);
+
+      case FileSize[filesize]:
+        #if (__is_arithmetic<T>)
+          return cast<T>(filesize);
+        #if (requires { T(i64()); })
+          return T(filesize);
+    }
+
+    std::panic("invalid value access");
+  }
+
+  pub Value() = default;
+  pub Value(Value &&) = default;
+  pub fn =(Value mut &, Value &&) -> Value mut & = default;
+  pub ~Value() = default;
+}
+
+pub fn ==(Value &lhs, Value &rhs) -> bool
+{
+  if (lhs.kind == rhs.kind)
+  {
+    switch (cast<int>(lhs.kind))
+    {
+      #{
+        #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
+          -> { case ${k}: return lhs.${k} == rhs.${k}; }
+      }
+    }
+  }
+
+  return lhs.kind == rhs.kind;
+}
+
+pub fn <=>(Value &lhs, Value &rhs) -> int
+{
+  if (lhs.kind == rhs.kind)
+  {
+    switch (cast<int>(lhs.kind))
+    {
+      #{
+        #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
+          -> { case ${k}: return lhs.${k} <=> rhs.${k}; }
+      }
+    }
+  }
+
+  return lhs.kind <=> rhs.kind;
+}
+
+fn fmt_duration(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 count) throws -> void
+{
+  var len = 0;
+  var buf = [0; 256];
+
+  var abscount = (count < 0) ? ~count : count;
+
+  if (abscount >= 604_800_000_000_000)
+    len = std::format_to(&mut buf, "{:.1}weeks", cast<float>(count) / 604_800_000_000_000.0);
+
+  else if (abscount >= 86_400_000_000_000)
+    len = std::format_to(&mut buf, "{:.1}days", cast<float>(count) / 86_400_000_000_000.0);
+
+  else if (abscount >= 3_600_000_000_000)
+    len = std::format_to(&mut buf, "{:.1}hours", cast<float>(count) / 3_600_000_000_000.0);
+
+  else if (abscount >= 60_000_000_000)
+    len = std::format_to(&mut buf, "{:.1}mins", cast<float>(count) / 60_000_000_000.0);
+
+  else if (abscount >= 1_000_000_000)
+    len = std::format_to(&mut buf, "{:.1}secs", cast<float>(count) / 1_000_000_000.0);
+
+  else if (abscount >= 1_000_000)
+    len = std::format_to(&mut buf, "{:.1}ms",  cast<float>(count) / 1_000_000.0);
+
+  else if (abscount >= 1_000)
+    len = std::format_to(&mut buf, "{:.1}µs", cast<float>(count) / 1_000.0);
+
+  else
+    len = std::format_to(&mut buf, "{}ns", count);
+
+  std::fmt_to(&mut os, &mut ctx, std::string_view(buf.data, len));
+}
+
+fn fmt_filesize(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 bytes) throws -> void
+{
+  var len = 0;
+  var buf = [0; 256];
+
+  var absbytes = (bytes < 0) ? ~bytes : bytes;
+
+  if (absbytes >= 1_152_921_504_606_846_976)
+    len = std::format_to(&mut buf, "{:.1} EiB", cast<float>(bytes) / 1_152_921_504_606_846_976.0);
+
+  else if (absbytes >= 1_125_899_906_842_624)
+    len = std::format_to(&mut buf, "{:.1} PiB", cast<float>(bytes) / 1_125_899_906_842_624.0);
+
+  else if (absbytes >= 1_099_511_627_776)
+    len = std::format_to(&mut buf, "{:.1} TiB", cast<float>(bytes) / 1_099_511_627_776.0);
+
+  else if (absbytes >= 1_073_741_824)
+    len = std::format_to(&mut buf, "{:.1} GiB", cast<float>(bytes) / 1_073_741_824.0);
+
+  else if (absbytes >= 1_048_576)
+    len = std::format_to(&mut buf, "{:.1} MiB", cast<float>(bytes) / 1_048_576.0);
+
+  else if (absbytes >= 1_024)
+    len = std::format_to(&mut buf, "{:.1} KiB", cast<float>(bytes) / 1_024.0);
+
+  else
+    len = std::format_to(&mut buf, "{} B", bytes);
+
+  std::fmt_to(&mut os, &mut ctx, std::string_view(buf.data, len));
+}
+
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, Value &value) throws -> void
+{
+  switch (value)
+  {
+    case Null:
+      std::fmt_to(&mut os, &mut ctx, "null");
+
+    case Number[number]:
+      std::fmt_to(&mut os, &mut ctx, number);
+
+    case Integer[integer]:
+      std::fmt_to(&mut os, &mut ctx, integer);
+
+    case Boolean[boolean]:
+      std::fmt_to(&mut os, &mut ctx, boolean);
+
+    case String[string]:
+      std::fmt_to(&mut os, &mut ctx, string);
+
+    case Duration[duration]:
+      fmt_duration(&mut os, &mut ctx, duration.count);
+
+    case FileSize[filesize]:
+      fmt_filesize(&mut os, &mut ctx, filesize);
+
+    else:
+      std::fmt_to(&mut os, &mut ctx, "undefined");
+  }
+}

@@ -100,7 +100,7 @@ pub struct image
     var beg = cast<gpt::entry*>(entries);
     var end = cast<gpt::entry*>(entries + cast(header.entry_count * header.entry_size));
 
-    return std::range_view<typeof(this)>(this, entry_iterator(header, beg), entry_iterator(header, end));
+    return std::range_view(&this, entry_iterator(header, beg), entry_iterator(header, end));
   }
 
   pub ~image() = default;

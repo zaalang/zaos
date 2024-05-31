@@ -36,7 +36,7 @@ struct vdso<name>
       }
     }
 
-    -> { u8[$(loadsize)] image = $(buf[0 .. loadsize].as_literal); }
+    -> { u8[${loadsize}] image = ${buf[0 .. loadsize].as_literal}; }
 
     for (var &header : image.section_headers)
     {
@@ -52,7 +52,7 @@ struct vdso<name>
 
             if (entry.st_info == 0 && entry.st_shndx != 0)
             {
-              -> { usize $(image.get_string(strtab, entry.st_name).as_literal) = $(cast<usize>(entry.st_value)); }
+              -> { usize ${image.get_string(strtab, entry.st_name).as_literal} = ${cast<usize>(entry.st_value)}; }
             }
           }
       }

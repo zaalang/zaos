@@ -1,0 +1,116 @@
+//
+// pipeline
+//
+
+import std.stdlib;
+import std.vector;
+import sys.thread;
+import sys.process;
+import value;
+
+using value;
+
+pub struct Pipeline
+{
+  union Task
+  {
+    Child(sys::child),
+    Thread(sys::thread),
+
+    Task(Task &&) = default;
+    ~Task() = default;
+  }
+
+  std::vector<Task> tasks;
+
+  pub bool capture_stdout;
+  pub bool capture_stderr;
+
+  pub Pipeline() = default;
+  pub Pipeline(Pipeline &&) = default;
+  pub ~Pipeline() = default;
+}
+
+pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws -> void
+{
+  if (!pipeline.tasks.empty)
+  {
+    switch (pipeline.tasks.back)
+    {
+      case Child[child]:
+        cmd.stdin = std::exchange(&mut child.stdout, std::file());
+    }
+  }
+
+  if (pipeline.capture_stdout)
+    cmd.stdout = sys::stdio::piped;
+
+  if (pipeline.capture_stderr)
+    cmd.stderr = sys::stdio::piped;
+
+  pipeline.tasks.push_back(Pipeline::Task::Child(cmd.spawn));
+}
+
+pub fn read(Pipeline mut &pipeline) throws -> Value
+{
+  var str = std::string();
+
+  if (pipeline.tasks.empty)
+    return Value();
+
+  switch (pipeline.tasks.back)
+  {
+    case Child[child]:
+
+      if (child.stdout)
+      {
+        for (;;)
+        {
+          str.reserve(str.len + 512);
+
+          var len = child.stdout.read(str.data + str.len, str.capacity - str.len);
+
+          if (len == 0)
+            break;
+
+          str.append_from_capacity(len);
+        }
+      }
+
+      if (child.stderr)
+      {
+        for (;;)
+        {
+          str.reserve(str.len + 512);
+
+          var len = child.stderr.read(str.data + str.len, str.capacity - str.len);
+
+          if (len == 0)
+            break;
+
+          str.append_from_capacity(len);
+        }
+      }
+  }
+
+  return Value::String(str);
+}
+
+pub fn wait(Pipeline mut &pipeline) -> i32
+{
+  var code = 0;
+
+  for (var mut &task : pipeline.tasks)
+  {
+    switch (task)
+    {
+      case Child[child]:
+        code = child.wait();
+
+      case Thread[thread]:
+        thread.join();
+    }
+  }
+
+  return code;
+}

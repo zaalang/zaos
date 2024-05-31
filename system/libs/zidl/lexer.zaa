@@ -4,6 +4,8 @@
 
 import std.stdio;
 import std.string : String;
+import std.bits.utf as utf;
+import diag;
 
 pub struct source_location
 {
@@ -162,15 +164,6 @@ fn is_integer_body(u8 ch) -> bool
 fn is_identifier_body(u8 ch) -> bool
 {
   return is_alpha(ch) || is_digit(ch) || ch == cast('_') || ch == cast('$') || ch == cast('!');
-}
-
-fn make_token(token::type type) -> token
-{
-  var tok = token();
-  tok.type = type;
-  tok.loc = source_location();
-
-  return tok;
 }
 
 fn make_token(token::type type, u8 *beg, u8 *end, lex_cursor &loc) -> token
@@ -443,6 +436,19 @@ fn lex_identifier(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cu
   return cursor;
 }
 
+fn lex_unknown(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
+{
+  let beg = src.head + cursor.position;
+
+  var ptr = beg + utf::len_next(beg, src.tail);
+
+  tok = make_token(token::type::unknown, beg, ptr, cursor);
+
+  cursor.position = ptr - src.head;
+
+  return cursor;
+}
+
 pub fn lex(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
 {
   while (true)
@@ -456,7 +462,7 @@ pub fn lex(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
 
     if (*ptr == 0)
     {
-      tok = make_token(token::type::eof);
+      tok = make_token(token::type::eof, ptr, ptr, cursor);
 
       return cursor;
     }
@@ -525,8 +531,7 @@ pub fn lex(source_text &src, lex_cursor cursor, token mut &tok) -> lex_cursor
         return lex_punctuators(src, cursor, &mut tok);
 
       else:
-        ptr += 1;
-        std::fprint(std::stderr, "warning: unknown character in lexer");
+        return lex_unknown(src, cursor, &mut tok);
     }
 
     cursor.position = ptr - src.head;

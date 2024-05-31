@@ -53,7 +53,7 @@ pub fn main() -> i32
     if (bytes <= 0)
       break;
 
-    std::printf(std::string_view(buffer.data, cast<usize>(bytes)));
+    std::print(std::string_view(buffer.data, cast<usize>(bytes)));
   }
 
   os::close(&mut thread_ring, fd);

@@ -228,17 +228,17 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
         var msgtype = std::meta::remove_reference($zidl_protocol_t::dispatch_t::#decl);
 
         -> {
-          case $(msgtype)::ordinal:
+          case ${msgtype}::ordinal:
 
-            var recv = null<$(msgtype) mut *>();
+            var recv = null<${msgtype} mut *>();
             var decode = zidl::decode(&mut bytes[0 ..  inbytes], &mut handles[0 .. infds], &mut recv);
 
             if (decode.error)
               goto else;
 
-            callback(&mut zidl_protocol_t::dispatch_t::$(decl)(&*recv), &mut completer);
+            callback(&mut zidl_protocol_t::dispatch_t::${decl}(&*recv), &mut completer);
 
-            $(msgtype)::~this(&mut *recv);
+            ${msgtype}::~this(&mut *recv);
         }
       }
     }

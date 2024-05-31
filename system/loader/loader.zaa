@@ -145,7 +145,7 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
   var fd = os::open(&mut ctx.ring, ctx.rootfd, os::string(path.data, path.len), 0, 0);
 
   if (fd < 0)
-    std::panic("loader: fd ", fd);
+    std::exit(fd);
 
   var stat = os::stat();
   if (var rc = os::stat(&mut ctx.ring, fd, &stat, 0x7f); rc < 0)

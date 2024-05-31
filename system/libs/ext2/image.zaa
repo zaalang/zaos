@@ -845,7 +845,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u32 uid
     return result;
 
   entry.set_name(name);
-  entry.set_type(ext2_ftype::regular_file);
+  entry.set_type(ext2_ftype::regular);
 
   var ino = 0;
   if (var result = this.allocate_inode(&mut ino, EXT2_IFREG); !result)
@@ -1063,7 +1063,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
   var dotentry = cast<ext2_dir_entry mut *>(block.data);
 
   dotentry.inode = ino;
-  dotentry.ftype = ext2_ftype::directory;
+  dotentry.type = ext2_ftype::directory;
   dotentry.file_name[0] = cast('.');
   dotentry.name_len = 1;
   dotentry.rec_len = 12;
@@ -1073,7 +1073,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
   var dotdotentry = cast<ext2_dir_entry mut *>(block.data + 12);
 
   dotdotentry.inode = parent.inode;
-  dotdotentry.ftype = ext2_ftype::directory;
+  dotdotentry.type = ext2_ftype::directory;
   dotdotentry.file_name[0] = cast('.');
   dotdotentry.file_name[1] = cast('.');
   dotdotentry.name_len = 2;

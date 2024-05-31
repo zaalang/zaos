@@ -1,0 +1,987 @@
+//
+// engine
+//
+
+import std.vector;
+import std.string;
+import chrono;
+import ast;
+import value;
+import pipeline;
+import diag;
+
+using ast;
+using value;
+using pipeline;
+
+pub struct Engine
+{
+  struct Source
+  {
+    std::string id;
+    std::string contents;
+
+    Source(std::String &&id, std::String &&contents)
+      : id(&&id), contents(&&contents)
+    {
+    }
+
+    Source(Source &&) = default;
+    ~Source() = default;
+  }
+
+  std::vector<Source> sources;
+
+  Engine() = default;
+  pub ~Engine() = default;
+}
+
+pub fn create() -> Engine
+{
+  return Engine();
+}
+
+pub fn add_source(Engine mut &engine, std::String &&id, std::String &&contents) -> std::string_view
+{
+  for (var &source : engine.sources)
+  {
+    if (source.id == id && source.contents == contents)
+      return source.contents;
+  }
+
+  return engine.sources.push_back(&&id, &&contents).contents;
+}
+
+union EvalError
+{
+  struct OperatorMismatch : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span, std::string_literal msg)
+    {
+      super.source = &engine;
+      super.message = "Operator Mismatch";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, msg);
+    }
+
+    this(Engine &engine, std::string_view lhs, std::string_literal lhs_msg, std::string_view rhs, std::string_literal rhs_msg)
+    {
+      super.source = &engine;
+      super.message = "Operator Mismatch";
+      super.loc = engine.source_ident(lhs);
+      super.add_label(engine.source_location(lhs), lhs.len, lhs_msg);
+      super.add_label(engine.source_location(rhs), rhs.len, rhs_msg);
+    }
+
+    ~this() = default;
+  }
+
+  struct OperatorOverflow : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span)
+    {
+      super.source = &engine;
+      super.message = "Operator Overflow";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, "overflowed");
+    }
+
+    ~this() = default;
+  }
+
+  struct DivisionByZero : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span)
+    {
+      super.source = &engine;
+      super.message = "Division By Zero";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, "division by zero");
+    }
+
+    ~this() = default;
+  }
+
+  struct Failed : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span, std::string_literal msg)
+    {
+      super.source = &engine;
+      super.message = "Failed";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, msg);
+    }
+
+    ~this() = default;
+  }
+}
+
+pub struct engine_error_category : pub std::error_category
+{
+  fn instance() -> engine_error_category *
+  {
+    static instance = #engine_error_category::engine_error_category();
+
+    return &instance;
+  }
+
+  pub fn message(uintptr value, u8 mut *buffer, usize buflen) -> std::string_view
+  {
+    return "engine exception occured";
+  }
+
+  engine_error_category() = default;
+  engine_error_category(engine_error_category &) = default;
+  ~engine_error_category() = default;
+}
+
+pub fn engine_error_category() -> engine_error_category *
+{
+  return engine_error_category::instance;
+}
+
+pub struct Context
+{
+  pub diag::diag diag;
+
+  pub Engine mut &engine;
+
+  diag::diag mut &outdiag;
+  std::optional<diag::diagnostic> exception;
+
+  Context(Engine &&engine, diag::diag &&diag)
+    : engine(&engine), diag(diag.leader), outdiag(&diag)
+  {
+  }
+
+  ~Context()
+  {
+    outdiag << diag;
+  }
+}
+
+pub fn source_ident(Engine &engine, std::string_view span) -> std::string
+{
+  var offset = 0;
+
+  for (var &source : engine.sources)
+  {
+    if (source.contents.begin <= span.begin && span.end <= source.contents.end)
+      return source.id;
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source location");
+}
+
+pub fn source_location(Engine &engine, std::string_view span) -> usize
+{
+  var offset = 0;
+
+  for (var &source : engine.sources)
+  {
+    if (source.contents.begin <= span.begin && span.end <= source.contents.end)
+      return offset + (span.data - source.contents.data);
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source location");
+}
+
+pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+{
+  var offset = 0;
+
+  for (var &source : engine.sources)
+  {
+    if (offset <= label.pos && label.pos < offset + source.contents.len)
+    {
+      var pos = offset;
+
+      lineno = 0;
+      position = 0;
+
+      for (var ch : source.contents)
+      {
+        switch (ch)
+        {
+          case '\n':
+
+            if (pos < label.pos)
+            {
+              position = pos + 1;
+
+              lineno += 1;
+            }
+
+            if (label.pos + label.len <= pos)
+            {
+              break;
+            }
+        }
+
+        pos += 1;
+      }
+
+      return source.contents[(position - offset) .. (pos - offset)];
+    }
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source span");
+}
+
+#[noreturn]
+pub fn raise(Context &&ctx, diag::diagnostic &&error) throws -> void
+{
+  var result = std::error(void);
+
+  result.value = 0;
+  result.category = engine_error_category;
+
+  ctx.exception = &move error;
+
+  throw result;
+}
+
+fn neg(Context &&ctx, UnaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.subexpr);
+
+  if (lhs.is_integer)
+  {
+    var sum = std::sub_with_borrow(0, lhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Integer(sum.0);
+  }
+
+  if (lhs.is_number)
+  {
+    return Value::Number(-lhs.as<f64>());
+  }
+
+  if (lhs.is_duration)
+  {
+    var sum = std::sub_with_borrow(0, lhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Duration(sum.0);
+  }
+
+  if (lhs.is_filesize)
+  {
+    var sum = std::sub_with_borrow(0, lhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::FileSize(sum.0);
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
+}
+
+fn not(Context &&ctx, UnaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.subexpr);
+
+  if (lhs.is_boolean)
+  {
+    return Value::Boolean(!lhs.as<bool>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
+}
+
+fn add(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_integer && rhs.is_integer)
+  {
+    var sum = std::add_with_carry(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Integer(sum.0);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Number(lhs.as<f64>() + rhs.as<f64>());
+  }
+
+  if (lhs.is_string && rhs.is_string)
+  {
+    return Value::String(lhs.as<std::string&>() + rhs.as<std::string&>());
+  }
+
+  if (lhs.is_duration && rhs.is_duration)
+  {
+    var sum = std::add_with_carry(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Duration(sum.0);
+  }
+
+  if (lhs.is_filesize && rhs.is_filesize)
+  {
+    var sum = std::add_with_carry(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::FileSize(sum.0);
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn sub(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_integer && rhs.is_integer)
+  {
+    var sum = std::sub_with_borrow(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Integer(sum.0);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Number(lhs.as<f64>() - rhs.as<f64>());
+  }
+
+  if (lhs.is_duration && rhs.is_duration)
+  {
+    var sum = std::sub_with_borrow(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Duration(sum.0);
+  }
+
+  if (lhs.is_filesize && rhs.is_filesize)
+  {
+    var sum = std::sub_with_borrow(lhs.as<i64>(), rhs.as<i64>());
+
+    if (sum.1 != 0)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::FileSize(sum.0);
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn div(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Number(lhs.as<f64>() / rhs.as<f64>());
+  }
+
+  if (lhs.is_duration && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Duration(lhs.as<i64>() / rhs.as<i64>());
+  }
+
+  if (lhs.is_duration && rhs.is_duration)
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Number(lhs.as<f64>() / rhs.as<f64>());
+  }
+
+  if (lhs.is_filesize && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::FileSize(lhs.as<i64>() / rhs.as<i64>());
+  }
+
+  if (lhs.is_filesize && rhs.is_filesize)
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Number(lhs.as<f64>() / rhs.as<f64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn idiv(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    if (std::abs(lhs.as<f64>() / rhs.as<f64>()) > 9e+18)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Integer(cast<i64>(lhs.as<f64>() / rhs.as<f64>()));
+  }
+
+  if (lhs.is_duration && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    if (std::abs(rhs.as<f64>()) > 9e+18)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.rhs.span));
+
+    return Value::Duration(lhs.as<i64>() / rhs.as<i64>());
+  }
+
+  if (lhs.is_duration && rhs.is_duration)
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Integer(cast<i64>(lhs.as<i64>() / rhs.as<i64>()));
+  }
+
+  if (lhs.is_filesize && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    if (std::abs(rhs.as<f64>()) > 9e+18)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.rhs.span));
+
+    return Value::FileSize(lhs.as<i64>() / rhs.as<i64>());
+  }
+
+  if (lhs.is_filesize && rhs.is_filesize)
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Integer(cast<i64>(lhs.as<i64>() / rhs.as<i64>()));
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn mul(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_integer && rhs.is_integer)
+  {
+    return Value::Integer(lhs.as<i64>() * rhs.as<i64>());
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Number(lhs.as<f64>() * rhs.as<f64>());
+  }
+
+  if ((lhs.is_duration && (rhs.is_integer || rhs.is_number)) || ((lhs.is_integer || lhs.is_number) && rhs.is_duration))
+  {
+    return Value::Duration(lhs.as<i64>() * rhs.as<i64>());
+  }
+
+  if ((lhs.is_filesize && (rhs.is_integer || rhs.is_number)) || ((lhs.is_integer || lhs.is_number) && rhs.is_filesize))
+  {
+    return Value::FileSize(lhs.as<i64>() * rhs.as<i64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn rem(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_integer && rhs.is_integer)
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Integer(lhs.as<i64>() % rhs.as<i64>());
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    if (rhs.as<f64> == 0.0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Number(lhs.as<f64>() % rhs.as<f64>());
+  }
+
+  if (lhs.is_duration && rhs.is_duration)
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::Duration(lhs.as<i64>() % rhs.as<i64>());
+  }
+
+  if (lhs.is_filesize && rhs.is_filesize)
+  {
+    if (rhs.as<i64> == 0)
+      ctx.raise(EvalError::DivisionByZero(ctx.engine, expr.rhs.span));
+
+    return Value::FileSize(lhs.as<i64>() % rhs.as<i64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn pow(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_integer && rhs.is_integer)
+  {
+    if (std::abs(std::pow(lhs.as<f64>(), rhs.as<i64>())) > 9e+18)
+      ctx.raise(EvalError::OperatorOverflow(ctx.engine, expr.span));
+
+    return Value::Integer(std::pow(lhs.as<i64>(), rhs.as<i64>()));
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Number(std::pow(lhs.as<f64>(), rhs.as<f64>()));
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn and(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+
+  if (lhs.is_boolean && lhs.as<bool> == false)
+    return Value::Boolean(false);
+
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_boolean && rhs.is_boolean)
+  {
+    return Value::Boolean(lhs.as<bool>() && rhs.as<bool>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn or(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+
+  if (lhs.is_boolean && lhs.as<bool> == true)
+    return Value::Boolean(true);
+
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.is_boolean && rhs.is_boolean)
+  {
+    return Value::Boolean(lhs.as<bool>() || rhs.as<bool>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn lt(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.kind == rhs.kind)
+  {
+    return Value::Boolean(lhs < rhs);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() < rhs.as<f64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn gt(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.kind == rhs.kind)
+  {
+    return Value::Boolean(lhs > rhs);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() > rhs.as<f64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn le(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.kind == rhs.kind)
+  {
+    return Value::Boolean(lhs <= rhs);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() <= rhs.as<f64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn ge(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if (lhs.kind == rhs.kind)
+  {
+    return Value::Boolean(lhs >= rhs);
+  }
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() >= rhs.as<f64>());
+  }
+
+  ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
+}
+
+fn eq(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() == rhs.as<f64>());
+  }
+
+  return Value::Boolean(lhs == rhs);
+}
+
+fn ne(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  var lhs = evaluate(ctx, *expr.lhs);
+  var rhs = evaluate(ctx, *expr.rhs);
+
+  if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
+  {
+    return Value::Boolean(lhs.as<f64>() != rhs.as<f64>());
+  }
+
+  return Value::Boolean(lhs != rhs);
+}
+
+fn rescue(Context &&ctx, BinaryOp &expr) throws -> Value
+{
+  try
+  {
+    return evaluate(ctx, *expr.lhs);
+  }
+  catch (std::error e)
+  {
+    return evaluate(ctx, *expr.rhs);
+  }
+}
+
+fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
+{
+  import run : *;
+
+  try
+  {
+    run(ctx, &mut pipeline, call.cmd.value);
+  }
+  catch (std::error e)
+  {
+    if (e.category == std::system_error_category)
+      ctx.raise(EvalError::Failed(ctx.engine, call.cmd.span, std::meta::enumerator_name(cast<std::errc>(e.value))));
+
+    throw e;
+  }
+}
+
+fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
+{
+  var value = Value();
+  var pipeline = Pipeline();
+
+  try
+  {
+    for (var expr = &expr; expr; )
+    {
+      switch (*expr)
+      {
+        case Call[call]:
+
+          pipeline.capture_stdout = capture;
+
+          call(ctx, &mut pipeline, call);
+
+          expr = null;
+
+        case BinaryOp[binaryop]:
+
+          switch (binaryop.op)
+          {
+            case Semi:
+
+              evaluate(ctx, *binaryop.lhs);
+
+            case Pipe:
+
+              switch (*binaryop.lhs)
+              {
+                case Call[call]:
+
+                  pipeline.capture_stdout = true;
+
+                  call(ctx, &mut pipeline, call);
+
+                else:
+
+                  // TODO: inject into pipeline
+                  evaluate(ctx, *binaryop.lhs);
+              }
+          }
+
+          switch (*binaryop.rhs)
+          {
+            case Call[call]:
+              expr = &*binaryop.rhs;
+
+            case BinaryOp[nextop]:
+
+              switch (nextop.op)
+              {
+                case Pipe:
+                  expr = &*binaryop.rhs;
+
+                else:
+                  expr = null;
+              }
+
+            else:
+              expr = null;
+          }
+
+          if (!expr)
+            value = evaluate(ctx, *binaryop.rhs);
+
+          pipeline.capture_stdout = false;
+      }
+    }
+
+    if (pipeline.capture_stdout || pipeline.capture_stderr)
+      value = pipeline.read();
+
+    pipeline.wait();
+
+    return value;
+  }
+  catch (std::error e)
+  {
+    pipeline.wait();
+
+    throw e;
+  }
+}
+
+fn evaluate(Context &&ctx, Expression &expr) throws -> Value
+{
+  switch (expr)
+  {
+    case Null:
+      return Value::Null;
+
+    case Number[number]:
+      return Value::Number(number.value);
+
+    case Integer[integer]:
+      return Value::Integer(integer.value);
+
+    case Boolean[boolean]:
+      return Value::Boolean(boolean.value);
+
+    case String[string]:
+      return Value::String(string.value);
+
+    case Duration[duration]:
+      return Value::Duration(duration.value);
+
+    case FileSize[filesize]:
+      return Value::FileSize(filesize.value);
+
+    case Call[call]:
+      return pipe(ctx, expr, capture: false);
+
+    case UnaryOp[unaryop]:
+
+      switch (unaryop.op)
+      {
+        case Plus:
+          return evaluate(ctx, *unaryop.subexpr);
+
+        case Minus:
+          return neg(ctx, unaryop);
+
+        case LNot:
+          return not(ctx, unaryop);
+
+        case Paren:
+
+          switch (*unaryop.subexpr)
+          {
+            case Call[call]:
+              return pipe(ctx, *unaryop.subexpr, capture: true);
+
+            case BinaryOp[nextop]:
+
+              switch (nextop.op)
+              {
+                case Semi:
+                case Pipe:
+                  return pipe(ctx, *unaryop.subexpr, capture: true);
+              }
+          }
+
+          return evaluate(ctx, *unaryop.subexpr);
+      }
+
+    case BinaryOp[binaryop]:
+
+      switch (binaryop.op)
+      {
+        case Add:
+          return add(ctx, binaryop);
+
+        case Sub:
+          return sub(ctx, binaryop);
+
+        case Div:
+          return div(ctx, binaryop);
+
+        case IDiv:
+          return idiv(ctx, binaryop);
+
+        case Mul:
+          return mul(ctx, binaryop);
+
+        case Rem:
+          return rem(ctx, binaryop);
+
+        case Pow:
+          return pow(ctx, binaryop);
+
+        case LAnd:
+          return and(ctx, binaryop);
+
+        case LOr:
+          return or(ctx, binaryop);
+
+        case LT:
+          return lt(ctx, binaryop);
+
+        case GT:
+          return gt(ctx, binaryop);
+
+        case LE:
+          return le(ctx, binaryop);
+
+        case GE:
+          return ge(ctx, binaryop);
+
+        case EQ:
+          return eq(ctx, binaryop);
+
+        case NE:
+          return ne(ctx, binaryop);
+
+        case Rescue:
+          return rescue(ctx, binaryop);
+
+        case Semi:
+        case Pipe:
+          return pipe(ctx, expr, capture: false);
+
+        case Assign:
+          ;
+      }
+  }
+
+  std::panic("unhandled expression");
+}
+
+pub fn evaluate(Engine mut &engine, Block &block, diag::diag mut &diag) -> Value
+{
+  var value = Value();
+
+  var ctx = Context(engine, diag);
+
+  for (var &expr : block.exprs)
+  {
+    try
+    {
+      value = evaluate(ctx, expr);
+    }
+    catch (std::error e)
+    {
+      if (e.category == std::system_error_category)
+        ctx.diag.error(EvalError::Failed(ctx.engine, expr.span, std::meta::enumerator_name(cast<std::errc>(e.value))));
+
+      if (e.category == engine_error_category)
+        ctx.diag.error(ctx.exception?!);
+    }
+
+    if (diag.has_errored)
+      break;
+  }
+
+  return value;
+}

@@ -1,0 +1,154 @@
+//
+// diag
+//
+
+import diag.diagnostic;
+
+import std.stdio;
+import std.string : String;
+import std.algorithm;
+
+pub struct diag
+{
+  pub std::string leader;
+
+  bool errored;
+  std::vector<diagnostic> diagnostics;
+
+  pub fn note(this mut &, std::string_literal msg) -> void
+  {
+    var diagnostic = diagnostic();
+    diagnostic.loc = this.leader;
+    diagnostic.severity = severity::note;
+    diagnostic.message = msg;
+
+    this.diagnostics.push_back(&move diagnostic);
+  }
+
+  pub fn warn(this mut &, std::string_literal msg) -> void
+  {
+    var diagnostic = diagnostic();
+    diagnostic.loc = this.leader;
+    diagnostic.severity = severity::warning;
+    diagnostic.message = msg;
+
+    this.diagnostics.push_back(&move diagnostic);
+  }
+
+  pub fn error(this mut &, std::string_literal msg) -> void
+  {
+    var diagnostic = diagnostic();
+    diagnostic.loc = this.leader;
+    diagnostic.severity = severity::error;
+    diagnostic.message = msg;
+
+    error(&mut this, &move diagnostic);
+
+    this.errored = true;
+  }
+
+  pub fn warn(this mut &, diagnostic &&diagnostic) -> void
+    where __is_rvalue<typeof(diagnostic)>
+  {
+    diagnostic.severity = severity::warning;
+
+    this.diagnostics.push_back(&move diagnostic);
+  }
+
+  pub fn error(this mut &, diagnostic &&diagnostic) -> void
+    where __is_rvalue<typeof(diagnostic)>
+  {
+    diagnostic.severity = severity::error;
+
+    this.diagnostics.push_back(&move diagnostic);
+
+    this.errored = true;
+  }
+
+  //pub fn error<Diagnostic>(this mut &, Diagnostic &&diagnostic) -> void
+  //  where __is_union<Diagnostic> && __is_rvalue<typeof(diagnostic)>
+  //{
+  //  switch (diagnostic)
+  //  {
+  //    #{
+  //      #for (const k = 1; k != std::meta::fields_of($Diagnostic).len; ++k)
+  //      {
+  //        -> { case ${cast<typeof(Diagnostic::kind)>(k)}[value]: this.diagnostics.push_back(&move value); }
+  //      }
+  //    }
+  //  }
+  //}
+
+  pub fn has_errored(this&) -> bool
+  {
+    return this.errored;
+  }
+
+  pub struct marker
+  {
+    bool errorstate;
+    usize diagscount;
+
+    marker(bool errorstate, usize diagscount)
+      : errorstate(errorstate), diagscount(diagscount)
+    {
+    }
+
+    pub marker() = default;
+    pub marker(marker &) = default;
+    pub fn =(marker mut &, marker &) -> marker mut & = default;
+    pub ~marker() = default;
+  }
+
+  pub fn marker(this &) -> marker
+  {
+    return marker(this.errored, this.diagnostics.len);
+  }
+
+  pub fn revert(this mut &, marker &marker) -> void
+  {
+    this.errored = marker.errorstate;
+    this.diagnostics.resize(marker.diagscount);
+  }
+
+  pub diag(String &&leader)
+  {
+    this.leader = &&leader;
+  }
+
+  pub diag(diag&) = default;
+  pub fn =(diag mut &, diag &) -> diag mut & = default;
+  pub ~diag() = default;
+}
+
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, diag &diag) throws -> void
+{
+  for (var &diagnostic : diag.diagnostics)
+  {
+    ctx.written += std::print_to(&mut os, diagnostic);
+  }
+}
+
+#[lifetime(depends(diag))]
+pub fn first(diag &diag) -> diagnostic &
+{
+  for (var &diagnostic : diag.diagnostics)
+  {
+    if (diagnostic.severity == severity::error)
+      return &diagnostic;
+  }
+
+  std::panic();
+}
+
+#[lifetime(consume(src))]
+pub fn <<(diag mut &dst, diag &&src) -> void
+{
+  for (var mut &diagnostic : &move src.diagnostics)
+  {
+    if (diagnostic.severity == severity::error)
+      dst.errored = true;
+
+    dst.diagnostics.push_back(&move diagnostic);
+  }
+}

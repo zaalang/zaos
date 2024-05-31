@@ -4,9 +4,8 @@
 
 import std.fmt;
 import std.error;
-import os.zaos.time;
-import os.zaos.fcntl;
 import std.bits.utf as utf;
+import termios;
 
 pub union event
 {
@@ -121,8 +120,6 @@ pub struct termin
   pub termin() = default;
   pub ~termin() = default;
 }
-
-extern fn thread_ring() -> os::ioring mut &;
 
 fn csi_keycode(u32 code) -> key_code
 {
@@ -258,7 +255,7 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
   {
     var in = u8(0);
 
-    if (var bytes = os::read(&mut thread_ring, fd, &in, 1); bytes != 1)
+    if (var bytes = termios::read(fd, &in, 1); bytes != 1)
     {
       if (bytes == 0)
       {
@@ -266,7 +263,7 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
         return true;
       }
 
-      if (bytes != os::EAGAIN)
+      if (cast<std::errc>(-bytes) != std::errc::would_block)
       {
         ctx.next = event::error(cast<std::errc>(-bytes));
         return true;
@@ -507,8 +504,8 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
 
 pub fn enable_mouse_capture(int fd)
 {
-  os::write(&mut thread_ring, fd, "\x1b[?1000h".data, 8);
-  os::write(&mut thread_ring, fd, "\x1b[?1002h".data, 8);
-  os::write(&mut thread_ring, fd, "\x1b[?1003h".data, 8);
-  os::write(&mut thread_ring, fd, "\x1b[?1015h".data, 8);
+  termios::write(fd, "\x1b[?1000h".data, 8);
+  termios::write(fd, "\x1b[?1002h".data, 8);
+  termios::write(fd, "\x1b[?1003h".data, 8);
+  termios::write(fd, "\x1b[?1015h".data, 8);
 }

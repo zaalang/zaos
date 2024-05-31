@@ -1,0 +1,50 @@
+//
+// test
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import terminal;
+import env;
+import sys.process;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn test(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
+{
+  using os;
+
+  terminal.write("Test\n");
+
+  try
+  {
+    var cmd = sys::command("/zaos/bin/ls");
+    cmd.arguments.push_back("-l");
+    cmd.stdin = sys::stdio::fd(terminal.pty.slave);
+    cmd.stdout = sys::stdio::piped; //::fd(terminal.pty.slave);
+    cmd.stderr = sys::stdio::fd(terminal.pty.slave);
+    cmd.working_directory = "/zaos";
+
+    var child = cmd.spawn();
+
+    for (;;)
+    {
+      var buf = [<u8>: void; 64];
+      var len = child.stdout.read(buf.data, buf.len);
+      std::print(len);
+      terminal.write(std::string_view(buf.data, len));
+
+      if (len == 0)
+        break;
+    }
+
+    std::print(": ", child.wait());
+
+  }
+  catch (std::error e)
+  {
+    std::print("error - ", e);
+  }
+
+  return 0;
+}

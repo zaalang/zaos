@@ -7,6 +7,12 @@ TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
 
 SRCS=\
 main.zaa\
+ast.zaa\
+lexer.zaa\
+parser.zaa\
+value.zaa\
+engine.zaa\
+run.zaa\
 
 default: $(BUILD)/shell
 

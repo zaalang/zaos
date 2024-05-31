@@ -210,13 +210,15 @@ struct msg_queue
         break;
     }
 
-    delegate = &move std::launder(this.messages[index].delegate);
+    delegate = &move this.messages[index].delegate;
 
     while (true)
     {
       if (std::atomic_cmpxchg_weak(&this.readhead, index, (index + 1) & (this.messages.len - 1)))
         break;
     }
+
+    std::launder(this.messages);
 
     return true;
   }
