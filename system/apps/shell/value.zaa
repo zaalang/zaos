@@ -13,6 +13,7 @@ pub union Value
   pub Integer(i64),
   pub Boolean(bool),
   pub String(std::string),
+  pub Literal(std::string_view),
   pub Duration(chrono::nanoseconds),
   pub FileSize(i64),
 
@@ -49,6 +50,11 @@ pub union Value
   pub fn is_string(this &) -> bool
   {
     return this.kind == typeof(this.kind)::String;
+  }
+
+  pub fn is_literal(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Literal;
   }
 
   pub fn is_duration(this &) -> bool
@@ -224,6 +230,9 @@ pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, Value &value
 
     case String[string]:
       std::fmt_to(&mut os, &mut ctx, string);
+
+    case Literal[literal]:
+      std::fmt_to(&mut os, &mut ctx, literal);
 
     case Duration[duration]:
       fmt_duration(&mut os, &mut ctx, duration.count);

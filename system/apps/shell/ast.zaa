@@ -73,8 +73,26 @@ pub struct String
   {
   }
 
+  pub String(std::string_view value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
   pub String(String &&) = default;
   pub ~String() = default;
+}
+
+pub struct Literal
+{
+  pub std::string_view span;
+
+  pub Literal(std::string_view span)
+    : span(span)
+  {
+  }
+
+  pub Literal(Literal &&) = default;
+  pub ~Literal() = default;
 }
 
 pub struct Duration
@@ -107,7 +125,7 @@ pub struct FileSize
 
 pub union Argument
 {
-  pub Flag(String),
+  pub Flags(String),
   pub Named((String, Expression)),
   pub Free(Expression),
 
@@ -115,8 +133,8 @@ pub union Argument
   {
     switch (this)
     {
-      case Flag[flag]:
-        return flag.span;
+      case Flags[flags]:
+        return flags.span;
 
       case Named[named]:
         return std::string_view(named.0.span.begin, named.1.span.end);
@@ -163,7 +181,7 @@ pub struct UnaryOp
     Plus,
     Minus,
     LNot,
-    Paren,
+    Group,
   }
 
   pub Type op;
@@ -233,6 +251,7 @@ pub union Expression
   pub Integer(Integer),
   pub Boolean(Boolean),
   pub String(String),
+  pub Literal(Literal),
   pub Duration(Duration),
   pub FileSize(FileSize),
   pub Call(Call),
@@ -257,6 +276,9 @@ pub union Expression
 
       case String[string]:
         return string.span;
+
+      case Literal[literal]:
+        return literal.span;
 
       case Duration[duration]:
         return duration.span;

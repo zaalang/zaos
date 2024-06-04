@@ -12,7 +12,8 @@ lexer.zaa\
 parser.zaa\
 value.zaa\
 engine.zaa\
-run.zaa\
+command.zaa\
+pipeline.zaa\
 
 default: $(BUILD)/shell
 

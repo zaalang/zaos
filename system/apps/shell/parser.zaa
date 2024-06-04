@@ -292,7 +292,7 @@ fn consume_adjacent_til(std::span<token> mut &tokens, token::type type) -> std::
   return span;
 }
 
-fn unescape(std::string_view span) -> std::string
+pub fn unescape(std::string_view span) -> std::string
 {
   var result = std::string::with_capacity(span.len);
 
@@ -389,24 +389,17 @@ fn parse_string_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Ex
 
   consume_token(&mut tokens, token::type::string_literal);
 
-  var value = std::string();
-
   if (span.starts_with("'"))
   {
-    value = span.drop_front(1).drop_back(1);
+    return Expression::String(span.drop_front(1).drop_back(1), span);
   }
 
   if (span.starts_with("\""))
   {
-    value = unescape(span.drop_front(1).drop_back(1));
+    return Expression::String(unescape(span.drop_front(1).drop_back(1)), span);
   }
 
-  if (!span.starts_with("'") && !span.starts_with("\""))
-  {
-    value = span;
-  }
-
-  return Expression::String(&move value, span);
+  return Expression::String(std::string(span), span);
 }
 
 fn parse_numeric_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
@@ -566,6 +559,40 @@ fn parse_declref(parse_context &&ctx, std::span<token> mut &tokens) -> Expressio
   std::panic("not implemented");
 }
 
+fn parse_argument(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+{
+  switch (tokens[0].type)
+  {
+    else:
+
+      var span = consume_adjacent(&mut tokens);
+
+      if (span.len > 1)
+      {
+        if (span.starts_with("'") && span.ends_with("'"))
+        {
+          return Expression::String(span[1 .. span.len-1], span);
+        }
+
+        if (span.starts_with("\"") && span.ends_with("\""))
+        {
+          return Expression::String(unescape(span[1 .. span.len-1]), span);
+        }
+
+        if (span.starts_with("$"))
+        {
+          std::panic("not implemented");
+        }
+      }
+
+      return Expression::Literal(span);
+
+    case block:
+
+      return parse_expression(ctx, &mut tokens);
+  }
+}
+
 fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
 {
   var cmd = tokens[0].span;
@@ -586,17 +613,11 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
   {
     switch (tokens[0].type)
     {
-      else:
-
-        var arg = consume_adjacent(&mut tokens);
-
-        arguments.push_back(Argument::Free(Expression::String(unescape(arg), arg)));
-
       case minus:
 
         var flags = consume_adjacent(&mut tokens);
 
-        arguments.push_back(Argument::Flag(String(unescape(flags), flags)));
+        arguments.push_back(Argument::Flags(String(unescape(flags), flags)));
 
       case minusminus:
 
@@ -604,29 +625,18 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
 
         if (try_consume_token(&mut tokens, token::type::equal) && tokens[0] != token::type::eof)
         {
-          switch (tokens[0].type)
-          {
-            else:
+          var expr = parse_argument(ctx, &mut tokens);
 
-              var arg = consume_adjacent(&mut tokens);
-
-              arguments.push_back(Argument::Named((String(unescape(name), name), Expression::String(unescape(arg), arg))));
-
-            case block:
-
-              var expr = parse_expression(ctx, &mut tokens);
-
-              arguments.push_back(Argument::Named((String(unescape(name), name), &move expr)));
-          }
+          arguments.push_back(Argument::Named((String(unescape(name), name), &move expr)));
         }
         else
         {
-          arguments.push_back(Argument::Flag(String(unescape(name), name)));
+          arguments.push_back(Argument::Flags(String(unescape(name), name)));
         }
 
-      case block:
+      else:
 
-        var expr = parse_expression(ctx, &mut tokens);
+        var expr = parse_argument(ctx, &mut tokens);
 
         arguments.push_back(Argument::Free(&move expr));
 
@@ -640,15 +650,17 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
   return Expression::Call(String(unescape(cmd), cmd), &move arguments);
 }
 
-fn parse_paren_expression(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_group_expression(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
 {
-  var inners = lexer::lex(tokens[0].span.drop_front(1).drop_back(1));
-
-  var expr = parse_expression(ctx, &mut std::span(inners));
+  var span = tokens[0].span;
 
   consume_token(&mut tokens, token::type::block);
 
-  return Expression::UnaryOp(UnaryOp::Type::Paren, &move expr);
+  var inners = lexer::lex(span.drop_front(1).drop_back(1));
+
+  var expr = parse_expression(ctx, &mut std::span(inners));
+
+  return Expression::UnaryOp(UnaryOp::Type::Group, &move expr);
 }
 
 fn parse_expression_left(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
@@ -697,7 +709,7 @@ fn parse_expression_left(parse_context &&ctx, std::span<token> mut &tokens) -> E
       switch (tokens[0].span[0])
       {
         case '(':
-          return parse_paren_expression(ctx, &mut tokens);
+          return parse_group_expression(ctx, &mut tokens);
       }
   }
 

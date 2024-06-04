@@ -33,8 +33,8 @@ pub fn sys_channel_create(process mut *process, ioring_ctx mut &ctx, virtaddr fd
 
   var fds = [0, 0];
 
-  fds[0] = process::current.new_fd(vfs::file_descriptor::create(channel.open_node0));
-  fds[1] = process::current.new_fd(vfs::file_descriptor::create(channel.open_node1));
+  fds[0] = process.new_fd(vfs::file_descriptor::create(channel.open_node0));
+  fds[1] = process.new_fd(vfs::file_descriptor::create(channel.open_node1));
 
   if (var result = vm::write_process_memory(process, fdsbuf, fds.data, fds.len * sizeof<i32>); !result)
     return result;

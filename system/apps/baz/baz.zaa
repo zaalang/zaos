@@ -12,15 +12,6 @@ fn main() -> int
 {
   std::print("baz");
 
-  for(;;)
-    std::printf(".");
-
-  var buf = [u8(0); 64];
-  var len = std::stdin.read(buf.data, buf.len);
-  std::print(len);
-  std::print(std::string_view(buf.data, len));
-
-/*
   var ring = os::ioring();
 
   var mmvec = os::mmvec();
@@ -76,7 +67,7 @@ fn main() -> int
 
     os::close(&mut ring, fd);
   }
-*/
+
   std::print("done");
 
   return 0;

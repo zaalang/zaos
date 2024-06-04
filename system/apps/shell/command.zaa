@@ -1,0 +1,99 @@
+//
+// command
+//
+
+import std.stdlib;
+import sys.process;
+import sys.path;
+import sys.fs;
+import parser;
+import engine;
+import pipeline;
+import value;
+
+using value;
+using engine;
+using pipeline;
+
+pub union Arg
+{
+  pub Flags(std::string),
+  pub Named((std::string, Value)),
+  pub Free(Value),
+
+  pub Arg(Arg &&) = default;
+  pub ~Arg() = default;
+}
+
+fn to_arg(Context &&ctx, Value &value) throws -> std::string
+{
+  switch (value)
+  {
+    case Literal[literal]:
+      return parser::unescape(literal);
+
+    case FileSize[filesize]:
+      return std::format("{}", filesize);
+  }
+
+  return std::format("{}", value);
+}
+
+pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws -> void
+{
+  var path = name;
+
+  if (!path.contains(sys::sep_byte))
+  {
+    path = "";
+
+    for (var &part : std::env::var("PATH").value_or("/zaos/bin").split(":"))
+    {
+      try
+      {
+        for (var &file : sys::read_dir(part))
+        {
+          if (file.is_dir)
+            continue;
+
+          if (file.name == name)
+          {
+            path = file.path;
+
+            break;
+          }
+        }
+      }
+      catch (std::error e)
+      {
+      }
+    }
+
+    if (path.empty)
+      throw std::system_error(std::errc::not_found);
+  }
+
+  if (path.starts_with("."))
+  {
+    path = sys::cwd + "/" + path;
+  }
+
+  var cmd = sys::command(path);
+
+  for (var &arg : args)
+  {
+    switch (arg)
+    {
+      case Flags[flags]:
+        cmd.arguments.push_back(flags);
+
+      case Named[var &(name, value)]:
+        cmd.arguments.push_back(std::format("{}={}", name, to_arg(ctx, value)));
+
+      case Free[value]:
+        cmd.arguments.push_back(to_arg(ctx, value));
+    }
+  }
+
+  pipeline.append(&mut cmd);
+}

@@ -368,6 +368,8 @@ fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
   {
     switch (src[idx])
     {
+      case '.':
+      case '_':
       case '0' ..= '9':
       case 'a' ..= 'z':
       case 'A' ..= 'Z':

@@ -8,11 +8,13 @@ import chrono;
 import ast;
 import value;
 import pipeline;
+import command;
 import diag;
 
 using ast;
 using value;
 using pipeline;
+using command;
 
 pub struct Engine
 {
@@ -97,6 +99,19 @@ union EvalError
       super.message = "Division By Zero";
       super.loc = engine.source_ident(span);
       super.add_label(engine.source_location(span), span.len, "division by zero");
+    }
+
+    ~this() = default;
+  }
+
+  struct InvalidPipelineElement : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span)
+    {
+      super.source = &engine;
+      super.message = "Invalid Pipeline Element";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, "invalid pipeline element");
     }
 
     ~this() = default;
@@ -732,11 +747,26 @@ fn rescue(Context &&ctx, BinaryOp &expr) throws -> Value
 
 fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
 {
-  import run : *;
+  var args = std::vector<Arg>();
+
+  for (var &arg : call.arguments)
+  {
+    switch (arg)
+    {
+      case Flags[flags]:
+        args.push_back(Arg::Flags(flags.value));
+
+      case Named[var &(name, expr)]:
+        args.push_back(Arg::Named(name.value, evaluate(ctx, expr)));
+
+      case Free[expr]:
+        args.push_back(Arg::Free(evaluate(ctx, expr)));
+    }
+  }
 
   try
   {
-    run(ctx, &mut pipeline, call.cmd.value);
+    run(ctx, &mut pipeline, call.cmd.value, args);
   }
   catch (std::error e)
   {
@@ -754,7 +784,7 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
 
   try
   {
-    for (var expr = &expr; expr; )
+    for (var expr = &expr;; )
     {
       switch (*expr)
       {
@@ -764,7 +794,12 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
 
           call(ctx, &mut pipeline, call);
 
-          expr = null;
+          if (pipeline.capture_stdout || pipeline.capture_stderr)
+            value = pipeline.read();
+
+          pipeline.wait();
+
+          return value;
 
         case BinaryOp[binaryop]:
 
@@ -773,6 +808,27 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
             case Semi:
 
               evaluate(ctx, *binaryop.lhs);
+
+              switch (*binaryop.rhs)
+              {
+                case Call[call]:
+                  expr = &*binaryop.rhs;
+
+                case BinaryOp[nextop]:
+
+                  switch (nextop.op)
+                  {
+                    case Semi:
+                    case Pipe:
+                      expr = &*binaryop.rhs;
+
+                    else:
+                      return evaluate(ctx, *binaryop.rhs);
+                  }
+
+                else:
+                  return evaluate(ctx, *binaryop.rhs);
+              }
 
             case Pipe:
 
@@ -786,44 +842,22 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
 
                 else:
 
-                  // TODO: inject into pipeline
-                  evaluate(ctx, *binaryop.lhs);
-              }
-          }
+                  if (!pipeline.empty)
+                    ctx.raise(EvalError::InvalidPipelineElement(ctx.engine, binaryop.lhs.span));
 
-          switch (*binaryop.rhs)
-          {
-            case Call[call]:
+                  pipeline.append(evaluate(ctx, *binaryop.lhs));
+              }
+
               expr = &*binaryop.rhs;
 
-            case BinaryOp[nextop]:
-
-              switch (nextop.op)
-              {
-                case Pipe:
-                  expr = &*binaryop.rhs;
-
-                else:
-                  expr = null;
-              }
-
             else:
-              expr = null;
+              ctx.raise(EvalError::InvalidPipelineElement(ctx.engine, expr.span));
           }
 
-          if (!expr)
-            value = evaluate(ctx, *binaryop.rhs);
-
-          pipeline.capture_stdout = false;
+        else:
+          ctx.raise(EvalError::InvalidPipelineElement(ctx.engine, expr.span));
       }
     }
-
-    if (pipeline.capture_stdout || pipeline.capture_stderr)
-      value = pipeline.read();
-
-    pipeline.wait();
-
-    return value;
   }
   catch (std::error e)
   {
@@ -852,6 +886,9 @@ fn evaluate(Context &&ctx, Expression &expr) throws -> Value
     case String[string]:
       return Value::String(string.value);
 
+    case Literal[literal]:
+      return Value::Literal(literal.span);
+
     case Duration[duration]:
       return Value::Duration(duration.value);
 
@@ -874,7 +911,7 @@ fn evaluate(Context &&ctx, Expression &expr) throws -> Value
         case LNot:
           return not(ctx, unaryop);
 
-        case Paren:
+        case Group:
 
           switch (*unaryop.subexpr)
           {

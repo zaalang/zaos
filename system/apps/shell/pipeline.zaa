@@ -16,6 +16,7 @@ pub struct Pipeline
   {
     Child(sys::child),
     Thread(sys::thread),
+    Value(Value),
 
     Task(Task &&) = default;
     ~Task() = default;
@@ -25,6 +26,11 @@ pub struct Pipeline
 
   pub bool capture_stdout;
   pub bool capture_stderr;
+
+  pub fn empty(this &) -> bool
+  {
+    return this.tasks.empty;
+  }
 
   pub Pipeline() = default;
   pub Pipeline(Pipeline &&) = default;
@@ -39,6 +45,27 @@ pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws -> void
     {
       case Child[child]:
         cmd.stdin = std::exchange(&mut child.stdout, std::file());
+
+      case Value[value]:
+
+        var fin = std::file();
+        var fout = std::file();
+        sys::pipe(&mut fin, &mut fout);
+
+        pipeline.tasks.push_back(Pipeline::Task::Thread(sys::thread::spawn(|| [var fout = &move fout, var value = pipeline.read] {
+
+          try
+          {
+            fout.print(value);
+          }
+          catch (std::error e)
+          {
+            std::fprint(std::stderr, e);
+          }
+
+        })));
+
+        cmd.stdin = &move fin;
     }
   }
 
@@ -51,16 +78,18 @@ pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws -> void
   pipeline.tasks.push_back(Pipeline::Task::Child(cmd.spawn));
 }
 
+pub fn append(Pipeline mut &pipeline, Value &&value) throws -> void
+{
+  pipeline.tasks.push_back(Pipeline::Task::Value(&&value));
+}
+
 pub fn read(Pipeline mut &pipeline) throws -> Value
 {
-  var str = std::string();
-
-  if (pipeline.tasks.empty)
-    return Value();
-
   switch (pipeline.tasks.back)
   {
     case Child[child]:
+
+      var str = std::string();
 
       if (child.stdout)
       {
@@ -91,9 +120,15 @@ pub fn read(Pipeline mut &pipeline) throws -> Value
           str.append_from_capacity(len);
         }
       }
+
+      return Value::String(str);
+
+    case Value:
+
+      return pipeline.tasks.take_back().Value;
   }
 
-  return Value::String(str);
+  std::panic();
 }
 
 pub fn wait(Pipeline mut &pipeline) -> i32
@@ -111,6 +146,8 @@ pub fn wait(Pipeline mut &pipeline) -> i32
         thread.join();
     }
   }
+
+  pipeline.tasks.clear();
 
   return code;
 }

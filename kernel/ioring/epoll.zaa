@@ -204,9 +204,9 @@ pub fn trigger(ioring_pollset mut *pollset) -> void
 
 pub fn sys_epoll_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> result
 {
-  var pollset = create_pollset(process::current);
+  var pollset = create_pollset(process);
 
-  return process::current.new_fd(vfs::file_descriptor::create(pollset));
+  return process.new_fd(vfs::file_descriptor::create(pollset));
 }
 
 pub fn sys_epoll_ctl(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 op, virtaddr evtbuf, u64 flags) -> result

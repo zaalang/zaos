@@ -16,10 +16,10 @@ enum flags
 
 pub fn sys_event_create(process mut *process, ioring_ctx mut &ctx, u64 value, u64 maxvalue, u64 flags) -> result
 {
-  var event = create_event(process::current);
+  var event = create_event(process);
 
   if (var result = setup_event(event, value, maxvalue); !result)
     return result;
 
-  return process::current.new_fd(vfs::file_descriptor::create(event));
+  return process.new_fd(vfs::file_descriptor::create(event));
 }
