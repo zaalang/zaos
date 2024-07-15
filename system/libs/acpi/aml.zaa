@@ -1,0 +1,322 @@
+//
+// acpi ml
+//
+
+import std.string;
+import std.byteconv;
+
+pub enum op
+{
+  invalid = -1,
+  stream_end = -2,
+  zero_op = 0x00,
+  one_op = 0x01,
+  alias_op = 0x06,
+  name_op = 0x08,
+  byte_prefix = 0x0a,
+  word_prefix = 0x0b,
+  dword_prefix = 0x0c,
+  string_prefix = 0x0d,
+  qword_prefix = 0x0e,
+  scope_op = 0x10,
+  buffer_op = 0x11,
+  package_op = 0x12,
+  varpackage_op = 0x13,
+  method_op = 0x14,
+  dualname_prefix = 0x2e,
+  multiname_prefix = 0x2f,
+  root_char = 0x5c,
+  parent_prefix_char = 0x5e,
+  under_char = 0x5f,
+  digit_char_0 = '0',
+  digit_char_9 = '9',
+  alpha_char_a = 'A',
+  alpha_char_z = 'Z',
+  ext_op = 0x5b,
+  mutex_op = 0x5b01,
+  event_op = 0x5b02,
+  condrefof_op = 0x5b12;
+  createfield_op = 0x5b13,
+  revision_op = 0x5b30,
+  debug_op = 0x5b31,
+  fatal_op = 0x5b31,
+  opregion_op = 0x5b80,
+  field_op = 0x5b81,
+  device_op = 0x5b82,
+  processor_op = 0x5b83,
+  powerres_op = 0x5b84,
+  thermalzone_op = 0x5b85,
+  indexfield_op = 0x5b86,
+  bankfield_op = 0x5b87,
+  local0_op = 0x60,
+  local1_op = 0x61,
+  local2_op = 0x62,
+  local3_op = 0x63,
+  local4_op = 0x64,
+  local5_op = 0x65,
+  local6_op = 0x66,
+  local7_op = 0x67,
+  arg0_op = 0x68,
+  arg1_op = 0x69,
+  arg2_op = 0x6a,
+  arg3_op = 0x6b,
+  arg4_op = 0x6c,
+  arg5_op = 0x6d,
+  arg6_op = 0x6e,
+  store_op = 0x70,
+  refof_op = 0x71,
+  add_op = 0x72,
+  concat_op = 0x73,
+  subtract_op = 0x74,
+  increment_op = 0x75,
+  decrement_op = 0x76,
+  multiply_op = 0x77,
+  divide_op = 0x78,
+  shiftleft_op = 0x79,
+  shiftright_op = 0x7a,
+  and_op = 0x7b,
+  nand_op = 0x7c,
+  or_op = 0x7d,
+  nor_op = 0x7e,
+  xor_op = 0x7f,
+  not_op = 0x80,
+  derefof_op = 0x83,
+  mod_op = 0x85,
+  sizeof_op = 0x87,
+  index_op = 0x88,
+  createdwordfield_op = 0x8a,
+  createwordfield_op = 0x8b,
+  createbytefield_op = 0x8c,
+  createbitfield_op = 0x8d,
+  createqwordfield_op = 0x8f,
+  l_and_op = 0x90,
+  l_or_op = 0x91,
+  l_not_op = 0x92,
+  l_equal_op = 0x93,
+  l_greater_op = 0x94,
+  l_less_op = 0x95,
+  tobuffer_op = 0x96,
+  todecimalstring_op = 0x97,
+  tohexstring_op = 0x98,
+  tointeger_op = 0x99,
+  tostring_op = 0x9c,
+  copyobject_op = 0x9d,
+  mid_op = 0x9e,
+  continue_op = 0x9f,
+  if_op = 0xa0,
+  else_op = 0xa1,
+  while_op = 0xa2,
+  noop_op = 0xa3,
+  return_op = 0xa4,
+  break_op = 0xa5,
+  breakpoint_op = 0xcc,
+  ones_op = 0xff,
+}
+
+pub fn peek_op(std::span<u8> is) -> op
+{
+  if (is.len > 1 && is[0] == 0x5b)
+    return cast<op>(cast<isize>(is[0]) << 8 | cast<isize>(is[1]));
+
+  if (is.len > 0)
+    return cast<op>(is[0]);
+
+  return stream_end;
+}
+
+pub fn name_to_string(std::span<u8> name) -> std::string
+{
+  var i = 0;
+  var str = std::string();
+
+  if (name[i] == cast('\\'))
+    str += name[i++];
+
+  while (name[i] == cast('^'))
+    str += name[i++];
+
+  switch (name[i])
+  {
+    case op::zero_op:
+      i += 1;
+
+    case op::dualname_prefix:
+      i += 1;
+
+    case op::multiname_prefix:
+      i += 2;
+  }
+
+  for (; i != name.len; i += 4)
+  {
+    str += name[i .. i + 4];
+
+    if (i + 4 != name.len)
+      str += '.';
+  }
+
+  return str;
+}
+
+pub fn scan_pkg_length(std::span<u8> mut &is, u64 mut &length) -> bool
+{
+  length = 0;
+
+  if (is.len < 1)
+    return false;
+
+  switch (is.head & 0xc0)
+  {
+    case 0x00:
+
+      length = cast<u64>(is[0] & 0x3f);
+
+      is.drop_front!(1);
+
+    case 0x40:
+
+      if (is.len < 2)
+        return false;
+
+      length = cast<u64>(is[0] & 0x0f) | cast<u64>(is[1]) << 4;
+
+      is.drop_front!(2);
+
+    case 0x80:
+
+      if (is.len < 3)
+        return false;
+
+      length = cast<u64>(is[0] & 0x0f) | cast<u64>(is[1]) << 4 | cast<u64>(is[2]) << 12;
+
+      is.drop_front!(3);
+
+    case 0xc0:
+
+      if (is.len < 4)
+        return false;
+
+      length = cast<u64>(is[0] & 0x0f) | cast<u64>(is[1]) << 4 | cast<u64>(is[2]) << 12 | cast<u64>(is[3]) << 20;
+
+      is.drop_front!(4);
+  }
+
+  return true;
+}
+
+pub fn scan_name_string(std::span<u8> mut &is, std::span<u8> mut &name) -> bool
+{
+  name = is;
+
+  switch (peek_op(is))
+  {
+    case root_char:
+      is.drop_front!(1);
+
+    case parent_prefix_char:
+      while (peek_op(is) == op::parent_prefix_char)
+        is.drop_front!(1);
+  }
+
+  var segcount = 0;
+
+  switch (peek_op(is))
+  {
+    case zero_op:
+      segcount = 0;
+      is.drop_front!(1);
+
+    case dualname_prefix:
+      segcount = 2;
+      is.drop_front!(1);
+
+    case multiname_prefix:
+
+      if (is.len < 2)
+        return false;
+
+      segcount = cast(is[1]);
+      is.drop_front!(2);
+
+    case under_char:
+    case alpha_char_a ..= alpha_char_z:
+      segcount = 1;
+
+    else:
+      return false;
+  }
+
+  if (segcount != 0)
+  {
+    if (is.len < segcount * 4)
+      return false;
+
+    is.drop_front!(segcount * 4);
+  }
+
+  name.take_front!(is.data - name.data);
+
+  return true;
+}
+
+pub fn scan_byte_data(std::span<u8> mut &is, u8 mut &byte) -> bool
+{
+  if (is.len < 1)
+    return false;
+
+  byte = is[0];
+
+  is.drop_front!(1);
+
+  return true;
+}
+
+pub fn scan_word_data(std::span<u8> mut &is, u16 mut &word) -> bool
+{
+  if (is.len < 2)
+    return false;
+
+  word = std::load_le_u16(is.data);
+
+  is.drop_front!(2);
+
+  return true;
+}
+
+pub fn scan_dword_data(std::span<u8> mut &is, u32 mut &dword) -> bool
+{
+  if (is.len < 4)
+    return false;
+
+  dword = std::load_le_u32(is.data);
+
+  is.drop_front!(4);
+
+  return true;
+}
+
+pub fn scan_qword_data(std::span<u8> mut &is, u64 mut &qword) -> bool
+{
+  if (is.len < 8)
+    return false;
+
+  qword = std::load_le_u64(is.data);
+
+  is.drop_front!(8);
+
+  return true;
+}
+
+pub fn scan_string_data(std::span<u8> mut &is, std::string mut &string) -> bool
+{
+  var n = std::memchr(is.data, 0, is.len);
+
+  if (is.len < n + 1)
+    return false;
+
+  string = std::string::from_utf8(is.data, n);
+
+  is.drop_front!(n + 1);
+
+  return true;
+}

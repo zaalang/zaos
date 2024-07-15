@@ -114,7 +114,7 @@ pub fn draw_text(painter &&painter, gui::font &font, gfx::transform &transform, 
 
   font.layout_text(text, &mut ids, &mut offsets);
 
-  for (var &(id, offset) : std::zip(ids, offsets))
+  for (var &[id, offset] : std::zip(ids, offsets))
   {
     var xy = transform * gfx::point(offset, 0.0);
     var glyph = font.glyph(id, transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x), 0.0);

@@ -87,7 +87,7 @@ pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector
       case Flags[flags]:
         cmd.arguments.push_back(flags);
 
-      case Named[var &(name, value)]:
+      case Named[var &[name, value]]:
         cmd.arguments.push_back(std::format("{}={}", name, to_arg(ctx, value)));
 
       case Free[value]:

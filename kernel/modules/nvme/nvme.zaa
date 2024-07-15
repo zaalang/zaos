@@ -399,13 +399,16 @@ pub fn initialise() -> void
   for (var &device : pci::devices)
   {
     if (device.class_code == [2, 8, 1])
-    {
-      var controller = std::allocator::new<controller>(device);
-
-      if (var result = controller.initialise(); !result)
-        std::print("nvme error initialising controller - ", result);
-    }
+      initialise(device);
   }
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var controller = std::allocator::new<controller>(device);
+
+  if (var result = controller.initialise(); !result)
+    std::print("nvme error initialising controller - ", result);
 }
 
 fn initialise(controller mut &controller) -> result

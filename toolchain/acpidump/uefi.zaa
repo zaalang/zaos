@@ -1,0 +1,297 @@
+//
+// uefi runtime
+//
+
+import std.stdio;
+import efi;
+
+using efi;
+
+extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32;
+
+fn ConIn() -> EFI_SIMPLE_INPUT_PROTOCOL * mut &
+{
+  static conin = null<EFI_SIMPLE_INPUT_PROTOCOL*>();
+
+  return &conin;
+}
+
+fn ConOut() -> EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL * mut &
+{
+  static conout = null<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *>();
+
+  return &conout;
+}
+
+fn BootServices() -> EFI_BOOT_SERVICES * mut &
+{
+  static bootsrv = null<EFI_BOOT_SERVICES *>();
+
+  return &bootsrv;
+}
+
+fn Instance() -> EFI_HANDLE mut &
+{
+  static image = 0;
+
+  return &image;
+}
+
+extern fn reloc(uintptr base, uintptr dynamic, uintptr offset) -> void
+{
+  const DT_RELA = 7;
+  const DT_RELASZ = 8;
+  const DT_RELAENT = 9;
+  const R_X86_64_RELATIVE = 8;
+
+  struct Elf64_Dyn
+  {
+    u64 tag;
+    uintptr value;
+  }
+
+  struct Elf64_Rela
+  {
+    uintptr offset;
+    u64 info;
+    i64 addend;
+  }
+
+  var rela = 0;
+  var relasz = 0;
+  var relaent = 0;
+
+  for (var entry = cast<Elf64_Dyn*>(dynamic); entry.tag != 0; ++entry)
+  {
+    switch (entry.tag)
+    {
+      case DT_RELA:
+        rela = base + entry.value;
+
+      case DT_RELASZ:
+        relasz = entry.value;
+
+      case DT_RELAENT:
+        relaent = entry.value;
+    }
+  }
+
+  while (relasz != 0)
+  {
+    var rel = cast<Elf64_Rela*>(rela);
+
+    if (rel.info & 0xffffffff == R_X86_64_RELATIVE)
+      *cast<uintptr mut *>(base + rel.offset) = offset + cast(rel.addend);
+
+    rela += relaent;
+    relasz -= relaent;
+  }
+}
+
+extern fn mem_alloc(usize size) -> std::mem_result
+{
+  var result = std::mem_result();
+
+  var memory = 0;
+  if (BootServices.AllocatePages(EFI_ALLOCATE_TYPE::AllocateAnyPages, EFI_MEMORY_TYPE::EfiLoaderData, (size + 4095) / 4096, &memory) != 0)
+    std::panic("memory allocation failure");
+
+  result.addr = cast<void mut *>(memory);
+  result.size = std::align_up(size, 4096);
+
+  return result;
+}
+
+extern fn mem_free(void *addr, usize size) -> void
+{
+  BootServices.FreePages(cast<uintptr>(addr), (size + 4095) / 4096);
+}
+
+struct string
+{
+  u8 *data;
+  usize len;
+}
+
+extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u32 rights, u32 fdflags) -> u32
+{
+  var dat = std::vector<u16, N:64>();
+
+  for (var ch = path.data; ch != path.data + path.len; ++ch)
+    dat.push_back(cast<u16>(*ch));
+
+  dat.push_back(0);
+
+  var filesystem = null<EFI_SIMPLE_FILE_SYSTEM_PROTOCOL*>();
+  var root = null<EFI_FILE_PROTOCOL*>();
+  var file = null<EFI_FILE_PROTOCOL*>();
+
+  if (BootServices.LocateProtocol(&EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID, null, cast(&filesystem)) != 0)
+    return 2;
+
+  if (filesystem.OpenVolume(&root) != 0)
+    return 2;
+
+  var flags = 0;
+
+  if (oflags & cast(std::fd::oflags::create) != 0)
+    flags |= EFI_FILE_MODE_CREATE;
+
+  if (rights & cast(std::fd::rights::read) != 0)
+    flags |= EFI_FILE_MODE_READ;
+
+  if (rights & cast(std::fd::rights::write) != 0)
+    flags |= EFI_FILE_MODE_WRITE;
+
+  if (root.Open(&file, dat.data, flags, 0) != 0)
+  {
+    root.Close();
+
+    return 2;
+  }
+
+  *fd = cast<uintptr>(file);
+
+  root.Close();
+
+  return 0;
+}
+
+extern fn fd_stat(uintptr fd, std::filestat mut *fs) -> u32
+{
+  if (fd != 0 && fd != 1 && fd != 2)
+  {
+    var file = cast<EFI_FILE_PROTOCOL*>(fd);
+
+    var bytes = 4095;
+    var buffer = [<u8>: void; 4095];
+
+    if (file.GetInfo(&EFI_FILE_INFO_ID, &bytes, buffer.data) != 0)
+      return 5;
+
+    var info = cast<EFI_FILE_INFO*>(buffer.data);
+
+    fs.size = info.FileSize;
+  }
+
+  return 0;
+}
+
+extern fn fd_readv(uintptr fd, std::iovec mut *iovs, usize n) -> std::fd_result
+{
+  var result = std::fd_result();
+
+  if (fd == 0)
+  {
+    var index = UINTN();
+    BootServices.WaitForEvent(1, &ConIn.WaitForKey, &index);
+
+    for (var i = 0; i < n; ++i)
+    {
+      var bytes = 0;
+      var buffer = (iovs + i).data;
+
+      for (; bytes < (iovs + i).len; ++bytes)
+      {
+        var key = EFI_INPUT_KEY();
+        if (ConIn.ReadKeyStroke(&key) != 0)
+          break;
+
+        *buffer++ = cast<u8>(key.UnicodeChar & 0xff);
+      }
+
+      result.length += bytes;
+
+      if (bytes != (iovs + i).len)
+        break;
+    }
+  }
+
+  if (fd != 0 && fd != 1 && fd != 2)
+  {
+    var file = cast<EFI_FILE_PROTOCOL*>(fd);
+
+    for (var i = 0; i < n; ++i)
+    {
+      var bytes = (iovs + i).len;
+      var buffer = (iovs + i).data;
+
+      if (file.Read(&bytes, buffer) != 0)
+        result.errno = 5;
+
+      if (bytes != (iovs + i).len)
+        result.errno = 5;
+
+      result.length += bytes;
+    }
+  }
+
+  return result;
+}
+
+extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
+{
+  var result = std::fd_result();
+
+  if (fd == 1)
+  {
+    var dat = std::vector<u16, N:64>();
+
+    for (var i = 0; i < n; ++i)
+    {
+      for (var ch = (iovs + i).data; ch != (iovs + i).data + (iovs + i).len; ++ch)
+      {
+        if (*ch == cast('\n'))
+          dat.push_back(cast<u16>('\r'));
+
+        dat.push_back(cast<u16>(*ch));
+      }
+
+      result.length += (iovs + i).len;
+    }
+
+    dat.push_back(0);
+
+    ConOut.OutputString(dat.data);
+  }
+
+  if (fd != 0 && fd != 1 && fd != 2)
+  {
+    var file = cast<EFI_FILE_PROTOCOL*>(fd);
+
+    for (var i = 0; i < n; ++i)
+    {
+      var bytes = (iovs + i).len;
+      var buffer = (iovs + i).data;
+
+      if (file.Write(&bytes, buffer) != 0)
+        result.errno = 5;
+
+      result.length += bytes;
+    }
+  }
+
+  return result;
+}
+
+extern fn fd_close(uintptr fd) -> u32
+{
+  cast<EFI_FILE_PROTOCOL*>(fd).Close();
+
+  return 0;
+}
+
+extern fn exit(i32 exitcode) -> void
+{
+  BootServices.Exit(Instance, cast(exitcode), 0, null);
+}
+
+extern fn efi_main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> void
+{
+  ConIn = SystemTable.ConIn;
+  ConOut = SystemTable.ConOut;
+  BootServices = SystemTable.BootServices;
+  Instance = Image;
+
+  exit(main(Image, SystemTable));
+}

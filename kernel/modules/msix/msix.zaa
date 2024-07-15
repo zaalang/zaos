@@ -47,11 +47,12 @@ pub fn configure(pci::device &device, (u8, u8) &vectors) -> bool
   var table = heap::mmap(vm::physrange(table_base, table_count * 16));
 
   var pba_base = device.read_base_address(cast<usize>(pba_value & 0x7)) + cast<usize>(pba_value & 0xfff8);
-  var pba = heap::mmap(vm::physrange(table_base, table_count * 16));
+  var pba = heap::mmap(vm::physrange(pba_base, table_count * 16));
 
   for (var i = 0; i < cast<usize>(vectors.1 - vectors.0); ++i)
   {
-    var address = uintptr(0xfee00000) | (i % sys::cpu_count) << 12;
+    var apicid = sys::apic_id(cast<int>(i % sys::cpu_count));
+    var address = uintptr(0xfee00000) | cast<uintptr>(apicid) << 12;
     var data = platform::io_vector_id(vectors.0 + cast<u8>(i));
 
     var entry = cast<u32 mut *>(table.addr + i * 16);

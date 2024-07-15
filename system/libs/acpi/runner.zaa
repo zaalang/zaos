@@ -1,0 +1,2253 @@
+//
+// acpi ml runner
+//
+
+import acpi;
+import acpi.aml as aml;
+import acpi.namespace;
+import std.span;
+import std.string;
+import std.vector;
+import std.flat_hash_map;
+
+using aml;
+using acpi::value;
+using acpi::result;
+using acpi::namespace;
+
+const NARGS = 7;
+const NLOCALS = 8;
+
+struct frame
+{
+  usize rip;
+  usize rsp;
+  acpi::node *scope;
+  std::span<u8> ret;
+  std::flat_hash_map<std::string, acpi::value*> variables;
+
+  frame() = default;
+  frame(frame&&) = default;
+  fn =(frame mut &, frame &&) -> frame mut & = default;
+  ~frame() = default;
+}
+
+pub union target
+{
+  pub nul,
+  pub debug,
+  pub arg(usize),
+  pub local(usize),
+  pub name(std::span<u8>),
+  pub reference(acpi::reference),
+
+  pub target() = default;
+  pub target(target&&) = default;
+  pub fn =(target mut &, target &&) -> target mut & = default;
+  pub ~target() = default;
+}
+
+struct instruction
+{
+  op op;
+  usize argc;
+  usize order;
+  usize tgtc;
+  usize targets;
+  acpi::node *scope;
+  std::span<u8> span;
+
+  instruction(op op, usize order = 0, usize targets = 0)
+    : op(op), order(order), targets(targets)
+  {
+  }
+
+  instruction(op op, usize order, std::span<u8> span)
+    : op(op), order(order), span(span)
+  {
+  }
+
+  instruction(op op, usize order, acpi::node *scope, std::span<u8> span)
+    : op(op), order(order), scope(scope), span(span)
+  {
+  }
+
+  instruction() = default;
+  instruction(instruction&&) = default;
+  fn =(instruction mut &, instruction &&) -> instruction mut & = default;
+  ~instruction() = default;
+}
+
+struct run_context
+{
+  std::vector<frame> frames;
+  std::vector<instruction> text;
+  std::vector<acpi::value> stack;
+  std::vector<acpi::target> targets;
+  std::vector<std::span<u8>> blocks;
+  std::list<acpi::value> values;
+
+  namespace mut &namespace;
+
+  fn frame(this &&)
+  {
+    return &this.frames.back;
+  }
+
+  fn arg(this &&, usize index)
+  {
+    return &this.stack[this.frame.rsp - (NARGS - index)];
+  }
+
+  fn local(this &&, usize index)
+  {
+    return &this.stack[this.frame.rsp + index];
+  }
+
+  fn push_frame(this mut &, usize argc, acpi::node *scope, std::span<u8> &ret) -> void
+  {
+    var mut &frame = this.frames.push_back();
+
+    frame.rip = this.text.len;
+    frame.rsp = this.stack.len + (NARGS - argc);
+    frame.scope = scope;
+    frame.ret = ret;
+
+    for (var mut &arg : this.stack.back_n(argc))
+      if (arg.is_buffer || arg.is_package)
+        arg = value(acpi::reference::value(this.add_value(&move arg)));
+
+    this.stack.resize(this.stack.len + (NARGS - argc) + NLOCALS);
+  }
+
+  fn pop_frame(this mut &) -> std::span<u8>
+  {
+    this.stack.erase(this.frame.rsp - NARGS, this.stack.len - (this.frame.rsp - NARGS) - 1);
+
+    return this.frames.take_back().ret;
+  }
+
+  pub fn add_value(this mut &, acpi::value &&value) -> acpi::value *
+  {
+    return &this.values.push_back(&&value);
+  }
+
+  pub fn add_variable(this mut &, std::string &&name, acpi::value *value) -> acpi::value *
+  {
+    return this.frame.variables.emplace(&&name, value);
+  }
+
+  pub fn add_variable(this mut &, std::string &&name, acpi::value &&value) -> acpi::value *
+  {
+    var value = &this.values.push_back(&&value);
+
+    return this.frame.variables.emplace(&&name, value);
+  }
+
+  run_context(namespace mut &namespace)
+    : namespace(&namespace)
+  {
+    text.reserve(32);
+    stack.reserve(64);
+    frames.reserve(4);
+    frames.resize(1);
+    blocks.reserve(4);
+    blocks.resize(1);
+  }
+
+  ~run_context() = default;
+}
+
+fn lookup(run_context &ctx, std::span<u8> name) -> std::optional<acpi::value *>
+{
+  var i = 0;
+  var node = ctx.frame.scope;
+
+  switch (name[i])
+  {
+    case '\\':
+      node = ctx.namespace.root;
+      ++i;
+
+    case '^':
+
+      for (; name[i] == cast('^'); ++i)
+      {
+        if (!node.parent)
+          return None;
+
+        node = node.parent;
+      }
+
+    case '_':
+    case 'A' ..= 'Z':
+
+      if (var value = ctx.frame.variables.get(name); value.is_some)
+        return value;
+
+      for (; node; node = node.parent)
+      {
+        if (var value = node.get(name); value.is_some)
+          return value;
+      }
+
+      return None;
+  }
+
+  switch (name[i])
+  {
+    case op::zero_op:
+      i += 1;
+
+    case op::dualname_prefix:
+      i += 1;
+
+    case op::multiname_prefix:
+      i += 2;
+  }
+
+  for (; i + 4 < name.len; i += 4)
+  {
+    switch (node.find(name[i .. i + 4]))
+    {
+      case Some[scope]:
+        node = scope;
+
+      else:
+        return None;
+    }
+  }
+
+  if (var value = node.get(name[i .. name.len]); value.is_some)
+    return value;
+
+  return None;
+}
+
+fn load(run_context mut &ctx, value mut &value) -> result
+{
+  while (value.is_reference)
+  {
+    switch (value.reference)
+    {
+      case local[idx]:
+        value = ctx.stack[idx];
+
+      case value[dst]:
+        if (var rc = ctx.namespace.load(dst, &mut value); !rc)
+          return rc;
+
+      case index[index]:
+        if (var rc = ctx.namespace.load(index.0, index.1, &mut value); !rc)
+          return rc;
+    }
+  }
+
+  return ok;
+}
+
+fn arg_obj(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (var op = peek_op(is))
+  {
+    case arg0_op:
+    case arg1_op:
+    case arg2_op:
+    case arg3_op:
+    case arg4_op:
+    case arg5_op:
+    case arg6_op:
+      is.drop_front!(1);
+      ctx.stack.push_back(value(ctx.arg(cast<usize>(op) - 0x68)));
+
+    else:
+      return invalid_opcode;
+  }
+
+  ctx.text.back.argc += 1;
+
+  return ok;
+}
+
+fn local_obj(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (var op = peek_op(is))
+  {
+    case local0_op:
+    case local1_op:
+    case local2_op:
+    case local3_op:
+    case local4_op:
+    case local5_op:
+    case local6_op:
+    case local7_op:
+      is.drop_front!(1);
+      ctx.stack.push_back(value(ctx.local(cast<usize>(op) - 0x60)));
+
+    else:
+      return invalid_opcode;
+  }
+
+  ctx.text.back.argc += 1;
+
+  return ok;
+}
+
+fn data_object(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (peek_op(is))
+  {
+    case byte_prefix:
+      is.drop_front!(1);
+
+      var byte = 0;
+
+      if (!scan_byte_data(&mut is, &mut byte))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value(byte));
+
+    case word_prefix:
+      is.drop_front!(1);
+
+      var word = 0;
+
+      if (!scan_word_data(&mut is, &mut word))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value(word));
+
+    case dword_prefix:
+      is.drop_front!(1);
+
+      var dword = 0;
+
+      if (!scan_dword_data(&mut is, &mut dword))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value(dword));
+
+    case string_prefix:
+      is.drop_front!(1);
+
+      var string = std::string();
+
+      if (!scan_string_data(&mut is, &mut string))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value(&move string));
+
+    case qword_prefix:
+      is.drop_front!(1);
+
+      var qword = 0;
+
+      if (!scan_qword_data(&mut is, &mut qword))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value(qword));
+
+    case zero_op:
+      is.drop_front!(1);
+      ctx.stack.push_back(value::integer(0));
+
+    case one_op:
+      is.drop_front!(1);
+      ctx.stack.push_back(value::integer(1));
+
+    case ones_op:
+      is.drop_front!(1);
+      ctx.stack.push_back(value::integer(~0));
+
+    case revision_op:
+      is.drop_front!(2);
+      ctx.stack.push_back(value::integer(0));
+
+    else:
+      return invalid_prefix;
+  }
+
+  if (ctx.text.back.op == op::package_op)
+  {
+    var value = ctx.stack.take_back();
+    var mut &package = ctx.stack[ctx.stack.len - 2].package;
+
+    package.elements.push_back(&move value);
+  }
+
+  ctx.text.back.argc += 1;
+
+  return ok;
+}
+
+fn define_method(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  var flags = 0;
+
+  if (!scan_byte_data(&mut is, &mut flags))
+    return unexpected_end_of_stream;
+
+  var end = cast<u8*>(cast<uintptr>(beg) + cast<usize>(len));
+
+  ctx.add_variable(name_to_string(name), value::method(ctx.frame.scope, flags, is.front_n(end - is.data)));
+
+  is.drop_front!(end - is.data);
+
+  return ok;
+}
+
+fn name_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.stack.push_back(name_to_string(name));
+
+  ctx.text.push_back(op::name_op, 1);
+
+  return ok;
+}
+
+fn define_name(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+  var name = ctx.stack.take_back();
+
+  switch (value)
+  {
+    case integer:
+    case boolean:
+    case string:
+    case package:
+    case buffer:
+      ctx.add_variable(name.string, &move value);
+
+    case reference[reference]:
+      ctx.add_variable(name.string, reference.value);
+
+    else:
+      return bad_value;
+  }
+
+  return ok;
+}
+
+fn define_alias(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var value = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut value))
+    return unexpected_end_of_stream;
+
+  var obj = lookup(ctx, value);
+
+  if (!obj)
+    return name_not_found;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), *obj);
+
+  return ok;
+}
+
+fn method_invocation(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  var obj = lookup(ctx, name);
+
+  if (!obj)
+    return name_not_found;
+
+  switch (**obj)
+  {
+    case method[method]:
+      ctx.text.push_back(op::method_op, cast<usize>(method.flags & 0x7), method.scope, method.code);
+
+    else:
+      ctx.stack.push_back(acpi::reference::value(*obj));
+
+      ctx.text.back.argc += 1;
+  }
+
+  return ok;
+}
+
+fn unary_op(run_context mut &ctx, op op, std::span<u8> mut &is) -> result
+{
+  var lhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut lhs); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut lhs))
+    return bad_value;
+
+  switch (op)
+  {
+    case not_op:
+      ctx.stack.push_back(value(~lhs.integer));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case l_not_op:
+      ctx.stack.push_back(value(lhs.integer == 0));
+
+    else:
+      std::panic("invalid reduce");
+  }
+
+  return ok;
+}
+
+fn compare_op(run_context mut &ctx, op op, std::span<u8> mut &is) -> result
+{
+  var rhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut rhs); !rc)
+    return rc;
+
+  var lhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut lhs); !rc)
+    return rc;
+
+  switch (lhs)
+  {
+    case integer:
+    case boolean:
+    case field:
+      if (!ctx.namespace.to_integer(&mut lhs))
+        return bad_value;
+
+      if (!ctx.namespace.to_integer(&mut rhs))
+        return bad_value;
+
+    case string:
+      if (!ctx.namespace.to_string(&mut rhs))
+        return bad_value;
+
+    case buffer:
+      if (!ctx.namespace.to_buffer(&mut rhs))
+        return bad_value;
+
+    else:
+      return bad_value;
+  }
+
+  switch (op)
+  {
+    case l_equal_op:
+      ctx.stack.push_back(value(lhs == rhs));
+
+    case l_greater_op:
+      ctx.stack.push_back(value(lhs > rhs));
+
+    case l_less_op:
+      ctx.stack.push_back(value(lhs < rhs));
+
+    else:
+      std::panic("invalid compare");
+  }
+
+  return ok;
+}
+
+fn binary_op(run_context mut &ctx, op op, std::span<u8> mut &is) -> result
+{
+  var rhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut rhs); !rc)
+    return rc;
+
+  var lhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut lhs); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut lhs))
+    return bad_value;
+
+  if (!ctx.namespace.to_integer(&mut rhs))
+    return bad_value;
+
+  switch (op)
+  {
+    case add_op:
+      ctx.stack.push_back(value(std::add_with_carry(lhs.integer, rhs.integer).0));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case subtract_op:
+      ctx.stack.push_back(value(std::sub_with_borrow(lhs.integer, rhs.integer).0));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case multiply_op:
+      ctx.stack.push_back(value(std::mul_with_carry(lhs.integer, rhs.integer).0));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case divide_op:
+      ctx.stack.push_back(value(rhs.integer != 0 ? lhs.integer % rhs.integer : 0));
+      ctx.stack.push_back(value(rhs.integer != 0 ? lhs.integer / rhs.integer : 0));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+      ctx.stack.pop_back();
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case mod_op:
+      ctx.stack.push_back(value(rhs.integer != 0 ? lhs.integer % rhs.integer : 0));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case shiftleft_op:
+      ctx.stack.push_back(value(lhs.integer << rhs.integer));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case shiftright_op:
+      ctx.stack.push_back(value(lhs.integer >> rhs.integer));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case and_op:
+      ctx.stack.push_back(value(lhs.integer & rhs.integer));
+
+    if (var rc = store(&mut ctx, &mut is); !rc)
+      return rc;
+
+    case nand_op:
+      ctx.stack.push_back(value(~(lhs.integer & rhs.integer)));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case or_op:
+      ctx.stack.push_back(value(lhs.integer | rhs.integer));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case nor_op:
+      ctx.stack.push_back(value(~(lhs.integer | rhs.integer)));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case xor_op:
+      ctx.stack.push_back(value(lhs.integer ^ rhs.integer));
+
+      if (var rc = store(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case l_and_op:
+      ctx.stack.push_back(value((lhs.integer & rhs.integer) != 0));
+
+    case l_or_op:
+      ctx.stack.push_back(value((lhs.integer | rhs.integer) != 0));
+
+    else:
+      std::panic("invalid reduce");
+  }
+
+  return ok;
+}
+
+fn increment(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (ctx.targets.take_back())
+  {
+    case arg[idx]:
+
+      var mut &value = ctx.arg(idx);
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer += 1));
+
+    case local[idx]:
+
+      var mut &value = ctx.local(idx);
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer += 1));
+
+    case name[name]:
+      var obj = lookup(ctx, name);
+
+      if (!obj)
+        return name_not_found;
+
+      var value = value();
+      if (var rc = ctx.namespace.load(*obj, &mut value); !rc)
+        return rc;
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer += 1));
+
+      if (var rc = ctx.namespace.store(*obj, &mut value); !rc)
+        return rc;
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+fn decrement(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (ctx.targets.take_back())
+  {
+    case arg[idx]:
+
+      var mut &value = ctx.arg(idx);
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer -= 1));
+
+    case local[idx]:
+
+      var mut &value = ctx.local(idx);
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer -= 1));
+
+    case name[name]:
+      var obj = lookup(ctx, name);
+
+      if (!obj)
+        return name_not_found;
+
+      var value = value();
+      if (var rc = ctx.namespace.load(*obj, &mut value); !rc)
+        return rc;
+
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(value(value.integer -= 1));
+
+      if (var rc = ctx.namespace.store(*obj, &mut value); !rc)
+        return rc;
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+fn concat(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var rhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut rhs); !rc)
+    return rc;
+
+  var lhs = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut lhs); !rc)
+    return rc;
+
+  switch (lhs)
+  {
+    case integer:
+    case boolean:
+      if (!ctx.namespace.to_integer(&mut rhs))
+        return bad_value;
+
+    case string:
+      if (!ctx.namespace.to_string(&mut rhs))
+        return bad_value;
+
+    case buffer:
+      if (!ctx.namespace.to_buffer(&mut rhs))
+        return bad_value;
+
+    else:
+      return bad_value;
+  }
+
+  var result = std::string();
+
+  if (!ctx.namespace.to_string(&mut lhs))
+    return bad_value;
+
+  if (!ctx.namespace.to_string(&mut rhs))
+    return bad_value;
+
+  result.append(lhs.string);
+  result.append(rhs.string);
+
+  ctx.stack.push_back(result);
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn to_buffer(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_buffer(&mut value))
+    return bad_value;
+
+  ctx.stack.push_back(value);
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn to_decimalstring(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  switch (value)
+  {
+    case integer:
+    case boolean:
+    case field:
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(std::format("{}", value.integer));
+
+    case string:
+      ctx.stack.push_back(&move value);
+
+    else:
+      return bad_value;
+  }
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn to_hexstring(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  switch (value)
+  {
+    case integer:
+    case boolean:
+    case field:
+      if (!ctx.namespace.to_integer(&mut value))
+        return bad_value;
+
+      ctx.stack.push_back(std::format("{:#x}", value.integer));
+
+    case string:
+      ctx.stack.push_back(&move value);
+
+    else:
+      return bad_value;
+  }
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn to_integer(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut value))
+    return bad_value;
+
+  ctx.stack.push_back(&move value);
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn buffer_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  ctx.stack.push_back(cast<uintptr>(beg) + cast<usize>(len));
+
+  ctx.text.push_back(op::buffer_op, 1);
+
+  return ok;
+}
+
+fn define_buffer(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var size = ctx.stack.take_back();
+  var end = cast<u8*>(cast<uintptr>(ctx.stack.take_back().integer));
+
+  if (!ctx.namespace.to_integer(&mut size))
+    return bad_value;
+
+  ctx.stack.push_back(value::buffer(cast<usize>(size.integer), is.front_n(end - is.data)));
+
+  ctx.stack.back.buffer.bytes.resize(ctx.stack.back.buffer.size);
+
+  is.drop_front!(end - is.data);
+
+  if (ctx.text.back.op == op::package_op)
+  {
+    var value = ctx.stack.take_back();
+    var mut &package = ctx.stack[ctx.stack.len - 2].package;
+
+    package.elements.push_back(&move value);
+  }
+
+  return ok;
+}
+
+fn package_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var op = peek_op(is);
+
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  switch (op)
+  {
+    case package_op:
+      var num_elements = 0;
+
+      if (!scan_byte_data(&mut is, &mut num_elements))
+        return unexpected_end_of_stream;
+
+      ctx.stack.push_back(value::package(cast<usize>(num_elements)));
+
+      ctx.text.push_back(op::package_op);
+
+    case varpackage_op:
+
+      ctx.text.push_back(op::varpackage_op, 1);
+  }
+
+  ctx.stack.push_back(cast<uintptr>(beg) + cast<usize>(len));
+
+  return ok;
+}
+
+fn varpackage_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var size = ctx.stack.take_back();
+  var end = cast<u8*>(cast<uintptr>(ctx.stack.take_back().integer));
+
+  if (!ctx.namespace.to_integer(&mut size))
+    return bad_value;
+
+  ctx.stack.push_back(value::package(cast<usize>(size.integer)));
+
+  ctx.stack.push_back(cast<uintptr>(end));
+
+  ctx.text.push_back(op::package_op, 1);
+
+  return ok;
+}
+
+fn define_package(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var end = cast<u8*>(cast<uintptr>(ctx.stack.take_back().integer));
+
+  while (is.data < end)
+  {
+    switch (var op = peek_op(is))
+    {
+      case byte_prefix:
+      case word_prefix:
+      case dword_prefix:
+      case string_prefix:
+      case qword_prefix:
+      case zero_op:
+      case one_op:
+      case ones_op:
+      case revision_op:
+        ctx.stack.push_back(cast<uintptr>(end));
+        ctx.text.push_back(op::package_op, 2);
+        return ok;
+
+      case package_op:
+      case varpackage_op:
+        ctx.stack.push_back(cast<uintptr>(end));
+        ctx.text.push_back(op::package_op, 2);
+        return ok;
+
+      case buffer_op:
+        ctx.stack.push_back(cast<uintptr>(end));
+        ctx.text.push_back(op::package_op, 2);
+        return ok;
+
+      case root_char:
+      case under_char:
+      case parent_prefix_char:
+      case dualname_prefix:
+      case multiname_prefix:
+      case alpha_char_a ..= alpha_char_z:
+
+        var name = std::span<u8>();
+
+        if (!scan_name_string(&mut is, &mut name))
+          return unexpected_end_of_stream;
+
+        ctx.stack.back.package.elements.push_back(name_to_string(name));
+
+      else:
+        return invalid_opcode;
+    }
+  }
+
+  ctx.stack.back.package.elements.resize(ctx.stack.back.package.size);
+
+  if (ctx.text.back.op == op::package_op)
+  {
+    var value = ctx.stack.take_back();
+    var mut &package = ctx.stack[ctx.stack.len - 2].package;
+
+    package.elements.push_back(&move value);
+  }
+
+  return ok;
+}
+
+fn opregion_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(2);
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.stack.push_back(name_to_string(name));
+
+  var region_space = 0;
+
+  if (!scan_byte_data(&mut is, &mut region_space))
+    return unexpected_end_of_stream;
+
+  ctx.stack.push_back(region_space);
+
+  ctx.text.push_back(op::opregion_op, 2);
+
+  return ok;
+}
+
+fn define_opregion(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var region_length = ctx.stack.take_back();
+  var region_offset = ctx.stack.take_back();
+  var region_space = ctx.stack.take_back();
+  var name = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut region_length); !rc)
+    return rc;
+
+  if (var rc = load(&mut ctx, &mut region_offset); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut region_length))
+    return bad_value;
+
+  if (!ctx.namespace.to_integer(&mut region_offset))
+    return bad_value;
+
+  ctx.add_variable(name.string, value::opregion(ctx.frame.scope, cast(region_space.integer), region_offset.integer, region_length.integer));
+
+  return ok;
+}
+
+fn named_field(run_context mut &ctx, value *source, u8 mut &flags, u64 mut &offset, std::span<u8> mut &is) -> result
+{
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  var length = 0;
+
+  if (!scan_pkg_length(&mut is, &mut length))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(source, flags, offset, length));
+
+  offset += length;
+
+  return ok;
+}
+
+fn reserved_field(run_context mut &ctx, u8 mut &flags, u64 mut &offset, std::span<u8> mut &is) -> result
+{
+  var length = 0;
+
+  if (!scan_pkg_length(&mut is, &mut length))
+    return unexpected_end_of_stream;
+
+  offset += length;
+
+  return ok;
+}
+
+fn access_field(run_context mut &ctx, u8 mut &flags, u64 mut &offset, std::span<u8> mut &is) -> result
+{
+  var type = 0;
+
+  if (!scan_byte_data(&mut is, &mut type))
+    return unexpected_end_of_stream;
+
+  var attrib = 0;
+
+  if (!scan_byte_data(&mut is, &mut attrib))
+    return unexpected_end_of_stream;
+
+  flags = type;
+
+  return ok;
+}
+
+fn define_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(2);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  var flags = 0;
+
+  if (!scan_byte_data(&mut is, &mut flags))
+    return unexpected_end_of_stream;
+
+  var offset = 0;
+
+  var source = lookup(ctx, name);
+
+  if (!source || !source.is_opregion)
+    return name_not_found;
+
+  while (is.data < beg + cast(len))
+  {
+    switch (peek_op(is))
+    {
+      case zero_op:
+        is.drop_front!(1);
+
+        if (var rc = reserved_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      case one_op:
+        is.drop_front!(1);
+
+        if (var rc = access_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      case under_char:
+      case alpha_char_a ..= alpha_char_z:
+
+        if (var rc = named_field(&mut ctx, *source, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      else:
+        return invalid_opcode;
+    }
+  }
+
+  return ok;
+}
+
+fn define_indexfield(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(2);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  var index_name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut index_name))
+    return unexpected_end_of_stream;
+
+  var data_name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut data_name))
+    return unexpected_end_of_stream;
+
+  var flags = 0;
+
+  if (!scan_byte_data(&mut is, &mut flags))
+    return unexpected_end_of_stream;
+
+  var offset = 0;
+
+  var data = lookup(ctx, data_name);
+
+  if (!data || !data.is_field)
+    return name_not_found;
+
+  var index = lookup(ctx, index_name);
+
+  if (!index|| !index.is_field)
+    return name_not_found;
+
+  var source = ctx.add_value(value::indexedregion(data.value, index.value));
+
+  while (is.data < beg + cast(len))
+  {
+    switch (peek_op(is))
+    {
+      case zero_op:
+        is.drop_front!(1);
+
+        if (var rc = reserved_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      case one_op:
+        is.drop_front!(1);
+
+        if (var rc = access_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      case under_char:
+      case alpha_char_a ..= alpha_char_z:
+
+        if (var rc = named_field(&mut ctx, source, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
+
+      else:
+        return invalid_opcode;
+    }
+  }
+
+  return ok;
+}
+
+fn define_refof(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  switch (ctx.targets.take_back())
+  {
+    case arg[idx]:
+      ctx.stack.push_back(value::pointer(acpi::reference::local(ctx.frame.rsp - (NARGS - idx))));
+
+    case local[idx]:
+      ctx.stack.push_back(value::pointer(acpi::reference::local(ctx.frame.rsp + idx)));
+
+    case name[name]:
+      var obj = lookup(ctx, name);
+
+      if (!obj)
+        return name_not_found;
+
+      ctx.stack.push_back(value::pointer(acpi::reference::value(*obj)));
+
+    case reference[reference]:
+      ctx.stack.push_back(value::pointer(reference));
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+fn define_derefof(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  switch (value)
+  {
+    case string[string]:
+      var obj = ctx.namespace.lookup(ctx.frame.scope, string);
+
+      if (!obj)
+        return name_not_found;
+
+      ctx.stack.push_back(acpi::reference::value(*obj));
+
+    case pointer[reference]:
+      ctx.stack.push_back(reference);
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+fn define_index(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var index = ctx.stack.take_back();
+  var source = ctx.stack.take_back();
+
+  if (!source.is_reference)
+    return bad_value;
+
+  if (!ctx.namespace.to_integer(&mut index))
+    return bad_value;
+
+  switch (source.reference)
+  {
+    case value[value]:
+      var indicies = std::vector<usize, N:3>();
+      indicies.push_back(cast<usize>(index.integer));
+      ctx.stack.push_back(value::pointer(acpi::reference::index(value, indicies)));
+
+    case index[base]:
+      var indicies = base.1;
+      indicies.push_back(cast<usize>(index.integer));
+      ctx.stack.push_back(value::pointer(acpi::reference::index(base.0, indicies)));
+
+    else:
+      std::panic();
+  }
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn create_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var numbits = ctx.stack.take_back();
+  var bitindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut numbits))
+    return bad_value;
+
+  if (!ctx.namespace.to_integer(&mut bitindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, bitindex.integer, numbits.integer));
+
+  return ok;
+}
+
+fn create_bit_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var bitindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut bitindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, bitindex.integer, 1));
+
+  return ok;
+}
+
+fn create_byte_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var byteindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut byteindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, byteindex.integer * 8, 8));
+
+  return ok;
+}
+
+fn create_word_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var byteindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut byteindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, byteindex.integer * 8, 16));
+
+  return ok;
+}
+
+fn create_dword_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var byteindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut byteindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, byteindex.integer * 8, 32));
+
+  return ok;
+}
+
+fn create_qword_field(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var byteindex = ctx.stack.take_back();
+  var sourcebuff = ctx.stack.take_back();
+
+  if (!sourcebuff.is_reference)
+  {
+    if (!ctx.namespace.to_buffer(&mut sourcebuff))
+      return bad_value;
+
+    sourcebuff = value(acpi::reference::value(ctx.add_value(&move sourcebuff)));
+  }
+
+  if (!ctx.namespace.to_integer(&mut byteindex))
+    return bad_value;
+
+  var name = std::span<u8>();
+
+  if (!scan_name_string(&mut is, &mut name))
+    return unexpected_end_of_stream;
+
+  ctx.add_variable(name_to_string(name), value::field(sourcebuff.reference, 0, byteindex.integer * 8, 64));
+
+  return ok;
+}
+
+fn store(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  switch (ctx.targets.take_back())
+  {
+    case nul:
+      ;
+
+    case debug:
+
+      std::print("Debug: ", value);
+
+    case arg[idx]:
+      var dst = &ctx.arg(idx);
+
+      for (;;)
+      {
+        if (dst.is_pointer)
+        {
+          switch (dst.pointer)
+          {
+            case local[idx]:
+              dst = &ctx.stack[idx];
+
+            case value[dst]:
+              if (var rc = ctx.namespace.store(dst, &mut value); !rc)
+                return rc;
+              break;
+
+            case index[index]:
+              if (var rc = ctx.namespace.store(index.0, index.1, &mut value); !rc)
+                return rc;
+              break;
+          }
+        }
+
+        if (value.is_buffer || value.is_string || value.is_package)
+          value = value(acpi::reference::value(ctx.add_value(&move value)));
+
+        *dst = value;
+
+        break;
+     }
+
+    case local[idx]:
+      var dst = &ctx.local(idx);
+
+      if (value.is_buffer || value.is_string || value.is_package)
+        value = value(acpi::reference::value(ctx.add_value(&move value)));
+
+      *dst = value;
+
+    case name[name]:
+      var dst = lookup(ctx, name);
+
+      if (!dst)
+        return name_not_found;
+
+      if (var rc = ctx.namespace.store(*dst, &mut value); !rc)
+        return rc;
+
+    case reference[reference]:
+      switch (reference)
+      {
+        case local[idx]:
+          ctx.stack[idx] = value;
+
+        case value[dst]:
+          if (var rc = ctx.namespace.store(dst, &mut value); !rc)
+            return rc;
+
+        case index[index]:
+          if (var rc = ctx.namespace.store(index.0, index.1, &mut value); !rc)
+            return rc;
+      }
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+fn if_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  ctx.text.push_back(op::if_op, 1, is.front_n(cast<usize>(len) - (is.data - beg)));
+
+  return ok;
+}
+
+fn else_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  is.drop_front!(cast<usize>(len) - (is.data - beg));
+
+  return ok;
+}
+
+fn while_op(run_context mut &ctx, std::span<u8> mut &is) -> result
+{
+  is.drop_front!(1);
+
+  var len = 0;
+  var beg = is.data;
+
+  if (!scan_pkg_length(&mut is, &mut len))
+    return unexpected_end_of_stream;
+
+  ctx.blocks.push_back(std::span(beg - 1, cast<usize>(len) + 1));
+
+  ctx.text.push_back(op::while_op, 1, is.front_n(cast<usize>(len) - (is.data - beg)));
+
+  return ok;
+}
+
+fn execute(run_context mut &ctx, std::span<u8> is) -> result
+{
+  for (;;)
+  {
+    switch (var op = peek_op(is))
+    {
+      case local0_op:
+      case local1_op:
+      case local2_op:
+      case local3_op:
+      case local4_op:
+      case local5_op:
+      case local6_op:
+      case local7_op:
+
+        if (var rc = local_obj(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case arg0_op:
+      case arg1_op:
+      case arg2_op:
+      case arg3_op:
+      case arg4_op:
+      case arg5_op:
+      case arg6_op:
+
+        if (var rc = arg_obj(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case byte_prefix:
+      case word_prefix:
+      case dword_prefix:
+      case string_prefix:
+      case qword_prefix:
+      case zero_op:
+      case one_op:
+      case ones_op:
+      case revision_op:
+
+        if (var rc = data_object(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case root_char:
+      case under_char:
+      case parent_prefix_char:
+      case dualname_prefix:
+      case multiname_prefix:
+      case alpha_char_a ..= alpha_char_z:
+
+        if (var rc = method_invocation(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case buffer_op:
+
+        if (var rc = buffer_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case package_op:
+      case varpackage_op:
+
+        if (var rc = package_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case method_op:
+
+        if (var rc = define_method(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case name_op:
+
+        if (var rc = name_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case alias_op:
+
+        if (var rc = define_alias(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case opregion_op:
+
+        if (var rc = opregion_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case field_op:
+
+        if (var rc = define_field(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case indexfield_op:
+
+        if (var rc = define_indexfield(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case createfield_op:
+        is.drop_front!(2);
+        ctx.text.push_back(op, 3);
+
+      case createbitfield_op:
+      case createbytefield_op:
+      case createwordfield_op:
+      case createdwordfield_op:
+      case createqwordfield_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 2);
+
+      case l_not_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1);
+
+      case l_equal_op:
+      case l_greater_op:
+      case l_less_op:
+      case l_and_op:
+      case l_or_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 2);
+
+      case not_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1, 1);
+
+      case add_op:
+      case subtract_op:
+      case multiply_op:
+      case mod_op:
+      case shiftleft_op:
+      case shiftright_op:
+      case and_op:
+      case nand_op:
+      case or_op:
+      case nor_op:
+      case xor_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 2, 1);
+
+      case divide_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 2, 2);
+
+      case concat_op:
+      case index_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 2, 1);
+
+      case refof_op:
+      case increment_op:
+      case decrement_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 0, 1);
+
+      case derefof_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1);
+
+      case tobuffer_op:
+      case todecimalstring_op:
+      case tohexstring_op:
+      case tointeger_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1, 1);
+
+      case store_op:
+      case copyobject_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1, 1);
+
+      case if_op:
+
+        if (var rc = if_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case else_op:
+
+        if (var rc = else_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case while_op:
+
+        if (var rc = while_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case break_op:
+      case continue_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op);
+
+      case noop_op:
+        is.drop_front!(1);
+
+      case return_op:
+        is.drop_front!(1);
+        ctx.text.push_back(op, 1);
+
+      case stream_end:
+        ctx.stack.push_back(value());
+        ctx.text.push_back(op::return_op);
+
+      else:
+        return invalid_opcode;
+    }
+
+    for (;;)
+    {
+      if (ctx.text.len == ctx.frame.rip)
+        break;
+
+      if (ctx.text.back.argc != ctx.text.back.order)
+        break;
+
+      for (;;)
+      {
+        if (ctx.text.back.tgtc == ctx.text.back.targets)
+          break;
+
+        switch (var op = peek_op(is))
+        {
+          case zero_op:
+            is.drop_front!(1);
+            ctx.targets.push_back(target::nul());
+
+          case local0_op:
+          case local1_op:
+          case local2_op:
+          case local3_op:
+          case local4_op:
+          case local5_op:
+          case local6_op:
+          case local7_op:
+            is.drop_front!(1);
+            ctx.targets.push_back(target::local(cast<usize>(op) - 0x60));
+
+          case arg0_op:
+          case arg1_op:
+          case arg2_op:
+          case arg3_op:
+          case arg4_op:
+          case arg5_op:
+          case arg6_op:
+            is.drop_front!(1);
+            ctx.targets.push_back(target::arg(cast<usize>(op) - 0x68));
+
+          case debug_op:
+            is.drop_front!(2);
+            ctx.targets.push_back(target::debug());
+
+          case root_char:
+          case under_char:
+          case parent_prefix_char:
+          case dualname_prefix:
+          case multiname_prefix:
+          case alpha_char_a ..= alpha_char_z:
+
+            var name = std::span<u8>();
+
+            if (!scan_name_string(&mut is, &mut name))
+              return unexpected_end_of_stream;
+
+            ctx.targets.push_back(target::name(name));
+
+          case refof_op:
+            ctx.text.push_back(cast<op>(0x30), 1);
+            ctx.text.push_back(op::noop_op);
+            break;
+
+          case derefof_op:
+            ctx.text.push_back(cast<op>(0x31), 1);
+            ctx.text.push_back(op::noop_op);
+            break;
+
+          case index_op:
+            ctx.text.push_back(cast<op>(0x32), 1);
+            ctx.text.push_back(op::noop_op);
+            break;
+
+          else:
+            return invalid_opcode;
+        }
+
+        ctx.text.back.tgtc += 1;
+      }
+
+      switch (var inst = ctx.text.take_back(); inst.op)
+      {
+        case not_op:
+        case l_not_op:
+
+          if (var rc = unary_op(&mut ctx, inst.op, &mut is); !rc)
+            return rc;
+
+        case l_equal_op:
+        case l_greater_op:
+        case l_less_op:
+
+          if (var rc = compare_op(&mut ctx, inst.op, &mut is); !rc)
+            return rc;
+
+        case add_op:
+        case subtract_op:
+        case multiply_op:
+        case divide_op:
+        case mod_op:
+        case shiftleft_op:
+        case shiftright_op:
+        case and_op:
+        case nand_op:
+        case or_op:
+        case nor_op:
+        case xor_op:
+        case l_and_op:
+        case l_or_op:
+
+          if (var rc = binary_op(&mut ctx, inst.op, &mut is); !rc)
+            return rc;
+
+        case increment_op:
+
+          if (var rc = increment(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case decrement_op:
+
+          if (var rc = decrement(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case concat_op:
+
+          if (var rc = concat(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case tobuffer_op:
+
+          if (var rc = to_buffer(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case todecimalstring_op:
+
+          if (var rc = to_decimalstring(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case tohexstring_op:
+
+          if (var rc = to_hexstring(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case tointeger_op:
+
+          if (var rc = to_integer(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case index_op:
+
+          if (var rc = define_index(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case refof_op:
+
+          if (var rc = define_refof(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case derefof_op:
+
+          if (var rc = define_derefof(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case store_op:
+        case copyobject_op:
+
+          if (var rc = store(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case buffer_op:
+
+          if (var rc = define_buffer(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case varpackage_op:
+
+          if (var rc = varpackage_op(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case package_op:
+
+          if (var rc = define_package(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case name_op:
+
+          if (var rc = define_name(&mut ctx, &mut is); !rc)
+            return rc;
+
+        case opregion_op:
+
+          if (var rc = define_opregion(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createfield_op:
+
+          if (var rc = create_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createbitfield_op:
+
+          if (var rc = create_bit_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createbytefield_op:
+
+          if (var rc = create_byte_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createwordfield_op:
+
+          if (var rc = create_word_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createdwordfield_op:
+
+          if (var rc = create_dword_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case createqwordfield_op:
+
+          if (var rc = create_qword_field(&mut ctx, &mut is); !rc)
+            return rc;
+
+          break;
+
+        case return_op:
+          is = ctx.pop_frame();
+
+          if (ctx.frames.len == 1)
+            return ok;
+
+        case method_op:
+          ctx.push_frame(inst.argc, inst.scope, is);
+
+          is = inst.span;
+
+          break;
+
+        case if_op:
+          var predicate = ctx.stack.take_back();
+
+          if (!ctx.namespace.to_integer(&mut predicate))
+            return bad_value;
+
+          if (predicate.integer == 0)
+          {
+            is.drop_front!(inst.span.end - is.begin);
+
+            if (peek_op(is) == op::else_op)
+            {
+              is.drop_front!(1);
+
+              var len = 0;
+              if (!scan_pkg_length(&mut is, &mut len))
+                return unexpected_end_of_stream;
+            }
+          }
+
+          break;
+
+        case while_op:
+          var predicate = ctx.stack.take_back();
+
+          if (!ctx.namespace.to_integer(&mut predicate))
+            return bad_value;
+
+          if (predicate.integer == 0)
+          {
+            ctx.blocks.pop_back();
+
+            is.drop_front!(inst.span.end - is.begin);
+          }
+
+          break;
+
+        case break_op:
+          if (ctx.blocks.empty)
+            return invalid_block;
+
+          is = std::span(ctx.blocks.take_back().end, is.end);
+
+          break;
+
+        case continue_op:
+          if (ctx.blocks.empty)
+            return invalid_block;
+
+          is = std::span(ctx.blocks.take_back().begin, is.end);
+
+          break;
+
+        case noop_op:
+          break;
+
+        case cast<op>(0x30):
+          ctx.targets.push_back(target::reference(ctx.stack.take_back().pointer));
+          ctx.text.back.tgtc += 1;
+          continue;
+
+        case cast<op>(0x31):
+          ctx.targets.push_back(target::reference(ctx.stack.take_back().reference));
+          ctx.text.back.tgtc += 1;
+          continue;
+
+        case cast<op>(0x32):
+          ctx.targets.push_back(target::reference(ctx.stack.take_back().pointer));
+          ctx.text.back.tgtc += 1;
+          continue;
+
+        else:
+          std::panic();
+      }
+
+      if (ctx.text.len != ctx.frame.rip)
+        ctx.text.back.argc += 1;
+      else
+        ctx.stack.pop_back();
+    }
+
+    if (is.data == ctx.blocks.back.end)
+      is = std::span(ctx.blocks.take_back().begin, is.end);
+  }
+}
+
+pub fn execute(namespace mut &ns, acpi::method &method, value mut &dst, std::span<value> &args = std::span<value>()) -> result
+{
+  var ctx = run_context(&mut ns);
+
+  for (var &arg : args)
+    ctx.stack.push_back(arg);
+
+  ctx.push_frame(args.len, method.scope, std::span<u8>());
+
+  if (var rc = execute(&mut ctx, method.code); !rc)
+    return rc;
+
+  if (!ctx.stack.empty)
+  {
+    if (var rc = load(&mut ctx, &mut ctx.stack.back); !rc)
+      return rc;
+
+    dst = ctx.stack.take_back();
+  }
+
+  return ok;
+}

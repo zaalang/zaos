@@ -19,7 +19,6 @@ _trampoline:
 
  .L8010:    .quad 0                       # gdt
  .L8018:    .quad 0                       # pml4
- .L8020:    .quad 0                       # gate
 
             .align 64
 
@@ -143,10 +142,6 @@ _trampoline:
             xor rbp, rbp
             push 0
             popf
-
- .spin:     pause
-            cmp qword ptr [0x8020], 0
-            je .spin
 
             # kernel
             pop rsi

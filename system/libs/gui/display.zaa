@@ -303,7 +303,7 @@ pub fn initialise(connection mut &this) -> i32
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
     this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(connection::message_handler);
 
-    app::loop::current.begin_wait(this.endpoint, &this.handler);
+    app::loop::current.begin_wait_fd(this.endpoint.fd, &this.handler);
 
     this.pointer = this.create_surface();
   }
@@ -788,7 +788,7 @@ pub struct surface : pub gui::object
       os::munmap(buffer.data, buffer.size);
     }
 
-    var (client_end, server_end) = zidl::buffer::create(size);
+    var [client_end, server_end] = zidl::buffer::create(size);
 
     var mmvec = os::mmvec();
     mmvec.offset = 0;

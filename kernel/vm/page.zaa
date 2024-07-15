@@ -17,6 +17,8 @@ pub using mtype = platform::mtype;
 pub using protection = platform::protection;
 pub using page_table = platform::page_table;
 
+pub using PHYSICAL_BASE = platform::PHYSICAL_BASE;
+
 pub struct physaddr : pub platform::physaddr_t
 {
   pub physaddr(platform::physaddr_t addr)
@@ -26,7 +28,7 @@ pub struct physaddr : pub platform::physaddr_t
 
   pub fn ptr(this&) -> void mut *
   {
-    return cast<void mut *>(this.super + platform::PHYSICAL_BASE);
+    return cast<void mut *>(PHYSICAL_BASE + this.super);
   }
 
   pub fn +(physaddr this, usize offset) -> physaddr
@@ -410,7 +412,7 @@ pub fn seed_usable_memory(page_allocator mut &this, platform::physaddr_t begin, 
 
   if (lhs != begin)
   {
-    rof(var i = order, var j = lhs; i == 0; --i)
+    rof (var i = order, var j = lhs; i == 0; --i)
     {
       var k = std::align_up(begin, PAGE_SIZE << i);
 
@@ -428,7 +430,7 @@ pub fn seed_usable_memory(page_allocator mut &this, platform::physaddr_t begin, 
 
   if (rhs != end)
   {
-    rof(var i = order, var j = rhs; i == 0; --i)
+    rof (var i = order, var j = rhs; i == 0; --i)
     {
       var k = std::align_down(end, PAGE_SIZE << i);
 

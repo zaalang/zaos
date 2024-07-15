@@ -184,7 +184,7 @@ pub fn dump(run_queue &this) -> void
 {
   std::print("[run queue]");
 
-  rof(var queue : this.ready)
+  rof (var queue : this.ready)
   {
     for (var thread = queue; thread; thread = thread.next)
     {
@@ -195,7 +195,7 @@ pub fn dump(run_queue &this) -> void
     }
   }
 
-  rof(var queue : this.waiting)
+  rof (var queue : this.waiting)
   {
     for (var thread = queue; thread; thread = thread.next)
     {
@@ -222,7 +222,7 @@ extern fn thread_main(thread mut *thread) -> void
   cpu::current_thread.tick_start_time = cpu::tsc;
   platform::enable_interrupts();
 
-  std::print(*thread, "started");
+  //std::print(*thread, "started");
 
   thread.start_routine(thread.start_argument);
 

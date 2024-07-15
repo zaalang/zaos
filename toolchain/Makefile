@@ -20,11 +20,14 @@ default:
 	
 	@cd dkmg; $(MAKE)
 	@cd readelf; $(MAKE)
+	@cd acpidump; $(MAKE)
 	@cd zidlc; $(MAKE)
 
 clean:
 	cd dkmg; $(MAKE) clean
 	cd readelf; $(MAKE) clean
+	cd acpidump; $(MAKE) clean
+	cd dkmg; $(MAKE) clean
 	cd zidlc; $(MAKE) clean
 	cd ${BUILDROOT}/toolchain/zrt/build; cmake --build . --target clean
 	cd ${BUILDROOT}/toolchain/zacc/build; cmake --build . --target clean

@@ -25,6 +25,7 @@ import process as _ : process, create_kernel_process;
 import platform : BootInfo;
 import syscalls;
 import ioring.workman;
+import cfg.acpi;
 
 fn bootstrap_filesystem() -> void
 {
@@ -94,6 +95,7 @@ fn kernel_main(void*) -> void
   pty::initialise();
   video::initialise();
   console::initialise();
+  cfg::initialise();
 
   bootstrap_filesystem();
 

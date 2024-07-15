@@ -54,7 +54,7 @@ fn hline(context &&ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t 
   if (dy == 0)
     return;
 
-  var (x0, x1) = (x0 < x1) ? (x0, x1) : (x1, x0);
+  var [x0, x1] = (x0 < x1) ? (x0, x1) : (x1, x0);
 
   var i0 = cast<usize>(max(floor(x0).to_rep, 0));
   var i1 = min(cast<usize>(max(ceil(x1).to_rep, 0)), ctx.width);
@@ -113,7 +113,7 @@ fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
   using lml;
   using std;
 
-  var (d, top, bot) = (xy0.y < xy1.y) ? (+1, xy0, xy1) : (-1, xy1, xy0);
+  var [d, top, bot] = (xy0.y < xy1.y) ? (+1, xy0, xy1) : (-1, xy1, xy0);
 
   var x = top.x;
   var dx = bot.x - top.x;

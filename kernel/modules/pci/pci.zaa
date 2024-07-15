@@ -3,12 +3,10 @@
 //
 
 import std.stdio;
-import acpi;
+import acpi.mcfg;
 import sys;
-import vm;
-import platform;
-
-using vm::physaddr;
+import vm : physaddr;
+import platform : PHYSICAL_BASE;
 
 pub enum command : u16
 {
@@ -147,64 +145,54 @@ struct pci_general_device
 
 pub fn initialise() -> void
 {
-  var acpi_root = sys::acpi_root;
+  var mcfg = acpi::find_mcfg(PHYSICAL_BASE, sys::acpi_root);
 
-  if (acpi_root)
+  if (!acpi::validate_mcfg(mcfg))
+    std::panic("bad_acpi_mcfg");
+
+  for (var config : mcfg.entries)
   {
-    var mcfg = acpi::find_table(acpi_root, platform::PHYSICAL_BASE, "MCFG");
-
-    if (mcfg)
+    for (var bus = config.bus_start; bus != config.bus_end; ++bus)
     {
-      var entry = cast<acpi::mcfg_entry*>(cast<uintptr>(mcfg) + sizeof<acpi::mcfg>);
-      var end = cast<acpi::mcfg_entry*>(cast<uintptr>(mcfg) + cast<usize>(mcfg.length));
+      var busentry = cast<pci_header*>(physaddr(cast<uintptr>(config.base_address) + cast<uintptr>(bus) << 20).ptr);
 
-      while (entry != end)
+      if (busentry.device_id == 0 || busentry.device_id == 0xffff)
+        continue;
+
+      for (var dev = 0; dev < 32; ++dev)
       {
-        for (var bus = entry.bus_start; bus != entry.bus_end; ++bus)
-        {
-          var busentry = cast<pci_header*>(physaddr(cast<uintptr>(entry.base_address) + cast<uintptr>(bus) << 20).ptr);
+        var deventry = cast<pci_header*>(cast<uintptr>(busentry) + cast<uintptr>(dev) << 15);
 
-          if (busentry.device_id == 0 || busentry.device_id == 0xffff)
+        if (deventry.device_id == 0 || deventry.device_id == 0xffff)
+          continue;
+
+        for (var func = 0; func < 8; ++func)
+        {
+          var entry = cast<pci_header*>(cast<uintptr>(deventry) + cast<uintptr>(func) << 12);
+
+          if (entry.device_id == 0 || entry.device_id == 0xffff)
             continue;
 
-          for (var dev = 0; dev < 32; ++dev)
-          {
-            var deventry = cast<pci_header*>(cast<uintptr>(busentry) + cast<uintptr>(dev) << 15);
+          var device = device();
 
-            if (deventry.device_id == 0 || deventry.device_id == 0xffff)
-              continue;
+          device.bus = bus;
+          device.dev = dev;
+          device.func = func;
+          device.vendor_id = entry.vendor_id;
+          device.device_id = entry.device_id;
+          device.class_code = entry.class_code;
+          device.header = entry;
 
-            for (var func = 0; func < 8; ++func)
-            {
-              var entry = cast<pci_header*>(cast<uintptr>(deventry) + cast<uintptr>(func) << 12);
-
-              if (entry.device_id == 0 || entry.device_id == 0xffff)
-                continue;
-
-              var device = device();
-
-              device.bus = bus;
-              device.dev = dev;
-              device.func = func;
-              device.vendor_id = entry.vendor_id;
-              device.device_id = entry.device_id;
-              device.class_code = entry.class_code;
-              device.header = entry;
-
-              pci.devices.push_back(device);
-            }
-          }
+          pci.devices.push_back(device);
         }
-
-        entry += 1;
       }
     }
-
-    std::print("pci bus: ", pci.devices.len, " devices");
-
-    for (var &device : pci.devices)
-      std::printf("  {}:{}.{} {} {} {}\n", device.bus, device.dev, device.func, device.vendor_id, device.device_id, device.class_code);
   }
+
+  std::print("pci bus: ", pci.devices.len, " devices");
+
+  for (var &device : pci.devices)
+    std::printf("  {}:{}.{} {:04x} {:04x} {}\n", device.bus, device.dev, device.func, device.vendor_id, device.device_id, device.class_code);
 }
 
 pub fn read_config<T>(device &device, var offset) -> T

@@ -119,7 +119,7 @@ struct sysfs_root_node : pub vfs::node
       if (var result = emit(vfs::filetype::directory, "..".data, 2); !result)
         return cast(result);
 
-      for (var &(name, node) : fs.subsystems)
+      for (var &[name, node] : fs.subsystems)
       {
         if (var result = emit(vfs::filetype::directory, name.data, name.len); !result)
           return cast(result);

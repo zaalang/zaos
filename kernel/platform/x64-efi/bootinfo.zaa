@@ -59,13 +59,28 @@ pub struct BootInfo
 
 pub fn insert_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t end) -> bool
 {
-  if (bootinfo.usable_memory_len == bootinfo.usable_memory_spans.len)
-    return false;
+  var i = 0;
 
-  bootinfo.usable_memory_spans[bootinfo.usable_memory_len].0 = begin;
-  bootinfo.usable_memory_spans[bootinfo.usable_memory_len].1 = end;
+  for (; i < bootinfo.usable_memory_len; ++i)
+  {
+    if (bootinfo.usable_memory_spans[i].1 == begin)
+    {
+      bootinfo.usable_memory_spans[i].1 = end;
 
-  bootinfo.usable_memory_len += 1;
+      break;
+    }
+  }
+
+  if (i == bootinfo.usable_memory_len)
+  {
+    if (i == bootinfo.usable_memory_spans.len)
+      return false;
+
+    bootinfo.usable_memory_spans[i].0 = begin;
+    bootinfo.usable_memory_spans[i].1 = end;
+
+    bootinfo.usable_memory_len += 1;
+  }
 
   return true;
 }
@@ -150,9 +165,4 @@ pub fn for_each_allocated_memory(BootInfo &bootinfo, fn (&callback)(physaddr_t) 
   }
 }
 
-pub fn finalise_boot(BootInfo &bootinfo, int cpu)
-{
-  platform_finalise_boot(bootinfo, cpu);
-}
-
-extern fn platform_finalise_boot(BootInfo &bootinfo, int cpu) -> void;
+pub extern fn finalise_boot(BootInfo &bootinfo, int cpu) -> void;

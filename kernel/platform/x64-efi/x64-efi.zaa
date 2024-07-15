@@ -12,6 +12,7 @@ import memory;
 import handlers;
 import bootinfo : BootInfo;
 import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+import std.atomic;
 
 extern fn enter_kernel(BootInfo &) -> void;
 
@@ -146,7 +147,7 @@ fn exit_boot_services(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable)
     {
       case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesCode:
       case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesData:
-        entry.VirtualStart = PHYSICAL_BASE + entry.PhysicalStart;
+        entry.VirtualStart = entry.PhysicalStart;
     }
   }
 
@@ -173,13 +174,24 @@ extern fn efi_main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> void
   enter_kernel(bootinfo);
 }
 
-extern fn platform_finalise_boot(BootInfo &bootinfo, int cpu) -> void
+extern fn finalise_boot(BootInfo &bootinfo, int cpu) -> void
 {
+  static rendezvous = i32(0);
+
+  std::atomic_add(&rendezvous, 1);
+
+  while (std::volatile_load(&rendezvous) < cast(bootinfo.cpu_count))
+    __relax();
+
   sys::setup(bootinfo, cpu);
   ioapic::setup(bootinfo, cpu);
-  memory::cement(bootinfo, cpu);
 
-  smp::rendezvous(cpu);
+  std::atomic_sub(&rendezvous, 1);
+
+  while (std::volatile_load(&rendezvous) != 0)
+    __relax();
+
+  memory::cement(bootinfo, cpu);
 
   cpu::enable_interrupts();
 }

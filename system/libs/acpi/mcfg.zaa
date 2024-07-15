@@ -1,0 +1,90 @@
+//
+// acpi mcfg
+//
+
+import acpi.rsdp;
+import std.memory;
+import std.range;
+
+const ACPI_MCFG_SIGNATURE = "MCFG";
+
+#[packed]
+pub struct mcfg : pub acpi::sdt
+{
+  pub u8[8] reserved;
+
+  pub struct config_iterator
+  {
+    pub config_iterator() = default;
+    pub config_iterator(config_iterator&) = default;
+    pub fn =(config_iterator mut &this, config_iterator &that) -> config_iterator mut & = default;
+    pub ~config_iterator() = default;
+
+    pub fn ++(config_iterator mut &this) -> config_iterator mut &
+    {
+      ++this.cursor;
+
+      return &this;
+    }
+
+    pub fn ==(config_iterator lhs, config_iterator rhs) -> bool
+    {
+      return lhs.cursor == rhs.cursor;
+    }
+
+    config_iterator(config *cursor)
+      : cursor(cursor)
+    {
+    }
+
+    config *cursor;
+  }
+
+  pub fn [](this &, config_iterator iter) -> config *
+  {
+    return iter.cursor;
+  }
+
+  pub fn entries(this &)
+  {
+    return std::range_view(&this, config_iterator(cast<config*>(&this + 1)), config_iterator(cast<config*>(cast<uintptr>(&this) + cast<usize>(this.length))));
+  }
+}
+
+#[packed]
+pub struct config
+{
+  pub u64 base_address;
+  pub u16 seg_group;
+  pub u8 bus_start;
+  pub u8 bus_end;
+  pub u8[4] reserved;
+}
+
+pub fn find_mcfg(acpi::tables &tables) -> mcfg *
+{
+  return tables.find<mcfg>(ACPI_MCFG_SIGNATURE);
+}
+
+pub fn find_mcfg(uintptr physical_base, uintptr acpi_root) -> mcfg *
+{
+  return acpi::tables(physical_base, acpi_root).find<mcfg>(ACPI_MCFG_SIGNATURE);
+}
+
+pub fn validate_mcfg(mcfg *mcfg) -> acpi::result
+{
+  if (!mcfg)
+    return not_found;
+
+  if (std::memcmp(mcfg, ACPI_MCFG_SIGNATURE.data, ACPI_MCFG_SIGNATURE.len) != 0)
+    return invalid_signature;
+
+  var checksum = u8(0);
+  for (var ch = cast<u8*>(mcfg); ch != cast<u8*>(mcfg) + cast<usize>(mcfg.length); ++ch)
+    checksum = __add_with_carry(checksum, *ch).0;
+
+  if (checksum != 0)
+    return invalid_checksum;
+
+  return ok;
+}

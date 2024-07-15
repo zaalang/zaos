@@ -588,7 +588,13 @@ pub struct ptty : pub chr::chrdev
     }
 
     if (count == 0 && !eof)
-      return would_block;
+    {
+      if (this.termios.c_lflag & ICANON == ICANON)
+        return would_block;
+
+      if (this.termios.c_cc[VMIN] != 0)
+        return would_block;
+    }
 
     return cast(count);
   }

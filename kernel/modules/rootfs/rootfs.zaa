@@ -290,7 +290,7 @@ pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize of
         return cast(result);
     }
 
-    for (var &(name, node) : this.contents)
+    for (var &[name, node] : this.contents)
     {
       var file_type = vfs::filetype();
 

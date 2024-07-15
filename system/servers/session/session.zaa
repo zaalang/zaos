@@ -139,7 +139,7 @@ fn spawn(session::unit mut &service) -> i32
   if (var rc = app::loop::current.begin_wait_pid(service.pid, &service.status_handler); rc < 0)
     return rc;
 
-  if (var rc = app::loop::current.begin_wait(service.channel, &service.channel_handler); rc < 0)
+  if (var rc = app::loop::current.begin_wait_fd(service.channel.fd, &service.channel_handler); rc < 0)
     return rc;
 
   std::print("sessiond service launched (", service.pid, ":", service.path, ")");
@@ -226,7 +226,7 @@ fn main() -> int
   register("zaos.triangle", "/zaos/root/triangle");
   register("zaos.terminal", "/zaos/bin/terminal");
 
-  for (var mut &(uri, service) : session::services)
+  for (var mut &[uri, service] : session::services)
   {
     if (var rc = service.spawn(); rc < 0)
       std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-rc));

@@ -16,6 +16,7 @@ if [ ! -f "OVMF_VARS.fd" ]; then
 fi
 
 OPTS="-machine q35 -cpu host -enable-kvm -m 2G -smp 2"
+#OPTS="-machine q35,i8042=off -cpu host -enable-kvm -m 2G -smp 2"
 
 OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.fd,format=raw"
 OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.fd,format=raw"
@@ -33,6 +34,7 @@ OPTS="$OPTS -device ide-hd,bus=ide.0,drive=disk0,bootindex=0"
 
 #OPTS="$OPTS -global PIIX4_PM.disable_s3=0"
 #OPTS="$OPTS -device piix3-usb-uhci -device usb-tablet"
+#OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-mouse"
 #OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-tablet"
 #OPTS="$OPTS -device virtio-keyboard -device virtio-tablet"
 

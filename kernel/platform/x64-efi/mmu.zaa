@@ -154,21 +154,21 @@ pub fn new(page_table mut &this, fn (&allocate)() -> physaddr_t) -> void
   this.pml4 = allocate();
 
   var irqs = cpu::disable_interrupts();
-  std::memset(cast<u8 mut *>(this.pml4 + PHYSICAL_BASE), 0, 2048);
-  std::memcpy(cast<u8 mut *>(this.pml4 + 2048 + PHYSICAL_BASE), cast<u8 mut *>(cpu::rdcr3() + 2048 + PHYSICAL_BASE), 2048);
+  std::memset(cast<u8 mut *>(PHYSICAL_BASE + this.pml4), 0, 2048);
+  std::memcpy(cast<u8 mut *>(PHYSICAL_BASE + this.pml4 + 2048), cast<u8 mut *>(PHYSICAL_BASE + cpu::rdcr3() + 2048), 2048);
   cpu::restore_interrupts(irqs);
 }
 
 pub fn query(page_table mut &this, virtaddr_t addr) -> page_table_query
 {
-  var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+  var pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + this.pml4);
 
   for (var i : pds(addr))
   {
     if (pt[i] & pdbits::present == 0)
       return page_table_query(0);
 
-    pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+    pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[i] & ~0xfff));
   }
 
   return page_table_query(pt[pte(addr)]);
@@ -181,7 +181,7 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
 
   while (page != pages.1)
   {
-    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+    var pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + this.pml4);
 
     for (var i : pds(addr))
     {
@@ -194,7 +194,7 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
         if (std::atomic_cmpxchg_strong(&pt[i], 0, 0xffe))
         {
           var addr = allocate();
-          std::memset(cast<u8 mut *>(addr + PHYSICAL_BASE), 0, PAGE_SIZE);
+          std::memset(cast<u8 mut *>(PHYSICAL_BASE + addr), 0, PAGE_SIZE);
 
           std::atomic_store(&pt[i], addr | pdbits::present | pdbits::writeable | pdbits::user);
         }
@@ -204,7 +204,7 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
         entry = std::atomic_load(&pt[i], std::memory_order::relaxed);
       }
 
-      pt = cast<uintptr[512] mut *>(entry & ~0xfff + PHYSICAL_BASE);
+      pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (entry & ~0xfff));
     }
 
     for (var i = pte(addr); page != pages.1 && i < 512; ++i)
@@ -225,10 +225,10 @@ pub fn map(page_table mut &this, virtaddr_t baseaddr, physrange_t pages, protect
       switch (mflags)
       {
         case zero:
-          std::memset(cast<void mut *>(page + PHYSICAL_BASE), 0, PAGE_SIZE);
+          std::memset(cast<void mut *>(PHYSICAL_BASE + page), 0, PAGE_SIZE);
 
         case copy:
-          std::memcpy(cast<void mut *>(page + PHYSICAL_BASE), cast<void mut *>(pt[i] & 0x7ffffffffffff000 + PHYSICAL_BASE), PAGE_SIZE);
+          std::memcpy(cast<void mut *>(PHYSICAL_BASE + page), cast<void mut *>(PHYSICAL_BASE + (pt[i] & 0x7ffffffffffff000)), PAGE_SIZE);
       }
 
       pt[i] = page | pdbits::present | flags;
@@ -248,13 +248,13 @@ pub fn set_memory_type(page_table mut &this, virtrange_t range, mtype mtype) -> 
 
   while (addr < range.1)
   {
-    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+    var pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + this.pml4);
 
     for (var i : pds(addr))
     {
       std::assert(pt[i] & pdbits::present != 0);
 
-      pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+      pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[i] & ~0xfff));
     }
 
     for (var i = pte(addr); addr < range.1 && i < 512; ++i)
@@ -287,13 +287,13 @@ pub fn unmap(page_table mut &this, virtrange_t range) -> void
 
   while (addr < range.1)
   {
-    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+    var pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + this.pml4);
 
     for (var i : pds(addr))
     {
       std::assert(pt[i] & pdbits::present != 0);
 
-      pt = cast<uintptr[512] mut *>(pt[i] & ~0xfff + PHYSICAL_BASE);
+      pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[i] & ~0xfff));
     }
 
     for (var i = pte(addr); addr < range.1 && i < 512; ++i)
@@ -321,19 +321,19 @@ pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, fn (&callb
   {
     var pds = pds(addr);
 
-    var pt = cast<uintptr[512] mut *>(this.pml4 + PHYSICAL_BASE);
+    var pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + this.pml4);
 
     if (pt[pds[0]] & pdbits::present != 0)
     {
-      pt = cast<uintptr[512] mut *>(pt[pds[0]] & ~0xfff + PHYSICAL_BASE);
+      pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[pds[0]] & ~0xfff));
 
       if (pt[pds[1]] & pdbits::present != 0)
       {
-        pt = cast<uintptr[512] mut *>(pt[pds[1]] & ~0xfff + PHYSICAL_BASE);
+        pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[pds[1]] & ~0xfff));
 
         if (pt[pds[2]] & pdbits::present != 0)
         {
-          pt = cast<uintptr[512] mut *>(pt[pds[2]] & ~0xfff + PHYSICAL_BASE);
+          pt = cast<uintptr[512] mut *>(PHYSICAL_BASE + (pt[pds[2]] & ~0xfff));
 
           for (var i = pte(addr); addr < range.1 && i < 512; ++i)
           {
@@ -368,25 +368,25 @@ pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, fn (&callb
 
 pub fn dispose(page_table mut &this, void mut *data, fn (&callback)(void mut *, physaddr_t) -> void) -> void
 {
-  var pml4 = cast<physaddr_t[512] mut *>(this.pml4 + PHYSICAL_BASE);
+  var pml4 = cast<physaddr_t[512] mut *>(PHYSICAL_BASE + this.pml4);
 
   for (var k = 0; k < 256; ++k)
   {
     if (pml4[k] & pdbits::present != 0)
     {
-      var pdp = cast<physaddr_t[512] mut *>(pml4[k] & ~0xfff + PHYSICAL_BASE);
+      var pdp = cast<physaddr_t[512] mut *>(PHYSICAL_BASE + (pml4[k] & ~0xfff));
 
       for (var j = 0; j < 512; ++j)
       {
         if (pdp[j] & pdbits::present != 0)
         {
-          var pd = cast<physaddr_t[512] mut *>(pdp[j] & ~0xfff + PHYSICAL_BASE);
+          var pd = cast<physaddr_t[512] mut *>(PHYSICAL_BASE + (pdp[j] & ~0xfff));
 
           for (var i = 0; i < 512; ++i)
           {
             if (pd[i] & pdbits::present != 0)
             {
-              var pt = cast<physaddr_t[512] mut *>(pd[i] & ~0xfff + PHYSICAL_BASE);
+              var pt = cast<physaddr_t[512] mut *>(PHYSICAL_BASE + (pd[i] & ~0xfff));
 
               for (var i = 0; i < 512; ++i)
                 std::assert(pt[i] == 0);

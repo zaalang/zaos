@@ -2,10 +2,10 @@
 // efi system
 //
 
-import acpi;
 import std.atomic;
 import bootinfo : BootInfo;
 import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+import acpi.madt;
 import cpu;
 
 struct thread
@@ -41,9 +41,6 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
     if (entry.VendorGuid != efi::ACPI_20_TABLE_GUID)
       continue;
 
-    if (!acpi::validate_rsdp(cast<void*>(entry.VendorTable), 0))
-      efi::panic(SystemTable, "invalid_rsdp");
-
     bootinfo.acpi_root = entry.VendorTable;
   }
 
@@ -51,46 +48,39 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
   bootinfo.apic_ids[0] = early_apic_id();
   bootinfo.early_tsc_frequency = early_tsc_frequency();
 
-  var acpi_root = cast<void*>(bootinfo.acpi_root);
+  if (!acpi::validate_rsdp(bootinfo.acpi_root))
+    efi::panic(SystemTable, "invalid_rsdp");
 
-  if (acpi_root)
+  var madt = acpi::find_madt(0, bootinfo.acpi_root);
+
+  if (!acpi::validate_madt(madt))
+    efi::panic(SystemTable, "bad_acpi_madt");
+
+  bootinfo.apic_address = madt.local_apic_address;
+
+  for (var apic : madt.entries)
   {
-    var madt = acpi::find_table(acpi_root, 0, "APIC");
-
-    if (!madt)
-      efi::panic(SystemTable, "bad_acpi_madt");
-
-    bootinfo.apic_address = cast<acpi::madt*>(madt).local_apic_address;
-
-    var apic = cast<acpi::apic*>(cast<uintptr>(madt) + sizeof<acpi::madt>);
-    var end = cast<acpi::apic*>(cast<uintptr>(madt) + cast<usize>(madt.length));
-
-    while (apic != end)
+    switch (apic.type)
     {
-      switch (apic.type)
-      {
-        case acpi::madt_type::local_apic:
+      case local_apic:
 
-          var local_apic = cast<acpi::local_apic*>(apic);
+        var local_apic = cast<acpi::local_apic*>(apic);
 
-          if (local_apic.flags & 1 == 1 && local_apic.apic_id != bootinfo.apic_ids[0] && bootinfo.cpu_count < bootinfo.apic_ids.len)
-          {
-            bootinfo.apic_ids[bootinfo.cpu_count] = local_apic.apic_id;
-            bootinfo.cpu_count += 1;
-          }
+        if (local_apic.flags & 1 == 1 && local_apic.apic_id != bootinfo.apic_ids[0] && bootinfo.cpu_count < bootinfo.apic_ids.len)
+        {
+          bootinfo.apic_ids[bootinfo.cpu_count] = local_apic.apic_id;
+          bootinfo.cpu_count += 1;
+        }
 
-        case acpi::madt_type::io_apic:
+      case io_apic:
 
-          var io_apic = cast<acpi::io_apic*>(apic);
+        var io_apic = cast<acpi::io_apic*>(apic);
 
-          if (bootinfo.ioapic_address == 0)
-          {
-            bootinfo.ioapic_address = io_apic.apic_address;
-            bootinfo.ioapic_interrupt_base = io_apic.interrupt_base;
-          }
-      }
-
-      apic = cast<acpi::apic*>(cast<uintptr>(apic) + cast<usize>(apic.length));
+        if (bootinfo.ioapic_address == 0)
+        {
+          bootinfo.ioapic_address = io_apic.apic_address;
+          bootinfo.ioapic_interrupt_base = io_apic.interrupt_base;
+        }
     }
   }
 
@@ -146,28 +136,19 @@ fn early_tsc_frequency() -> u64
   {
     // fallback to quick pit
 
-    // gate high, disable speaker
-    cpu::out8(0x61, cpu::in8(0x61) & ~0x2 | 0x1);
-
-    // counter 2, mode 0 (one-shot), binary count
-    cpu::out8(0x43, 0xb0);
-
-    // starting count
-
-    cpu::out8(0x42, 0xff);
-    cpu::out8(0x42, 0xff);
+    cpu::out8(0x61, cpu::in8(0x61) & ~0x2 | 0x1);  // gate high, disable speaker
+    cpu::out8(0x43, 0xb0);  // counter 2, mode 0 (one-shot), binary count
+    cpu::out8(0x42, 0xff);  // starting count lo
+    cpu::out8(0x42, 0xff);  // starting count hi
 
     var lo = cpu::in8(0x42);
     var hi = cpu::in8(0x42);
 
-    // read back
     while (hi != 255)
     {
       lo = cpu::in8(0x42);
       hi = cpu::in8(0x42);
     }
-
-    // timing loop
 
     var start = cpu::rdtsc();
     var startcount = cast<u64>(hi) << 8 | cast<u64>(lo);
@@ -181,8 +162,7 @@ fn early_tsc_frequency() -> u64
     var end = cpu::rdtsc();
     var endcount = cast<u64>(hi) << 8 | cast<u64>(lo);
 
-    // gate low
-    cpu::out8(0x61, cpu::in8(0x61) & ~0x2);
+    cpu::out8(0x61, cpu::in8(0x61) & ~0x2); // gate low
 
     frequency = (end - start) * (14318180 / 12) / (startcount - endcount);
   }
@@ -304,13 +284,6 @@ pub fn rsp0() -> uintptr
 
 pub fn setup(BootInfo &bootinfo, int cpu) -> void
 {
-  static rendezvous = i32(0);
-
-  std::atomic_add(&rendezvous, 1);
-
-  while (std::volatile_load(&rendezvous) < cast(bootinfo.cpu_count))
-    __relax();
-
   cpu::wrmsr(cpu::msr_index::tsc, 0);
   cpu::wrmsr(cpu::msr_index::tsc_aux, cast(cpu));
 
@@ -419,7 +392,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   if (var apic_base = cpu::rdmsr(cpu::msr_index::apic_base); apic_base & 0x400 == 0)
     cpu::wrmsr(cpu::msr_index::apic_base, apic_base | 0x400); // x2apic enable
 
-  cpu::wrmsr(cpu::msr_index::apic_spurious_intr_vector, cpu::rdmsr(cpu::msr_index::apic_spurious_intr_vector) & 0xffffff00 | 0x1ff); // apic spurious interrupt vector
+  cpu::wrmsr(cpu::msr_index::apic_ivt_spurious, cpu::rdmsr(cpu::msr_index::apic_ivt_spurious) & 0xffffff00 | 0x1ff); // apic spurious interrupt vector
 
   cpu::wrmsr(cpu::msr_index::apic_lvt_timer, cpu::rdmsr(cpu::msr_index::apic_lvt_timer) & 0xfffcef00 | 0x500fc); // apic timer
   cpu::wrmsr(cpu::msr_index::apic_timer_divide_config, cpu::rdmsr(cpu::msr_index::apic_timer_divide_config) & 0xfffffff0 | 0x0b);
@@ -431,6 +404,6 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
 
   cpu::wrmsr(cpu::msr_index::apic_task_priority, cpu::rdmsr(cpu::msr_index::apic_task_priority) & 0xffffff00); // apic task priority
 
-  cpu::rdmsr(cpu::msr_index::apic_spurious_intr_vector);
+  cpu::rdmsr(cpu::msr_index::apic_ivt_spurious);
   cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
 }

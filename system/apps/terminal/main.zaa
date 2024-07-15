@@ -467,7 +467,7 @@ fn main() -> int
 
     window.channel_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(channel_handler);
 
-    if (var rc = app::loop::current.begin_wait(window.pty.channel, &window.channel_handler); rc < 0)
+    if (var rc = app::loop::current.begin_wait_fd(window.pty.channel.fd, &window.channel_handler); rc < 0)
       throw std::system_error(cast<std::errc>(-rc));
 
     app.run();

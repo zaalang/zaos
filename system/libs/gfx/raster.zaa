@@ -80,7 +80,7 @@ fn hline(raster_t &&ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coor
   if (dy == 0)
     return;
 
-  var (x0, x1) = (x0 < x1) ? (x0, x1) : (x1, x0);
+  var [x0, x1] = (x0 < x1) ? (x0, x1) : (x1, x0);
 
   var i0 = floor(x0).to_rep;
   var i1 = floor(x1).to_rep;
@@ -128,7 +128,7 @@ fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
   using lml;
   using std;
 
-  var (d, top, bot) = (v0.y < v1.y) ? (+1, v0, v1) : (-1, v1, v0);
+  var [d, top, bot] = (v0.y < v1.y) ? (+1, v0, v1) : (-1, v1, v0);
 
   var x = top.x;
   var dx = bot.x - top.x;

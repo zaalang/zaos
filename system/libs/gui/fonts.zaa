@@ -203,7 +203,7 @@ fn populate(fonts mut &fonts, std::string_view fontmap) throws -> void
   if (!faces.is_map)
     throw std::system_error(std::errc::format_error);
 
-  for (var &(k, v) : faces.as_map)
+  for (var &[k, v] : faces.as_map)
   {
     if (!k.is_string || !v.is_map)
       throw std::system_error(std::errc::format_error);
@@ -214,7 +214,7 @@ fn populate(fonts mut &fonts, std::string_view fontmap) throws -> void
     var stretch = v["stretch"].as<int>;
     var weight = v["weight"].as<int>;
 
-    for (var &(family, style) : std::zip(v["family"].as_array, v["style"].as_array))
+    for (var &[family, style] : std::zip(v["family"].as_array, v["style"].as_array))
     {
       var mut &font = fonts.families.emplace(family.as_string);
 

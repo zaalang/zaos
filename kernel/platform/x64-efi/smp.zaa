@@ -8,34 +8,11 @@ import acpi;
 import bootinfo : BootInfo;
 import cpu;
 
-const APIC_ESR = 0x280;  // Error Status Register
-const APIC_ICR0 = 0x300; // Interrupt Command Register [bits 0-31]
-const APIC_ICR1 = 0x310; // Interrupt Command Register [bits 32-63]
-
-fn cpu_rendezvous() -> i32 mut &
-{
-  static rendezvous = i32(0);
-
-  return &rendezvous;
-}
-
-fn apic_read(uintptr base, uintptr offset) -> u32
-{
-  return std::volatile_load(cast<u32*>(base + offset));
-}
-
-fn apic_write(uintptr base, uintptr offset, u32 value) -> void
-{
-  std::volatile_store(cast<u32 mut *>(base + offset), value);
-}
-
 pub fn initialise(BootInfo mut &bootinfo)
 {
   const code_base = 0x8000;
   const stack_base = 0x10000;
   const stack_size = 64; // bytes per cpu
-
-  cpu_rendezvous = cast(bootinfo.cpu_count);
 
   var trampoline_base = extern(_trampoline);
   var trampoline_size = extern(trampoline_) - trampoline_base;
@@ -45,70 +22,42 @@ pub fn initialise(BootInfo mut &bootinfo)
   std::memcpy(cast<void mut *>(code_base + 0x10), &bootinfo.gdt, sizeof(bootinfo.gdt));
   std::memcpy(cast<void mut *>(code_base + 0x18), &bootinfo.pml4, sizeof(bootinfo.pml4));
 
+  if (var apic_base = cpu::rdmsr(cpu::msr_index::apic_base); apic_base & 0x400 == 0)
+    cpu::wrmsr(cpu::msr_index::apic_base, apic_base | 0x400); // x2apic enable
+
   for (var cpu = 1; cpu < bootinfo.cpu_count; ++cpu)
   {
     var apic = cast<uintptr>(bootinfo.apic_address);
-    var apic_id = cast<u32>(bootinfo.apic_ids[cpu]);
+    var apicid = cast<u32>(bootinfo.apic_ids[cpu]);
 
-    var stack = cast<uintptr mut *>(stack_base - cast<usize>(apic_id * stack_size));
+    var stack = cast<uintptr mut *>(stack_base - cast<usize>(apicid) * stack_size);
 
     *(stack - 1) = cast<uintptr>(cpu);
     *(stack - 2) = cast<uintptr>(&bootinfo);
 
     // clear apic errors
-    apic_write(apic, APIC_ESR, 0);
-
-    // select ap
-    apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+    cpu::wrmsr(cpu::msr_index::apic_esr, 0);
 
     // trigger INIT IPI
-    apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff00000 | 0x00C500);
-
-    // wait for delivery
-    while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
-      __relax();
-
-    // select ap
-    apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x04500);
 
     // deassert INIT IPI
-    apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff00000 | 0x008500);
-
-    // wait for delivery
-    while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
-      __relax();
+    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x00500);
 
     // 10 millisecond pause
     cpu::spin(bootinfo.early_tsc_frequency / 100 + 1);
 
-    // send STARTUP IPI (twice)
+    // trigger STARTUP IPI (twice)
     for (var j = 0; j < 2; j++)
     {
       // clear apic errors
-      apic_write(apic, APIC_ESR, 0);
-
-      // select ap
-      apic_write(apic, APIC_ICR1, apic_read(apic, APIC_ICR1) & 0x00ffffff | apic_id << 24);
+      cpu::wrmsr(cpu::msr_index::apic_esr, 0);
 
       // trigger STARTUP IPI for 0800:0000
-      apic_write(apic, APIC_ICR0, apic_read(apic, APIC_ICR0) & 0xfff0f800 | 0x000608);
+      cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x0c608);
 
       // wait 200 usec
       cpu::spin(bootinfo.early_tsc_frequency / 5000 + 1);
-
-      // wait for delivery
-      while (apic_read(apic, APIC_ICR0) & (1 << 12) != 0)
-        __relax();
     }
   }
-
-  std::volatile_store(cast<u64 mut *>(code_base + 0x20), 1);
-}
-
-pub fn rendezvous(int cpu) -> void
-{
-  std::atomic_sub(&cpu_rendezvous, 1);
-
-  while (std::volatile_load(&cpu_rendezvous) != 0)
-    __relax();
 }

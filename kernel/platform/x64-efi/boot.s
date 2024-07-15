@@ -68,6 +68,7 @@ enter_kernel:
             mov [rsp - 16], word ptr 39   # descriptor size
             mov [rsp - 14], rax           # descriptor offset
             lgdt [rsp - 16]
+
             push 0x8
             lea rax, [rip + .llmode]
             push rax

@@ -259,7 +259,7 @@ pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel c
   client.channel = &move channel;
   client.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
 
-  app::loop::current.begin_wait(client.channel, &client.handler);
+  app::loop::current.begin_wait_fd(client.channel.fd, &client.handler);
 }
 
 pub fn create_sprite(i32 width, i32 height, i32 stride, u8 *data, winton::format format) -> sprite
@@ -712,7 +712,7 @@ fn acknowledge(client mut *client, u32 serial) -> result
 {
   var compositor = client.compositor;
 
-  for (var mut &(id, surface) : client.surfaces)
+  for (var mut &[id, surface] : client.surfaces)
   {
     if (surface.configure_serial != serial)
       continue;
@@ -1385,7 +1385,7 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
 
   if (pointer.pressed_count == 0)
   {
-    var (node, xy) = compositor.scene.pick(pointer.position);
+    var [node, xy] = compositor.scene.pick(pointer.position);
 
     if (pointer.focus != node)
     {
@@ -1672,7 +1672,7 @@ pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> r
 {
   for (var mut &client : compositor.clients)
   {
-    for (var mut &(id, surface) : client.surfaces)
+    for (var mut &[id, surface] : client.surfaces)
     {
       if (surface_id == surface.uuid)
       {

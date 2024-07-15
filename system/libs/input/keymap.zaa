@@ -60,7 +60,7 @@ pub fn load_keys(keymap mut &keymap, std::string_view path) -> i32
     if (!keys.is_map)
       return -cast<i32>(errc::keys_format_invalid);
 
-    for (var &(k, v) : keys.as_map)
+    for (var &[k, v] : keys.as_map)
     {
       if (!k.is_integer)
         return -cast<i32>(errc::keys_format_invalid);
@@ -121,7 +121,7 @@ pub fn load_syms(keymap mut &keymap, std::string_view path) -> i32
     if (!syms.is_map)
       return -cast<i32>(errc::syms_format_invalid);
 
-    for (var &(k, v) : syms.as_map)
+    for (var &[k, v] : syms.as_map)
     {
       if (!k.is_integer)
         return -cast<i32>(errc::syms_format_invalid);

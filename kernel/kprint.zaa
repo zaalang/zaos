@@ -7,7 +7,7 @@ import std.string;
 import std.atomic;
 import std.fmt;
 import sys;
-import platform;
+import platform : PHYSICAL_BASE;
 
 const font = [
     // 32 0x20 ' '
@@ -1778,7 +1778,7 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
         for (var j = 0; j < 16; ++j)
         {
           var src = font[cast<usize>(buffer[k] - 32) * 16 + j];
-          var dst = cast<u32 mut *>(platform::PHYSICAL_BASE + fb.address + (cy + j) * fb.pitch + cx*4);
+          var dst = cast<u32 mut *>(PHYSICAL_BASE + fb.address + (cy + j) * fb.pitch + cx*4);
 
           for (var i = 7; i >= 0; --i)
           {

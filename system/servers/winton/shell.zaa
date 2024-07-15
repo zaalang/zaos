@@ -44,7 +44,7 @@ pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) ->
   shell.channel = &move channel;
   shell.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
 
-  app::loop::current.begin_wait(shell.channel, &shell.handler);
+  app::loop::current.begin_wait_fd(shell.channel.fd, &shell.handler);
 }
 
 fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void

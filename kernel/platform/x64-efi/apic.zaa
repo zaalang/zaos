@@ -13,22 +13,14 @@ pub fn set_timer_deadline(u64 ticks) -> void
 
 pub fn unicast_ipi_interrupt(u8 apicid)
 {
-  var command = cpu::rdmsr(cpu::msr_index::apic_intr_command);
-
-  command = command & 0xfff32000 | cast<u64>(apicid) << 32 | 0x40fd;
-
   cpu::sfence();
-  cpu::wrmsr(cpu::msr_index::apic_intr_command, command);
+  cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x040fd);
 }
 
 pub fn broadcast_ipi_interrupt()
 {
-  var command = cpu::rdmsr(cpu::msr_index::apic_intr_command);
-
-  command = command & 0xfff32000 | 0xc40fd;
-
   cpu::sfence();
-  cpu::wrmsr(cpu::msr_index::apic_intr_command, command);
+  cpu::wrmsr(cpu::msr_index::apic_isr, 0xc40fd);
 }
 
 pub extern fn allocate_io_vectors(usize count) -> (u8, u8);

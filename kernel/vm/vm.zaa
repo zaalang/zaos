@@ -292,7 +292,7 @@ pub fn create_physical_region(address_space mut &space, virtrange range, std::ve
     if (!region.is_foreign)
       ref_physical_pages(pages);
 
-    vm::map_physical_pages(addr, pages, prot);
+    map_physical_pages(addr, pages, prot);
 
     addr += pages.size;
   }

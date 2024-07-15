@@ -97,6 +97,8 @@ modules/sysfs/sysfs.zaa\
 modules/sysfs/proc.zaa\
 modules/video/video.zaa\
 modules/console/console.zaa\
+modules/cfg/cfg.zaa\
+modules/cfg/acpi.zaa\
 syscalls/syscalls.zaa\
 syscalls/thread.zaa\
 syscalls/process.zaa\

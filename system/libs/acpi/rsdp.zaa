@@ -1,0 +1,137 @@
+//
+// acpi rsdp
+//
+
+import acpi;
+import std.memory;
+
+const ACPI_RSDP_SIGNATURE = "RSD PTR ";
+const ACPI_RSDT_SIGNATURE = "RSDT";
+const ACPI_XSDT_SIGNATURE = "XSDT";
+
+#[packed]
+pub struct rsdp
+{
+  pub u8[8] signature;
+  pub u8 checksum;
+  pub u8[6] oem_id;
+  pub u8 revision;
+  pub u32 rsdt_address;
+  pub u32 length;
+  pub u64 xsdt_address;
+  pub u8 extended_checksum;
+  pub u8[3] reserved;
+}
+
+#[packed]
+pub struct sdt
+{
+  pub u8[4] signature;
+  pub u32 length;
+  pub u8 revision;
+  pub u8 checksum;
+  pub u8[6] oem_id;
+  pub u8[8] oem_table_id;
+  pub u32 oem_revision;
+  pub u8[4] creator_id;
+  pub u32 creator_revision;
+}
+
+fn host_address<T>(uintptr physical_base, var physaddr) -> T *
+{
+  return cast<T*>(physical_base + cast<uintptr>(physaddr));
+}
+
+pub fn validate_rsdp(uintptr acpi_root) -> acpi::result
+{
+  var rsdp = cast<rsdp*>(acpi_root);
+
+  if (!rsdp)
+    return bad_rsdp_root;
+
+  if (std::memcmp(rsdp, ACPI_RSDP_SIGNATURE.data, ACPI_RSDP_SIGNATURE.len) != 0)
+    return invalid_signature;
+
+  if (rsdp.length != sizeof<rsdp>)
+    return invalid_checksum;
+
+  var checksum = u8(0);
+  for (var ch = cast<u8*>(rsdp); ch != cast<u8*>(rsdp) + sizeof<rsdp>; ++ch)
+    checksum = __add_with_carry(checksum, *ch).0;
+
+  if (checksum != 0)
+    return invalid_checksum;
+
+  var xsdt = cast<sdt*>(cast<uintptr>(rsdp.xsdt_address));
+
+  if (!xsdt)
+    return bad_xsdt_address;
+
+  if (std::memcmp(xsdt, ACPI_XSDT_SIGNATURE.data, ACPI_XSDT_SIGNATURE.len) != 0)
+    return invalid_signature;
+
+  for (var ch = cast<u8*>(xsdt); ch != cast<u8*>(xsdt) + cast<usize>(xsdt.length); ++ch)
+    checksum = __add_with_carry(checksum, *ch).0;
+
+  if (checksum != 0)
+    return invalid_checksum;
+
+  return ok;
+}
+
+pub struct tables
+{
+  sdt *xsdt;
+  uintptr physical_base;
+
+  pub tables(uintptr physical_base, sdt *xsdt)
+    : physical_base(physical_base), xsdt(xsdt)
+  {
+  }
+
+  pub tables(uintptr physical_base, uintptr acpi_root)
+    : physical_base(physical_base)
+  {
+    var rsdp = host_address<rsdp>(physical_base, acpi_root);
+    this.xsdt = host_address<sdt>(physical_base, rsdp.xsdt_address);
+  }
+
+  pub fn len(this &) -> usize
+  {
+    return cast<usize>(this.xsdt.length - sizeof<sdt>) / sizeof<uintptr>;
+  }
+
+  pub fn begin(this &) -> usize
+  {
+    return 0;
+  }
+
+  pub fn end(this &) -> usize
+  {
+    return this.len;
+  }
+
+  pub fn [](this &, usize index) -> sdt *
+  {
+    return host_address<sdt>(this.physical_base, *(cast<uintptr*>(this.xsdt + 1) + index));
+  }
+
+  pub tables(tables&) = default;
+  pub ~tables() = default;
+}
+
+pub fn find<T>(tables &tables, var signature) -> T *
+{
+  for (var table : tables)
+  {
+    if (std::memcmp(table, signature.data, signature.len) == 0)
+      return cast<T*>(table);
+  }
+
+  return null;
+}
+
+pub fn find_table<T>(uintptr physical_base, uintptr acpi_root, var signature) -> T *
+{
+  return tables(physical_base, acpi_root).find<T>(signature);
+}

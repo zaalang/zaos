@@ -194,19 +194,6 @@ pub struct loop
     return 0;
   }
 
-  pub fn begin_wait(this mut &loop, zidl::channel &channel, wait_t mut *handler) -> i32
-  {
-    var evt = os::pollevt();
-    evt.id = channel.fd;
-    evt.type = os::POLLFD;
-    evt.mask = os::POLLIN;
-
-    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
-      return rc;
-
-    return 0;
-  }
-
   pub fn cancel_wait(this mut &loop, wait_t mut *handler) -> i32
   {
     var evt = os::pollevt();
@@ -373,7 +360,7 @@ pub fn run(loop mut &loop) -> i32
 
 pub fn connect_to_service(String &uri) throws -> zidl::channel
 {
-  var (server_end, client_end) = zidl::channel::create();
+  var [server_end, client_end] = zidl::channel::create();
 
   if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(uri), &move server_end); !result)
     throw std::system_error(std::errc::broken_pipe);

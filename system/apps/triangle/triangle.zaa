@@ -43,7 +43,7 @@ struct application
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
     this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
 
-    app::loop::current.begin_wait(this.endpoint, &this.handler);
+    app::loop::current.begin_wait_fd(this.endpoint.fd, &this.handler);
   }
 
   fn create_window(this mut &, u32 id) -> void
@@ -54,7 +54,7 @@ struct application
 
   fn create_buffer(this mut &, u32 id, i32 width, i32 height, zidl::zaos_winton::format format) throws -> buffer
   {
-    var (client_end, server_end) = zidl::buffer::create(cast<usize>(width * height * 4));
+    var [client_end, server_end] = zidl::buffer::create(cast<usize>(width * height * 4));
 
     zidl::send<zidl::zaos_winton::compositor::create_buffer_request>(this.endpoint, id, &move server_end, 0, width, height, 4*width, format);
 

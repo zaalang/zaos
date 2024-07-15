@@ -21,6 +21,9 @@ image:
         - cp:
             src: build/grubx64.efi
             dest: /EFI/Boot/bootx64.efi
+        - cp:
+            src: build/toolchain/acpidump/acpidump.efi
+            dest: /EFI/Boot/acpidump.efi
 
     - name: root
       size: 64Mb

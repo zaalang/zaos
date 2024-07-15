@@ -9,7 +9,7 @@ import std.sys.clock;
 import cpu;
 import vdso;
 import scheduler : run_queue;
-import platform : MAX_CPU_COUNT, PHYSICAL_BASE;
+import platform : physaddr_t, MAX_CPU_COUNT;
 
 struct system
 {
@@ -20,7 +20,7 @@ struct system
 
   u64 clock_base;
 
-  platform::physaddr_t acpi_root;
+  physaddr_t acpi_root;
 
   frame_buffer boot_frame_buffer;
 
@@ -62,9 +62,14 @@ pub fn clock_base() -> u64
   return std::atomic_load(&sys.clock_base);
 }
 
-pub fn acpi_root() -> void *
+pub fn acpi_root() -> physaddr_t
 {
-  return cast<void*>(sys.acpi_root + PHYSICAL_BASE);
+  return sys.acpi_root;
+}
+
+pub fn apic_id(int cpu) -> u8
+{
+  return sys.apic_ids[cast(cpu)];
 }
 
 pub struct frame_buffer
@@ -73,7 +78,7 @@ pub struct frame_buffer
   pub usize height;
   pub usize depth;
   pub usize pitch;
-  pub platform::physaddr_t address;
+  pub physaddr_t address;
 
   pub frame_buffer() = default;
   pub frame_buffer(frame_buffer&) = default;

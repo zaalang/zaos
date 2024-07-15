@@ -120,7 +120,7 @@ pub struct process
   {
     var guard = std::lock_guard(&mut procman.lock);
 
-    for (var mut &(id, process) : procman.processes)
+    for (var mut &[id, process] : procman.processes)
     {
       callback(process);
     }

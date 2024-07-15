@@ -1,0 +1,195 @@
+//
+// acpi dump
+//
+
+import std.stdio;
+import efi : EFI_HANDLE, EFI_SYSTEM_TABLE;
+import acpi.madt;
+import acpi.mcfg;
+import acpi.fadt;
+import acpi.parser;
+
+struct cfg
+{
+  acpi::namespace ns;
+
+  fn read_system_memory(uintptr address, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn read_system_io(u16 port, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn read_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn write_system_memory(uintptr address, usize width, u64 value) -> void
+  {
+  }
+
+  fn write_system_io(u16 port, usize width, u64 value) -> void
+  {
+  }
+
+  fn write_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
+  {
+  }
+
+  cfg() = default;
+  ~cfg() = default;
+}
+
+extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
+{
+  std::print("acpi dump");
+  std::print("---------");
+
+  var acpi_root = 0;
+
+  for (var i = 0; i < SystemTable.NumberOfTableEntries; ++i)
+  {
+    var entry = SystemTable.ConfigurationTable + i;
+
+    if (entry.VendorGuid != efi::ACPI_20_TABLE_GUID)
+      continue;
+
+    acpi_root = entry.VendorTable;
+  }
+
+  if (!acpi::validate_rsdp(acpi_root))
+    std::panic("invalid rdsp table");
+
+  var madt = acpi::find_madt(0, acpi_root);
+
+  if (!acpi::validate_madt(madt))
+    std::panic("invalid madt table");
+
+  std::printf("acpi root address: {:#08x}\n", acpi_root);
+  std::printf("\n");
+
+  std::printf("local apic address: {:#08x}\n", madt.local_apic_address);
+
+  for (var apic : madt.entries)
+  {
+    switch (apic.type)
+    {
+      case local_apic:
+
+        var local_apic = cast<acpi::local_apic*>(apic);
+
+        std::printf("  local apic: id {}, flags {}\n", local_apic.apic_id, local_apic.flags);
+
+      case io_apic:
+
+        var io_apic = cast<acpi::io_apic*>(apic);
+
+        std::printf("  io apic: addr {:#08x}, irq {}\n", io_apic.apic_address, io_apic.interrupt_base);
+    }
+  }
+
+  std::printf("\n");
+
+  var mcfg = acpi::find_mcfg(0, acpi_root);
+
+  if (!acpi::validate_mcfg(mcfg))
+    std::panic("invalid mcfg table");
+
+  std::printf("pci bus enumeration\n");
+
+  for (var config : mcfg.entries)
+  {
+    for (var bus = config.bus_start; bus != config.bus_end; ++bus)
+    {
+      struct pci_header
+      {
+        u16 vendor_id;
+        u16 device_id;
+        u16 command;
+        u16 status;
+        u8 revision_id;
+        u8[3] class_code;
+        u8 cache_line_size;
+        u8 primary_latency_timer;
+        u8 header_type;
+        u8 bist;
+      }
+
+      var busentry = cast<pci_header*>(cast<uintptr>(config.base_address) + cast<uintptr>(bus) << 20);
+
+      if (busentry.device_id == 0 || busentry.device_id == 0xffff)
+        continue;
+
+      for (var dev = 0; dev < 32; ++dev)
+      {
+        var deventry = cast<pci_header*>(cast<uintptr>(busentry) + cast<uintptr>(dev) << 15);
+
+        if (deventry.device_id == 0 || deventry.device_id == 0xffff)
+          continue;
+
+        for (var func = 0; func < 8; ++func)
+        {
+          var entry = cast<pci_header*>(cast<uintptr>(deventry) + cast<uintptr>(func) << 12);
+
+          if (entry.device_id == 0 || entry.device_id == 0xffff)
+            continue;
+
+          std::printf("  {}:{}.{} {:04x} {:04x} {}\n", bus, dev, func, entry.vendor_id, entry.device_id, entry.class_code);
+        }
+      }
+    }
+  }
+
+  std::printf("\n");
+
+  var fadt = acpi::find_fadt(0, acpi_root);
+
+  if (!acpi::validate_fadt(fadt))
+    std::panic("invalid fadt table");
+
+  var dsdt = cast<acpi::sdt*>(fadt.dsdt_address);
+
+  std::printf("dsdt address: {:#08x}\n", dsdt);
+
+  for (var table : acpi::tables(0, acpi_root))
+  {
+    if (table.signature == std::span("SSDT"))
+      std::printf("ssdt address: {:#08x}\n", table);
+  }
+
+  try
+  {
+    var fout = std::file::create("\\EFI\\Boot\\dsdt");
+
+    fout.write(cast<u8*>(dsdt), cast<usize>(dsdt.length));
+  }
+  catch (std::error e)
+  {
+    std::print("dsdt write error - ", e);
+  }
+
+  try
+  {
+    var cfg = cfg();
+
+    acpi::initialise(&mut cfg.ns, &impl cfg);
+
+    var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
+
+//    cfg.ns.dump();
+
+    std::print(ret);
+  }
+  catch (std::error e)
+  {
+    std::print(e);
+  }
+
+  std::print("ok");
+
+  return 0;
+}

@@ -1,0 +1,77 @@
+//
+// acpi cfg
+//
+
+import std.stdio;
+import acpi.fadt;
+import acpi.parser;
+import sys;
+import platform : PHYSICAL_BASE;
+
+struct cfg
+{
+  acpi::namespace ns;
+
+  fn read_system_memory(uintptr address, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn read_system_io(u16 port, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn read_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
+  {
+    return 0;
+  }
+
+  fn write_system_memory(uintptr address, usize width, u64 value) -> void
+  {
+  }
+
+  fn write_system_io(u16 port, usize width, u64 value) -> void
+  {
+  }
+
+  fn write_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
+  {
+  }
+
+  cfg() = default;
+  ~cfg() = default;
+}
+
+pub fn initialise() -> void
+{
+  std::print("acpi cfg");
+
+  var xsdt = acpi::tables(PHYSICAL_BASE, sys::acpi_root);
+
+  var fadt = acpi::find_fadt(xsdt);
+
+  if (!acpi::validate_fadt(fadt))
+    std::panic("bad_acpi_fadt");
+
+  var dsdt = cast<acpi::sdt*>(PHYSICAL_BASE + fadt.dsdt_address);
+
+  std::printf("dsdt address: {:#08x}\n", dsdt);
+
+//  try
+//  {
+//    var cfg = cfg();
+//
+//    acpi::initialise(&mut cfg.ns, &impl cfg);
+//
+//    var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
+//
+//  //    cfg.ns.dump();
+//
+//    std::print(ret);
+//  }
+//  catch (std::error e)
+//  {
+//    std::print(e);
+//  }
+}

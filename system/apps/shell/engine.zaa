@@ -756,7 +756,7 @@ fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
       case Flags[flags]:
         args.push_back(Arg::Flags(flags.value));
 
-      case Named[var &(name, expr)]:
+      case Named[var &[name, expr]]:
         args.push_back(Arg::Named(name.value, evaluate(ctx, expr)));
 
       case Free[expr]:
