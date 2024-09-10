@@ -22,8 +22,3 @@ pub fn broadcast_ipi_interrupt()
   cpu::sfence();
   cpu::wrmsr(cpu::msr_index::apic_isr, 0xc40fd);
 }
-
-pub extern fn allocate_io_vectors(usize count) -> (u8, u8);
-pub extern fn enable_io_vector(u8 irq) -> void;
-pub extern fn disable_io_vector(u8 irq) -> void;
-pub extern fn io_vector_id(u8 irq) -> u8;

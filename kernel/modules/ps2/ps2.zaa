@@ -9,6 +9,7 @@ import dev;
 import chr;
 import ps2.mouse;
 import ps2.keyboard;
+import ioapic;
 import io;
 import vm;
 import cpu;
@@ -625,8 +626,8 @@ fn initialise(controller mut &controller) -> result
     flush();
   }
 
-  io::install_handler(0x01, cast(extern(ps2_io_handler)), &controller);
-  io::install_handler(0x0c, cast(extern(ps2_io_handler)), &controller);
+  io::install_handler(ioapic::resolve(0x01), cast(extern(ps2_io_handler)), &controller);
+  io::install_handler(ioapic::resolve(0x0c), cast(extern(ps2_io_handler)), &controller);
 
   if (!wait_then_write(PS2_CTRL_PORT, command::write, 500))
     return timed_out;

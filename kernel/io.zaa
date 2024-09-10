@@ -60,11 +60,15 @@ fn intman()
   return &interrupt_manager::instance;
 }
 
+extern fn enable_io_vector(u8 irq) -> void;
+extern fn disable_io_vector(u8 irq) -> void;
+extern fn allocate_io_vectors(usize count) -> (u8, u8);
+
 pub fn allocate_vectors(usize count) -> (u8, u8)
 {
   var guard = std::lock_guard(&mut intman.lock);
 
-  return platform::allocate_io_vectors(count);
+  return allocate_io_vectors(count);
 }
 
 pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mut *handler_argument) -> void
@@ -82,7 +86,7 @@ pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void m
 
   if (!vector.head.next)
   {
-    platform::enable_io_vector(irq);
+    enable_io_vector(irq);
   }
 }
 
@@ -106,7 +110,7 @@ pub fn remove_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mu
 
   if (!vector.head)
   {
-    platform::disable_io_vector(irq);
+    disable_io_vector(irq);
   }
 }
 

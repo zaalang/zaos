@@ -12,6 +12,7 @@ import vm;
 import vfs;
 import scheduler;
 import io;
+import ioapic;
 import pci;
 import nvme;
 import ahci;
@@ -88,6 +89,7 @@ fn kernel_main(void*) -> void
   blk::initialise();
   vfs::initialise();
   ioring::initialise();
+  ioapic::initialise();
   pci::initialise();
   nvme::initialise();
   ahci::initialise();

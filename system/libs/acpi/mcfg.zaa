@@ -55,7 +55,7 @@ pub struct mcfg : pub acpi::sdt
 pub struct config
 {
   pub u64 base_address;
-  pub u16 seg_group;
+  pub u16 segment_group;
   pub u8 bus_start;
   pub u8 bus_end;
   pub u8[4] reserved;

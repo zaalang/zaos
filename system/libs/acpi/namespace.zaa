@@ -9,17 +9,17 @@ import std.vector;
 import std.flat_hash_map;
 import std.string : String;
 import std.scan;
-import acpi.runner;
+import acpi.parser;
 
 pub vtable interface
 {
-  fn read_system_memory(uintptr address, usize width) -> u64;
-  fn read_system_io(u16 port, usize width) -> u64;
-  fn read_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64;
+  fn read_system_memory(opregion *opregion, uintptr address, usize width) -> u64;
+  fn read_system_io(opregion *opregion, u16 port, usize width) -> u64;
+  fn read_pci_config(opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64;
 
-  fn write_system_memory(uintptr address, usize width, u64 value) -> void;
-  fn write_system_io(u16 port, usize width, u64 value) -> void;
-  fn write_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void;
+  fn write_system_memory(opregion *opregion, uintptr address, usize width, u64 value) -> void;
+  fn write_system_io(opregion *opregion, u16 port, usize width, u64 value) -> void;
+  fn write_pci_config(opregion *opregion, u16 sg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void;
 }
 
 pub struct package
@@ -30,6 +30,12 @@ pub struct package
   pub package(usize size)
   {
     this.size = size;
+  }
+
+  pub package(usize size, std::vector<value> &&elements)
+  {
+    this.size = size;
+    this.elements.append(&&elements);
   }
 
   pub package() = default;
@@ -43,10 +49,21 @@ pub struct buffer
   pub usize size;
   pub std::vector<u8> bytes;
 
+  pub buffer(usize size)
+  {
+    this.size = size;
+  }
+
   pub buffer(usize size, std::span<u8> bytes)
   {
     this.size = size;
     this.bytes.append(bytes);
+  }
+
+  pub buffer(usize size, std::vector<u8> &&bytes)
+  {
+    this.size = size;
+    this.bytes.append(&&bytes);
   }
 
   pub fn ==(buffer &, buffer &) -> bool = default;
@@ -56,6 +73,29 @@ pub struct buffer
   pub buffer(buffer &&) = default;
   pub fn =(buffer mut &, buffer &&) -> buffer mut & = default;
   pub ~buffer() = default;
+}
+
+pub struct event
+{
+  pub event() = default;
+  pub event(event &&) = default;
+  pub fn =(event mut &, event &&) -> event mut & = default;
+  pub ~event() = default;
+}
+
+pub struct mutex
+{
+  pub u8 flags;
+
+  pub mutex(u8 flags)
+    : flags(flags)
+  {
+  }
+
+  pub mutex() = default;
+  pub mutex(mutex &&) = default;
+  pub fn =(mutex mut &, mutex &&) -> mutex mut & = default;
+  pub ~mutex() = default;
 }
 
 pub struct opregion
@@ -136,11 +176,6 @@ pub struct field
   {
   }
 
-  pub field(value *source, u8 flags, u64 offset, u64 length)
-    : flags(flags), offset(offset), length(length), source(reference::value(source))
-  {
-  }
-
   pub field() = default;
   pub field(field &&) = default;
   pub fn =(field mut &, field &&) -> field mut & = default;
@@ -164,11 +199,42 @@ pub struct method
   pub ~method() = default;
 }
 
+pub struct callback
+{
+  pub u8 flags;
+  pub fn (*callee)(namespace mut &, acpi::value mut &, std::span<acpi::value> &) -> acpi::result;
+
+  pub callback(u8 flags, fn (*callee)(namespace mut &, acpi::value mut &, std::span<acpi::value> &) -> acpi::result)
+    : flags(flags), callee(callee)
+  {
+  }
+
+  pub callback() = default;
+  pub callback(callback &&) = default;
+  pub fn =(callback mut &, callback &&) -> callback mut & = default;
+  pub ~callback() = default;
+}
+
 pub union reference
 {
   pub local(usize),
   pub value(value *),
   pub index((value *, std::vector<usize, N:3>)),
+
+  pub reference(usize idx)
+    : local(idx)
+  {
+  }
+
+  pub reference(value *value)
+    : value(value)
+  {
+  }
+
+  pub reference(value *value, std::vector<usize, N:3> &idx)
+    : index(value, idx)
+  {
+  }
 
   pub reference() = default;
   pub reference(reference &&) = default;
@@ -183,13 +249,15 @@ pub union value
   pub string(std::string),
   pub package(package),
   pub buffer(buffer),
+  pub event(event),
+  pub mutex(mutex),
   pub opregion(opregion),
   pub bankedregion(bankedregion),
   pub indexedregion(indexedregion),
   pub field(field),
   pub method(method),
+  pub callback(callback),
   pub reference(reference),
-  pub pointer(reference),
 
   pub fn bool(this &) -> bool
   {
@@ -221,6 +289,16 @@ pub union value
     return this.kind == typeof(this.kind)::buffer;
   }
 
+  pub fn is_event(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::event;
+  }
+
+  pub fn is_mutex(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::mutex;
+  }
+
   pub fn is_opregion(this &) -> bool
   {
     return this.kind == typeof(this.kind)::opregion;
@@ -236,14 +314,14 @@ pub union value
     return this.kind == typeof(this.kind)::method;
   }
 
+  pub fn is_callback(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::callback;
+  }
+
   pub fn is_reference(this &) -> bool
   {
     return this.kind == typeof(this.kind)::reference;
-  }
-
-  pub fn is_pointer(this &) -> bool
-  {
-    return this.kind == typeof(this.kind)::pointer;
   }
 
   pub value<T>(T integer)
@@ -262,8 +340,13 @@ pub union value
   {
   }
 
-  pub value(reference reference)
-    : reference(reference)
+  pub value(std::vector<u8> &&buffer)
+    : buffer(buffer.len, &&buffer)
+  {
+  }
+
+  pub value(std::vector<value> &&package)
+    : package(package.len, &&package)
   {
   }
 
@@ -342,13 +425,15 @@ pub struct node
   pub std::flat_hash_map<std::string, node*> children;
   pub node *parent;
 
-  node(type type, node *parent)
+  node *next;
+  node *first;
+
+  pub node(type type, node *parent)
     : type(type), parent(parent)
   {
   }
 
-  pub node(node&&) = default;
-  pub fn =(node mut &, node &&) -> node mut & = default;
+  pub node() = default;
   pub ~node() = default;
 }
 
@@ -364,27 +449,99 @@ pub struct namespace
     return this.root;
   }
 
+  pub struct iterator
+  {
+    pub iterator() = default;
+    pub iterator(iterator&) = default;
+    pub fn =(iterator mut &this, iterator &that) -> iterator mut & = default;
+    pub ~iterator() = default;
+
+    pub fn *(iterator &this) -> node *
+    {
+      return this.node;
+    }
+
+    pub fn descend(iterator mut &this) -> void
+    {
+      if (this.node.first)
+        this.descend = true;
+    }
+
+    pub fn ++(iterator mut &this) -> iterator mut &
+    {
+      if (this.descend)
+      {
+        this.node = this.node.first;
+        this.descend = false;
+
+        return &this;
+      }
+
+      while (this.node)
+      {
+        if (this.node.next)
+        {
+          this.node = this.node.next;
+
+          return &this;
+        }
+
+        this.node = this.node.parent;
+      }
+
+      return &this;
+    }
+
+    pub fn ==(iterator lhs, iterator rhs) -> bool
+    {
+      return lhs.node == rhs.node;
+    }
+
+    iterator(node *node)
+      : node(node)
+    {
+    }
+
+    node *node;
+    bool descend;
+  }
+
+  pub fn begin(this &)
+  {
+    return iterator(this.root);
+  }
+
+  pub fn end(this &)
+  {
+    return iterator();
+  }
+
+  pub fn [](this &&, iterator iter)
+  {
+    return &*iter.node;
+  }
+
   pub namespace() = default;
-  pub namespace(namespace&&) = default;
+  pub namespace(namespace &&) = default;
   pub fn =(namespace mut &, namespace &&) -> namespace mut & = default;
   pub ~namespace() = default;
 }
 
 pub fn initialise(namespace mut &ns, interface &interface) -> void
 {
-  ns.root = &ns.nodes.push_back(node(node::type::scope, null));
+  ns.root = &ns.nodes.push_back(node::type::scope, null);
 
-  ns.add_value(ns.root, "_REV", value(2));
-  ns.add_value(ns.root, "_OS_", value("Microsoft Windows NT"));
+  ns.define(ns.root, "_REV", value(2));
+  ns.define(ns.root, "_OS_", value("Microsoft Windows NT"));
 
-  ns.add_scope(ns.root, node::type::scope, "_GPE");
-  ns.add_scope(ns.root, node::type::scope, "_PR_");
-  ns.add_scope(ns.root, node::type::scope, "_SB_");
-  ns.add_scope(ns.root, node::type::scope, "_SI_");
-  ns.add_scope(ns.root, node::type::scope, "_TZ_");
+  ns.define(ns.root, node::type::scope, "_GPE");
+  ns.define(ns.root, node::type::scope, "_PR_");
+  ns.define(ns.root, node::type::scope, "_SB_");
+  ns.define(ns.root, node::type::scope, "_SI_");
+  ns.define(ns.root, node::type::scope, "_TZ_");
 
-  //ns.add_value(ns.root, "_GL_", value::mutex());
-  //ns.add_value(ns.root, "_OSI", value::callback());
+  ns.define(ns.root, "_GL_", value::mutex());
+  ns.define(ns.root, "_OSI", value::callback(1, |ns, dst, args| osi(&mut ns, &mut dst, args[0])));
 
   ns.interface = &interface;
 }
@@ -399,12 +556,19 @@ pub fn find(node &node, String &name) -> std::optional<node *>
   return node.children.get(name);
 }
 
-pub fn add_value(namespace mut &ns, value &&value) -> value *
+pub fn alloc(namespace mut &ns, value &&value) -> value *
 {
   return &ns.values.push_back(&&value);
 }
 
-pub fn add_value(namespace mut &ns, node *node, String name, value &&value) -> value *
+pub fn define(namespace mut &ns, node *node, String &&name, value *value) -> value *
+{
+  var node = cast<node mut *>(node);
+
+  return node.values.emplace(&&name, value);
+}
+
+pub fn define(namespace mut &ns, node *node, String &&name, value &&value) -> value *
 {
   var node = cast<node mut *>(node);
   var value = &ns.values.push_back(&&value);
@@ -412,17 +576,12 @@ pub fn add_value(namespace mut &ns, node *node, String name, value &&value) -> v
   return node.values.emplace(&&name, value);
 }
 
-pub fn add_alias(namespace mut &ns, node *node, String name, value *value) -> value *
+pub fn define(namespace mut &ns, node *node, node::type type, String &&name) -> node *
 {
   var node = cast<node mut *>(node);
+  var scope = &ns.nodes.push_back(type, node);
 
-  return node.values.emplace(&&name, value);
-}
-
-pub fn add_scope(namespace mut &ns, node *node, node::type type, String name) -> node *
-{
-  var node = cast<node mut *>(node);
-  var scope = &ns.nodes.push_back(node(type, node));
+  scope.next = std::exchange(&mut node.first, scope);
 
   return node.children.emplace(&&name, scope);
 }
@@ -517,6 +676,63 @@ pub fn to_buffer(namespace mut &ns, value mut &value) -> bool
   return true;
 }
 
+fn osi(namespace mut &ns, value mut &dst, value &arg) -> acpi::result
+{
+  var arg = arg;
+
+  if (!ns.to_string(&mut arg))
+    return bad_value;
+
+  switch (arg.string)
+  {
+    case "Windows 2000":
+    case "Windows 2001":
+    case "Windows 2001 SP1":
+    case "Windows 2001 SP2":
+    case "Windows 2001.1":
+    case "Windows 2001.1 SP1":
+    case "Windows 2006":
+    case "Windows 2006 SP1":
+    case "Windows 2006 SP2":
+    case "Windows 2006.1":
+    case "Windows 2009":
+    case "Windows 2012":
+    case "Windows 2013":
+    case "Windows 2015":
+    case "Windows 2016":
+    case "Windows 2017":
+    case "Windows 2017.2":
+    case "Windows 2018":
+    case "Windows 2018.2":
+    case "Windows 2019":
+    case "Windows 2020":
+    case "Windows 2021":
+    case "Windows 2022":
+      dst = value(true);
+
+    case "Darwin":
+      dst = value(true);
+
+    case "Linux":
+      dst = value(true);
+
+    case "Module Device":
+    case "Processor Device":
+    case "3.0 Thermal Model":
+    case "3.0 _SCP Extensions":
+    case "Processor Aggregator Device":
+      dst = value(true);
+
+    case "Extended Address Space Descriptor":
+      dst = value(true);
+
+    else:
+      dst = value(false);
+  }
+
+  return ok;
+}
+
 fn read(namespace mut &ns, std::span<u8> buffer, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
 {
   var data = u64(0);
@@ -579,11 +795,11 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
     {
       case opregion::space::system_memory:
 
-        data = ns.interface.read_system_memory(cast(opregion.base + byte + i), width);
+        data = ns.interface.read_system_memory(&opregion, cast(opregion.base + byte + i), width);
 
       case opregion::space::system_io:
 
-        data = ns.interface.read_system_io(cast(opregion.base + byte + i), width);
+        data = ns.interface.read_system_io(&opregion, cast(opregion.base + byte + i), width);
 
       case opregion::space::pci_config:
 
@@ -613,7 +829,7 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
         var dev = (adr.integer & 0x00ff0000) >> 16;
         var func = (adr.integer & 0x000000ff) >> 0;
 
-        data = ns.interface.read_pci_config(cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
+        data = ns.interface.read_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
 
       else:
         return invalid_region_space;
@@ -640,9 +856,17 @@ fn read(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, valu
 
     case opregion[opregion]:
       return ns.read(opregion, offset, length, flags, &mut value);
+
+    case indexedregion[indexedregion]:
+      value = value(0);
+      return ok;
+
+    case bankedregion[bankedregion]:
+      value = value(0);
+      return ok;
   }
 
-  return ok;
+  std::panic("unhandled field source");
 }
 
 fn read(namespace mut &ns, field &field, value mut &value) -> acpi::result
@@ -749,7 +973,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
         {
           case 0x00:
             if (len < cast(width * 8))
-              data = ns.interface.read_system_memory(cast(opregion.base + byte + i), width);
+              data = ns.interface.read_system_memory(&opregion, cast(opregion.base + byte + i), width);
 
           case 0x20:
             data = 0xffff_ffff_ffff_ffff;
@@ -757,7 +981,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 
         data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
 
-        ns.interface.write_system_memory(cast(opregion.base + byte + i), width, data);
+        ns.interface.write_system_memory(&opregion, cast(opregion.base + byte + i), width, data);
 
       case opregion::space::system_io:
 
@@ -765,7 +989,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
         {
           case 0x00:
             if (len < cast(width * 8))
-              data = ns.interface.read_system_io(cast(opregion.base + byte + i), width);
+              data = ns.interface.read_system_io(&opregion, cast(opregion.base + byte + i), width);
 
           case 0x20:
             data = 0xffff_ffff_ffff_ffff;
@@ -773,7 +997,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 
         data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
 
-        ns.interface.write_system_io(cast(opregion.base + byte + i), width, data);
+        ns.interface.write_system_io(&opregion, cast(opregion.base + byte + i), width, data);
 
       case opregion::space::pci_config:
 
@@ -807,7 +1031,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
         {
           case 0x00:
             if (len < cast(width * 8))
-              data = ns.interface.read_pci_config(cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
+              data = ns.interface.read_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
 
           case 0x20:
             data = 0xffff_ffff_ffff_ffff;
@@ -815,7 +1039,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 
         data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
 
-        ns.interface.write_pci_config(cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width, data);
+        ns.interface.write_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width, data);
 
       else:
         return invalid_region_space;
@@ -844,7 +1068,7 @@ fn write(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, val
       return ns.write(&mut opregion, offset, length, flags, value);
   }
 
-  return ok;
+  std::panic("unhandled field source");
 }
 
 fn write(namespace mut &ns, field mut &field, value &value) -> acpi::result
@@ -889,6 +1113,8 @@ pub fn load(namespace mut &ns, value *obj, value mut &value) -> acpi::result
     case string:
     case package:
     case buffer:
+    case opregion:
+    case reference:
     case method:
       value = *obj;
 
@@ -1104,7 +1330,7 @@ pub fn lookup(namespace mut &ns, node *scope, String &name) -> std::optional<acp
   return None;
 }
 
-pub fn invoke(namespace mut &ns, node *scope, String &name, value mut &dst, std::span<value> &args = std::span<value>()) -> acpi::result
+pub fn invoke<Args>(namespace mut &ns, node *scope, String &name, value mut &dst, Args && ...args) -> acpi::result
 {
   var obj = ns.lookup(scope, name);
 
@@ -1114,7 +1340,7 @@ pub fn invoke(namespace mut &ns, node *scope, String &name, value mut &dst, std:
   switch (**obj)
   {
     case method[method]:
-      if (var rc = acpi::execute(&mut ns, method, &mut dst, args); !rc)
+      if (var rc = acpi::execute(&mut ns, method, &mut dst, &&args...); !rc)
         return rc;
 
     else:

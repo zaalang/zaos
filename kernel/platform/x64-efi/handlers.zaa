@@ -181,5 +181,5 @@ extern fn io_dispatch_handler(interrupt_frame &frame, u8 irq) -> void
 {
   cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
 
-  io_dispatch(irq - 0x20);
+  io_dispatch(irq);
 }

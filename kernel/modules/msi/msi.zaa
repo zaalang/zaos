@@ -35,7 +35,7 @@ pub fn configure(pci::device &device, (u8, u8) &vectors) -> bool
   std::assert(cast<usize>(vectors.1 - vectors.0) <= count(device));
 
   var address = uintptr(0xfee00000);
-  var data = platform::io_vector_id(vectors.0);
+  var data = vectors.0;
 
   var offset = device.read_capability(pci::capabilities::msi);
   var control = device.read_config<u16>(offset + msi_register::control);

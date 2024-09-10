@@ -1,0 +1,112 @@
+//
+// ioapic
+//
+
+import std.stdio;
+import std.atomic;
+import acpi.madt;
+import platform : PHYSICAL_BASE;
+import sys;
+import io;
+
+struct interrupt_controller
+{
+  uintptr ioapic;
+  u32 gsi_base;
+  u32 gsi_count;
+  (u8, u8) vectors;
+
+  fn instance() -> interrupt_controller mut &
+  {
+    static instance = #interrupt_controller();
+
+    return &instance;
+  }
+
+  interrupt_controller() = default;
+  interrupt_controller(#interrupt_controller&) = default;
+  ~interrupt_controller() = default;
+}
+
+fn ic() -> interrupt_controller mut &
+{
+  return &interrupt_controller::instance;
+}
+
+fn ioapic_read(uintptr base, u32 register) -> u32
+{
+  std::volatile_store(cast<u32 mut *>(PHYSICAL_BASE + base), register);
+
+  return std::volatile_load(cast<u32*>(PHYSICAL_BASE + base + 0x10));
+}
+
+fn ioapic_write(uintptr base, u32 register, u32 value) -> void
+{
+  std::volatile_store(cast<u32 mut *>(PHYSICAL_BASE + base), register);
+
+  std::volatile_store(cast<u32 mut *>(PHYSICAL_BASE + base + 0x10), value);
+}
+
+pub fn resolve(u32 gsi) -> u8
+{
+  if (gsi == 0)
+    return 0;
+
+  if (gsi < ic.gsi_base || gsi >= ic.gsi_base + ic.gsi_count)
+    return 0;
+
+  return ic.vectors.0 + cast<u8>(gsi - ic.gsi_base);
+}
+
+pub extern fn enable_io_vector(u8 irq) -> void
+{
+  var idx = cast<u32>(irq - ic.vectors.0);
+
+  var entry = ioapic_read(ic.ioapic, 0x10 + 2*idx);
+
+  ioapic_write(ic.ioapic, 0x10 + 2*idx, entry & ~0x10000);
+}
+
+pub extern fn disable_io_vector(u8 irq) -> void
+{
+  var idx = cast<u32>(irq - ic.vectors.0);
+
+  var entry = ioapic_read(ic.ioapic, 0x10 + 2*idx);
+
+  ioapic_write(ic.ioapic, 0x10 + 2*idx, entry | 0x10000);
+}
+
+pub fn initialise() -> void
+{
+  var madt = acpi::find_madt(PHYSICAL_BASE, sys::acpi_root);
+
+  if (!acpi::validate_madt(madt))
+    std::panic("bad_acpi_madt");
+
+  for (var apic : madt.entries)
+  {
+    switch (apic.type)
+    {
+      case io_apic:
+
+        var io_apic = cast<acpi::io_apic*>(apic);
+
+        ic.ioapic = cast<uintptr>(io_apic.apic_address);
+
+        ic.gsi_base = io_apic.interrupt_base;
+        ic.gsi_count = (ioapic_read(ic.ioapic, 0x1) >> 16) & 0xff + 1;
+    }
+  }
+
+  ic.vectors = io::allocate_vectors(cast<usize>(ic.gsi_count));
+
+  for (var idx = 0; idx < ic.gsi_count; ++idx)
+  {
+    var vector = cast<u32>(ic.vectors.0) + idx;
+
+    ioapic_write(ic.ioapic, 0x10 + 2*idx, vector | 0x10900);
+    ioapic_write(ic.ioapic, 0x10 + 2*idx + 1, 0xff000000);
+  }
+
+  std::print("ioapic: interrupts ", ic.gsi_base, " through ", ic.gsi_base + ic.gsi_count - 1);
+}

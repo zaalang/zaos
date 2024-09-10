@@ -6,46 +6,68 @@ import std.stdio;
 import acpi.fadt;
 import acpi.parser;
 import sys;
+import vm;
 import platform : PHYSICAL_BASE;
 
-struct cfg
+struct namespace
 {
-  acpi::namespace ns;
+  std::optional<acpi::namespace> ns;
 
-  fn read_system_memory(uintptr address, usize width) -> u64
+  fn read_system_memory(acpi::opregion *opregion, uintptr address, usize width) -> u64
   {
+    std::printf("read addr {:x}, {}\n", address, width);
+
     return 0;
   }
 
-  fn read_system_io(u16 port, usize width) -> u64
+  fn read_system_io(acpi::opregion *opregion, u16 port, usize width) -> u64
   {
+    std::printf("read port {}, {}\n", port, width);
+
     return 0;
   }
 
-  fn read_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
+  fn read_pci_config(acpi::opregion *opregion, u16 sg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
   {
+    std::printf("read pci {} {} {} {} {}, {}\n", sg, bus, dev, func, offset, width);
+
     return 0;
   }
 
-  fn write_system_memory(uintptr address, usize width, u64 value) -> void
+  fn write_system_memory(acpi::opregion *opregion, uintptr address, usize width, u64 value) -> void
   {
   }
 
-  fn write_system_io(u16 port, usize width, u64 value) -> void
+  fn write_system_io(acpi::opregion *opregion, u16 port, usize width, u64 value) -> void
   {
   }
 
-  fn write_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
+  fn write_pci_config(acpi::opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
   {
   }
 
-  cfg() = default;
-  ~cfg() = default;
+  fn instance()
+  {
+    static instance = #namespace();
+
+    return &instance;
+  }
+
+  namespace() = default;
+  namespace(#namespace&) = default;
+  ~namespace() = default;
+}
+
+fn cfg()
+{
+  return &namespace::instance;
 }
 
 pub fn initialise() -> void
 {
-  std::print("acpi cfg");
+  var ns = acpi::namespace();
+
+  acpi::initialise(&mut ns, &impl cfg);
 
   var xsdt = acpi::tables(PHYSICAL_BASE, sys::acpi_root);
 
@@ -54,24 +76,28 @@ pub fn initialise() -> void
   if (!acpi::validate_fadt(fadt))
     std::panic("bad_acpi_fadt");
 
-  var dsdt = cast<acpi::sdt*>(PHYSICAL_BASE + fadt.dsdt_address);
+  var dsdt = cast<acpi::sdt*>(vm::physaddr(fadt.dsdt_address).ptr);
 
-  std::printf("dsdt address: {:#08x}\n", dsdt);
+  if (!dsdt)
+    std::panic("bad_acpi_dsdt");
 
-//  try
-//  {
-//    var cfg = cfg();
-//
-//    acpi::initialise(&mut cfg.ns, &impl cfg);
-//
-//    var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
-//
-//  //    cfg.ns.dump();
-//
-//    std::print(ret);
-//  }
-//  catch (std::error e)
-//  {
-//    std::print(e);
-//  }
+  std::printf("acpi dsdt address: {:#08x}\n", dsdt);
+
+  if (var rc = acpi::parse(&mut ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length))); !rc)
+    std::panic("acpi dsdt parse error - ", rc);
+
+  for (var table : acpi::tables(PHYSICAL_BASE, sys::acpi_root))
+  {
+    if (table.signature == std::span("SSDT"))
+    {
+      std::printf("acpi ssdt address: {:#08x}\n", table);
+
+      if (var rc = acpi::parse(&mut ns, std::span(cast<u8*>(table + 1), cast<u8*>(table) + cast<usize>(table.length))); !rc)
+        std::panic("acpi ssdt parse error - ", rc);
+    }
+  }
+
+  ns.dump();
+
+  cfg.ns = &move ns;
 }

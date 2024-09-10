@@ -5,6 +5,7 @@
 import std.stdio;
 import std.atomic;
 import cpu;
+import ioapic;
 import pci;
 import msi;
 import vm;
@@ -469,7 +470,7 @@ fn initialise(controller mut &controller) -> result
   pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
   pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
 
-  var irq = device.read_interrupt_line();
+  var irq = ioapic::resolve(device.read_interrupt_line());
 
   if (msi::count(device) != 0)
   {

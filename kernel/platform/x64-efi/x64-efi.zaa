@@ -6,7 +6,6 @@ import sys;
 import cpu;
 import smp;
 import exit;
-import ioapic;
 import video;
 import memory;
 import handlers;
@@ -184,7 +183,6 @@ extern fn finalise_boot(BootInfo &bootinfo, int cpu) -> void
     __relax();
 
   sys::setup(bootinfo, cpu);
-  ioapic::setup(bootinfo, cpu);
 
   std::atomic_sub(&rendezvous, 1);
 

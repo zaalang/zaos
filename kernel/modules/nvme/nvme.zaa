@@ -8,6 +8,7 @@ import std.vector;
 import std.function;
 import std.byteconv;
 import cpu;
+import ioapic;
 import pci;
 import msix;
 import vm;
@@ -424,7 +425,7 @@ fn initialise(controller mut &controller) -> result
 
   var queue_count = std::min(sys::cpu_count, controller.queues.len);
 
-  var irq = device.read_interrupt_line();
+  var irq = ioapic::resolve(device.read_interrupt_line());
 
   if (msix::count(device) >= queue_count + 1)
   {

@@ -13,30 +13,30 @@ struct cfg
 {
   acpi::namespace ns;
 
-  fn read_system_memory(uintptr address, usize width) -> u64
+  fn read_system_memory(acpi::opregion *opregion, uintptr address, usize width) -> u64
   {
     return 0;
   }
 
-  fn read_system_io(u16 port, usize width) -> u64
+  fn read_system_io(acpi::opregion *opregion, u16 port, usize width) -> u64
   {
     return 0;
   }
 
-  fn read_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
+  fn read_pci_config(acpi::opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
   {
     return 0;
   }
 
-  fn write_system_memory(uintptr address, usize width, u64 value) -> void
+  fn write_system_memory(acpi::opregion *opregion, uintptr address, usize width, u64 value) -> void
   {
   }
 
-  fn write_system_io(u16 port, usize width, u64 value) -> void
+  fn write_system_io(acpi::opregion *opregion, u16 port, usize width, u64 value) -> void
   {
   }
 
-  fn write_pci_config(u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
+  fn write_pci_config(acpi::opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
   {
   }
 
@@ -172,22 +172,15 @@ extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
     std::print("dsdt write error - ", e);
   }
 
-  try
-  {
-    var cfg = cfg();
+  var cfg = cfg();
 
-    acpi::initialise(&mut cfg.ns, &impl cfg);
+  acpi::initialise(&mut cfg.ns, &impl cfg);
 
-    var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
+  var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
 
 //    cfg.ns.dump();
 
-    std::print(ret);
-  }
-  catch (std::error e)
-  {
-    std::print(e);
-  }
+  std::print(ret);
 
   std::print("ok");
 

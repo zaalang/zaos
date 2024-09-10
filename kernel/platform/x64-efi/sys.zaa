@@ -23,11 +23,32 @@ struct thread
   ~thread() = default;
 }
 
+struct system
+{
+  u64[4] vectors;
+
+  fn instance() -> system mut &
+  {
+    static instance = #system();
+
+    return &instance;
+  }
+
+  system() = default;
+  system(#system&) = default;
+  ~system() = default;
+}
+
 fn td() -> thread mut &
 {
   static thread_local td = #thread();
 
   return &td;
+}
+
+fn sys() -> system mut &
+{
+  return &system::instance;
 }
 
 pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &bootinfo)
@@ -282,6 +303,43 @@ pub fn rsp0() -> uintptr
   return td.tss.rsp[0];
 }
 
+fn disable_legacy_pic() -> void
+{
+  cpu::out8(0x21, 0xff);
+  cpu::out8(0xa1, 0xff);
+}
+
+pub extern fn allocate_io_vectors(usize count) -> (u8, u8)
+{
+  var mut &vectors = sys.vectors;
+
+  for (var j = 32; j < 250 - count; ++j)
+  {
+    if (vectors[j >> 6] & (1 << (j & 0x3f)) == 0)
+    {
+      var i = j;
+
+      for (j += 1; j < i + count; ++j)
+      {
+        if (vectors[j >> 6] & (1 << (j & 0x3f)) != 0)
+          break;
+      }
+
+      if (j - i == count)
+      {
+        for (var k = i; k != j; ++k)
+        {
+          vectors[k >> 6] |= 1 << (k & 0x3f);
+        }
+
+        return (cast<u8>(i), cast<u8>(j));
+      }
+    }
+  }
+
+  return (0, 0);
+}
+
 pub fn setup(BootInfo &bootinfo, int cpu) -> void
 {
   cpu::wrmsr(cpu::msr_index::tsc, 0);
@@ -388,6 +446,9 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   cpu::wrmsr(cpu::msr_index::pat, cpu::rdmsr(cpu::msr_index::pat) & ~0x700000000 | 0x100000000);
 
   // apic
+
+  if (cpu == 0)
+    disable_legacy_pic();
 
   if (var apic_base = cpu::rdmsr(cpu::msr_index::apic_base); apic_base & 0x400 == 0)
     cpu::wrmsr(cpu::msr_index::apic_base, apic_base | 0x400); // x2apic enable

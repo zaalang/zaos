@@ -72,6 +72,7 @@ pub enum capabilities : u8
 
 pub struct device
 {
+  pub u16 sg;
   pub u8 bus;
   pub u8 dev;
   pub u8 func;
@@ -175,6 +176,7 @@ pub fn initialise() -> void
 
           var device = device();
 
+          device.sg = config.segment_group;
           device.bus = bus;
           device.dev = dev;
           device.func = func;
@@ -280,11 +282,11 @@ pub fn read_size_register(device &device, usize bar) -> usize
   return cast<usize>(~size | 0x3) + 1;
 }
 
-pub fn read_interrupt_line(device &device) -> u8
+pub fn read_interrupt_line(device &device) -> u32
 {
   std::assert(device.header.header_type & 0x7f == 0);
 
-  return std::volatile_load(&cast<pci_general_device*>(device.header).interrupt_line);
+  return cast<u32>(std::volatile_load(&cast<pci_general_device*>(device.header).interrupt_line));
 }
 
 pub fn read_capability(device &device, capabilities id) -> u8

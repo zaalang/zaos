@@ -19,7 +19,6 @@ platform/x64-efi/smp.zaa\
 platform/x64-efi/mmu.zaa\
 platform/x64-efi/rtc.zaa\
 platform/x64-efi/apic.zaa\
-platform/x64-efi/ioapic.zaa\
 platform/x64-efi/task.zaa\
 platform/x64-efi/video.zaa\
 platform/x64-efi/memory.zaa\
@@ -75,6 +74,7 @@ blk/gpt.zaa\
 blk/cache.zaa\
 support/rc.zaa\
 support/json.zaa\
+modules/ioapic/ioapic.zaa\
 modules/pci/pci.zaa\
 modules/msi/msi.zaa\
 modules/msix/msix.zaa\

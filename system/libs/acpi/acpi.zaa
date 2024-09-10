@@ -25,7 +25,10 @@ pub enum result : i32
   invalid_target = -3002,
   invalid_block = -3003,
   value_not_found = -3004,
-  bad_access = -3005,
+  bad_arg_count = -3005,
+  bad_access = -3006,
+
+  stack_exhausted = -4000,
 
   pub fn bool(result code) -> bool
   {
