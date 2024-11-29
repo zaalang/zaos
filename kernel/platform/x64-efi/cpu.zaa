@@ -21,14 +21,34 @@ pub enum exception
   //debug_trap,
 }
 
-pub fn in8(u16 port) -> u8
+pub fn in8(u32 port) -> u8
 {
-  return cast<u8>(__asm("in al, $1", "={ax},N{dx}", port) & 0xFF);
+  return cast<u8>(__asm("in al, $1", "={al},N{dx}", cast<u16>(port)) & 0xff);
 }
 
-pub fn out8(u16 port, u8 value) -> void
+pub fn in16(u32 port) -> u16
 {
-  __asm("out $1, al", "{ax},N{dx}", value, port);
+  return cast<u16>(__asm("in ax, $1", "={ax},N{dx}", cast<u16>(port)) & 0xffff);
+}
+
+pub fn in32(u32 port) -> u32
+{
+  return cast<u32>(__asm("in eax, $1", "={eax},N{dx}", cast<u16>(port)) & 0xffffffff);
+}
+
+pub fn out8(u32 port, u8 value) -> void
+{
+  __asm("out $1, al", "{al},N{dx}", value, cast<u16>(port));
+}
+
+pub fn out16(u32 port, u16 value) -> void
+{
+  __asm("out $1, ax", "{ax},N{dx}", value, cast<u16>(port));
+}
+
+pub fn out32(u32 port, u32 value) -> void
+{
+  __asm("out $1, eax", "{eax},N{dx}", value, cast<u16>(port));
 }
 
 pub fn cpuid(u32 eax, u32 ecx = 0) -> (u32, u32, u32, u32)

@@ -395,23 +395,6 @@ extern fn nvme_controller_handler(controller mut *controller) -> void
     nvme_queue_handler(controller.queues[i]);
 }
 
-pub fn initialise() -> void
-{
-  for (var &device : pci::devices)
-  {
-    if (device.class_code == [2, 8, 1])
-      initialise(device);
-  }
-}
-
-pub fn initialise(pci::device &device) -> void
-{
-  var controller = std::allocator::new<controller>(device);
-
-  if (var result = controller.initialise(); !result)
-    std::print("nvme error initialising controller - ", result);
-}
-
 fn initialise(controller mut &controller) -> result
 {
   var &device = controller.device;
@@ -514,6 +497,23 @@ fn initialise(queue mut &queue) -> result
     return result;
 
   return ok;
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var controller = std::allocator::new<controller>(device);
+
+  if (var result = controller.initialise(); !result)
+    std::print("nvme error initialising controller - ", result);
+}
+
+pub fn initialise() -> void
+{
+  for (var &device : pci::devices)
+  {
+    if (device.class_code == [2, 8, 1])
+      initialise(device);
+  }
 }
 
 #[lifetime(launder(callback), consume(callback))]

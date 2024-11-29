@@ -13,13 +13,9 @@ import acpi.parser;
 
 pub vtable interface
 {
-  fn read_system_memory(opregion *opregion, uintptr address, usize width) -> u64;
-  fn read_system_io(opregion *opregion, u16 port, usize width) -> u64;
-  fn read_pci_config(opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64;
-
-  fn write_system_memory(opregion *opregion, uintptr address, usize width, u64 value) -> void;
-  fn write_system_io(opregion *opregion, u16 port, usize width, u64 value) -> void;
-  fn write_pci_config(opregion *opregion, u16 sg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void;
+  fn read(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result;
+  fn write(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result;
+  fn close(acpi::namespace mut &namespace, acpi::opregion *opregion) -> acpi::result;
 }
 
 pub struct package
@@ -664,7 +660,7 @@ pub fn to_buffer(namespace mut &ns, value mut &value) -> bool
       value = value::buffer(8, std::span(buf.data, 8));
 
     case string[string]:
-      value = value::buffer(string.len, string.span);
+      value = value::buffer(string.len + 1, std::span(string.data, string.len + 1));
 
     case buffer[buffer]:
       ;
@@ -674,6 +670,29 @@ pub fn to_buffer(namespace mut &ns, value mut &value) -> bool
   }
 
   return true;
+}
+
+pub fn pathname(namespace &ns, node *node) -> std::string
+{
+  var path = std::string("\\");
+
+  while (node.parent)
+  {
+    for (var &[name, it] : node.parent.children)
+    {
+      if (it == node)
+      {
+        path.insert(path.begin + 1, name);
+
+        if (path.len != name.len + 1)
+          path.insert(path.begin + name.len + 1, ".");
+      }
+    }
+
+    node = node.parent;
+  }
+
+  return path;
 }
 
 fn osi(namespace mut &ns, value mut &dst, value &arg) -> acpi::result
@@ -779,63 +798,22 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
   if (length > 64)
     return bad_access;
 
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width) - byte;
-
   value = value(0);
 
-  for (var i = 0; i < size; i += cast(width))
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
   {
+    var data = 0;
+
     var bit = offset & cast(width * 8 - 1);
     var len = std::min(bit + length, cast(width * 8)) - bit;
 
-    var data = 0;
+    if (var rc = ns.interface.read(&mut ns, &opregion, i, width, &mut data); !rc)
+      return rc;
 
-    switch (opregion.space)
-    {
-      case opregion::space::system_memory:
-
-        data = ns.interface.read_system_memory(&opregion, cast(opregion.base + byte + i), width);
-
-      case opregion::space::system_io:
-
-        data = ns.interface.read_system_io(&opregion, cast(opregion.base + byte + i), width);
-
-      case opregion::space::pci_config:
-
-        var seg = value(0);
-        var bbn = value(0);
-        var adr = value();
-
-        if (var rc = ns.invoke(opregion.scope, "_SEG", &mut seg); !rc && rc != acpi::result::value_not_found)
-          return rc;
-
-        if (!ns.to_integer(&mut seg))
-          return bad_value;
-
-        if (var rc = ns.invoke(opregion.scope, "_BBN", &mut bbn); !rc && rc != acpi::result::value_not_found)
-          return rc;
-
-        if (!ns.to_integer(&mut bbn))
-          return bad_value;
-
-        if (var rc = ns.invoke(opregion.scope, "_ADR", &mut adr); !rc)
-          return rc;
-
-        if (!ns.to_integer(&mut adr))
-          return bad_value;
-
-        var bus = bbn.integer;
-        var dev = (adr.integer & 0x00ff0000) >> 16;
-        var func = (adr.integer & 0x000000ff) >> 0;
-
-        data = ns.interface.read_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
-
-      else:
-        return invalid_region_space;
-    }
-
-    value.integer |= (data << (64 - bit - len) >> (64 - len)) << (length - len);
+    value.integer |= data << (64 - bit - len) >> (64 - len) << (length - len);
 
     offset += len;
     length -= len;
@@ -951,99 +929,40 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
   if (length > 64)
     return bad_access;
 
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width) - byte;
-
   if (!value.is_integer)
     return bad_value;
 
   var value = value.integer;
 
-  for (var i = 0; i < size; i += cast(width))
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
   {
+    var data = 0;
+
     var bit = offset & cast(width * 8 - 1);
     var len = std::min(bit + length, cast(width * 8)) - bit;
 
-    var data = 0;
-
-    switch (opregion.space)
+    if (len < cast(width * 8))
     {
-      case opregion::space::system_memory:
-        switch (flags & 0x60)
-        {
-          case 0x00:
-            if (len < cast(width * 8))
-              data = ns.interface.read_system_memory(&opregion, cast(opregion.base + byte + i), width);
+      switch (flags & 0x60)
+      {
+        case 0x00:
+          if (var rc = ns.interface.read(&mut ns, &opregion, i, width, &mut data); !rc)
+            return rc;
 
-          case 0x20:
-            data = 0xffff_ffff_ffff_ffff;
-        }
-
-        data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
-
-        ns.interface.write_system_memory(&opregion, cast(opregion.base + byte + i), width, data);
-
-      case opregion::space::system_io:
-
-        switch (flags & 0x60)
-        {
-          case 0x00:
-            if (len < cast(width * 8))
-              data = ns.interface.read_system_io(&opregion, cast(opregion.base + byte + i), width);
-
-          case 0x20:
-            data = 0xffff_ffff_ffff_ffff;
-        }
-
-        data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
-
-        ns.interface.write_system_io(&opregion, cast(opregion.base + byte + i), width, data);
-
-      case opregion::space::pci_config:
-
-        var seg = value(0);
-        var bbn = value(0);
-        var adr = value();
-
-        if (var rc = ns.invoke(opregion.scope, "_SEG", &mut seg); !rc && rc != acpi::result::value_not_found)
-          return rc;
-
-        if (!ns.to_integer(&mut seg))
-          return bad_value;
-
-        if (var rc = ns.invoke(opregion.scope, "_BBN", &mut bbn); !rc && rc != acpi::result::value_not_found)
-          return rc;
-
-        if (!ns.to_integer(&mut bbn))
-          return bad_value;
-
-        if (var rc = ns.invoke(opregion.scope, "_ADR", &mut adr); !rc)
-          return rc;
-
-        if (!ns.to_integer(&mut adr))
-          return bad_value;
-
-        var bus = bbn.integer;
-        var dev = (adr.integer & 0x00ff0000) >> 16;
-        var func = (adr.integer & 0x000000ff) >> 0;
-
-        switch (flags & 0x60)
-        {
-          case 0x00:
-            if (len < cast(width * 8))
-              data = ns.interface.read_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width);
-
-          case 0x20:
-            data = 0xffff_ffff_ffff_ffff;
-        }
-
-        data = data & ~(~0 << (64 - bit - len) >> (64 - len) << bit) | (value << bit);
-
-        ns.interface.write_pci_config(&opregion, cast(seg.integer), cast(bus), cast(dev), cast(func), cast(opregion.base + byte + i), width, data);
-
-      else:
-        return invalid_region_space;
+        case 0x20:
+          data = 0xffff_ffff_ffff_ffff;
+      }
     }
+
+    data &= ~(~0 << (64 - bit - len) >> (64 - len) << bit);
+    data |= value << (64 - len) >> (64 - bit - len);
+    data &= (1 << (width * 8)) - 1;
+
+    if (var rc = ns.interface.write(&mut ns, &opregion, i, width, data); !rc)
+      return rc;
 
     value >>= len;
 
@@ -1285,6 +1204,11 @@ pub fn store(namespace mut &ns, value *obj, std::vector<usize> &index, value mut
   return ok;
 }
 
+pub fn close(namespace mut &ns, opregion &opregion) -> void
+{
+  ns.interface.close(&mut ns, &opregion);
+}
+
 pub fn lookup(namespace mut &ns, node *scope, String &name) -> std::optional<acpi::value *>
 {
   var i = 0;
@@ -1344,7 +1268,8 @@ pub fn invoke<Args>(namespace mut &ns, node *scope, String &name, value mut &dst
         return rc;
 
     else:
-      dst = **obj;
+      if (var rc = load(&mut ns, *obj, &mut dst); !rc)
+        return rc;
   }
 
   return ok;

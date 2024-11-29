@@ -108,8 +108,8 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
   if (cpu::cpuid(1).2 & 0x200000 == 0)
     efi::panic(SystemTable, "missing_x2apic");
 
-  //if (cpu::cpuid(0x80000007).3 & 0x100 == 0)
-  //  efi::panic(SystemTable, "missing_invariant_tsc");
+  if (cpu::cpuid(0x80000007).3 & 0x100 == 0)
+    efi::panic(SystemTable, "missing_invariant_tsc");
 
   if (cpu::cpuid(1).2 & 0x1000000 == 0)
     efi::panic(SystemTable, "missing_tsc_deadline");

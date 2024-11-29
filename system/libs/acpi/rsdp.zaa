@@ -3,6 +3,7 @@
 //
 
 import acpi;
+import std.span;
 import std.memory;
 
 const ACPI_RSDP_SIGNATURE = "RSD PTR ";
@@ -35,6 +36,11 @@ pub struct sdt
   pub u32 oem_revision;
   pub u8[4] creator_id;
   pub u32 creator_revision;
+
+  pub fn payload(this &sdt) -> std::span<u8>
+  {
+    return std::span(cast<u8*>(&sdt + 1), cast<u8*>(&sdt) + cast<usize>(sdt.length));
+  }
 }
 
 fn host_address<T>(uintptr physical_base, var physaddr) -> T *

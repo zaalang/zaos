@@ -84,7 +84,7 @@ fn read_data_port() -> u8
   return platform::in8(PS2_DATA_PORT);
 }
 
-fn wait_then_read<T>(u16 port, T mut *value, u64 timeout) -> bool
+fn wait_then_read<T>(u32 port, T mut *value, u64 timeout) -> bool
 {
   for (var k = 0; k < timeout; ++k)
   {
@@ -101,7 +101,7 @@ fn wait_then_read<T>(u16 port, T mut *value, u64 timeout) -> bool
   return false;
 }
 
-fn wait_then_write<T>(u16 port, T value, u64 timeout) -> bool
+fn wait_then_write<T>(u32 port, T value, u64 timeout) -> bool
 {
   for (var k = 0; k < timeout; ++k)
   {
@@ -490,14 +490,6 @@ fn probe_mouse() -> result
   return cast(response);
 }
 
-pub fn initialise() -> void
-{
-  var controller = std::allocator::new<controller>();
-
-  if (var result = controller.initialise(); !result)
-    std::print("ps2 error initialising controller - ", result);
-}
-
 fn initialise(controller mut &controller) -> result
 {
   flush();
@@ -661,4 +653,12 @@ fn initialise(port mut &dev) -> result
   }
 
   return ok;
+}
+
+pub fn initialise() -> void
+{
+  var controller = std::allocator::new<controller>();
+
+  if (var result = controller.initialise(); !result)
+    std::print("ps2 error initialising controller - ", result);
 }

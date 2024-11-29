@@ -1,0 +1,50 @@
+//
+// lockcell
+//
+
+import mutex as _ : mutex;
+
+pub struct LockCell<T, Lock = mutex>
+{
+  T value;
+  Lock lock;
+
+  #[lifetime(depend(this))]
+  pub fn lock(this mut &) -> LockCellGuard<T, Lock>
+  {
+    this.lock.lock();
+
+    return LockCellGuard(&mut this);
+  }
+
+  pub LockCell<Args>(Args && ...args)
+    match (Args args) { T(&move args...); }
+    : value(&&args...)
+  {
+  }
+
+  pub LockCell() = default;
+  pub LockCell(#LockCell&) = default;
+  pub ~LockCell() = default;
+}
+
+pub struct LockCellGuard<T, Lock>
+{
+  LockCell<T, Lock> mut &cell;
+
+  #[lifetime(depend(this))]
+  pub fn *(this &&)
+  {
+    return &this.cell.value;
+  }
+
+  LockCellGuard(LockCell<T, Lock> mut &cell)
+    : cell(&cell)
+  {
+  }
+
+  pub ~LockCellGuard()
+  {
+    cell.lock.unlock();
+  }
+}

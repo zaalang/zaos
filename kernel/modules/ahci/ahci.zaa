@@ -442,23 +442,6 @@ extern fn ahci_io_handler(controller mut *controller) -> void
   std::volatile_store(&controller.hba.is, pending);
 }
 
-pub fn initialise() -> void
-{
-  for (var &device : pci::devices)
-  {
-    if (device.class_code == [1, 6, 1])
-      initialise(device);
-  }
-}
-
-pub fn initialise(pci::device &device) -> void
-{
-  var controller = std::allocator::new<controller>(device);
-
-  if (var result = controller.initialise(); !result)
-    std::print("ahci error initialising controller - ", result);
-}
-
 fn initialise(controller mut &controller) -> result
 {
   var &device = controller.device;
@@ -581,6 +564,23 @@ fn initialise(port mut &port) -> result
   }
 
   return ok;
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var controller = std::allocator::new<controller>(device);
+
+  if (var result = controller.initialise(); !result)
+    std::print("ahci error initialising controller - ", result);
+}
+
+pub fn initialise() -> void
+{
+  for (var &device : pci::devices)
+  {
+    if (device.class_code == [1, 6, 1])
+      initialise(device);
+  }
 }
 
 pub fn identify(port mut &port, vm::physaddr buffer) -> result

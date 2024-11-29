@@ -1,5 +1,5 @@
 //
-// acpi
+// acpi fadt
 //
 
 import acpi;
@@ -11,13 +11,52 @@ const ACPI_DSDT_SIGNATURE = "DSDT";
 const ACPI_SSDT_SIGNATURE = "SSDT";
 
 #[packed]
-struct gas
+pub struct gas
 {
   pub u8 address_space_id;
-  pub u8 register_bit_width;
+  pub u8 register_bit_length;
   pub u8 register_bit_offset;
-  pub u8 access_size;
+  pub u8 access_width;
   pub u64 address;
+
+  pub gas() = default;
+  pub gas(gas &) = default;
+  pub fn =(gas mut &, gas &) -> gas mut & = default;
+  pub ~gas() = default;
+}
+
+pub const fadt_c1_supported = 0x4;
+pub const fadt_c2_mp_supported = 0x8;
+pub const fadt_power_button = 0x10;
+pub const fadt_sleep_button = 0x20;
+pub const fadt_fixed_rtc = 0x40;
+pub const fadt_hw_reduced = 0x100000;
+
+pub enum pm1
+{
+  pub const timer_status = 0x1;
+  pub const bus_master_status = 0x10;
+  pub const global_lock_status = 0x20;
+  pub const power_button_status = 0x100;
+  pub const sleep_button_status = 0x200;
+  pub const realtime_clock_status = 0x400;
+  pub const pciexp_wake_status = 0x4000;
+  pub const wake_status = 0x8000;
+
+  pub const timer_enable = 0x1;
+  pub const global_lock_enable = 0x20;
+  pub const power_button_enable = 0x100;
+  pub const sleep_button_enable = 0x200;
+  pub const realtime_clock_enable = 0x400;
+  pub const pciexp_wake_disable = 0x4000;
+
+  pub const sci_enable = 0x1;
+  pub const bus_master_rld = 0x2;
+  pub const global_lock_release = 0x4;
+  pub const sleep_type = 0x1c00;
+  pub const sleep_enable = 0x2000;
+
+  pub const control_writeonly_bits = 0x2004;
 }
 
 #[packed]
@@ -28,7 +67,7 @@ pub struct fadt : pub acpi::sdt
   pub u8 reserved;
   pub u8 preferred_pm_profile;
   pub u16 sci_interrupt;
-  pub u32 smi_commandport;
+  pub u32 smi_command;
   pub u8 acpi_enable;
   pub u8 acpi_disable;
   pub u8 s4bios_reqest;
@@ -44,9 +83,9 @@ pub struct fadt : pub acpi::sdt
   pub u8 pm1_event_length;
   pub u8 pm1_control_length;
   pub u8 pm2_control_length;
-  pub u8 pmtimer_length;
-  pub u8 gpe0_length;
-  pub u8 gpe1_length;
+  pub u8 pmtimer_block_length;
+  pub u8 gpe0_block_length;
+  pub u8 gpe1_block_length;
   pub u8 gpe1_base;
   pub u8 cstate_control;
   pub u16 worst_c2_latency;
@@ -91,6 +130,106 @@ pub struct fadt : pub acpi::sdt
 
     return cast<uintptr>(fadt.dsdt);
   }
+
+  pub fn x_pm1a_status_block(this &fadt) -> gas
+  {
+    var addr = gas();
+
+    addr.address_space_id = fadt.x_pm1a_event_block.address_space_id;
+    addr.register_bit_length = fadt.x_pm1a_event_block.register_bit_length / 2;
+    addr.register_bit_offset = fadt.x_pm1a_event_block.register_bit_offset;
+    addr.access_width = fadt.x_pm1a_event_block.access_width;
+    addr.address = fadt.x_pm1a_event_block.address;
+
+    return addr;
+  }
+
+  pub fn x_pm1a_enable_block(this &fadt) -> gas
+  {
+    var addr = gas();
+
+    addr.address_space_id = fadt.x_pm1a_event_block.address_space_id;
+    addr.register_bit_length = fadt.x_pm1a_event_block.register_bit_length / 2;
+    addr.register_bit_offset = fadt.x_pm1a_event_block.register_bit_offset + fadt.x_pm1a_event_block.register_bit_length / 2;
+    addr.access_width = fadt.x_pm1a_event_block.access_width;
+    addr.address = fadt.x_pm1a_event_block.address;
+
+    return addr;
+  }
+
+  pub fn x_pm1b_status_block(this &fadt) -> gas
+  {
+    var addr = gas();
+
+    addr.address_space_id = fadt.x_pm1b_event_block.address_space_id;
+    addr.register_bit_length = fadt.x_pm1b_event_block.register_bit_length / 2;
+    addr.register_bit_offset = fadt.x_pm1b_event_block.register_bit_offset;
+    addr.access_width = fadt.x_pm1b_event_block.access_width;
+    addr.address = fadt.x_pm1b_event_block.address;
+
+    return addr;
+  }
+
+  pub fn x_pm1b_enable_block(this &fadt) -> gas
+  {
+    var addr = gas();
+
+    addr.address_space_id = fadt.x_pm1b_event_block.address_space_id;
+    addr.register_bit_length = fadt.x_pm1b_event_block.register_bit_length / 2;
+    addr.register_bit_offset = fadt.x_pm1b_event_block.register_bit_offset + fadt.x_pm1b_event_block.register_bit_length / 2;
+    addr.access_width = fadt.x_pm1b_event_block.access_width;
+    addr.address = fadt.x_pm1b_event_block.address;
+
+    return addr;
+  }
+
+  pub fn x_gpe0_status_block(this &fadt, u8 i) -> gas
+  {
+    var addr = acpi::gas();
+
+    addr.address_space_id = fadt.x_gpe0_block.address_space_id;
+    addr.register_bit_length = 8;
+    addr.register_bit_offset = 0;
+    addr.address = fadt.x_gpe0_block.address + cast(i);
+
+    return addr;
+  }
+
+  pub fn x_gpe0_enable_block(this &fadt, u8 i) -> gas
+  {
+    var addr = acpi::gas();
+
+    addr.address_space_id = fadt.x_gpe0_block.address_space_id;
+    addr.register_bit_length = 8;
+    addr.register_bit_offset = 0;
+    addr.address = fadt.x_gpe0_block.address + cast(i + fadt.gpe0_block_length / 2);
+
+    return addr;
+  }
+
+  pub fn x_gpe1_status_block(this &fadt, u8 i) -> gas
+  {
+    var addr = acpi::gas();
+
+    addr.address_space_id = fadt.x_gpe1_block.address_space_id;
+    addr.register_bit_length = 8;
+    addr.register_bit_offset = 0;
+    addr.address = fadt.x_gpe1_block.address + cast(i);
+
+    return addr;
+  }
+
+  pub fn x_gpe1_enable_block(this &fadt, u8 i) -> gas
+  {
+    var addr = acpi::gas();
+
+    addr.address_space_id = fadt.x_gpe1_block.address_space_id;
+    addr.register_bit_length = 8;
+    addr.register_bit_offset = 0;
+    addr.address = fadt.x_gpe1_block.address + cast(i + fadt.gpe1_block_length / 2);
+
+    return addr;
+  }
 }
 
 pub fn find_fadt(acpi::tables &tables) -> fadt *
@@ -120,4 +259,3 @@ pub fn validate_fadt(fadt *fadt) -> acpi::result
 
   return ok;
 }
-

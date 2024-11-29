@@ -30,7 +30,8 @@ dbgln:      # (uintptr fd, ciovec *iovs, usize n) -> fd_result;
             xor ecx, ecx
  .bb4:      mov rax, [rdi]
             mov al, [rax + rcx]
-            out 0xe9, al
+            mov dx, 0x402
+            out dx, al
             add rcx, 1
             cmp rcx, [r10]
             jne .bb4

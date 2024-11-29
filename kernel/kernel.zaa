@@ -17,7 +17,6 @@ import pci;
 import nvme;
 import ahci;
 import blk;
-import ps2;
 import pty;
 import video;
 import console;
@@ -93,7 +92,6 @@ fn kernel_main(void*) -> void
   pci::initialise();
   nvme::initialise();
   ahci::initialise();
-  ps2::initialise();
   pty::initialise();
   video::initialise();
   console::initialise();

@@ -1460,6 +1460,10 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case decrement_op:
     case index_op:
     case derefof_op:
+    case tobuffer_op:
+    case todecimalstring_op:
+    case tohexstring_op:
+    case tointeger_op:
     case store_op:
     case copyobject_op:
       ctx.push_state(state::term_list);
@@ -2987,6 +2991,20 @@ fn store(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+fn end(context mut &ctx, std::span<u8> &is) -> result
+{
+  for (var &value : ctx.values)
+  {
+    switch (value)
+    {
+      case opregion[opregion]:
+        ctx.namespace.close(opregion);
+    }
+  }
+
+  return ok;
+}
+
 fn evaluate(context mut &ctx, std::span<u8> is) -> result
 {
   ctx.state = state::stream_start;
@@ -3343,6 +3361,8 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
     ctx.state = ctx.pop_state();
   }
 
+  end(&mut ctx, is);
+
   return ok;
 }
 
@@ -3375,7 +3395,7 @@ pub fn execute(namespace mut &ns, acpi::method &method, value mut &dst, std::spa
   if (var rc = evaluate(&mut ctx, &mut is); !rc)
     return rc;
 
-  if (ctx.stack.len != NARGS + NLOCALS)
+  if (ctx.stack.len > NARGS + NLOCALS)
     dst = ctx.stack.take_back().value;
 
   return ok;
@@ -3398,7 +3418,7 @@ pub fn execute<Args>(namespace mut &ns, acpi::method &method, value mut &dst, Ar
   if (var rc = evaluate(&mut ctx, &mut is); !rc)
     return rc;
 
-  if (ctx.stack.len == NARGS + NLOCALS)
+  if (ctx.stack.len > NARGS + NLOCALS)
     dst = ctx.stack.take_back().value;
 
   return ok;

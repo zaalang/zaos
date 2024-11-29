@@ -9,39 +9,19 @@ import acpi.mcfg;
 import acpi.fadt;
 import acpi.parser;
 
-struct cfg
+fn read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
 {
-  acpi::namespace ns;
+  return not_supported;
+}
 
-  fn read_system_memory(acpi::opregion *opregion, uintptr address, usize width) -> u64
-  {
-    return 0;
-  }
+fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
+{
+  return not_supported;
+}
 
-  fn read_system_io(acpi::opregion *opregion, u16 port, usize width) -> u64
-  {
-    return 0;
-  }
-
-  fn read_pci_config(acpi::opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width) -> u64
-  {
-    return 0;
-  }
-
-  fn write_system_memory(acpi::opregion *opregion, uintptr address, usize width, u64 value) -> void
-  {
-  }
-
-  fn write_system_io(acpi::opregion *opregion, u16 port, usize width, u64 value) -> void
-  {
-  }
-
-  fn write_pci_config(acpi::opregion *opregion, u16 seg, u8 bus, u8 dev, u8 func, u16 offset, usize width, u64 value) -> void
-  {
-  }
-
-  cfg() = default;
-  ~cfg() = default;
+fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
+{
+  return ok;
 }
 
 extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
@@ -155,10 +135,10 @@ extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
 
   std::printf("dsdt address: {:#08x}\n", dsdt);
 
-  for (var table : acpi::tables(0, acpi_root))
+  for (var sdt : acpi::tables(0, acpi_root))
   {
-    if (table.signature == std::span("SSDT"))
-      std::printf("ssdt address: {:#08x}\n", table);
+    if (sdt.signature == std::span("SSDT"))
+      std::printf("ssdt address: {:#08x}\n", sdt);
   }
 
   try
@@ -172,15 +152,23 @@ extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
     std::print("dsdt write error - ", e);
   }
 
-  var cfg = cfg();
+  var ns = acpi::namespace();
 
-  acpi::initialise(&mut cfg.ns, &impl cfg);
+  acpi::initialise(&mut ns, &impl ns);
 
-  var ret = acpi::parse(&mut cfg.ns, std::span(cast<u8*>(dsdt + 1), cast<u8*>(dsdt) + cast<usize>(dsdt.length)));
+  if (var rc = acpi::parse(&mut ns, dsdt.payload); !rc)
+    std::panic("acpi dsdt parse error - ", rc);
 
-//    cfg.ns.dump();
+  for (var sdt : acpi::tables(0, acpi_root))
+  {
+    if (sdt.signature == std::span("SSDT"))
+    {
+      if (var rc = acpi::parse(&mut ns, sdt.payload); !rc)
+        std::panic("acpi ssdt parse error - ", rc);
+    }
+  }
 
-  std::print(ret);
+  //ns.dump();
 
   std::print("ok");
 
