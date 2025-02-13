@@ -63,12 +63,12 @@ extern fn nmi_handler(interrupt_frame &frame, u8 irq) -> void
 
 extern fn breakpoint_handler(interrupt_frame &frame, u8 irq) -> void
 {
-  std::print("Break: ", cast<void*>(frame.rip));
+  std::panic("break: ", cast<void*>(frame.rip));
 }
 
 extern fn double_fault_handler(interrupt_frame &frame, u8 irq, u64 errorcode) -> void
 {
-  std::panic("Double Fault: ", cast<void*>(frame.rip), " ", errorcode);
+  std::panic("double fault: ", cast<void*>(frame.rip), " ", errorcode);
 }
 
 extern fn page_fault_handler(interrupt_frame &frame, u8 irq, fault errorcode) -> void

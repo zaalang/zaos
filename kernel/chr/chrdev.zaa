@@ -70,39 +70,39 @@ pub struct chrdev_ptr : pub Rc<chrdev>
   {
     var result = std::string();
 
-    this.ops.query(*this, query, result);
+    this.ops.query(*this, query, &mut result);
 
     return result;
   }
 
   pub fn open(this mut &, fd mut &fd, u64 flags, u32 mode) -> chr::result
   {
-    return this.ops.open(*this, &mut fd, flags, mode);
+    return this.ops.open(&mut *this, &mut fd, flags, mode);
   }
 
   pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
   {
-    return this.ops.ioctl(*this, op, buffer);
+    return this.ops.ioctl(&mut *this, op, buffer);
   }
 
   pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
   {
-    return this.ops.poll(*this, &mut readable, &mut writeable);
+    return this.ops.poll(&mut *this, &mut readable, &mut writeable);
   }
 
   pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
   {
-    return this.ops.read(*this, buffer, offset, length);
+    return this.ops.read(&mut *this, buffer, offset, length);
   }
 
   pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
   {
-    return this.ops.write(*this, buffer, offset, length);
+    return this.ops.write(&mut *this, buffer, offset, length);
   }
 
   pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
   {
-    return this.ops.mmap(*this, range, offset, prot, use);
+    return this.ops.mmap(&mut *this, range, offset, prot, use);
   }
 
   chrdev_ptr(chrdev mut *inner)

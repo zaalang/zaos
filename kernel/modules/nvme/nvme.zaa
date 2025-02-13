@@ -438,7 +438,7 @@ fn initialise(controller mut &controller) -> result
 
   controller.doorbell_stride = 1 << ((cap >> cap::dbl_shift) & cap::dbl_mask);
 
-  controller.admin = std::allocator::new<queue>(controller, 0, 16);
+  controller.admin = std::allocator::new<queue>(&mut controller, 0, 16);
 
   regs.asq = controller.admin.sq;
   regs.acq = controller.admin.cq;
@@ -465,7 +465,7 @@ fn initialise(controller mut &controller) -> result
 
   for (var i = 0; i < queue_count; ++i)
   {
-    controller.queues[i] = std::allocator::new<queue>(controller, i + 1, queue_entries);
+    controller.queues[i] = std::allocator::new<queue>(&mut controller, i + 1, queue_entries);
 
     if (var result = controller.queues[i].initialise(); !result)
       std::print("nvme error initialising queue ", i + 1, " - ", result);
@@ -673,9 +673,9 @@ fn detect(controller mut &controller) -> result
 
       std::print("nvme ", controller.name, "/", nsid, " namespace active");
 
-      var dev = blk::blkdev::create<namespace>(controller, nsid);
+      var dev = blk::blkdev::create<namespace>(&mut controller, nsid);
 
-      dev::register(dev);
+      dev::register(dev::dev_t(), dev);
       blk::scan_for_partitions(dev);
     }
   }

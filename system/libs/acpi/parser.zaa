@@ -575,7 +575,7 @@ fn load(context mut &ctx, target &target, value mut &value) -> result
       if (!obj)
         return name_not_found;
 
-      if (var rc = ctx.namespace.load(*obj, &mut value); !rc)
+      if (var rc = ctx.namespace.load(obj?!, &mut value); !rc)
         return rc;
 
     case reference[reference]:
@@ -1464,6 +1464,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case todecimalstring_op:
     case tohexstring_op:
     case tointeger_op:
+    case acquire_op:
     case store_op:
     case copyobject_op:
       ctx.push_state(state::term_list);
@@ -1504,6 +1505,7 @@ fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value &&value)
   return ok;
 }
 
+#[noinline]
 fn define_name(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -1523,6 +1525,7 @@ fn define_name(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_alias(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -1534,7 +1537,7 @@ fn define_alias(context mut &ctx, std::span<u8> mut &is) -> result
     {
       case Some[node]:
 
-        if (var rc = define(&mut ctx, node, name.span, *obj); !rc)
+        if (var rc = define(&mut ctx, node, name.span, obj?!); !rc)
           return rc;
 
       else:
@@ -1545,6 +1548,7 @@ fn define_alias(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_scope(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -1563,7 +1567,7 @@ fn define_scope(context mut &ctx, std::span<u8> mut &is) -> result
         if (!scope)
           scope = ctx.namespace.define(node, acpi::node::type::scope, name.span);
 
-        ctx.push_scope(*scope);
+        ctx.push_scope(scope?!);
 
       else:
         return invalid_path;
@@ -1577,6 +1581,7 @@ fn define_scope(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_device(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -1598,6 +1603,7 @@ fn define_device(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_processor(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var pblklen = ctx.stack.take_back().byte;
@@ -1622,6 +1628,7 @@ fn define_processor(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_powerres(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var resource_order = ctx.stack.take_back().word;
@@ -1645,6 +1652,7 @@ fn define_powerres(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_thermalzone(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -1775,6 +1783,7 @@ fn extended_access_field(context mut &ctx, u8 mut &flags, u64 mut &offset, std::
   return ok;
 }
 
+#[noinline]
 fn define_field(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var flags = ctx.stack.take_back().byte;
@@ -1784,7 +1793,7 @@ fn define_field(context mut &ctx, std::span<u8> mut &is) -> result
 
   var source = lookup(ctx, name);
 
-  if (!source || !source.is_opregion)
+  if (!source || !source?!.is_opregion)
     return name_not_found;
 
   while (!is.empty)
@@ -1818,7 +1827,7 @@ fn define_field(context mut &ctx, std::span<u8> mut &is) -> result
       case under_char:
       case alpha_char_a ..= alpha_char_z:
 
-        if (var rc = named_field(&mut ctx, *source, &mut flags, &mut offset, &mut is); !rc)
+        if (var rc = named_field(&mut ctx, source?!, &mut flags, &mut offset, &mut is); !rc)
           return rc;
 
       else:
@@ -1829,6 +1838,7 @@ fn define_field(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var flags = ctx.stack.take_back().byte;
@@ -1840,12 +1850,12 @@ fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
 
   var region = lookup(ctx, region_name);
 
-  if (!region || !region.is_opregion)
+  if (!region || !region?!.is_opregion)
     return name_not_found;
 
   var bank = lookup(ctx, bank_name);
 
-  if (!bank || !bank.is_field)
+  if (!bank || !bank?!.is_field)
     return name_not_found;
 
   if (var rc = load(&mut ctx, &mut bank_value); !rc)
@@ -1854,7 +1864,7 @@ fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut bank_value.value))
     return bad_value;
 
-  var source = ctx.alloc(value::bankedregion(*region, *bank, bank_value.value.integer));
+  var source = ctx.alloc(value::bankedregion(region?!, bank?!, bank_value.value.integer));
 
   while (!is.empty)
   {
@@ -1886,6 +1896,7 @@ fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_indexfield(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var flags = ctx.stack.take_back().byte;
@@ -1896,15 +1907,15 @@ fn define_indexfield(context mut &ctx, std::span<u8> mut &is) -> result
 
   var data = lookup(ctx, data_name);
 
-  if (!data || !data.is_field)
+  if (!data || !data?!.is_field)
     return name_not_found;
 
   var index = lookup(ctx, index_name);
 
-  if (!index || !index.is_field)
+  if (!index || !index?!.is_field)
     return name_not_found;
 
-  var source = ctx.alloc(value::indexedregion(*data, index.value));
+  var source = ctx.alloc(value::indexedregion(data?!, index?!));
 
   while (!is.empty)
   {
@@ -1936,6 +1947,7 @@ fn define_indexfield(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_opregion(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var length  = ctx.stack.take_back();
@@ -1969,6 +1981,7 @@ fn define_opregion(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_method(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var flags = ctx.stack.take_back().byte;
@@ -1988,6 +2001,7 @@ fn define_method(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_mutex(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var flags = ctx.stack.take_back().byte;
@@ -2008,6 +2022,7 @@ fn define_mutex(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn define_event(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -2027,6 +2042,7 @@ fn define_event(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn create_field(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
@@ -2126,6 +2142,7 @@ fn create_field(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn unary_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var lhs = ctx.stack.take_back();
@@ -2154,6 +2171,7 @@ fn unary_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn compare_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var rhs = ctx.stack.take_back();
@@ -2207,6 +2225,7 @@ fn compare_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn binary_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var rhs = ctx.stack.take_back();
@@ -2318,6 +2337,7 @@ fn binary_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn increment_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var value = value();
@@ -2336,6 +2356,7 @@ fn increment_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn decrement_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var value = value();
@@ -2354,6 +2375,7 @@ fn decrement_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn refof_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   switch (ctx.targets.take_back())
@@ -2370,7 +2392,7 @@ fn refof_op(context mut &ctx, std::span<u8> mut &is) -> result
       if (!obj)
         return name_not_found;
 
-      ctx.push_value(value::reference(*obj));
+      ctx.push_value(value::reference(obj?!));
 
     case reference[reference]:
       ctx.push_value(value::reference(reference));
@@ -2382,6 +2404,7 @@ fn refof_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn condrefof_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var dst = ctx.targets.take_back();
@@ -2404,7 +2427,7 @@ fn condrefof_op(context mut &ctx, std::span<u8> mut &is) -> result
       if (!obj)
         return ok;
 
-      ctx.push_value(value::reference(*obj));
+      ctx.push_value(value::reference(obj?!));
 
     else:
       return invalid_target;
@@ -2420,6 +2443,7 @@ fn condrefof_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn index_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var index = ctx.stack.take_back();
@@ -2456,6 +2480,7 @@ fn index_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn derefof_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -2471,7 +2496,7 @@ fn derefof_op(context mut &ctx, std::span<u8> mut &is) -> result
       if (!obj)
         return name_not_found;
 
-      ctx.push_operand(operand::ref(*obj));
+      ctx.push_operand(operand::ref(obj?!));
 
     case reference[reference]:
       ctx.push_operand(operand::ref(reference));
@@ -2483,6 +2508,7 @@ fn derefof_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn mid_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var length = ctx.stack.take_back();
@@ -2522,6 +2548,7 @@ fn mid_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn concat_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var rhs = ctx.stack.take_back();
@@ -2573,6 +2600,7 @@ fn concat_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn to_buffer(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -2591,6 +2619,7 @@ fn to_buffer(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn to_decimalstring(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -2621,6 +2650,7 @@ fn to_decimalstring(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn to_hexstring(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -2651,6 +2681,7 @@ fn to_hexstring(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn to_integer(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.take_back();
@@ -2669,6 +2700,7 @@ fn to_integer(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var value = value();
@@ -2696,6 +2728,7 @@ fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var timeout = ctx.stack.take_back().word;
@@ -2725,6 +2758,7 @@ fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn release_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   switch (ctx.targets.take_back())
@@ -2750,6 +2784,7 @@ fn release_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn sleep_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var period = ctx.stack.take_back();
@@ -2765,6 +2800,7 @@ fn sleep_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn return_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   if (var rc = load(&mut ctx, &mut ctx.stack.back); !rc)
@@ -2776,6 +2812,7 @@ fn return_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var obj = lookup(ctx, ctx.stack.take_back().name);
@@ -2783,7 +2820,7 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
   if (!obj)
     return name_not_found;
 
-  switch (**obj)
+  switch (*obj?!)
   {
     case method[method]:
       var argc = cast<usize>(method.flags & 0x3);
@@ -2793,7 +2830,7 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
       for (var arg = 0; arg < argc; ++arg)
         ctx.push_state(state::term_arg);
 
-      ctx.push_operand(operand::callee(**obj));
+      ctx.push_operand(operand::callee(*obj?!));
 
     case callback[callback]:
       var argc = cast<usize>(callback.flags & 0x3);
@@ -2803,16 +2840,17 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
       for (var arg = 0; arg < argc; ++arg)
         ctx.push_state(state::term_arg);
 
-      ctx.push_operand(operand::callee(**obj));
+      ctx.push_operand(operand::callee(*obj?!));
 
     else:
 
-      ctx.push_operand(operand::ref(*obj));
+      ctx.push_operand(operand::ref(obj?!));
   }
 
   return ok;
 }
 
+#[noinline]
 fn method_call(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var argc = 0;
@@ -2845,6 +2883,7 @@ fn method_call(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn if_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var block = ctx.blocks.take_back();
@@ -2876,6 +2915,7 @@ fn if_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn while_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var predicate = ctx.stack.take_back();
@@ -2897,6 +2937,7 @@ fn while_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn break_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   ctx.pop_state();
@@ -2907,6 +2948,7 @@ fn break_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn continue_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   ctx.pop_state();
@@ -2914,6 +2956,7 @@ fn continue_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn store(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.back();
@@ -2965,7 +3008,7 @@ fn store(context mut &ctx, std::span<u8> mut &is) -> result
       if (!dst)
         return name_not_found;
 
-      if (var rc = ctx.namespace.store(*dst, &mut src.value); !rc)
+      if (var rc = ctx.namespace.store(dst?!, &mut src.value); !rc)
         return rc;
 
     case reference[reference]:
@@ -2991,6 +3034,7 @@ fn store(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+#[noinline]
 fn end(context mut &ctx, std::span<u8> &is) -> result
 {
   for (var &value : ctx.values)
@@ -3388,11 +3432,9 @@ pub fn execute(namespace mut &ns, acpi::method &method, value mut &dst, std::spa
   if (cast<usize>(method.flags & 0x7) != args.len)
     return bad_arg_count;
 
-  var is = method.code;
-
   ctx.push_frame(args.len, method.scope, std::span<u8>());
 
-  if (var rc = evaluate(&mut ctx, &mut is); !rc)
+  if (var rc = evaluate(&mut ctx, method.code); !rc)
     return rc;
 
   if (ctx.stack.len > NARGS + NLOCALS)
@@ -3411,11 +3453,9 @@ pub fn execute<Args>(namespace mut &ns, acpi::method &method, value mut &dst, Ar
   if (cast<usize>(method.flags & 0x7) != args.len)
     return bad_arg_count;
 
-  var is = method.code;
-
   ctx.push_frame(args.len, method.scope, std::span<u8>());
 
-  if (var rc = evaluate(&mut ctx, &mut is); !rc)
+  if (var rc = evaluate(&mut ctx, method.code); !rc)
     return rc;
 
   if (ctx.stack.len > NARGS + NLOCALS)

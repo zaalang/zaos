@@ -70,24 +70,24 @@ pub struct blkdev_ptr : pub Rc<blkdev>
   {
     var result = std::string();
 
-    this.ops.query(*this, query, result);
+    this.ops.query(*this, query, &mut result);
 
     return result;
   }
 
   pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
   {
-    return this.ops.ioctl(*this, op, buffer);
+    return this.ops.ioctl(&mut *this, op, buffer);
   }
 
   pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
   {
-    return this.ops.enqueue(*this, request);
+    return this.ops.enqueue(&mut *this, request);
   }
 
   pub fn cancel(this mut &, blk::request mut *request) -> blk::result
   {
-    return this.ops.cancel(*this, request);
+    return this.ops.cancel(&mut *this, request);
   }
 
   blkdev_ptr(blkdev mut *inner)

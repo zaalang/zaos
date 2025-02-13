@@ -246,7 +246,7 @@ pub fn fetch(vfs::node_ptr node, u64 offset) -> block_ptr
     block.entry.offset = offset;
     block.entry.response = io::response();
 
-    if (var result = node.file_operations.read(node, block.response.cb, offset, (*block.entry).iovs, 0, block.size); !result)
+    if (var result = node.file_operations.read(node, &mut block.response.cb, offset, (*block.entry).iovs, 0, block.size); !result)
       io::cancel(&mut block.response.cb, result);
 
     block.state = cache_entry::state::initialised;
@@ -318,7 +318,7 @@ fn plumber(void*) -> void
             bytes += BLOCK_FLUSH_SIZE;
           }
 
-          if (var result = node.file_operations.write(node, response.cb, position, entry.iovs, offset, bytes); !result)
+          if (var result = node.file_operations.write(node, &mut response.cb, position, entry.iovs, offset, bytes); !result)
             std::print("plumber: unable to initiate write back - ", result);
         }
 

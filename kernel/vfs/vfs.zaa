@@ -227,7 +227,7 @@ pub fn mount(vfs::node_ptr path, file_system mut *fs) -> vfs::result
 {
   var mount = mount();
 
-  if (var result = fs.ops.mount(fs, mount.root); !result)
+  if (var result = fs.ops.mount(fs, &mut mount.root); !result)
     return result;
 
   mount.fs = fs;
@@ -263,7 +263,7 @@ pub fn mount(vfs::node_ptr path, file_system mut *fs) -> vfs::result
 
 pub fn create(vfs::node_ptr &path, String &name, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
-  return path.directory_operations.create(path, std::string_view(name.data, name.len), result, uid, gid, mode);
+  return path.directory_operations.create(path, std::string_view(name.data, name.len), &mut result, uid, gid, mode);
 }
 
 pub fn create(vfs::node_ptr &path, String &name, u32 uid, u32 gid, u32 mode) -> vfs::result
@@ -275,19 +275,19 @@ pub fn create(vfs::node_ptr &path, String &name, u32 uid, u32 gid, u32 mode) -> 
 
 pub fn mkdir(vfs::node_ptr &path, String &name, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
-  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), result, uid, gid, mode);
+  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), &mut result, uid, gid, mode);
 }
 
 pub fn mkdir(vfs::node_ptr &path, String &name, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
   var node = node_ptr();
 
-  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), node, uid, gid, mode);
+  return path.directory_operations.mkdir(path, std::string_view(name.data, name.len), &mut node, uid, gid, mode);
 }
 
 pub fn symlink(vfs::node_ptr &path, String &name, String &target, vfs::node_ptr mut &result, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
-  return path.directory_operations.symlink(path, std::string_view(name.data, name.len), std::string_view(target.data, target.len), result, uid, gid, mode);
+  return path.directory_operations.symlink(path, std::string_view(name.data, name.len), std::string_view(target.data, target.len), &mut result, uid, gid, mode);
 }
 
 pub fn symlink(vfs::node_ptr &path, String &name, String &target, u32 uid, u32 gid, u32 mode) -> vfs::result
@@ -309,7 +309,7 @@ pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::r
 
 pub fn stat(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
-  return node.node_operations.getattr(node, stat, mask);
+  return node.node_operations.getattr(node, &mut stat, mask);
 }
 
 pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result

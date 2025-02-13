@@ -13,5 +13,5 @@ pub fn initialise() -> void
 {
   var dev = chr::chrdev::create<ptmx>();
 
-  dev::register(dev);
+  dev::register(dev::dev_t(), dev);
 }

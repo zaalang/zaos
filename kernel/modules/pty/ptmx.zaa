@@ -44,7 +44,7 @@ pub struct ptmx : pub chr::chrdev
       if (var result = ptm.node_operations.open(ptm, &mut fd, flags, mode); !result)
         return cast(result);
 
-      dev::register(ptty);
+      dev::register(dev::dev_t(), ptty);
     }
 
     return ok;

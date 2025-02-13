@@ -1,0 +1,34 @@
+//
+// acpi utils
+//
+
+import acpi;
+import std.byteconv;
+
+const digits = "0123456789ABCDEF";
+
+pub fn eisaid_to_string(acpi::value mut &value) -> bool
+{
+  switch (value)
+  {
+    case integer[integer]:
+      var swapped = std::byteswap(cast<u32>(integer));
+
+      value = acpi::value("       ");
+      value.string[0] = 0x40 + cast<u8>((swapped >> 26) & 0x1f);
+      value.string[1] = 0x40 + cast<u8>((swapped>> 21) & 0x1f);
+      value.string[2] = 0x40 + cast<u8>((swapped>> 16) & 0x1f);
+      value.string[3] = digits[cast<usize>(swapped >> 12 & 0xf)];
+      value.string[4] = digits[cast<usize>(swapped >> 8 & 0xf)];
+      value.string[5] = digits[cast<usize>(swapped >> 4 & 0xf)];
+      value.string[6] = digits[cast<usize>(swapped >> 0 & 0xf)];
+
+    case string[string]:
+      ;
+
+    else:
+      return false;
+  }
+
+  return true;
+}

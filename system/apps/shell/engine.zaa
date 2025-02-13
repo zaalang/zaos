@@ -164,7 +164,7 @@ pub struct Context
   diag::diag mut &outdiag;
   std::optional<diag::diagnostic> exception;
 
-  Context(Engine &&engine, diag::diag &&diag)
+  Context(Engine mut &engine, diag::diag mut &diag)
     : engine(&engine), diag(diag.leader), outdiag(&diag)
   {
   }
@@ -250,7 +250,7 @@ pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after
 }
 
 #[noreturn]
-pub fn raise(Context &&ctx, diag::diagnostic &&error) throws -> void
+pub fn raise(Context mut &ctx, diag::diagnostic &&error) throws -> void
 {
   var result = std::error(void);
 
@@ -262,9 +262,9 @@ pub fn raise(Context &&ctx, diag::diagnostic &&error) throws -> void
   throw result;
 }
 
-fn neg(Context &&ctx, UnaryOp &expr) throws -> Value
+fn neg(Context mut &ctx, UnaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.subexpr);
+  var lhs = evaluate(&mut ctx, *expr.subexpr);
 
   if (lhs.is_integer)
   {
@@ -304,9 +304,9 @@ fn neg(Context &&ctx, UnaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
 }
 
-fn not(Context &&ctx, UnaryOp &expr) throws -> Value
+fn not(Context mut &ctx, UnaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.subexpr);
+  var lhs = evaluate(&mut ctx, *expr.subexpr);
 
   if (lhs.is_boolean)
   {
@@ -316,10 +316,10 @@ fn not(Context &&ctx, UnaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
 }
 
-fn add(Context &&ctx, BinaryOp &expr) throws -> Value
+fn add(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_integer && rhs.is_integer)
   {
@@ -364,10 +364,10 @@ fn add(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn sub(Context &&ctx, BinaryOp &expr) throws -> Value
+fn sub(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_integer && rhs.is_integer)
   {
@@ -407,10 +407,10 @@ fn sub(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn div(Context &&ctx, BinaryOp &expr) throws -> Value
+fn div(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
   {
@@ -455,10 +455,10 @@ fn div(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn idiv(Context &&ctx, BinaryOp &expr) throws -> Value
+fn idiv(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
   {
@@ -512,10 +512,10 @@ fn idiv(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn mul(Context &&ctx, BinaryOp &expr) throws -> Value
+fn mul(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_integer && rhs.is_integer)
   {
@@ -540,10 +540,10 @@ fn mul(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn rem(Context &&ctx, BinaryOp &expr) throws -> Value
+fn rem(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_integer && rhs.is_integer)
   {
@@ -580,10 +580,10 @@ fn rem(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn pow(Context &&ctx, BinaryOp &expr) throws -> Value
+fn pow(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_integer && rhs.is_integer)
   {
@@ -601,14 +601,14 @@ fn pow(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn and(Context &&ctx, BinaryOp &expr) throws -> Value
+fn and(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
 
   if (lhs.is_boolean && lhs.as<bool> == false)
     return Value::Boolean(false);
 
-  var rhs = evaluate(ctx, *expr.rhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_boolean && rhs.is_boolean)
   {
@@ -618,14 +618,14 @@ fn and(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn or(Context &&ctx, BinaryOp &expr) throws -> Value
+fn or(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
 
   if (lhs.is_boolean && lhs.as<bool> == true)
     return Value::Boolean(true);
 
-  var rhs = evaluate(ctx, *expr.rhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.is_boolean && rhs.is_boolean)
   {
@@ -635,10 +635,10 @@ fn or(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn lt(Context &&ctx, BinaryOp &expr) throws -> Value
+fn lt(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.kind == rhs.kind)
   {
@@ -653,10 +653,10 @@ fn lt(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn gt(Context &&ctx, BinaryOp &expr) throws -> Value
+fn gt(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.kind == rhs.kind)
   {
@@ -671,10 +671,10 @@ fn gt(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn le(Context &&ctx, BinaryOp &expr) throws -> Value
+fn le(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.kind == rhs.kind)
   {
@@ -689,10 +689,10 @@ fn le(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn ge(Context &&ctx, BinaryOp &expr) throws -> Value
+fn ge(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if (lhs.kind == rhs.kind)
   {
@@ -707,10 +707,10 @@ fn ge(Context &&ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn eq(Context &&ctx, BinaryOp &expr) throws -> Value
+fn eq(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
   {
@@ -720,10 +720,10 @@ fn eq(Context &&ctx, BinaryOp &expr) throws -> Value
   return Value::Boolean(lhs == rhs);
 }
 
-fn ne(Context &&ctx, BinaryOp &expr) throws -> Value
+fn ne(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
-  var lhs = evaluate(ctx, *expr.lhs);
-  var rhs = evaluate(ctx, *expr.rhs);
+  var lhs = evaluate(&mut ctx, *expr.lhs);
+  var rhs = evaluate(&mut ctx, *expr.rhs);
 
   if ((lhs.is_integer || lhs.is_number) && (rhs.is_integer || rhs.is_number))
   {
@@ -733,19 +733,19 @@ fn ne(Context &&ctx, BinaryOp &expr) throws -> Value
   return Value::Boolean(lhs != rhs);
 }
 
-fn rescue(Context &&ctx, BinaryOp &expr) throws -> Value
+fn rescue(Context mut &ctx, BinaryOp &expr) throws -> Value
 {
   try
   {
-    return evaluate(ctx, *expr.lhs);
+    return evaluate(&mut ctx, *expr.lhs);
   }
   catch (std::error e)
   {
-    return evaluate(ctx, *expr.rhs);
+    return evaluate(&mut ctx, *expr.rhs);
   }
 }
 
-fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
+fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws -> void
 {
   var args = std::vector<Arg>();
 
@@ -757,16 +757,16 @@ fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
         args.push_back(Arg::Flags(flags.value));
 
       case Named[var &[name, expr]]:
-        args.push_back(Arg::Named(name.value, evaluate(ctx, expr)));
+        args.push_back(Arg::Named(name.value, evaluate(&mut ctx, expr)));
 
       case Free[expr]:
-        args.push_back(Arg::Free(evaluate(ctx, expr)));
+        args.push_back(Arg::Free(evaluate(&mut ctx, expr)));
     }
   }
 
   try
   {
-    run(ctx, &mut pipeline, call.cmd.value, args);
+    run(&mut ctx, &mut pipeline, call.cmd.value, args);
   }
   catch (std::error e)
   {
@@ -777,7 +777,7 @@ fn call(Context &&ctx, Pipeline mut &pipeline, Call &call) throws -> void
   }
 }
 
-fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
+fn pipe(Context mut &ctx, Expression &expr, bool capture) throws -> Value
 {
   var value = Value();
   var pipeline = Pipeline();
@@ -792,7 +792,7 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
 
           pipeline.capture_stdout = capture;
 
-          call(ctx, &mut pipeline, call);
+          call(&mut ctx, &mut pipeline, call);
 
           if (pipeline.capture_stdout || pipeline.capture_stderr)
             value = pipeline.read();
@@ -807,7 +807,7 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
           {
             case Semi:
 
-              evaluate(ctx, *binaryop.lhs);
+              evaluate(&mut ctx, *binaryop.lhs);
 
               switch (*binaryop.rhs)
               {
@@ -823,11 +823,11 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
                       expr = &*binaryop.rhs;
 
                     else:
-                      return evaluate(ctx, *binaryop.rhs);
+                      return evaluate(&mut ctx, *binaryop.rhs);
                   }
 
                 else:
-                  return evaluate(ctx, *binaryop.rhs);
+                  return evaluate(&mut ctx, *binaryop.rhs);
               }
 
             case Pipe:
@@ -838,14 +838,14 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
 
                   pipeline.capture_stdout = true;
 
-                  call(ctx, &mut pipeline, call);
+                  call(&mut ctx, &mut pipeline, call);
 
                 else:
 
                   if (!pipeline.empty)
                     ctx.raise(EvalError::InvalidPipelineElement(ctx.engine, binaryop.lhs.span));
 
-                  pipeline.append(evaluate(ctx, *binaryop.lhs));
+                  pipeline.append(evaluate(&mut ctx, *binaryop.lhs));
               }
 
               expr = &*binaryop.rhs;
@@ -867,7 +867,7 @@ fn pipe(Context &&ctx, Expression &expr, bool capture) throws -> Value
   }
 }
 
-fn evaluate(Context &&ctx, Expression &expr) throws -> Value
+fn evaluate(Context mut &ctx, Expression &expr) throws -> Value
 {
   switch (expr)
   {
@@ -896,27 +896,27 @@ fn evaluate(Context &&ctx, Expression &expr) throws -> Value
       return Value::FileSize(filesize.value);
 
     case Call[call]:
-      return pipe(ctx, expr, capture: false);
+      return pipe(&mut ctx, expr, capture: false);
 
     case UnaryOp[unaryop]:
 
       switch (unaryop.op)
       {
         case Plus:
-          return evaluate(ctx, *unaryop.subexpr);
+          return evaluate(&mut ctx, *unaryop.subexpr);
 
         case Minus:
-          return neg(ctx, unaryop);
+          return neg(&mut ctx, unaryop);
 
         case LNot:
-          return not(ctx, unaryop);
+          return not(&mut ctx, unaryop);
 
         case Group:
 
           switch (*unaryop.subexpr)
           {
             case Call[call]:
-              return pipe(ctx, *unaryop.subexpr, capture: true);
+              return pipe(&mut ctx, *unaryop.subexpr, capture: true);
 
             case BinaryOp[nextop]:
 
@@ -924,11 +924,11 @@ fn evaluate(Context &&ctx, Expression &expr) throws -> Value
               {
                 case Semi:
                 case Pipe:
-                  return pipe(ctx, *unaryop.subexpr, capture: true);
+                  return pipe(&mut ctx, *unaryop.subexpr, capture: true);
               }
           }
 
-          return evaluate(ctx, *unaryop.subexpr);
+          return evaluate(&mut ctx, *unaryop.subexpr);
       }
 
     case BinaryOp[binaryop]:
@@ -936,56 +936,56 @@ fn evaluate(Context &&ctx, Expression &expr) throws -> Value
       switch (binaryop.op)
       {
         case Add:
-          return add(ctx, binaryop);
+          return add(&mut ctx, binaryop);
 
         case Sub:
-          return sub(ctx, binaryop);
+          return sub(&mut ctx, binaryop);
 
         case Div:
-          return div(ctx, binaryop);
+          return div(&mut ctx, binaryop);
 
         case IDiv:
-          return idiv(ctx, binaryop);
+          return idiv(&mut ctx, binaryop);
 
         case Mul:
-          return mul(ctx, binaryop);
+          return mul(&mut ctx, binaryop);
 
         case Rem:
-          return rem(ctx, binaryop);
+          return rem(&mut ctx, binaryop);
 
         case Pow:
-          return pow(ctx, binaryop);
+          return pow(&mut ctx, binaryop);
 
         case LAnd:
-          return and(ctx, binaryop);
+          return and(&mut ctx, binaryop);
 
         case LOr:
-          return or(ctx, binaryop);
+          return or(&mut ctx, binaryop);
 
         case LT:
-          return lt(ctx, binaryop);
+          return lt(&mut ctx, binaryop);
 
         case GT:
-          return gt(ctx, binaryop);
+          return gt(&mut ctx, binaryop);
 
         case LE:
-          return le(ctx, binaryop);
+          return le(&mut ctx, binaryop);
 
         case GE:
-          return ge(ctx, binaryop);
+          return ge(&mut ctx, binaryop);
 
         case EQ:
-          return eq(ctx, binaryop);
+          return eq(&mut ctx, binaryop);
 
         case NE:
-          return ne(ctx, binaryop);
+          return ne(&mut ctx, binaryop);
 
         case Rescue:
-          return rescue(ctx, binaryop);
+          return rescue(&mut ctx, binaryop);
 
         case Semi:
         case Pipe:
-          return pipe(ctx, expr, capture: false);
+          return pipe(&mut ctx, expr, capture: false);
 
         case Assign:
           ;
@@ -999,13 +999,13 @@ pub fn evaluate(Engine mut &engine, Block &block, diag::diag mut &diag) -> Value
 {
   var value = Value();
 
-  var ctx = Context(engine, diag);
+  var ctx = Context(&mut engine, &mut diag);
 
   for (var &expr : block.exprs)
   {
     try
     {
-      value = evaluate(ctx, expr);
+      value = evaluate(&mut ctx, expr);
     }
     catch (std::error e)
     {
@@ -1013,7 +1013,9 @@ pub fn evaluate(Engine mut &engine, Block &block, diag::diag mut &diag) -> Value
         ctx.diag.error(EvalError::Failed(ctx.engine, expr.span, std::meta::enumerator_name(cast<std::errc>(e.value))));
 
       if (e.category == engine_error_category)
-        ctx.diag.error(ctx.exception?!);
+        ctx.diag.error(&move ctx.exception.value);
+
+      ctx.exception.clear();
     }
 
     if (diag.has_errored)

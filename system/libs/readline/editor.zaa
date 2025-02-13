@@ -698,7 +698,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
   painter.move_home();
   painter.move_up(this.y);
   if (this.sy == 0)
-    prompt.paint_left(prompt, painter);
+    prompt.paint_left(prompt, &mut painter);
   painter.save_position();
 
   for (var y = 0, var line : text.split("\n"))
@@ -709,7 +709,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
       var j = line.end - text.begin;
 
       if (y != 0)
-        prompt.paint_indent(prompt, painter);
+        prompt.paint_indent(prompt, &mut painter);
 
       if (i <= this.cursor && this.cursor <= j)
       {
@@ -849,7 +849,7 @@ pub fn paint(editor mut &this, int fd, prompt &prompt) -> void
   this.lines = painter.lines;
 
   painter.erase_cursor_to_screen();
-  prompt.paint_right(prompt, painter);
+  prompt.paint_right(prompt, &mut painter);
   painter.restore_position();
 
   painter.show_cursor();
@@ -863,11 +863,11 @@ pub fn render(editor &this, int fd, prompt &prompt) -> void
   painter.hide_cursor();
   painter.move_home();
   painter.move_up(this.y);
-  prompt.paint_left(prompt, painter);
+  prompt.paint_left(prompt, &mut painter);
   painter.erase_cursor_to_screen();
   painter.text(this.buffer);
   painter.save_position();
-  prompt.paint_right(prompt, painter);
+  prompt.paint_right(prompt, &mut painter);
   painter.restore_position();
   painter.text("\n");
   painter.show_cursor();

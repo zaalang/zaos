@@ -3,7 +3,8 @@
 //
 
 import std.stdio;
-import std.vector;
+import std.vector : Span;
+import std.string : String;
 import blk.blkdev;
 import chr.chrdev;
 import devfs;
@@ -32,9 +33,77 @@ pub struct dev_t
   pub ~dev_t() = default;
 }
 
+pub struct attr_t
+{
+  pub enum type
+  {
+    path,
+    hid,
+    uid,
+    cid,
+    adr,
+  }
+
+  pub union value
+  {
+    pub integer(u64),
+    pub boolean(bool),
+    pub string(std::string),
+    pub buffer(std::vector<u8>),
+
+    pub value() = default;
+    pub value(value &&) = default;
+    pub fn =(value mut &, value &&) -> value mut & = default;
+    pub ~value() = default;
+  }
+
+  pub type type;
+  pub value value;
+
+  pub attr_t(type type, u64 integer)
+    : type(type), value(value::integer(integer))
+  {
+  }
+
+  pub attr_t(type type, bool boolean)
+    : type(type), value(value::boolean(boolean))
+  {
+  }
+
+  pub attr_t(type type, String &&string)
+    : type(type), value(value::string(&&string))
+  {
+  }
+
+  pub attr_t(type type, std::vector<u8> &&buffer)
+    : type(type), value(value::buffer(&&buffer))
+  {
+  }
+
+  pub attr_t() = default;
+  pub attr_t(attr_t&) = default;
+  pub fn =(attr_t mut &, attr_t &) -> attr_t mut & = default;
+  pub ~attr_t() = default;
+}
+
+pub struct bus
+{
+  std::vector<attr_t> attributes;
+
+  bus(std::vector<attr_t> &&attributes)
+    : attributes(&&attributes)
+  {
+  }
+
+  bus() = default;
+  pub bus(bus&) = default;
+  pub fn =(bus mut &, bus &) -> bus mut & = default;
+  pub ~bus() = default;
+}
+
 pub union device
 {
-  pub bus,
+  pub bus(bus),
   pub blkdev(blk::blkdev_ptr),
   pub chrdev(chr::chrdev_ptr),
 
@@ -43,7 +112,20 @@ pub union device
     return this.kind != cast(0);
   }
 
-  pub device() = default;
+  pub fn find(this &, attr_t::type type) -> std::optional<attr_t::value &>
+  {
+    switch (this)
+    {
+      case bus[bus]:
+        for (var &attr : bus.attributes)
+          if (attr.type == type)
+            return &attr.value;
+    }
+
+    return None;
+  }
+
+  device() = default;
   pub device(device&&) = default;
   pub fn =(device mut &, device &&) -> device mut & = default;
   pub ~device() = default;
@@ -84,7 +166,7 @@ fn devman() -> device_manager mut &
   return &device_manager::instance;
 }
 
-fn register(device_manager mut &devman, device device) -> dev_t
+fn register(device_manager mut &devman, dev_t parent, device device) -> dev_t
 {
   var guard = std::lock_guard(&mut devman.lock);
 
@@ -101,21 +183,31 @@ fn register(device_manager mut &devman, device device) -> dev_t
 
   node.id = dev_t(node.id.generation + 1, slot);
   node.device = &move device;
-  node.parent.id = 0;
+  node.parent = parent;
 
-  devfs::publish(node.id, node.device);
+  switch (node.device)
+  {
+    case blkdev:
+    case chrdev:
+      devfs::publish(node.id, node.device);
+  }
 
   return node.id;
 }
 
-pub fn register(blk::blkdev_ptr &dev) -> dev_t
+pub fn register(dev_t parent, blk::blkdev_ptr &dev) -> dev_t
 {
-  return devman.register(device::blkdev(dev));
+  return devman.register(parent, device::blkdev(dev));
 }
 
-pub fn register(chr::chrdev_ptr &dev) -> dev_t
+pub fn register(dev_t parent, chr::chrdev_ptr &dev) -> dev_t
 {
-  return devman.register(device::chrdev(dev));
+  return devman.register(parent, device::chrdev(dev));
+}
+
+pub fn register(dev_t parent, std::vector<attr_t> &&attributes) -> dev_t
+{
+  return devman.register(parent, device::bus(&&attributes));
 }
 
 pub fn remove(blk::blkdev_ptr &dev) -> void

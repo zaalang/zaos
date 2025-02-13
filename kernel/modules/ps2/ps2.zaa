@@ -551,7 +551,7 @@ fn initialise(controller mut &controller) -> result
 
     if (keyboard_response == response::success)
     {
-      controller.ports[0] = std::allocator::new<port>(controller, 0, type::keyboard);
+      controller.ports[0] = std::allocator::new<port>(&mut controller, 0, type::keyboard);
 
       cfg |= config::keyboard_interrupt;
     }
@@ -609,7 +609,7 @@ fn initialise(controller mut &controller) -> result
 
       if (probe_mouse())
       {
-        controller.ports[1] = std::allocator::new<port>(controller, 1, type::mouse);
+        controller.ports[1] = std::allocator::new<port>(&mut controller, 1, type::mouse);
 
         cfg |= config::mouse_interrupt;
       }
@@ -639,17 +639,17 @@ fn initialise(controller mut &controller) -> result
   return ok;
 }
 
-fn initialise(port mut &dev) -> result
+fn initialise(port mut &port) -> result
 {
-  switch (dev.type)
+  switch (port.type)
   {
     case mouse:
-      std::print("ps2 mouse on port ", dev.index);
-      dev::register(chr::chrdev::create<mouse>(dev));
+      std::print("ps2 mouse on port ", port.index);
+      dev::register(dev::dev_t(), chr::chrdev::create<mouse>(&mut port));
 
     case keyboard:
-      std::print("ps2 keyboard on port ", dev.index);
-      dev::register(chr::chrdev::create<keyboard>(dev));
+      std::print("ps2 keyboard on port ", port.index);
+      dev::register(dev::dev_t(), chr::chrdev::create<keyboard>(&mut port));
   }
 
   return ok;

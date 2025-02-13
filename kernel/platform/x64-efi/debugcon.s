@@ -1,5 +1,5 @@
 #
-# debugcon port 0xe9
+# debugcon port 0x402
 #
 
 .intel_syntax noprefix

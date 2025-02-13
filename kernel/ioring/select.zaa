@@ -75,7 +75,7 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
           case vfs::node::type::channel:
           case vfs::node::type::device:
 
-            if (var result = node.stream_operations.poll(node, readable.cb, writeable.cb); !result)
+            if (var result = node.stream_operations.poll(node, &mut readable.cb, &mut writeable.cb); !result)
               return result;
 
           case vfs::node::type::pollset:

@@ -44,7 +44,7 @@ fn fround(f64 v) -> coord_t
   return v + (v < 0.0 ? -0.5 : 0.5)*std::pow(2.0, coord_t::exponent);
 }
 
-fn hline(context &&ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
+fn hline(context mut &ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -85,7 +85,7 @@ fn hline(context &&ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t 
   *(row + i1) += d * area1;
 }
 
-fn vline(context &&ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0, coord_t y1) -> void
+fn vline(context mut &ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -108,7 +108,7 @@ fn vline(context &&ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0
   *(row + i1) += d * y1 * area;
 }
 
-fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
+fn edge(context mut &ctx, vec2 xy0, vec2 xy1) -> void
 {
   using lml;
   using std;
@@ -127,14 +127,14 @@ fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
 
   if (j0 == j1)
   {
-    hline(ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), bot.x, fract(bot.y));
+    hline(&mut ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), bot.x, fract(bot.y));
 
     return;
   }
 
   if (dx == 0)
   {
-    vline(ctx, d, ctx.cells.data + j0*ctx.width, j1, top.x, fract(top.y), fract(bot.y));
+    vline(&mut ctx, d, ctx.cells.data + j0*ctx.width, j1, top.x, fract(top.y), fract(bot.y));
 
     return;
   }
@@ -151,7 +151,7 @@ fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
     x_bump += dy * coord_t::numeric_traits::smallest;
   }
 
-  hline(ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), x, coord_t(1));
+  hline(&mut ctx, d, ctx.cells.data + j0*ctx.width, top.x, fract(top.y), x, coord_t(1));
 
   for (var row = ctx.cells.data + (j0+1)*ctx.width, var end = ctx.cells.data + j1*ctx.width; row < end; row += ctx.width)
   {
@@ -163,37 +163,37 @@ fn edge(context &&ctx, vec2 xy0, vec2 xy1) -> void
       x_error -= dy * coord_t::numeric_traits::smallest;
     }
 
-    hline(ctx, d, row, x, coord_t(0), x_next, coord_t(1));
+    hline(&mut ctx, d, row, x, coord_t(0), x_next, coord_t(1));
 
     x = x_next;
   }
 
-  hline(ctx, d, ctx.cells.data + j1*ctx.width, x, coord_t(0), bot.x, fract(bot.y));
+  hline(&mut ctx, d, ctx.cells.data + j1*ctx.width, x, coord_t(0), bot.x, fract(bot.y));
 }
 
-fn move_to(context &&ctx, vec2 xy) -> void
+fn move_to(context mut &ctx, vec2 xy) -> void
 {
   ctx.cursor = xy;
 }
 
-fn move_to(context &&ctx, (f64, f64) &xy) -> void
+fn move_to(context mut &ctx, (f64, f64) &xy) -> void
 {
-  move_to(ctx, vec2(fround(xy.0), fround(xy.1)));
+  move_to(&mut ctx, vec2(fround(xy.0), fround(xy.1)));
 }
 
-fn line_to(context &&ctx, vec2 xy) -> void
+fn line_to(context mut &ctx, vec2 xy) -> void
 {
-  edge(ctx, ctx.cursor, xy);
+  edge(&mut ctx, ctx.cursor, xy);
 
-  move_to(ctx, xy);
+  move_to(&mut ctx, xy);
 }
 
-fn line_to(context &&ctx, (f64, f64) &xy) -> void
+fn line_to(context mut &ctx, (f64, f64) &xy) -> void
 {
-  line_to(ctx, vec2(fround(xy.0), fround(xy.1)));
+  line_to(&mut ctx, vec2(fround(xy.0), fround(xy.1)));
 }
 
-fn quad_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
+fn quad_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
 {
   using lml;
   using std;
@@ -221,13 +221,13 @@ fn quad_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
     dxdu += ddx;
     dydu += ddy;
 
-    line_to(ctx, vec2(fround(x), fround(y)));
+    line_to(&mut ctx, vec2(fround(x), fround(y)));
   }
 
-  line_to(ctx, vec2(fround(xy2.0), fround(xy2.1)));
+  line_to(&mut ctx, vec2(fround(xy2.0), fround(xy2.1)));
 }
 
-fn cubic_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> void
+fn cubic_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> void
 {
   using lml;
   using std;
@@ -261,10 +261,10 @@ fn cubic_to(context &&ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> vo
     ddx += dddx;
     ddy += dddy;
 
-    line_to(ctx, vec2(fround(x), fround(y)));
+    line_to(&mut ctx, vec2(fround(x), fround(y)));
   }
 
-  line_to(ctx, vec2(fround(xy3.0), fround(xy3.1)));
+  line_to(&mut ctx, vec2(fround(xy3.0), fround(xy3.1)));
 }
 
 fn accumulate(context &ctx, std::vector<u8> mut &glyph) -> void
@@ -389,7 +389,7 @@ pub fn *(transform &tx, rect &bound) -> rect
   return rect(x_min, y_min, x_max, y_max);
 }
 
-fn trace(context &&ctx, face &face, glyph &glyph, transform &tx) -> bool
+fn trace(context mut &ctx, face &face, glyph &glyph, transform &tx) -> bool
 {
   switch (glyph.type)
   {
@@ -400,13 +400,13 @@ fn trace(context &&ctx, face &face, glyph &glyph, transform &tx) -> bool
         switch (pt)
         {
           case move_to[pt]:
-            move_to(ctx, tx * (pt.x, pt.y));
+            move_to(&mut ctx, tx * (pt.x, pt.y));
 
           case line_to[pt]:
-            line_to(ctx, tx * (pt.x, pt.y));
+            line_to(&mut ctx, tx * (pt.x, pt.y));
 
           case quad_to[pt]:
-            quad_to(ctx, tx * (pt.x1, pt.y1), tx * (pt.x, pt.y));
+            quad_to(&mut ctx, tx * (pt.x1, pt.y1), tx * (pt.x, pt.y));
         }
       }
 
@@ -414,7 +414,7 @@ fn trace(context &&ctx, face &face, glyph &glyph, transform &tx) -> bool
 
       for (var &component : glyph.components)
       {
-        trace(ctx, face, face.glyph(component.glyph_id), tx * transform(component.transform));
+        trace(&mut ctx, face, face.glyph(component.glyph_id), tx * transform(component.transform));
       }
   }
 
@@ -433,7 +433,7 @@ pub fn render(face &face, glyphid id, transform &tx, bitmap mut &bitmap) -> bool
 
   var tx = transform::translation(cast<f64>(-bound.x_min), cast<f64>(-bound.y_min)) * tx * transform::scale(1.0, -1.0);
 
-  if (!trace(ctx, face, glyph, tx))
+  if (!trace(&mut ctx, face, glyph, tx))
     return false;
 
   bitmap.width = ctx.width;

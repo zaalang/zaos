@@ -852,7 +852,7 @@ pub struct surface : pub gui::object
       this.status |= surface::status::redraw;
     }
 
-    this.vtable.configure_event(this, configure_event(this.pending_size));
+    this.vtable.configure_event(&mut this, configure_event(this.pending_size));
 
     var region = gui::rect(0, 0, this.pending_size.width, this.pending_size.height);
 
@@ -931,7 +931,7 @@ pub struct surface : pub gui::object
     {
       case title:
       case interior:
-        this.vtable.motion_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
+        this.vtable.motion_event(&mut this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
     }
 
     if (this.status & surface::status::cursor == surface::status::cursor)
@@ -991,7 +991,7 @@ pub struct surface : pub gui::object
       {
         case close:
           if (frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options) == this.location)
-            this.vtable.close_event(this);
+            this.vtable.close_event(&mut this);
 
         case maximise:
           if (frame::location(this.position.0, this.position.1, this.size.width, this.size.height, this.options) == this.location)
@@ -1007,7 +1007,7 @@ pub struct surface : pub gui::object
     {
       case title:
       case interior:
-        this.vtable.button_event(this, pointer_event(time, cast(button), this.position, this.modifiers, this.buttons));
+        this.vtable.button_event(&mut this, pointer_event(time, cast(button), this.position, this.modifiers, this.buttons));
     }
   }
 
@@ -1017,18 +1017,18 @@ pub struct surface : pub gui::object
     {
       case title:
       case interior:
-        this.vtable.wheel_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons, (dx, dy)));
+        this.vtable.wheel_event(&mut this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons, (dx, dy)));
     }
   }
 
   fn keyboard_enter(this mut &, u32 serial) -> void
   {
-    this.vtable.focus_event(this, focus_event(focus_event::type::focus_in));
+    this.vtable.focus_event(&mut this, focus_event(focus_event::type::focus_in));
   }
 
   fn keyboard_leave(this mut &, u32 serial) -> void
   {
-    this.vtable.focus_event(this, focus_event(focus_event::type::focus_out));
+    this.vtable.focus_event(&mut this, focus_event(focus_event::type::focus_out));
   }
 
   fn keyboard_modifiers(this mut &, u64 time, winton::modifiers modifiers) -> void
@@ -1039,13 +1039,13 @@ pub struct surface : pub gui::object
     {
       case title:
       case interior:
-        this.vtable.motion_event(this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
+        this.vtable.motion_event(&mut this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
     }
   }
 
   fn keyboard_key(this mut &, u64 time, u32 key, u32 state, char sym) -> void
   {
-    this.vtable.key_event(this, key_event(time, key, state, sym, this.modifiers));
+    this.vtable.key_event(&mut this, key_event(time, key, state, sym, this.modifiers));
   }
 
   fn resize(this mut &) -> void
@@ -1056,7 +1056,7 @@ pub struct surface : pub gui::object
       this.damage = gui::rect(0, 0, this.size.width, this.size.height);
       this.status |= surface::status::redraw;
 
-      this.vtable.resize_event(this, resize_event(this.size)) -> void;
+      this.vtable.resize_event(&mut this, resize_event(this.size)) -> void;
 
       var inputregion = this.input_region();
       this.connection.set_input_region(this.id, inputregion.x, inputregion.y, inputregion.width, inputregion.height);
@@ -1118,7 +1118,7 @@ pub struct surface : pub gui::object
         frame::render(buffer.width, buffer.height, cast<usize>(buffer.stride), buffer.data + cast<usize>(buffer.offset), title_color, text_color, this.options, hit_color, location);
       }
 
-      this.vtable.paint_event(this, &mut buffer, this.damage);
+      this.vtable.paint_event(&mut this, &mut buffer, this.damage);
 
       this.swap(&mut buffer);
     }

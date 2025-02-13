@@ -285,7 +285,7 @@ fn ==(directory_entry *entry, std::string_view name) -> bool
 
   for (; i < entry.name.len && j < name.len; ++j)
   {
-    if (name[j] == cast('.') && entry.name[i] == cast(' '))
+    if (name[j] == cast('.'))
     {
       while (i < entry.name.len && entry.name[i] == cast(' '))
         ++i;

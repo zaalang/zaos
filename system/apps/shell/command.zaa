@@ -47,7 +47,7 @@ pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector
   {
     path = "";
 
-    for (var &part : std::env::var("PATH").value_or("/zaos/bin").split(":"))
+    for (var &part : std::env::var("PATH").unwrap_or("/zaos/bin").split(":"))
     {
       try
       {

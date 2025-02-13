@@ -107,12 +107,12 @@ struct context
   ~context() = default;
 }
 
-fn add_type(context &&ctx, type &&type) -> type *
+fn add_type(context mut &ctx, type &&type) -> type *
 {
   return &*ctx.typetable.push_back(&&type);
 }
 
-fn resolve_type(context &&ctx, std::string_view name) -> type *
+fn resolve_type(context mut &ctx, std::string_view name) -> type *
 {
   for (var &type : ctx.typetable)
   {
@@ -146,7 +146,7 @@ fn resolve_type(context &&ctx, std::string_view name) -> type *
 
   if (var j = name.find_first('['); j != name.end)
   {
-    if (var type = resolve_type(ctx, name[name.begin .. j]))
+    if (var type = resolve_type(&mut ctx, name[name.begin .. j]))
     {
       var size = usize(0);
       std::sscan(name[j + 1 .. name.end - 1], &mut size);
@@ -160,9 +160,9 @@ fn resolve_type(context &&ctx, std::string_view name) -> type *
   return null;
 }
 
-fn resolve_type(context &&ctx, String &name) -> type *
+fn resolve_type(context mut &ctx, String &name) -> type *
 {
-  return resolve_type(ctx, std::string_view(name));
+  return resolve_type(&mut ctx, std::string_view(name));
 }
 
 fn sizeof_tag_type(tag_type *tagtype) -> usize
@@ -272,7 +272,7 @@ fn zidl_typename(type *type) -> std::string_view
   std::panic("unknown zidl type");
 }
 
-fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
+fn max_message_size(context mut &ctx, std::vector<zidl::decl> &variables) -> usize
 {
   var size = 0;
   var data = 0;
@@ -285,7 +285,7 @@ fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable.type))
+        if (var type = resolve_type(&mut ctx, variable.type))
           size = std::align_up(size, alignof_type(type)) + sizeof_type(type);
 
         data += std::align_up(std::max(variable.constraint, 64), 8);
@@ -300,7 +300,7 @@ fn max_message_size(context &&ctx, std::vector<zidl::decl> &variables) -> usize
   return size + data;
 }
 
-fn max_request_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
+fn max_request_size(context mut &ctx, std::vector<zidl::decl> &methods) -> usize
 {
   var size = 0;
 
@@ -310,7 +310,7 @@ fn max_request_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
     {
       case method[method]:
 
-        size += max_message_size(ctx, method.parameters);
+        size += max_message_size(&mut ctx, method.parameters);
 
       else:
         std::panic("unhandled method decl");
@@ -320,7 +320,7 @@ fn max_request_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
   return size;
 }
 
-fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
+fn max_response_size(context mut &ctx, std::vector<zidl::decl> &methods) -> usize
 {
   var size = 0;
 
@@ -330,7 +330,7 @@ fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
     {
       case method[method]:
 
-        size += max_message_size(ctx, method.returns);
+        size += max_message_size(&mut ctx, method.returns);
 
       else:
         std::panic("unhandled method decl");
@@ -340,7 +340,7 @@ fn max_response_size(context &&ctx, std::vector<zidl::decl> &methods) -> usize
   return size;
 }
 
-fn codegen_fields(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_fields(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
 {
   for (var &variable : variables)
   {
@@ -348,47 +348,47 @@ fn codegen_fields(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable.type))
-          std::fprintf(ctx.fout, "      pub {} {};\n", zidl_typename(type), variable.name);
+        if (var type = resolve_type(&mut ctx, variable.type))
+          std::fprintf(&mut ctx.fout, "      pub {} {};\n", zidl_typename(type), variable.name);
 
       else:
         std::panic("unhandled parameter decl");
     }
   }
 
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
 {
-  std::fprintf(ctx.fout, "      pub this(");
+  std::fprintf(&mut ctx.fout, "      pub this(");
 
   for (var &variable : variables)
   {
     if (&variable != &variables.front)
-      std::fprintf(ctx.fout, ", ");
+      std::fprintf(&mut ctx.fout, ", ");
 
     switch (variable)
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable.type))
+        if (var type = resolve_type(&mut ctx, variable.type))
         {
           switch (*type)
           {
             case builtin:
-              std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
+              std::fprintf(&mut ctx.fout, "{} {}", zidl_typename(type), variable.name);
 
             case array:
-              std::fprintf(ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
+              std::fprintf(&mut ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
 
             case tag:
-              std::fprintf(ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
+              std::fprintf(&mut ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
 
             case string:
             case channel:
             case buffer:
-              std::fprintf(ctx.fout, "{} {}", zidl_typename(type), variable.name);
+              std::fprintf(&mut ctx.fout, "{} {}", zidl_typename(type), variable.name);
           }
         }
 
@@ -397,40 +397,40 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
     }
   }
 
-  std::fprintf(ctx.fout, ")\n");
+  std::fprintf(&mut ctx.fout, ")\n");
 
   if (!variables.empty)
   {
-    std::fprintf(ctx.fout, "        : ");
+    std::fprintf(&mut ctx.fout, "        : ");
 
     for (var &variable : variables)
     {
       if (&variable != &variables.front)
-        std::fprintf(ctx.fout, ", ");
+        std::fprintf(&mut ctx.fout, ", ");
 
       switch (variable)
       {
         case variable[variable]:
 
-          if (var type = resolve_type(ctx, variable.type))
+          if (var type = resolve_type(&mut ctx, variable.type))
           {
             switch (*type)
             {
               case builtin:
-                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
+                std::fprintf(&mut ctx.fout, "{}({})", variable.name, variable.name);
 
               case array:
-                std::fprintf(ctx.fout, "{}(&&{})", variable.name, variable.name);
+                std::fprintf(&mut ctx.fout, "{}(&&{})", variable.name, variable.name);
 
               case tag:
-                std::fprintf(ctx.fout, "{}(&&{})", variable.name, variable.name);
+                std::fprintf(&mut ctx.fout, "{}(&&{})", variable.name, variable.name);
 
               case string:
-                std::fprintf(ctx.fout, "{}({})", variable.name, variable.name);
+                std::fprintf(&mut ctx.fout, "{}({})", variable.name, variable.name);
 
               case channel:
               case buffer:
-                std::fprintf(ctx.fout, "{}(&move {})", variable.name, variable.name);
+                std::fprintf(&mut ctx.fout, "{}(&move {})", variable.name, variable.name);
             }
           }
 
@@ -439,18 +439,18 @@ fn codegen_constructor(context &&ctx, std::vector<zidl::decl> &variables) throws
       }
     }
 
-    std::fprintf(ctx.fout, "\n");
+    std::fprintf(&mut ctx.fout, "\n");
   }
 
-  std::fprintf(ctx.fout, "      {{\n");
-  std::fprintf(ctx.fout, "      }}\n");
-  std::fprintf(ctx.fout, "      \n");
+  std::fprintf(&mut ctx.fout, "      {{\n");
+  std::fprintf(&mut ctx.fout, "      }}\n");
+  std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_encode(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
 {
-  std::fprintf(ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
-  std::fprintf(ctx.fout, "      {{\n");
+  std::fprintf(&mut ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
+  std::fprintf(&mut ctx.fout, "      {{\n");
 
   for (var &variable : variables)
   {
@@ -458,14 +458,14 @@ fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable.type))
+        if (var type = resolve_type(&mut ctx, variable.type))
         {
           switch (*type)
           {
             case string:
             case channel:
             case buffer:
-              std::fprintf(ctx.fout, "        zidl::encode(&mut encoder, value.{});\n", variable.name);
+              std::fprintf(&mut ctx.fout, "        zidl::encode(&mut encoder, value.{});\n", variable.name);
           }
         }
 
@@ -474,14 +474,14 @@ fn codegen_encode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     }
   }
 
-  std::fprintf(ctx.fout, "      }}\n");
-  std::fprintf(ctx.fout, "      \n");
+  std::fprintf(&mut ctx.fout, "      }}\n");
+  std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_decode(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
 {
-  std::fprintf(ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
-  std::fprintf(ctx.fout, "      {{\n");
+  std::fprintf(&mut ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
+  std::fprintf(&mut ctx.fout, "      {{\n");
 
   for (var &variable : variables)
   {
@@ -489,14 +489,14 @@ fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     {
       case variable[variable]:
 
-        if (var type = resolve_type(ctx, variable.type))
+        if (var type = resolve_type(&mut ctx, variable.type))
         {
           switch (*type)
           {
             case string:
             case channel:
             case buffer:
-              std::fprintf(ctx.fout, "        zidl::decode(&mut decoder, &mut value.{});\n", variable.name);
+              std::fprintf(&mut ctx.fout, "        zidl::decode(&mut decoder, &mut value.{});\n", variable.name);
           }
         }
 
@@ -505,53 +505,53 @@ fn codegen_decode(context &&ctx, std::vector<zidl::decl> &variables) throws -> v
     }
   }
 
-  std::fprintf(ctx.fout, "      }}\n");
-  std::fprintf(ctx.fout, "      \n");
+  std::fprintf(&mut ctx.fout, "      }}\n");
+  std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_method(context &&ctx, zidl::method &method) throws -> void
+fn codegen_method(context mut &ctx, zidl::method &method) throws -> void
 {
   if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
   {
-    std::fprintf(ctx.fout, "    pub struct {}_request\n", method.name);
-    std::fprintf(ctx.fout, "    {{\n");
-    std::fprintf(ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x10101010) & 0x7ffffff);
-    std::fprintf(ctx.fout, "      pub const max_message_size = {};\n", max_message_size(ctx, method.parameters));
-    std::fprintf(ctx.fout, "      \n");
+    std::fprintf(&mut ctx.fout, "    pub struct {}_request\n", method.name);
+    std::fprintf(&mut ctx.fout, "    {{\n");
+    std::fprintf(&mut ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x10101010) & 0x7ffffff);
+    std::fprintf(&mut ctx.fout, "      pub const max_message_size = {};\n", max_message_size(&mut ctx, method.parameters));
+    std::fprintf(&mut ctx.fout, "      \n");
 
-    codegen_fields(ctx, method.parameters);
-    codegen_constructor(ctx, method.parameters);
-    codegen_encode(ctx, method.parameters);
-    codegen_decode(ctx, method.parameters);
+    codegen_fields(&mut ctx, method.parameters);
+    codegen_constructor(&mut ctx, method.parameters);
+    codegen_encode(&mut ctx, method.parameters);
+    codegen_decode(&mut ctx, method.parameters);
 
-    std::fprintf(ctx.fout, "      pub ~this() = default;\n");
-    std::fprintf(ctx.fout, "    }}\n");
-    std::fprintf(ctx.fout, "\n");
+    std::fprintf(&mut ctx.fout, "      pub ~this() = default;\n");
+    std::fprintf(&mut ctx.fout, "    }}\n");
+    std::fprintf(&mut ctx.fout, "\n");
   }
 
   if (method.type == zidl::method::type::twoway || method.type == zidl::method::type::event)
   {
-    std::fprintf(ctx.fout, "    pub struct {}_response\n", method.name);
-    std::fprintf(ctx.fout, "    {{\n");
-    std::fprintf(ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x92be81) & 0x7ffffff);
-    std::fprintf(ctx.fout, "      pub const max_message_size = {};\n", max_message_size(ctx, method.returns));
-    std::fprintf(ctx.fout, "      \n");
+    std::fprintf(&mut ctx.fout, "    pub struct {}_response\n", method.name);
+    std::fprintf(&mut ctx.fout, "    {{\n");
+    std::fprintf(&mut ctx.fout, "      pub const ordinal = {:#x};\n", std::hash().combine(method.ordinal, 0x92be81) & 0x7ffffff);
+    std::fprintf(&mut ctx.fout, "      pub const max_message_size = {};\n", max_message_size(&mut ctx, method.returns));
+    std::fprintf(&mut ctx.fout, "      \n");
 
-    codegen_fields(ctx, method.returns);
-    codegen_constructor(ctx, method.returns);
-    codegen_encode(ctx, method.returns);
-    codegen_decode(ctx, method.returns);
+    codegen_fields(&mut ctx, method.returns);
+    codegen_constructor(&mut ctx, method.returns);
+    codegen_encode(&mut ctx, method.returns);
+    codegen_decode(&mut ctx, method.returns);
 
-    std::fprintf(ctx.fout, "      pub ~this() = default;\n");
-    std::fprintf(ctx.fout, "    }}\n");
-    std::fprintf(ctx.fout, "\n");
+    std::fprintf(&mut ctx.fout, "      pub ~this() = default;\n");
+    std::fprintf(&mut ctx.fout, "    }}\n");
+    std::fprintf(&mut ctx.fout, "\n");
   }
 }
 
-fn codegen_dispatch(context &&ctx, zidl::protocol &protocol) throws -> void
+fn codegen_dispatch(context mut &ctx, zidl::protocol &protocol) throws -> void
 {
-  std::fprintf(ctx.fout, "    pub union dispatch_t\n");
-  std::fprintf(ctx.fout, "    {{\n");
+  std::fprintf(&mut ctx.fout, "    pub union dispatch_t\n");
+  std::fprintf(&mut ctx.fout, "    {{\n");
 
   for (var &method : protocol.methods)
   {
@@ -560,138 +560,138 @@ fn codegen_dispatch(context &&ctx, zidl::protocol &protocol) throws -> void
       case method[method]:
 
         if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
-          std::fprintf(ctx.fout, "      pub {}({}_request mut &),\n", method.name, method.name);
+          std::fprintf(&mut ctx.fout, "      pub {}({}_request mut &),\n", method.name, method.name);
 
         if (method.type == zidl::method::type::event)
-          std::fprintf(ctx.fout, "      pub {}({}_response mut &),\n", method.name, method.name);
+          std::fprintf(&mut ctx.fout, "      pub {}({}_response mut &),\n", method.name, method.name);
 
       else:
         std::panic("unhandled protocol decl");
     }
   }
 
-  std::fprintf(ctx.fout, "      \n");
-  std::fprintf(ctx.fout, "      pub ~this() = default;\n");
-  std::fprintf(ctx.fout, "    }}\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "      \n");
+  std::fprintf(&mut ctx.fout, "      pub ~this() = default;\n");
+  std::fprintf(&mut ctx.fout, "    }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_messages(context &&ctx, zidl::protocol &protocol) throws -> void
+fn codegen_messages(context mut &ctx, zidl::protocol &protocol) throws -> void
 {
   for (var &method : protocol.methods)
   {
     switch (method)
     {
       case method[method]:
-        codegen_method(ctx, method);
+        codegen_method(&mut ctx, method);
 
       else:
         std::panic("unhandled protocol decl");
     }
   }
 
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_protocol(context &&ctx, zidl::protocol &protocol) throws -> void
+fn codegen_protocol(context mut &ctx, zidl::protocol &protocol) throws -> void
 {
-  std::fprintf(ctx.fout, "  pub struct {}\n", protocol.name);
-  std::fprintf(ctx.fout, "  {{\n");
-  std::fprintf(ctx.fout, "    pub const max_request_size = {};\n", max_request_size(ctx, protocol.methods));
-  std::fprintf(ctx.fout, "    pub const max_response_size = {};\n", max_response_size(ctx, protocol.methods));
-  std::fprintf(ctx.fout, "    \n");
+  std::fprintf(&mut ctx.fout, "  pub struct {}\n", protocol.name);
+  std::fprintf(&mut ctx.fout, "  {{\n");
+  std::fprintf(&mut ctx.fout, "    pub const max_request_size = {};\n", max_request_size(&mut ctx, protocol.methods));
+  std::fprintf(&mut ctx.fout, "    pub const max_response_size = {};\n", max_response_size(&mut ctx, protocol.methods));
+  std::fprintf(&mut ctx.fout, "    \n");
 
-  codegen_dispatch(ctx, protocol);
-  codegen_messages(ctx, protocol);
+  codegen_dispatch(&mut ctx, protocol);
+  codegen_messages(&mut ctx, protocol);
 
-  std::fprintf(ctx.fout, "  }}\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "  }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_constant(context &&ctx, zidl::constant &constant) throws -> void
+fn codegen_constant(context mut &ctx, zidl::constant &constant) throws -> void
 {
-  std::fprintf(ctx.fout, "  pub const {} = {};\n\n", constant.name, constant.value);
+  std::fprintf(&mut ctx.fout, "  pub const {} = {};\n\n", constant.name, constant.value);
 }
 
-fn codegen_bits(context &&ctx, zidl::bits &bits) throws -> void
+fn codegen_bits(context mut &ctx, zidl::bits &bits) throws -> void
 {
-  std::fprintf(ctx.fout, "  pub enum {} : u32\n", bits.name);
-  std::fprintf(ctx.fout, "  {{\n");
+  std::fprintf(&mut ctx.fout, "  pub enum {} : u32\n", bits.name);
+  std::fprintf(&mut ctx.fout, "  {{\n");
 
   for (var &constant : bits.constants)
   {
     switch (constant)
     {
       case constant[constant]:
-        std::fprintf(ctx.fout, "    {} = {},\n", constant.name, constant.value);
+        std::fprintf(&mut ctx.fout, "    {} = {},\n", constant.name, constant.value);
 
       else:
         std::panic("unhandled bits decl");
     }
   }
 
-  std::fprintf(ctx.fout, "    \n");
-  std::fprintf(ctx.fout, "    pub const fn bool({} lhs) -> bool {{ return cast<u32>(lhs) != 0; }}\n", bits.name);
-  std::fprintf(ctx.fout, "    \n");
-  std::fprintf(ctx.fout, "    pub const fn ~({} lhs) -> {} {{ return cast(~cast<u32>(lhs)); }}\n", bits.name, bits.name);
-  std::fprintf(ctx.fout, "    pub const fn &({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) & cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
-  std::fprintf(ctx.fout, "    pub const fn |({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) | cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
-  std::fprintf(ctx.fout, "    pub const fn ^({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) ^ cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+  std::fprintf(&mut ctx.fout, "    \n");
+  std::fprintf(&mut ctx.fout, "    pub const fn bool({} lhs) -> bool {{ return cast<u32>(lhs) != 0; }}\n", bits.name);
+  std::fprintf(&mut ctx.fout, "    \n");
+  std::fprintf(&mut ctx.fout, "    pub const fn ~({} lhs) -> {} {{ return cast(~cast<u32>(lhs)); }}\n", bits.name, bits.name);
+  std::fprintf(&mut ctx.fout, "    pub const fn &({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) & cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+  std::fprintf(&mut ctx.fout, "    pub const fn |({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) | cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
+  std::fprintf(&mut ctx.fout, "    pub const fn ^({} lhs, {} rhs) -> {} {{ return cast(cast<u32>(lhs) ^ cast<u32>(rhs)); }}\n", bits.name, bits.name, bits.name);
 
-  std::fprintf(ctx.fout, "  }}\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "  }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
 
   ctx.typetable.push_back(type::tag(bits.name, std::vector::from([ctx.i32type])));
 }
 
-fn codegen_enumerator(context &&ctx, zidl::enumerator &enumerator) throws -> void
+fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws -> void
 {
-  std::fprintf(ctx.fout, "  pub enum {} : i32\n", enumerator.name);
-  std::fprintf(ctx.fout, "  {{\n");
+  std::fprintf(&mut ctx.fout, "  pub enum {} : i32\n", enumerator.name);
+  std::fprintf(&mut ctx.fout, "  {{\n");
 
   for (var &constant : enumerator.constants)
   {
     switch (constant)
     {
       case constant[constant]:
-        std::fprintf(ctx.fout, "    {} = {},\n", constant.name, constant.value);
+        std::fprintf(&mut ctx.fout, "    {} = {},\n", constant.name, constant.value);
 
       else:
         std::panic("unhandled enum decl");
     }
   }
 
-  std::fprintf(ctx.fout, "  }}\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "  }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
 
   ctx.typetable.push_back(type::tag(enumerator.name, std::vector::from([ctx.i32type])));
 }
 
-fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
+fn codegen_structure(context mut &ctx, zidl::structure &structure) throws -> void
 {
-  std::fprintf(ctx.fout, "  pub struct {}\n", structure.name);
-  std::fprintf(ctx.fout, "  {{\n");
+  std::fprintf(&mut ctx.fout, "  pub struct {}\n", structure.name);
+  std::fprintf(&mut ctx.fout, "  {{\n");
 
   for (var &field : structure.fields)
   {
     switch (field)
     {
       case variable[field]:
-        std::fprintf(ctx.fout, "    pub {} {};\n", field.type, field.name);
+        std::fprintf(&mut ctx.fout, "    pub {} {};\n", field.type, field.name);
 
       else:
         std::panic("unhandled struct decl");
     }
   }
 
-  std::fprintf(ctx.fout, "    \n");
-  std::fprintf(ctx.fout, "    pub {}() = default;\n", structure.name);
-  std::fprintf(ctx.fout, "    pub {}({}&&) = default;\n", structure.name, structure.name);
-  std::fprintf(ctx.fout, "    pub fn =({} mut &, {} &&) -> {} mut & = default;\n", structure.name, structure.name, structure.name);
-  std::fprintf(ctx.fout, "    pub fn ==({} &, {} &) -> bool = default;\n", structure.name, structure.name);
-  std::fprintf(ctx.fout, "    pub ~{}() = default;\n", structure.name);
-  std::fprintf(ctx.fout, "  }}\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "    \n");
+  std::fprintf(&mut ctx.fout, "    pub {}() = default;\n", structure.name);
+  std::fprintf(&mut ctx.fout, "    pub {}({}&&) = default;\n", structure.name, structure.name);
+  std::fprintf(&mut ctx.fout, "    pub fn =({} mut &, {} &&) -> {} mut & = default;\n", structure.name, structure.name, structure.name);
+  std::fprintf(&mut ctx.fout, "    pub fn ==({} &, {} &) -> bool = default;\n", structure.name, structure.name);
+  std::fprintf(&mut ctx.fout, "    pub ~{}() = default;\n", structure.name);
+  std::fprintf(&mut ctx.fout, "  }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
 
   var fields = std::vector<type*>();
 
@@ -700,7 +700,7 @@ fn codegen_structure(context &&ctx, zidl::structure &structure) throws -> void
     switch (field)
     {
       case variable[field]:
-        if (var type = resolve_type(ctx, field.type))
+        if (var type = resolve_type(&mut ctx, field.type))
           fields.push_back(type);
 
       else:
@@ -718,39 +718,39 @@ fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throw
 
   ctx.fout = std::file::create(outfile);
 
-  std::fprintf(ctx.fout, "//\n// auto generated - do not modify\n//\n\n");
-  std::fprintf(ctx.fout, "import zidl.types;\n");
-  std::fprintf(ctx.fout, "import zidl.protocol;\n");
-  std::fprintf(ctx.fout, "\n");
+  std::fprintf(&mut ctx.fout, "//\n// auto generated - do not modify\n//\n\n");
+  std::fprintf(&mut ctx.fout, "import zidl.types;\n");
+  std::fprintf(&mut ctx.fout, "import zidl.protocol;\n");
+  std::fprintf(&mut ctx.fout, "\n");
 
-  std::fprintf(ctx.fout, "pub struct {}\n", ast.name.gsub(".", "_"));
-  std::fprintf(ctx.fout, "{{\n");
+  std::fprintf(&mut ctx.fout, "pub struct {}\n", ast.name.gsub(".", "_"));
+  std::fprintf(&mut ctx.fout, "{{\n");
 
   for (var &decl : ast.decls)
   {
     switch (decl)
     {
       case constant[constant]:
-        codegen_constant(ctx, constant);
+        codegen_constant(&mut ctx, constant);
 
       case bits[bits]:
-        codegen_bits(ctx, bits);
+        codegen_bits(&mut ctx, bits);
 
       case enumerator[enumerator]:
-        codegen_enumerator(ctx, enumerator);
+        codegen_enumerator(&mut ctx, enumerator);
 
       case structure[structure]:
-        codegen_structure(ctx, structure);
+        codegen_structure(&mut ctx, structure);
 
       case protocol[protocol]:
-        codegen_protocol(ctx, protocol);
+        codegen_protocol(&mut ctx, protocol);
 
       else:
         std::panic("unhandled ast decl");
     }
   }
 
-  std::fprintf(ctx.fout, "}}\n");
+  std::fprintf(&mut ctx.fout, "}}\n");
 }
 
 fn main

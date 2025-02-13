@@ -412,7 +412,7 @@ struct parse_context
   ~parse_context() = default;
 }
 
-fn parse_qualified_name(parse_context &&ctx) -> std::string
+fn parse_qualified_name(parse_context mut &ctx) -> std::string
 {
   var loc = ctx.tok.loc;
   var name = ctx.tok.text;
@@ -431,7 +431,7 @@ fn parse_qualified_name(parse_context &&ctx) -> std::string
   return name;
 }
 
-fn parse_const_declaration(parse_context &&ctx) -> decl
+fn parse_const_declaration(parse_context mut &ctx) -> decl
 {
   var constant = constant();
 
@@ -456,7 +456,7 @@ fn parse_const_declaration(parse_context &&ctx) -> decl
   return decl::constant(&move constant);
 }
 
-fn parse_variable_declaration(parse_context &&ctx) -> decl
+fn parse_variable_declaration(parse_context mut &ctx) -> decl
 {
   var variable = variable();
 
@@ -494,7 +494,7 @@ fn parse_variable_declaration(parse_context &&ctx) -> decl
   return decl::variable(&move variable);
 }
 
-fn parse_method_declaration(parse_context &&ctx) -> decl
+fn parse_method_declaration(parse_context mut &ctx) -> decl
 {
   var method = method();
 
@@ -514,7 +514,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
 
       while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
       {
-        if (var decl = parse_variable_declaration(ctx); decl)
+        if (var decl = parse_variable_declaration(&mut ctx); decl)
         {
           method.parameters.push_back(&move decl);
         }
@@ -535,7 +535,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
 
         while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
         {
-          if (var decl = parse_variable_declaration(ctx); decl)
+          if (var decl = parse_variable_declaration(&mut ctx); decl)
           {
             method.returns.push_back(&move decl);
           }
@@ -565,7 +565,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
 
       while (ctx.tok != token::type::r_paren && ctx.tok != token::type::eof)
       {
-        if (var decl = parse_variable_declaration(ctx); decl)
+        if (var decl = parse_variable_declaration(&mut ctx); decl)
         {
           method.returns.push_back(&move decl);
         }
@@ -596,7 +596,7 @@ fn parse_method_declaration(parse_context &&ctx) -> decl
   return decl::method(method);
 }
 
-fn parse_protocol_declaration(parse_context &&ctx) -> decl
+fn parse_protocol_declaration(parse_context mut &ctx) -> decl
 {
   var protocol = protocol();
 
@@ -612,7 +612,7 @@ fn parse_protocol_declaration(parse_context &&ctx) -> decl
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
-    if (var decl = parse_method_declaration(ctx); decl)
+    if (var decl = parse_method_declaration(&mut ctx); decl)
     {
       protocol.methods.push_back(&move decl);
     }
@@ -624,7 +624,7 @@ fn parse_protocol_declaration(parse_context &&ctx) -> decl
   return decl::protocol(&move protocol);
 }
 
-fn parse_bits_declaration(parse_context &&ctx) -> decl
+fn parse_bits_declaration(parse_context mut &ctx) -> decl
 {
   var bits = bits();
 
@@ -667,7 +667,7 @@ fn parse_bits_declaration(parse_context &&ctx) -> decl
   return decl::bits(&move bits);
 }
 
-fn parse_enum_declaration(parse_context &&ctx) -> decl
+fn parse_enum_declaration(parse_context mut &ctx) -> decl
 {
   var enumerator = enumerator();
 
@@ -710,7 +710,7 @@ fn parse_enum_declaration(parse_context &&ctx) -> decl
   return decl::enumerator(&move enumerator);
 }
 
-fn parse_struct_declaration(parse_context &&ctx) -> decl
+fn parse_struct_declaration(parse_context mut &ctx) -> decl
 {
   var structure = structure();
 
@@ -726,7 +726,7 @@ fn parse_struct_declaration(parse_context &&ctx) -> decl
 
   while (ctx.tok != token::type::r_brace && ctx.tok != token::type::eof)
   {
-    if (var decl = parse_variable_declaration(ctx); decl)
+    if (var decl = parse_variable_declaration(&mut ctx); decl)
     {
       structure.fields.push_back(&move decl);
     }
@@ -741,7 +741,7 @@ fn parse_struct_declaration(parse_context &&ctx) -> decl
   return decl::structure(&move structure);
 }
 
-fn parse_toplevel_declaration(parse_context &&ctx) -> decl
+fn parse_toplevel_declaration(parse_context mut &ctx) -> decl
 {
   var loc = ctx.tok.loc;
 
@@ -752,19 +752,19 @@ fn parse_toplevel_declaration(parse_context &&ctx) -> decl
       ctx.consume_token(token::type::semi);
 
     case kw_const:
-      return parse_const_declaration(ctx);
+      return parse_const_declaration(&mut ctx);
 
     case kw_protocol:
-      return parse_protocol_declaration(ctx);
+      return parse_protocol_declaration(&mut ctx);
 
     case kw_bits:
-      return parse_bits_declaration(ctx);
+      return parse_bits_declaration(&mut ctx);
 
     case kw_enum:
-      return parse_enum_declaration(ctx);
+      return parse_enum_declaration(&mut ctx);
 
     case kw_struct:
-      return parse_struct_declaration(ctx);
+      return parse_struct_declaration(&mut ctx);
 
     else:
       ctx.diag.error(ParseError::ExpectedDeclaration(ctx.text, ctx.tok));
@@ -788,14 +788,14 @@ pub fn parse(String &path, diag::diag mut &diag) throws -> ast
   if (!ctx.try_consume_token(token::type::kw_library))
     ctx.diag.error(ParseError::ExpectedLibrary(ctx.text, ctx.tok));
 
-  ast.name = parse_qualified_name(ctx);
+  ast.name = parse_qualified_name(&mut ctx);
 
   if (!ctx.try_consume_token(token::type::semi))
     ctx.diag.error(ParseError::ExpectedSemi(ctx.text, ctx.tok));
 
   while (ctx.tok != token::type::eof)
   {
-    if (var decl = parse_toplevel_declaration(ctx); decl)
+    if (var decl = parse_toplevel_declaration(&mut ctx); decl)
     {
       ast.decls.push_back(&move decl);
     }

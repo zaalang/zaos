@@ -11,6 +11,8 @@
             .global platform_task_switch
             .global platform_task_switch_full
             .global platform_task_transition
+            .global platform_task_on_stack
+            .global __chkstk
             .global tss
 
             .section .tdata
@@ -148,5 +150,27 @@ platform_task_entry:
             mov [rsp - 8], qword ptr 0x1f80
             ldmxcsr [rsp - 8]
             jmp rcx
+
+platform_task_on_stack:
+            push rbp
+            mov rbp, rsp
+            mov rsp, rdx
+            and rsp, -16
+            call rsi
+            mov rsp, rbp
+            pop rbp
+            ret
+
+__chkstk:
+            push rcx
+            mov rcx, [fs:tss@tpoff + 4]
+            test rcx, rcx
+            je 1f
+            mov rcx, [rcx + 16]           # task bp (top of stack)
+            add rcx, rax
+            cmp rsp, rcx
+            jle __stack_chk_fail
+ 1:         pop rcx
+            ret
 
 .section .note.GNU-stack, "", @progbits

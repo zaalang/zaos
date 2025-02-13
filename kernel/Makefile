@@ -74,6 +74,7 @@ blk/gpt.zaa\
 blk/cache.zaa\
 support/rc.zaa\
 support/json.zaa\
+support/lockcell.zaa\
 modules/ioapic/ioapic.zaa\
 modules/pci/pci.zaa\
 modules/msi/msi.zaa\
@@ -185,7 +186,7 @@ $(BUILD)/vdso.so: vdso.ld $(VDSO)
 $(BUILD)/kernel.zaa.o: $(BUILD)/vdso.so $(KERNEL)
 	@echo "ZZ kernel"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -O3 -g -c -fpic -mno-red-zone --features=-sse,-mmx,+soft-float -I modules -o $@ kernel.zaa
+	@$(ZZ) $(TARGETZFLAGS) -O3 -g -c -fpic -mno-red-zone -mprobe-stack --features=-sse,-mmx,+soft-float -I modules -o $@ kernel.zaa
 
 clean:
 	rm -f $(BUILD)/kernel.* $(BUILD)/vdso.* $(OBJS) $(VDSO)

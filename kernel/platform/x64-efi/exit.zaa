@@ -7,6 +7,7 @@ import cpu;
 
 extern fn exit(u32) -> void
 {
+  cpu::disable_interrupts();
   cpu::disable_memory_protect();
 
   var rbp = cast<uintptr*>(__asm("mov $0, rbp", "=r"));

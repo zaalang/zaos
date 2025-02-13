@@ -155,13 +155,9 @@ pub struct run_queue
     while (*curr)
     {
       if (*curr == thread)
-      {
         *curr = curr.wakenext;
-      }
       else
-      {
         curr = &curr.wakenext;
-      }
     }
 
     while (wakelist)
@@ -305,9 +301,6 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
 
   if (next_thread != current_thread)
   {
-    var rsp = __asm("mov $0, rsp", "=r");
-    std::assert(rsp > cast<uintptr>(current_thread) && rsp <= cast<uintptr>(current_thread) + sizeof<thread>);
-
     if (next_thread.process != current_thread.process)
     {
       next_thread.process.pagetable.ref();

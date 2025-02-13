@@ -490,7 +490,7 @@ fn initialise(controller mut &controller) -> result
     {
       if (hba.ports[i].ssts & 0xdf == 0x13)
       {
-        controller.ports[i] = std::allocator::new<port>(controller, i);
+        controller.ports[i] = std::allocator::new<port>(&mut controller, i);
       }
     }
   }
@@ -550,9 +550,9 @@ fn initialise(port mut &port) -> result
     case 0x00000101: // SATA drive
       std::print("ahci ", port.name, " sata device");
 
-      var dev = blk::blkdev::create<satadev>(port);
+      var dev = blk::blkdev::create<satadev>(&mut port);
 
-      dev::register(dev);
+      dev::register(dev::dev_t(), dev);
       blk::scan_for_partitions(dev);
 
     case 0xEB140101: // ATAPI drive

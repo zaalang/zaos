@@ -75,7 +75,7 @@ pub struct thread
 
   pub io::response rval;
 
-  u8[16] reserved;
+  u8[72] reserved;
 
   pub platform::task task;
 
@@ -308,6 +308,7 @@ fn initialise(thread mut *this) -> void
   this.wait_abstime = 0;
   this.pinned = null;
   this.next = null;
+  this.prev = null;
   this.cpu_time = 0;
   std::atomic_add(&this.refcnt, 2);
 

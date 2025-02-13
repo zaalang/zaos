@@ -217,8 +217,10 @@ pub struct process
 
   pub fn sbrk(this mut &, usize size) -> vm::virtaddr
   {
+    const guard = 16384;
+
     var base = this.heaptop;
-    this.heaptop.super = std::align_up(this.heaptop.super + size, 65536);
+    this.heaptop.super = std::align_up(this.heaptop.super + size + guard, 65536);
     return base;
   }
 

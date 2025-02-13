@@ -1261,14 +1261,14 @@ pub fn invoke<Args>(namespace mut &ns, node *scope, String &name, value mut &dst
   if (!obj)
     return value_not_found;
 
-  switch (**obj)
+  switch (*obj?!)
   {
     case method[method]:
       if (var rc = acpi::execute(&mut ns, method, &mut dst, &&args...); !rc)
         return rc;
 
     else:
-      if (var rc = load(&mut ns, *obj, &mut dst); !rc)
+      if (var rc = load(&mut ns, obj?!, &mut dst); !rc)
         return rc;
   }
 

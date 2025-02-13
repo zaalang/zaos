@@ -1,5 +1,5 @@
 //
-// x86 cpu
+// task
 //
 
 import std.stdlib;
@@ -28,10 +28,11 @@ pub struct task
     return std::atomic_or(&task.flags, flag) & flag != flag;
   }
 
-  u8[7680] kernel_stack;
+  u8[7872] kernel_stack;
 
   flags flags;
   uintptr sp;
+  uintptr tp;
 
   pub task() = default;
   pub ~task() = default;
@@ -41,6 +42,7 @@ pub fn task_init(task mut &task, task::flags flags = cast(0)) -> void
 {
   task.flags = flags;
   task.sp = cast<uintptr>(task.kernel_stack.data + task.kernel_stack.len);
+  task.tp = cast<uintptr>(task.kernel_stack.data) + 128;
 }
 
 pub fn task_fork(task mut &task, uintptr ip, void mut *data) -> void
@@ -55,9 +57,7 @@ pub fn task_enter(task mut &task, uintptr ip, void mut *data) -> void
 
 pub fn task_switch(task mut &from, task &to) -> void
 {
-  std::assert(to.sp > cast<uintptr>(to.kernel_stack.data + 2632), "kernel stack exhausted");
-
-  set_task_stack(cast<uintptr>(to.kernel_stack.data + to.kernel_stack.len));
+  task_set_task_gate(cast<uintptr>(to.kernel_stack.data + to.kernel_stack.len));
 
   if (from.flags & task::flags::user == task::flags::user)
     platform_task_switch_full(&mut from.sp, to.sp);
@@ -67,24 +67,25 @@ pub fn task_switch(task mut &from, task &to) -> void
 
 pub fn task_transition(task mut &task, uintptr ip, uintptr sp) -> void
 {
+  task.tp += 2568;
   task.flags |= task::flags::user;
 
   platform_task_transition(ip, sp);
 }
 
-pub fn get_task_stack() -> uintptr
+pub fn task_get_task_gate() -> uintptr
 {
   return __asm("mov $0, fs:tss@tpoff + 4", "=r");
 }
 
-pub fn set_task_stack(uintptr sp) -> void
+pub fn task_set_task_gate(uintptr sp) -> void
 {
   __asm("mov fs:tss@tpoff + 4, $0", "r", sp);
 }
 
-pub fn get_task_self() -> task mut *
+pub fn task_get_self() -> task mut *
 {
-  return cast<task mut *>(get_task_stack() - sizeof<typeof(task::kernel_stack)>);
+  return cast<task mut *>(task_get_task_gate() - sizeof<typeof(task::kernel_stack)>);
 }
 
 pub fn task_self() -> task mut *
@@ -92,8 +93,24 @@ pub fn task_self() -> task mut *
   return cast<task mut *>(cpu::gsbase() - sizeof<typeof(task::kernel_stack)>);
 }
 
+pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback)
+{
+  fn trampoline(void mut *callback) -> void
+  {
+    cast<Callback mut *>(callback)();
+  }
+
+  var tp = task_self.tp;
+  task_self.tp = cast<uintptr>(base);
+
+  platform_task_on_stack(&callback, cast<fn (*)(void mut *) -> void>(trampoline), base + size);
+
+  task_self.tp = tp;
+}
+
 extern fn platform_task_fork(uintptr mut &sp, uintptr ip, void mut *data) -> void;
 extern fn platform_task_enter(uintptr mut &sp, uintptr ip, void mut *data) -> void;
 extern fn platform_task_switch(uintptr mut &from, uintptr to) -> void;
 extern fn platform_task_switch_full(uintptr mut &from, uintptr to) -> void;
 extern fn platform_task_transition(uintptr ip, uintptr sp) -> void;
+extern fn platform_task_on_stack(void mut *data, fn (*callback)(void mut *) -> void, u8 mut *sp) -> void;

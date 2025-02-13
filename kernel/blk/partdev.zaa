@@ -127,7 +127,7 @@ pub fn scan_for_partitions(blk::blkdev_ptr &dev) -> void
 
     var dev = blk::blkdev::create<partdev>(dev, part);
 
-    dev::register(dev);
+    dev::register(dev::dev_t(), dev);
   }
 
   if (partitions.empty)

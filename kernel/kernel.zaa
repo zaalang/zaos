@@ -13,9 +13,6 @@ import vfs;
 import scheduler;
 import io;
 import ioapic;
-import pci;
-import nvme;
-import ahci;
 import blk;
 import pty;
 import video;
@@ -89,13 +86,12 @@ fn kernel_main(void*) -> void
   vfs::initialise();
   ioring::initialise();
   ioapic::initialise();
-  pci::initialise();
-  nvme::initialise();
-  ahci::initialise();
   pty::initialise();
   video::initialise();
   console::initialise();
   cfg::initialise();
+
+  cfg::coldplug();
 
   bootstrap_filesystem();
 

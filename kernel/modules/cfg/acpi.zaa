@@ -6,13 +6,19 @@ import std.stdio;
 import std.atomic;
 import acpi.fadt;
 import acpi.parser;
+import acpi.utils;
 import ioapic;
 import io;
 import sys;
+import dev;
 import vm : virtrange, physrange;
 import support.lockcell : LockCell;
 import platform : PHYSICAL_BASE;
+
+import pci;
 import ps2;
+import ahci;
+import nvme;
 
 const MEMORY_SPACE = 0xffffa00000000000;
 
@@ -583,69 +589,6 @@ extern fn acpi_sci_handler(namespace mut *cfg) -> void
   acpi_write_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, 0xffff);
 }
 
-fn configure(namespace mut &cfg) -> acpi::result
-{
-  var irq = ioapic::resolve(cast<u32>(cfg.fadt.sci_interrupt));
-
-  io::install_handler(irq, &cast<fn (namespace mut *) -> void>(acpi_sci_handler), &cfg);
-
-  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
-    return rc;
-
-  return ok;
-}
-
-fn coldplug(namespace mut &cfg) -> acpi::result
-{
-  var mut &ns = cfg.ns;
-
-  if (var rc = ns.invoke(ns.root, "_PIC", &mut acpi::value(), acpi::value(1)); !rc)
-    return rc;
-
-  for (var node = ns.begin; node != ns.end; ++node)
-  {
-    if (node.get("_INI"))
-    {
-      var sta = acpi::value(0xf);
-      if (var rc = ns.invoke(*node, "_STA", &mut sta); !rc && rc != acpi::result::value_not_found)
-        std::panic("_STA: ", rc);
-
-      if (sta.integer & 0x1 != 0)
-      {
-        var ini = acpi::value();
-        if (var rc = ns.invoke(*node, "_INI", &mut ini); !rc)
-          std::panic("_INI: ", rc);
-
-        std::print(ns.pathname(*node), " {", " _STA: ", sta, ", _INI: ", ini, " }");
-      }
-
-      if (sta.integer & 0x9 == 0)
-        continue;
-    }
-
-    node.descend();
-  }
-
-  for (var node = ns.begin; node != ns.end; ++node)
-  {
-    if (node.type == acpi::node::type::device)
-    {
-      std::print(ns.pathname(*node));
-
-      var hid = acpi::value();
-      if (var rc = ns.invoke(*node, "_HID", &mut hid); !rc && rc != acpi::result::value_not_found)
-        std::panic("_HID: ", rc);
-
-      if ((hid.is_integer && hid.integer == 0x0303d041) || (hid.is_string && hid.string == "PNP0303"))
-        ps2::initialise();
-    }
-
-    node.descend();
-  }
-
-  return ok;
-}
-
 fn initialise(namespace mut &cfg) -> acpi::result
 {
   var ns = acpi::namespace();
@@ -688,8 +631,24 @@ fn initialise(namespace mut &cfg) -> acpi::result
     }
   }
 
-
   cfg.ns = &move ns;
+
+  return ok;
+}
+
+fn configure(namespace mut &cfg) -> acpi::result
+{
+  var mut &ns = cfg.ns?!;
+
+  var irq = ioapic::resolve(cast<u32>(cfg.fadt.sci_interrupt));
+
+  io::install_handler(irq, &cast<fn (namespace mut *) -> void>(acpi_sci_handler), &cfg);
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
+    return rc;
+
+  if (var rc = ns.invoke(ns.root, "_PIC", &mut acpi::value(), acpi::value(1)); !rc)
+    return rc;
 
   return ok;
 }
@@ -701,7 +660,142 @@ pub fn initialise() -> void
 
   if (var rc = configure(&mut cfg); !rc)
     std::panic("acpi configure failed: ", rc);
+}
 
-  if (var rc = coldplug(&mut cfg); !rc)
-    std::panic("acpi coldplug failed: ", rc);
+pub fn coldplug() -> void
+{
+  var stack = std::vector<u8>::with_size(32768);
+
+  platform::on_stack(stack.data, stack.capacity, || {
+    var mut &ns = cfg.ns?!;
+
+    var devlist = std::flat_hash_map<acpi::node*, dev::dev_t>();
+
+    if (cfg.fadt.flags & acpi::fadt_power_button == 0)
+    {
+      var attributes = std::vector<dev::attr_t>();
+
+      attributes.push_back(dev::attr_t::type::uid, "PNP0C0C");
+
+      dev::register(dev::dev_t(), &move attributes);
+    }
+
+    if (cfg.fadt.flags & acpi::fadt_sleep_button == 0)
+    {
+      var attributes = std::vector<dev::attr_t>();
+
+      attributes.push_back(dev::attr_t::type::uid, "PNP0C0E");
+
+      dev::register(dev::dev_t(), &move attributes);
+    }
+
+    for (var node = ns.begin; node != ns.end; ++node)
+    {
+      var sta = acpi::value(0xf);
+      if (var rc = ns.invoke(*node, "_STA", &mut sta); !rc && rc != acpi::result::value_not_found)
+        std::panic("_STA: ", rc);
+
+      if (node.get("_INI"))
+      {
+        if (sta.integer & 0x1 != 0)
+        {
+          var ini = acpi::value();
+          if (var rc = ns.invoke(*node, "_INI", &mut ini); !rc)
+            std::panic("_INI: ", rc);
+
+          std::print(ns.pathname(*node), " {", " _STA: ", sta, ", _INI: ", ini, " }");
+        }
+      }
+
+      if (node.type == acpi::node::type::device)
+      {
+        var parent = dev::dev_t();
+
+        switch (devlist.get(node.parent))
+        {
+          case Some[dev]:
+            parent = dev;
+        }
+
+        var attributes = std::vector<dev::attr_t>();
+
+        attributes.push_back(dev::attr_t::type::path, ns.pathname(*node));
+
+        if (node.get("_HID"))
+        {
+          var hid = acpi::value();
+          if (var rc = ns.invoke(*node, "_HID", &mut hid); !rc && rc != acpi::result::value_not_found)
+            std::panic("_HID: ", rc);
+
+          if (acpi::eisaid_to_string(&mut hid))
+            attributes.push_back(dev::attr_t::type::hid, &move hid.string);
+        }
+
+        if (node.get("_UID"))
+        {
+          var uid = acpi::value();
+          if (var rc = ns.invoke(*node, "_UID", &mut uid); !rc && rc != acpi::result::value_not_found)
+            std::panic("_UID: ", rc);
+
+          if (ns.to_string(&mut uid))
+            attributes.push_back(dev::attr_t::type::uid, &move uid.string);
+        }
+
+        if (node.get("_CID"))
+        {
+          var cid = acpi::value();
+          if (var rc = ns.invoke(*node, "_CID", &mut cid); !rc && rc != acpi::result::value_not_found)
+            std::panic("_CID: ", rc);
+
+          //attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+        }
+
+        if (node.get("_ADR"))
+        {
+          var adr = acpi::value();
+          if (var rc = ns.invoke(*node, "_ADR", &mut adr); !rc && rc != acpi::result::value_not_found)
+            std::panic("_ADR: ", rc);
+
+          if (ns.to_integer(&mut adr))
+            attributes.push_back(dev::attr_t::type::adr, &move adr.integer);
+        }
+
+        var dev = dev::register(parent, &move attributes);
+
+        if (var bus = dev::get(dev))
+        {
+          if (var hid = bus.find(dev::attr_t::type::hid))
+          {
+            switch (hid?!.string)
+            {
+              case "PNP0303":
+                ps2::initialise();
+
+              case "PNP0A08":
+                pci::initialise();
+
+                for (var &device : pci::devices)
+                {
+                  switch (device.class_code)
+                  {
+                    case #[1, 6, 1]:
+                      ahci::initialise(device);
+
+                    case #[2, 8, 1]:
+                      nvme::initialise(device);
+                  }
+                }
+            }
+          }
+        }
+
+        devlist.insert(*node, dev);
+      }
+
+      if (sta.integer & 0x9 == 0)
+        continue;
+
+      node.descend();
+    }
+  });
 }

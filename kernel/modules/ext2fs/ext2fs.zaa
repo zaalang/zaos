@@ -665,7 +665,7 @@ pub fn read(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
 
     var bytes = std::min(block.length, remaining);
 
-    if (var result = fs.dev.file_operations.read(fs.dev, cb, block.offset, buffer, offset, bytes); !result)
+    if (var result = fs.dev.file_operations.read(fs.dev, &mut cb, block.offset, buffer, offset, bytes); !result)
       return result;
 
     remaining -= bytes;
@@ -701,7 +701,7 @@ pub fn write(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
 
     var bytes = std::min(block.length - cast(position & cast(fs.volume.blocksize - 1)), remaining);
 
-    if (var result = fs.dev.file_operations.write(fs.dev, cb, block.offset + (position & cast(fs.volume.blocksize - 1)), buffer, offset, bytes); !result)
+    if (var result = fs.dev.file_operations.write(fs.dev, &mut cb, block.offset + (position & cast(fs.volume.blocksize - 1)), buffer, offset, bytes); !result)
       return result;
 
     remaining -= bytes;

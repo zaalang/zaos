@@ -215,7 +215,7 @@ struct parse_context
 
   diag::diag mut &outdiag;
 
-  parse_context(std::string_view text, diag::diag &&diag)
+  parse_context(std::string_view text, diag::diag mut &diag)
     : text(text), diag(diag.leader), outdiag(&diag)
   {
   }
@@ -356,7 +356,7 @@ pub fn unescape(std::string_view span) -> std::string
   return result;
 }
 
-fn parse_null_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_null_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var span = tokens[0].span;
 
@@ -365,7 +365,7 @@ fn parse_null_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expr
   return Expression::Null(span);
 }
 
-fn parse_bool_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_bool_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var span = tokens[0].span;
 
@@ -383,7 +383,7 @@ fn parse_bool_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expr
   }
 }
 
-fn parse_string_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_string_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var span = tokens[0].span;
 
@@ -402,7 +402,7 @@ fn parse_string_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Ex
   return Expression::String(std::string(span), span);
 }
 
-fn parse_numeric_literal(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_numeric_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var span = tokens[0].span;
 
@@ -533,33 +533,33 @@ fn parse_numeric_literal(parse_context &&ctx, std::span<token> mut &tokens) -> E
   return Expression();
 }
 
-fn parse_unary_plus(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_unary_plus(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   consume_token(&mut tokens, token::type::plus);
 
-  return Expression::UnaryOp(UnaryOp::Type::Plus, parse_expression_left(ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Type::Plus, parse_expression_left(&mut ctx, &mut tokens));
 }
 
-fn parse_unary_minus(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_unary_minus(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   consume_token(&mut tokens, token::type::minus);
 
-  return Expression::UnaryOp(UnaryOp::Type::Minus, parse_expression_left(ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Type::Minus, parse_expression_left(&mut ctx, &mut tokens));
 }
 
-fn parse_unary_not(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_unary_not(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   consume_token(&mut tokens, token::type::exclaim);
 
-  return Expression::UnaryOp(UnaryOp::Type::LNot, parse_expression_left(ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Type::LNot, parse_expression_left(&mut ctx, &mut tokens));
 }
 
-fn parse_declref(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_declref(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   std::panic("not implemented");
 }
 
-fn parse_argument(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_argument(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   switch (tokens[0].type)
   {
@@ -589,11 +589,11 @@ fn parse_argument(parse_context &&ctx, std::span<token> mut &tokens) -> Expressi
 
     case block:
 
-      return parse_expression(ctx, &mut tokens);
+      return parse_expression(&mut ctx, &mut tokens);
   }
 }
 
-fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_callee(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var cmd = tokens[0].span;
 
@@ -625,7 +625,7 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
 
         if (try_consume_token(&mut tokens, token::type::equal) && tokens[0] != token::type::eof)
         {
-          var expr = parse_argument(ctx, &mut tokens);
+          var expr = parse_argument(&mut ctx, &mut tokens);
 
           arguments.push_back(Argument::Named((String(unescape(name), name), &move expr)));
         }
@@ -636,7 +636,7 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
 
       else:
 
-        var expr = parse_argument(ctx, &mut tokens);
+        var expr = parse_argument(&mut ctx, &mut tokens);
 
         arguments.push_back(Argument::Free(&move expr));
 
@@ -650,7 +650,7 @@ fn parse_callee(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
   return Expression::Call(String(unescape(cmd), cmd), &move arguments);
 }
 
-fn parse_group_expression(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_group_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var span = tokens[0].span;
 
@@ -658,58 +658,58 @@ fn parse_group_expression(parse_context &&ctx, std::span<token> mut &tokens) -> 
 
   var inners = lexer::lex(span.drop_front(1).drop_back(1));
 
-  var expr = parse_expression(ctx, &mut std::span(inners));
+  var expr = parse_expression(&mut ctx, &mut std::span(inners));
 
   return Expression::UnaryOp(UnaryOp::Type::Group, &move expr);
 }
 
-fn parse_expression_left(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_expression_left(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   switch (tokens[0].type)
   {
     case kw_null:
-      return parse_null_literal(ctx, &mut tokens);
+      return parse_null_literal(&mut ctx, &mut tokens);
 
     case kw_true:
     case kw_false:
-      return parse_bool_literal(ctx, &mut tokens);
+      return parse_bool_literal(&mut ctx, &mut tokens);
 
     case numeric_constant:
-      return parse_numeric_literal(ctx, &mut tokens);
+      return parse_numeric_literal(&mut ctx, &mut tokens);
 
     case plus:
-      return parse_unary_plus(ctx, &mut tokens);
+      return parse_unary_plus(&mut ctx, &mut tokens);
 
     case minus:
-      return parse_unary_minus(ctx, &mut tokens);
+      return parse_unary_minus(&mut ctx, &mut tokens);
 
     case exclaim:
-      return parse_unary_not(ctx, &mut tokens);
+      return parse_unary_not(&mut ctx, &mut tokens);
 
     case slash:
     case period:
-      return parse_callee(ctx, &mut tokens);
+      return parse_callee(&mut ctx, &mut tokens);
 
     case string_literal:
       switch (tokens[0].span[0])
       {
         case '"':
         case '\'':
-          return parse_string_literal(ctx, &mut tokens);
+          return parse_string_literal(&mut ctx, &mut tokens);
 
         case '$':
-          return parse_declref(ctx, &mut tokens);
+          return parse_declref(&mut ctx, &mut tokens);
 
         case 'a' ..= 'z':
         case 'A' ..= 'Z':
-          return parse_callee(ctx, &mut tokens);
+          return parse_callee(&mut ctx, &mut tokens);
       }
 
     case block:
       switch (tokens[0].span[0])
       {
         case '(':
-          return parse_group_expression(ctx, &mut tokens);
+          return parse_group_expression(&mut ctx, &mut tokens);
       }
   }
 
@@ -720,7 +720,7 @@ fn parse_expression_left(parse_context &&ctx, std::span<token> mut &tokens) -> E
   return Expression();
 }
 
-fn parse_expression_right(parse_context &&ctx, std::span<token> mut &tokens, PrecLevel minprec, Expression lhs) -> Expression
+fn parse_expression_right(parse_context mut &ctx, std::span<token> mut &tokens, PrecLevel minprec, Expression lhs) -> Expression
 {
   for (;;)
   {
@@ -738,14 +738,14 @@ fn parse_expression_right(parse_context &&ctx, std::span<token> mut &tokens, Pre
         ctx.diag.error(ParseError::InvalidExpressionElement(ctx.text, tokens[0].span));
     }
 
-    var rhs = parse_expression_left(ctx, &mut tokens);
+    var rhs = parse_expression_left(&mut ctx, &mut tokens);
 
     var nextprec = precedence(tokens[0]);
     var rightassoc = (prec == PrecLevel::Semi || prec == PrecLevel::Pipe || prec == PrecLevel::Conditional || prec == PrecLevel::Assignment);
 
     if (prec < nextprec || (prec == nextprec && rightassoc))
     {
-      rhs = parse_expression_right(ctx, &mut tokens, cast<PrecLevel>(cast<int>(prec) + cast<int>(!rightassoc)), &move rhs);
+      rhs = parse_expression_right(&mut ctx, &mut tokens, cast<PrecLevel>(cast<int>(prec) + cast<int>(!rightassoc)), &move rhs);
     }
 
     lhs = Expression::BinaryOp(binaryopcode(op), &move lhs, &move rhs);
@@ -754,16 +754,16 @@ fn parse_expression_right(parse_context &&ctx, std::span<token> mut &tokens, Pre
   return lhs;
 }
 
-fn parse_expression(parse_context &&ctx, std::span<token> mut &tokens) -> Expression
+fn parse_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
-  return parse_expression_right(ctx, &mut tokens, PrecLevel::Assignment, parse_expression_left(ctx, &mut tokens));
+  return parse_expression_right(&mut ctx, &mut tokens, PrecLevel::Assignment, parse_expression_left(&mut ctx, &mut tokens));
 }
 
 pub fn parse(std::string_view &src, diag::diag mut &diag) -> Block
 {
   var block = Block();
 
-  var ctx = parse_context(src, diag);
+  var ctx = parse_context(src, &mut diag);
 
   var tokens = std::span(lexer::lex(src));
 
@@ -781,13 +781,13 @@ pub fn parse(std::string_view &src, diag::diag mut &diag) -> Block
       case exclaim:
       case period:
       case slash:
-        block.exprs.push_back(parse_expression(ctx, &mut tokens));
+        block.exprs.push_back(parse_expression(&mut ctx, &mut tokens));
 
       case block:
         switch (tokens[0].span[0])
         {
           case '(':
-            block.exprs.push_back(parse_expression(ctx, &mut tokens));
+            block.exprs.push_back(parse_expression(&mut ctx, &mut tokens));
 
           else:
             ctx.diag.error(ParseError::ExpectedBlockElement(ctx.text, tokens[0].span));
