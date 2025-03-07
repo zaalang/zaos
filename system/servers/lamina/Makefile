@@ -2,24 +2,18 @@
 
 include ../../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/servers/lamina
-TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
-
-SRCS=\
-lamina.zaa\
-shell.zaa\
-desktop.zaa\
-$(BUILDROOT)/system/generated/zidl/zaos_sys.zaa\
-$(BUILDROOT)/system/generated/zidl/zaos_winton.zaa\
+BUILD := $(BUILDROOT)/system/servers/lamina
+ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
+LIBS := -lzrt
 
 default: $(BUILD)/lamina
 
-$(BUILD)/lamina: $(SRCS)
+-include $(BUILD)/lamina.d
+
+$(BUILD)/%: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ lamina.zaa
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/lamina $(BUILD)/*.o
-
-
+	rm -f $(BUILD)/lamina $(BUILD)/*.o $(BUILD)/*.d

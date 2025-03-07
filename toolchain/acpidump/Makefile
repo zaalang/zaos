@@ -2,9 +2,20 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/toolchain/acpidump
+BUILD := $(BUILDROOT)/toolchain/acpidump
+ZFLAGS := $(HOSTZFLAGS) -I$(ROOT)/system/libs
+
+OBJS=\
+$(BUILD)/uefi.o\
+$(BUILD)/uefi.s.o\
+$(BUILD)/acpidump.o\
 
 default: $(BUILD)/acpidump.efi
+
+$(BUILD)/acpidump.efi: uefi.ld $(OBJS)
+	@echo "LD acpidump"
+	@$(LD) -T uefi.ld -pie --no-dynamic-linker -Bsymbolic -znocombreloc -nostdlib -o $(BUILD)/acpidump.elf $(OBJS)
+	@$(OBJCOPY) -j .text -j .data -j .tls -j .dynamic -j .rela -j .reloc --output-target pei-x86-64 --subsystem=efi-app $(BUILD)/acpidump.elf $(BUILD)/acpidump.efi
 
 $(BUILD)/%.s.o: %.s 
 	@echo "AS $<"
@@ -14,12 +25,7 @@ $(BUILD)/%.s.o: %.s
 $(BUILD)/%.o: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(HOSTZFLAGS) -g -c -fpic -I$(ROOT)/system/libs -o $@ $^
-
-$(BUILD)/acpidump.efi: $(BUILD)/uefi.s.o $(BUILD)/uefi.o $(BUILD)/acpidump.o
-	@echo "LD acpidump"
-	@$(LD) -T uefi.ld -pie --no-dynamic-linker -Bsymbolic -znocombreloc -nostdlib -o $(BUILD)/acpidump.elf $^
-	@$(OBJCOPY) -j .text -j .data -j .tls -j .dynamic -j .rela -j .reloc --output-target pei-x86-64 --subsystem=efi-app $(BUILD)/acpidump.elf $(BUILD)/acpidump.efi
+	@$(ZZ) $(ZFLAGS) -g -c -o $@ $^
 
 clean:
 	rm -f $(BUILD)/acpidump.elf $(BUILD)/acpidump.efi $(BUILD)/*.o

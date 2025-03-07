@@ -2,8 +2,8 @@
 
 include ../mkspec.mk
 
-BUILD:=$(BUILDROOT)/kernel
-TARGETZFLAGS+=-I$(ROOT)/system/libs
+BUILD := $(BUILDROOT)/kernel
+ZFLAGS += -I$(ROOT)/system/libs
 
 PLATFORM=\
 platform/platform.zaa\
@@ -100,6 +100,8 @@ modules/video/video.zaa\
 modules/console/console.zaa\
 modules/cfg/cfg.zaa\
 modules/cfg/acpi.zaa\
+modules/cfg/acpi/namespace.zaa\
+modules/cfg/acpi/registers.zaa\
 syscalls/syscalls.zaa\
 syscalls/thread.zaa\
 syscalls/process.zaa\
@@ -176,7 +178,7 @@ $(BUILD)/%.s.o: %.s
 $(BUILD)/platform/x64-efi/x64-efi.zaa.o: $(PLATFORM)
 	@echo "ZZ platform"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -O3 -g -c -fpic -mno-red-zone -fno-stack-protect --features=-sse,-mmx,+soft-float -o $@ platform/x64-efi/x64-efi.zaa
+	@$(ZZ) $(ZFLAGS) -O3 -g -c -mno-red-zone -fno-stack-protect --features=-sse,-mmx,+soft-float -o $@ platform/x64-efi/x64-efi.zaa
 
 $(BUILD)/vdso.so: vdso.ld $(VDSO)
 	@echo "LD vdso"
@@ -186,7 +188,7 @@ $(BUILD)/vdso.so: vdso.ld $(VDSO)
 $(BUILD)/kernel.zaa.o: $(BUILD)/vdso.so $(KERNEL)
 	@echo "ZZ kernel"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -O3 -g -c -fpic -mno-red-zone -mprobe-stack --features=-sse,-mmx,+soft-float -I modules -o $@ kernel.zaa
+	@$(ZZ) $(ZFLAGS) -O3 -g -c -mno-red-zone -mprobe-stack --features=-sse,-mmx,+soft-float -I modules -o $@ kernel.zaa
 
 clean:
 	rm -f $(BUILD)/kernel.* $(BUILD)/vdso.* $(OBJS) $(VDSO)

@@ -2,7 +2,7 @@
 
 include ./mkspec.mk
 
-TOOLCHAIN := 20250213
+TOOLCHAIN := 20250224
 
 default:
 ifneq ($(file < $(BUILDROOT)/toolchain/version), $(TOOLCHAIN))

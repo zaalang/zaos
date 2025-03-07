@@ -2,18 +2,18 @@
 
 include ../../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/apps/bar
-TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
-
-SRCS=\
-bar.zaa\
+BUILD := $(BUILDROOT)/system/apps/bar
+ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
+LIBS := -lzrt
 
 default: $(BUILD)/bar
 
-$(BUILD)/bar: $(SRCS)
+-include $(BUILD)/bar.d
+
+$(BUILD)/%: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ bar.zaa
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/bar $(BUILD)/*.o
+	rm -f $(BUILD)/bar $(BUILD)/*.o $(BUILD)/*.d

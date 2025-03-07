@@ -1,0 +1,63 @@
+//
+// mandlebrot
+//
+
+import std.stdio;
+
+using std;
+
+fn plot(float xmin, float xmax, float xstep, float ymin, float ymax, float ystep) -> void
+{
+  fn pd(int d) -> void
+  {
+    if (d > 8)
+      putc('#');
+    else if (d > 4)
+      putc('+');
+    else if (d > 2)
+      putc('.');
+    else
+      putc(' ');
+  }
+
+  fn converge(float cr, float ci) -> int
+  {
+    var r = 0.0;
+    var i = 0.0;
+    var r2 = 0.0;
+    var i2 = 0.0;
+    var iters = 0;
+
+    while ((r2 + i2 < 4.0) && (iters < 256))
+    {
+      i = r * i * 2.0 + ci;
+      r = r2 - i2 + cr;
+      r2 = r * r;
+      i2 = i * i;
+      ++iters;
+    }
+
+    return iters;
+  }
+
+  printf("\x1b[H");
+
+  for (var y = ymin; y < ymax; y = y + ystep)
+  {
+    for (var x = xmin; x < xmax; x = x + xstep)
+      pd(converge(x, y));
+
+    putc('\n');
+  }
+}
+
+fn main() -> void
+{
+  var rs = -2.5;
+  var iss = -1.3;
+  var rm = 0.05;
+  var im = 0.07;
+
+  plot(rs, rs + rm * 78.0, rm, iss, iss + im * 40.0, im);
+}
+

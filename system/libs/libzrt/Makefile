@@ -2,8 +2,8 @@
 
 include ../../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/libs/libzrt
-TARGETZFLAGS+=-I$(ROOT)/system/libs
+BUILD := $(BUILDROOT)/system/libs/libzrt
+ZFLAGS += -I$(ROOT)/system/libs
 
 OBJS=\
 $(BUILD)/start.s.o\
@@ -42,7 +42,7 @@ $(BUILD)/%.s.o: %.s
 $(BUILD)/%.zaa.o: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -c -fpic -fno-stack-protect -o $@ $^
+	@$(ZZ) $(ZFLAGS) -g -c -fno-stack-protect -o $@ $^
 
 clean:
 	rm -f $(BUILD)/libzrt.a $(OBJS)

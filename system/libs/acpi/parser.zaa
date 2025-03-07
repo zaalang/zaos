@@ -61,6 +61,7 @@ enum state
   while_op,
   break_op,
   continue_op,
+  notify_op,
   l_not_op,
   l_and_op,
   l_or_op,
@@ -86,6 +87,7 @@ enum state
   condrefof_op,
   index_op,
   derefof_op,  
+  match_op,
   mid_op,
   concat_op,
   to_buffer,
@@ -1132,6 +1134,16 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_state(state::derefof_op);
       ctx.push_state(state::term_arg);
 
+    case match_op:
+      is.drop_front!(1);
+      ctx.push_state(state::match_op);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::byte_data);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::byte_data);
+      ctx.push_state(state::term_arg);
+
     case mid_op:
       is.drop_front!(1);
       ctx.push_state(state::mid_op);
@@ -1434,6 +1446,19 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_state(state::term_list);
       ctx.push_state(state::continue_op);
 
+    case notify_op:
+      is.drop_front!(1);
+      ctx.push_state(state::term_list);
+      ctx.push_state(state::notify_op);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::name_string);
+
+    case package_op:
+    case varpackage_op:
+      is.drop_front!(1);
+      ctx.push_state(state::pkg);
+      ctx.push_state(state::pkg_length);
+
     case zero_op:
     case one_op:
     case ones_op:
@@ -1460,6 +1485,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case decrement_op:
     case index_op:
     case derefof_op:
+    case match_op:
     case tobuffer_op:
     case todecimalstring_op:
     case tohexstring_op:
@@ -1873,14 +1899,14 @@ fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
       case zero_op:
         is.drop_front!(1);
 
-          if (var rc = reserved_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
-            return rc;
+        if (var rc = reserved_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
 
       case one_op:
         is.drop_front!(1);
 
-          if (var rc = access_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
-            return rc;
+        if (var rc = access_field(&mut ctx, &mut flags, &mut offset, &mut is); !rc)
+          return rc;
 
       case under_char:
       case alpha_char_a ..= alpha_char_z:
@@ -2508,6 +2534,84 @@ fn derefof_op(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
+fn is_match(u8 op, value &lhs, value &rhs) -> bool
+{
+  switch (op)
+  {
+    case 0: // MTR
+      return true;
+
+    case 1: // MEQ
+      return lhs == rhs;
+
+    case 2: // MLE
+      return lhs <= rhs;
+
+    case 3: // MLT
+      return lhs < rhs;
+
+    case 4: // MGE
+      return lhs >= rhs;
+
+    case 5: // MGT
+      return lhs > rhs;
+  }
+
+  return false;
+}
+
+#[noinline]
+fn match_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var start_index = ctx.stack.take_back();
+  var value2 = ctx.stack.take_back();
+  var op2 = ctx.stack.take_back().byte;
+  var value1 = ctx.stack.take_back();
+  var op1 = ctx.stack.take_back().byte;
+  var search_pkg = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut start_index); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut start_index.value))
+    return bad_value;
+
+  if (var rc = load(&mut ctx, &mut value1); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut value1.value))
+    return bad_value;
+
+  if (var rc = load(&mut ctx, &mut value2); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut value2.value))
+    return bad_value;
+
+  if (var rc = load(&mut ctx, &mut search_pkg); !rc)
+    return rc;
+
+  if (!search_pkg.value.is_package)
+    return bad_value;
+
+  var result = value::integer(~0);
+  var mut &package = search_pkg.value.package;
+
+  for (var idx = cast<usize>(start_index.value.integer); idx < package.elements.len; ++idx)
+  {
+    if (is_match(op1, package.elements[idx], value1.value) && is_match(op2, package.elements[idx], value2.value))
+    {
+      result = value(idx);
+
+      break;
+    }
+  }
+
+  ctx.push_value(result);
+
+  return ok;
+}
+
 #[noinline]
 fn mid_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
@@ -2795,7 +2899,7 @@ fn sleep_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut period.value))
     return bad_value;
 
-  // sleep
+  ctx.namespace.sleep(period.value);
 
   return ok;
 }
@@ -2957,6 +3061,40 @@ fn continue_op(context mut &ctx, std::span<u8> mut &is) -> result
 }
 
 #[noinline]
+fn notify_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var value = ctx.stack.take_back();
+  var name = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut value); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut value.value))
+    return bad_value;
+
+  switch (resolve(ctx, &mut name))
+  {
+    case Some[node]:
+
+      for (; node; node = node.parent)
+      {
+        if (var obj = node.find(name.span))
+          break;
+      }
+
+      if (var obj = node.find(name.span))
+        ctx.namespace.notify(obj?!, value.value);
+
+    else:
+      return invalid_path;
+  }
+
+  ctx.pop_state();
+
+  return ok;
+}
+
+#[noinline]
 fn store(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var src = ctx.stack.back();
@@ -2971,7 +3109,7 @@ fn store(context mut &ctx, std::span<u8> mut &is) -> result
 
     case debug:
 
-      std::print("Debug: ", src.value);
+      std::print("acpi debug: ", src.value);
 
     case arg[idx]:
 
@@ -3288,6 +3426,11 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
         if (var rc = derefof_op(&mut ctx, &mut is); !rc)
           return rc;
 
+      case match_op:
+
+        if (var rc = match_op(&mut ctx, &mut is); !rc)
+          return rc;
+
       case mid_op:
 
         if (var rc = mid_op(&mut ctx, &mut is); !rc)
@@ -3371,6 +3514,11 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
       case continue_op:
 
         if (var rc = continue_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case notify_op:
+
+        if (var rc = notify_op(&mut ctx, &mut is); !rc)
           return rc;
 
       case store:

@@ -2,23 +2,18 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/toolchain/dkmg
-
-SRCS=\
-dkmg.zaa\
-$(ROOT)/system/libs/gpt/gpt.zaa\
-$(ROOT)/system/libs/gpt/image.zaa\
-$(ROOT)/system/libs/fat/fat.zaa\
-$(ROOT)/system/libs/fat/image.zaa\
-$(ROOT)/system/libs/ext2/ext2.zaa\
-$(ROOT)/system/libs/ext2/image.zaa\
+BUILD := $(BUILDROOT)/toolchain/dkmg
+ZFLAGS := $(HOSTZFLAGS) -I$(ROOT)/system/libs
+LIBS := -lzrt
 
 default: $(BUILD)/dkmg
 
-$(BUILD)/dkmg: $(SRCS)
-	@echo "HOSTZZ $<"
+-include $(BUILD)/dkmg.d
+
+$(BUILD)/%: %.zaa
+	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(HOSTZFLAGS) -g -I$(ROOT)/system/libs -lzrt -o $@ $^
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/dkmg $(BUILD)/*.o
+	rm -f $(BUILD)/dkmg $(BUILD)/*.o $(BUILD)/*.d

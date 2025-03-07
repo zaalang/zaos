@@ -149,3 +149,6 @@ image:
         - cp:
             src: build/system/apps/breakout/breakout
             dest: /root/breakout
+        - cp:
+            src: build/system/apps/mandlebrot/mandlebrot
+            dest: /root/mandlebrot

@@ -2,25 +2,18 @@
 
 include ../../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/apps/shell
-TARGETZFLAGS+=-I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -lzrt
-
-SRCS=\
-main.zaa\
-ast.zaa\
-lexer.zaa\
-parser.zaa\
-value.zaa\
-engine.zaa\
-command.zaa\
-pipeline.zaa\
+BUILD := $(BUILDROOT)/system/apps/shell
+ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
+LIBS := -lzrt
 
 default: $(BUILD)/shell
 
-$(BUILD)/shell: $(SRCS)
+-include $(BUILD)/shell.d
+
+$(BUILD)/%: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -fpic -o $@ main.zaa
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/shell $(BUILD)/*.o
+	rm -f $(BUILD)/shell $(BUILD)/*.o $(BUILD)/*.d

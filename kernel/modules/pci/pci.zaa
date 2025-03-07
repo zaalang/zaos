@@ -72,7 +72,7 @@ pub enum capabilities : u8
 
 pub struct device
 {
-  pub u16 sg;
+  pub u16 seg;
   pub u8 bus;
   pub u8 dev;
   pub u8 func;
@@ -176,7 +176,7 @@ pub fn initialise() -> void
 
           var device = device();
 
-          device.sg = config.segment_group;
+          device.seg = config.segment_group;
           device.bus = bus;
           device.dev = dev;
           device.func = func;

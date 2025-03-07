@@ -2,13 +2,13 @@
 
 include ../../../mkspec.mk
 
-BUILD := $(BUILDROOT)/system/apps/breakout
+BUILD := $(BUILDROOT)/system/apps/mandlebrot
 ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt
 LIBS := -lzrt
 
-default: $(BUILD)/breakout
+default: $(BUILD)/mandlebrot
 
--include $(BUILD)/breakout.d
+-include $(BUILD)/mandlebrot.d
 
 $(BUILD)/%: %.zaa
 	@echo "ZZ $<"
@@ -16,4 +16,4 @@ $(BUILD)/%: %.zaa
 	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/breakout $(BUILD)/*.o $(BUILD)/*.d
+	rm -f $(BUILD)/mandlebrot $(BUILD)/*.o $(BUILD)/*.d

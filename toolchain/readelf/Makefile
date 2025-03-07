@@ -2,14 +2,18 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/toolchain/readelf
+BUILD := $(BUILDROOT)/toolchain/readelf
+ZFLAGS := $(HOSTZFLAGS) -I$(ROOT)/system/libs
+LIBS := -lzrt
 
 default: $(BUILD)/readelf
 
-$(BUILD)/readelf: readelf.zaa
-	@echo "HOSTZZ $<"
+-include $(BUILD)/readelf.d
+
+$(BUILD)/%: %.zaa
+	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(HOSTZFLAGS) -g -I$(ROOT)/system/libs -lzrt -o $@ $^
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/readelf $(BUILD)/*.o
+	rm -f $(BUILD)/readelf $(BUILD)/*.o $(BUILD)/*.d

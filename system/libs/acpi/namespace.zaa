@@ -16,6 +16,10 @@ pub vtable interface
   fn read(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result;
   fn write(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result;
   fn close(acpi::namespace mut &namespace, acpi::opregion *opregion) -> acpi::result;
+
+  fn notify(acpi::namespace mut &namespace, acpi::node *node, acpi::value &value) -> acpi::result;
+
+  fn sleep(acpi::namespace mut &namespace, acpi::value &period) -> acpi::result;
 }
 
 pub struct package
@@ -1207,6 +1211,16 @@ pub fn store(namespace mut &ns, value *obj, std::vector<usize> &index, value mut
 pub fn close(namespace mut &ns, opregion &opregion) -> void
 {
   ns.interface.close(&mut ns, &opregion);
+}
+
+pub fn notify(namespace mut &ns, node *node, value &value) -> void
+{
+  ns.interface.notify(&mut ns, node, value);
+}
+
+pub fn sleep(namespace mut &ns, value &period) -> void
+{
+  ns.interface.sleep(&mut ns, period);
 }
 
 pub fn lookup(namespace mut &ns, node *scope, String &name) -> std::optional<acpi::value *>

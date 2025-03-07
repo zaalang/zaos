@@ -21,7 +21,17 @@ fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize wi
 
 fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
 {
-  return ok;
+  return not_supported;
+}
+
+fn notify(acpi::namespace mut &ns, acpi::node *node, acpi::value &value) -> acpi::result
+{
+  return not_supported;
+}
+
+fn sleep(acpi::namespace mut &ns, acpi::value &period) -> acpi::result
+{
+  return not_supported;
 }
 
 extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32

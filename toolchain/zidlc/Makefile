@@ -2,14 +2,18 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/toolchain/zidlc
+BUILD := $(BUILDROOT)/toolchain/zidlc
+ZFLAGS := $(HOSTZFLAGS) -I$(ROOT)/system/libs
+LIBS := -lzrt
 
 default: $(BUILD)/zidlc
 
-$(BUILD)/zidlc: zidlc.zaa
-	@echo "HOSTZZ $<"
+-include $(BUILD)/zidlc.d
+
+$(BUILD)/%: %.zaa
+	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(HOSTZFLAGS) -g -I$(ROOT)/system/libs -lzrt -o $@ $^
+	@$(ZZ) $(ZFLAGS) -g -o $@ $^ $(LIBS)
 
 clean:
-	rm -f $(BUILD)/zidlc $(BUILD)/*.o
+	rm -f $(BUILD)/zidlc $(BUILD)/*.o $(BUILD)/*.d

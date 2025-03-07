@@ -1,0 +1,199 @@
+//
+// acpi cfg
+//
+
+import std.stdio;
+import acpi.fadt;
+import vm : virtaddr, physaddr;
+import platform;
+
+pub fn acpi_read_register(acpi::gas &gas, u64 mut &value) -> acpi::result
+{
+  var width = 0;
+  var offset = cast<u64>(gas.register_bit_offset);
+  var length = cast<u64>(gas.register_bit_length);
+
+  switch (gas.access_width)
+  {
+    case 0:
+      width = std::ceil_pow2(std::min(64, cast(length)) / 8);
+
+    case 1 ..= 4:
+      width = cast(gas.access_width);
+
+    else:
+      return invalid_access_width;
+  }
+
+  value = 0;
+
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
+  {
+    var data = 0;
+
+    var bit = offset & cast(width * 8 - 1);
+    var len = std::min(bit + length, cast(width * 8)) - bit;
+
+    switch (gas.address_space_id)
+    {
+      case 0:
+        switch (width)
+        {
+          case 1:
+            data = cast<u64>(std::volatile_load(cast<u8*>(physaddr(cast<uintptr>(gas.address + i)).ptr)));
+
+          case 2:
+            data = cast<u64>(std::volatile_load(cast<u16*>(physaddr(cast<uintptr>(gas.address + i)).ptr)));
+
+          case 4:
+            data = cast<u64>(std::volatile_load(cast<u32*>(physaddr(cast<uintptr>(gas.address + i)).ptr)));
+
+          case 8:
+            data = cast<u64>(std::volatile_load(cast<u64*>(physaddr(cast<uintptr>(gas.address + i)).ptr)));
+
+          else:
+            return invalid_access_width;
+        }
+
+      case 1:
+        switch (width)
+        {
+          case 1:
+            data = cast<u64>(platform::in8(cast<u32>(gas.address + i)));
+
+          case 2:
+            data = cast<u64>(platform::in16(cast<u32>(gas.address + i)));
+
+          case 4:
+            data = cast<u64>(platform::in32(cast<u32>(gas.address + i)));
+
+          else:
+            return invalid_access_width;
+        }
+
+      else:
+        return invalid_region_space;
+    }
+
+    value |= data << (64 - bit - len) >> (64 - len) << (length - len);
+
+    offset += len;
+    length -= len;
+  }
+
+  return ok;
+}
+
+pub fn acpi_read_register(acpi::gas &gas0, acpi::gas &gas1, u64 mut &value) -> acpi::result
+{
+  var pm1a = 0;
+
+  if (var rc = acpi_read_register(gas0, &mut pm1a); !rc)
+    return rc;
+
+  var pm1b = 0;
+
+  if (gas1.address != 0)
+    if (var rc = acpi_read_register(gas1, &mut pm1b); !rc)
+      return rc;
+
+  value = pm1a | pm1b;
+
+  return ok;
+}
+
+pub fn acpi_write_register(acpi::gas &gas, u64 value) -> acpi::result
+{
+  var width = 0;
+  var offset = cast<u64>(gas.register_bit_offset);
+  var length = cast<u64>(gas.register_bit_length);
+
+  switch (gas.access_width)
+  {
+    case 0:
+      width = std::ceil_pow2(std::min(64, cast(length)) / 8);
+
+    case 1 ..= 4:
+      width = cast(gas.access_width);
+
+    else:
+      return invalid_access_width;
+  }
+
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
+  {
+    var data = 0;
+
+    var bit = offset & cast(width * 8 - 1);
+    var len = std::min(bit + length, cast(width * 8)) - bit;
+
+    data |= value << (64 - len) >> (64 - bit - len);
+    data &= (1 << (width * 8)) - 1;
+
+    switch (gas.address_space_id)
+    {
+      case 0:
+        switch (width)
+        {
+          case 1:
+            std::volatile_store(cast<u8 mut *>(physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u8>(data));
+
+          case 2:
+            std::volatile_store(cast<u16 mut *>(physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u16>(data));
+
+          case 4:
+            std::volatile_store(cast<u32 mut *>(physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u32>(data));
+
+          case 8:
+            std::volatile_store(cast<u64 mut *>(physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u64>(data));
+
+          else:
+            return invalid_access_width;
+        }
+
+      case 1:
+        switch (width)
+        {
+          case 1:
+            platform::out8(cast<u32>(gas.address + i), cast<u8>(data));
+
+          case 2:
+            platform::out16(cast<u32>(gas.address + i), cast<u16>(data));
+
+          case 4:
+            platform::out32(cast<u32>(gas.address + i), cast<u32>(data));
+
+          else:
+            return invalid_access_width;
+        }
+
+      else:
+        return invalid_region_space;
+    }
+
+    value >>= len;
+
+    offset += len;
+    length -= len;
+  }
+
+  return ok;
+}
+
+pub fn acpi_write_register(acpi::gas &gas0, acpi::gas &gas1, u64 value) -> acpi::result
+{
+  if (var rc = acpi_write_register(gas0, value); !rc)
+    return rc;
+
+  if (gas1.address != 0)
+    if (var rc = acpi_write_register(gas1, 0); !rc)
+      return rc;
+
+  return ok;
+}

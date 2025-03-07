@@ -497,6 +497,25 @@ pub const EFI_DEVICE_PATH_PROTOCOL_GUID = EFI_GUID(0x9576e91, 0x6d3f, 0x11d2, [0
 pub const EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID = EFI_GUID(0x8b843e20, 0x8132, 0x4852, [0x90, 0xcc, 0x55, 0x1a, 0x4e, 0x4a, 0x7f, 0x1c]);
 pub const EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID = EFI_GUID(0x0964e5b22, 0x6459, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
 
+pub fn print(EFI_SYSTEM_TABLE *SystemTable, var && ...args) -> void
+{
+  import std.stdio;
+
+  var buffer1 = [u8(0); 1024];
+  var buffer2 = [u16(0); 1024];
+
+  var len = std::sprint(&mut buffer1, args...);
+
+  var out = buffer2.data;
+  for (var i = 0; i < len; ++i)
+    *out++ = cast(buffer1[i]);
+
+  *out++ = cast('\r');
+  *out++ = cast('\n');
+
+  SystemTable.ConOut.OutputString(buffer2.data);
+}
+
 pub fn panic(EFI_SYSTEM_TABLE *SystemTable, var msg) -> void
 {
   var buffer = [u16(0); 256];

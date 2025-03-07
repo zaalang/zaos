@@ -2,39 +2,33 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/loader
-TARGETZFLAGS+=-I$(ROOT)/system/libs
-
-SRCS=\
-loader.zaa\
-$(ROOT)/system/libs/elf/elf.zaa\
-$(ROOT)/system/libs/elf/hash.zaa\
-$(ROOT)/system/libs/elf/image.zaa\
-$(ROOT)/system/libs/elf/auxvec.zaa\
+BUILD := $(BUILDROOT)/system/loader
+ZFLAGS += -I$(ROOT)/system/libs
+LDFLAGS := -L$(BUILDROOT)/system/libs/libzrt
+LIBS := -lzrt
 
 OBJS=\
-$(BUILD)/loader.zaa.o\
 $(BUILD)/start.s.o\
-
-ZRT=$(BUILDROOT)/system/libs/libzrt/libzrt.a
-LIBS=-L$(BUILDROOT)/system/libs/libzrt -lzrt
+$(BUILD)/loader.zaa.o\
 
 default: $(BUILD)/loader
 
-$(BUILD)/loader: loader.ld $(OBJS) $(ZRT)
+-include $(BUILD)/loader.zaa.d
+
+$(BUILD)/loader: loader.ld $(OBJS)
 	@echo "LD loader"
 	@mkdir -p $(@D)
-	@$(LD) -T loader.ld -pie --dynamic-linker=/system/lib/loader -nostdlib -o $@ $(OBJS) $(LIBS)
+	@$(LD) $(LDFLAGS) -T loader.ld -pie --dynamic-linker=/system/lib/loader -nostdlib -o $@ $(OBJS) $(LIBS)
 
 $(BUILD)/%.s.o: %.s 
 	@echo "AS $<"
 	@mkdir -p $(@D)
 	@$(AS) -o $@ $^
 	
-$(BUILD)/loader.zaa.o: $(SRCS)
+$(BUILD)/%.zaa.o: %.zaa
 	@echo "ZZ $<"
 	@mkdir -p $(@D)
-	@$(ZZ) $(TARGETZFLAGS) -g -c -fpic -fno-stack-protect -o $@ loader.zaa
+	@$(ZZ) $(ZFLAGS) -g -c -fno-stack-protect -o $@ $^
 
 clean:
-	rm -f $(BUILD)/loader $(OBJS)
+	rm -f $(BUILD)/loader $(BUILD)/*.o $(BUILD)/*.d

@@ -2,7 +2,7 @@
 
 include ../../mkspec.mk
 
-BUILD:=$(BUILDROOT)/system/generated/zidl
+BUILD := $(BUILDROOT)/system/generated/zidl
 
 IDLS=\
 $(BUILD)/zaos_sys.zaa\

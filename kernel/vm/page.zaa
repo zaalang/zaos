@@ -553,7 +553,7 @@ pub fn release(page_allocator mut &this, std::mutable_span<page> &pages) -> void
   this.release(order, &this.pages[index]);
 }
 
-pub fn dump_free_pages(page_allocator &this)
+pub fn dump_free_pages(page_allocator mut &this)
 {
   var total = 0;
 

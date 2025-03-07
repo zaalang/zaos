@@ -3,799 +3,178 @@
 //
 
 import std.stdio;
-import std.atomic;
-import acpi.fadt;
 import acpi.parser;
-import acpi.utils;
-import ioapic;
-import io;
-import sys;
 import dev;
-import vm : virtrange, physrange;
-import support.lockcell : LockCell;
-import platform : PHYSICAL_BASE;
+import cfg.acpi.namespace : namespace;
+import platform;
 
 import pci;
 import ps2;
 import ahci;
 import nvme;
 
-const MEMORY_SPACE = 0xffffa00000000000;
-
-struct namespace
-{
-  struct system_memory_region
-  {
-    virtrange range;
-
-    system_memory_region(virtrange range)
-      : range(range)
-    {
-    }
-
-    system_memory_region(system_memory_region &&) = default;
-    fn =(system_memory_region mut &, system_memory_region &&) -> system_memory_region mut & = default;
-    ~system_memory_region() = default;
-  }
-
-  struct system_io_region
-  {
-    u32 port;
-
-    system_io_region(u32 port)
-      : port(port)
-    {
-    }
-
-    system_io_region(system_io_region &&) = default;
-    fn =(system_io_region mut &, system_io_region &&) -> system_io_region mut & = default;
-    ~system_io_region() = default;
-  }
-
-  struct pci_config_region
-  {
-    u16 seg;
-    u8 bus;
-    u8 dev;
-    u8 func;
-
-    pci_config_region(u16 seg, u8 bus, u8 dev, u8 func)
-      : seg(seg), bus(bus), dev(dev), func(func)
-    {
-    }
-
-    pci_config_region(pci_config_region &&) = default;
-    fn =(pci_config_region mut &, pci_config_region &&) -> pci_config_region mut & = default;
-    ~pci_config_region() = default;
-  }
-
-  union region
-  {
-    system_memory(system_memory_region),
-    system_io(system_io_region),
-    pci_config(pci_config_region),
-
-    region(region &&) = default;
-    fn =(region mut &, region &&) -> region mut & = default;
-    ~region() = default;
-  }
-
-  acpi::fadt *fadt;
-  std::optional<acpi::namespace> ns;
-  LockCell<std::flat_hash_map<acpi::opregion*, region>> regions;
-
-  uintptr heaptop = MEMORY_SPACE;
-
-  fn sbrk(this mut &, usize size) -> vm::virtrange
-  {
-    var base = this.heaptop;
-    this.heaptop = std::align_up(this.heaptop + size, 65536);
-
-    return virtrange(base, size);
-  }
-
-  fn open(acpi::namespace mut &ns, acpi::opregion *opregion) -> region
-  {
-    var regions = cfg.regions.lock();
-
-    if (var region = regions.get(opregion))
-      return region.value;
-
-    switch (opregion.space)
-    {
-      case acpi::opregion::space::system_memory:
-
-        var range = cfg.sbrk(cast<usize>(opregion.length));
-        var pages = std::vector<physrange, N:1>::from([ physrange(cast<uintptr>(opregion.base), cast<usize>(opregion.length)) ]);
-
-        if (var result = vm::create_physical_region(range, pages, vm::protection::readwrite, vm::usage::shared | vm::usage::foreign); !result)
-          std::panic("acpi_bad_memmap");
-
-        if (var result = vm::set_memory_type(range, vm::mtype::uncached); !result)
-          std::panic("acpi_bad_memtype");
-
-        return regions.emplace(opregion, region::system_memory(range));
-
-      case acpi::opregion::space::system_io:
-
-        return regions.emplace(opregion, region::system_io(cast<u32>(opregion.base)));
-
-      case acpi::opregion::space::pci_config:
-
-        var seg = acpi::value(0);
-        var bbn = acpi::value(0);
-        var adr = acpi::value();
-
-        if (var rc = ns.invoke(opregion.scope, "_SEG", &mut seg); !rc && rc != acpi::result::value_not_found)
-          std::panic("acpi_bad_seg");
-
-        if (!ns.to_integer(&mut seg))
-          std::panic("acpi_bad_seg");
-
-        if (var rc = ns.invoke(opregion.scope, "_BBN", &mut bbn); !rc && rc != acpi::result::value_not_found)
-          std::panic("acpi_bad_bbn");
-
-        if (!ns.to_integer(&mut bbn))
-          std::panic("acpi_bad_bbn");
-
-        if (var rc = ns.invoke(opregion.scope, "_ADR", &mut adr); !rc)
-          std::panic("acpi_bad_adr");
-
-        if (!ns.to_integer(&mut adr))
-          std::panic("acpi_bad_adr");
-
-        var bus = bbn.integer;
-        var dev = (adr.integer & 0x00ff0000) >> 16;
-        var func = (adr.integer & 0x000000ff) >> 0;
-
-        return regions.emplace(opregion, region::pci_config(cast<u16>(seg.integer), cast<u8>(bus), cast<u8>(dev), cast<u8>(func)));
-
-      else:
-        std::panic("acpi_invalid_space");
-    }
-  }
-
-  fn read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
-  {
-    switch (open(&mut ns, opregion))
-    {
-      case system_memory[region]:
-
-        switch (width)
-        {
-          case 1:
-            data = cast<u64>(std::volatile_load(cast<u8*>(region.range.addr + cast(offset))));
-
-          case 2:
-            data = cast<u64>(std::volatile_load(cast<u16*>(region.range.addr + cast(offset))));
-
-          case 4:
-            data = cast<u64>(std::volatile_load(cast<u32*>(region.range.addr + cast(offset))));
-
-          case 8:
-            data = cast<u64>(std::volatile_load(cast<u64*>(region.range.addr + cast(offset))));
-
-          else:
-            std::panic("acpi_invalid_load");
-        }
-
-        std::printf("read {:#x} {} {} {:#x}\n", region.range, offset, width, data);
-
-      case system_io[region]:
-
-        switch (width)
-        {
-          case 1:
-            data = cast<u64>(platform::in8(region.port + cast(offset)));
-
-          case 2:
-            data = cast<u64>(platform::in16(region.port + cast(offset)));
-
-          case 4:
-            data = cast<u64>(platform::in32(region.port + cast(offset)));
-
-          else:
-            std::panic("acpi_invalid_in");
-        }
-
-        std::printf("read io {:#x} {} {} {:#x}\n", region.port, offset, width, data);
-
-      case pci_config[region]:
-
-        std::printf("read pci {} {} {} {} {} {} {:#x}\n", region.seg, region.bus, region.dev, region.func, offset, width, data);
-
-      else:
-        return invalid_region_space;
-    }
-
-    return ok;
-  }
-
-  fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
-  {
-    switch (open(&mut ns, opregion))
-    {
-      case system_memory[region]:
-
-        std::printf("write {:#x} {} {} {:#x}\n", region.range, offset, width, data);
-
-        switch (width)
-        {
-          case 1:
-            std::volatile_store(cast<u8 mut *>(region.range.addr + cast(offset)), cast<u8>(data));
-
-          case 2:
-            std::volatile_store(cast<u16 mut *>(region.range.addr + cast(offset)), cast<u16>(data));
-
-          case 4:
-            std::volatile_store(cast<u32 mut *>(region.range.addr + cast(offset)), cast<u32>(data));
-
-          case 8:
-            std::volatile_store(cast<u64 mut *>(region.range.addr + cast(offset)), cast<u64>(data));
-
-          else:
-            std::panic("acpi_invalid_store");
-        }
-
-      case system_io[region]:
-
-        std::printf("write io {:#x} {} {} {:#x}\n", region.port, offset, width, data);
-
-        switch (width)
-        {
-          case 1:
-            platform::out8(region.port + cast(offset), cast<u8>(data));
-
-          case 2:
-            platform::out16(region.port + cast(offset), cast<u16>(data));
-
-          case 4:
-            platform::out32(region.port + cast(offset), cast<u32>(data));
-
-          else:
-            std::panic("acpi_invalid_out");
-        }
-
-      case pci_config[region]:
-
-        std::printf("write pci {} {} {} {} {} {} {:#x}\n", region.seg, region.bus, region.dev, region.func, offset, width, data);
-
-      else:
-        return invalid_region_space;
-    }
-
-    return ok;
-  }
-
-  fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
-  {
-    var regions = cfg.regions.lock();
-
-    switch (regions[opregion])
-    {
-      case system_memory[region]:
-
-        if (var result = vm::munmap(region.range); !result)
-          std::panic("acpi_bad_munmap");
-    }
-
-    regions.erase(opregion);
-
-    return ok;
-  }
-
-  fn instance()
-  {
-    static instance = #namespace();
-
-    return &instance;
-  }
-
-  namespace() = default;
-  namespace(#namespace&) = default;
-  ~namespace() = default;
-}
-
-fn cfg()
-{
-  return &namespace::instance;
-}
-
-fn acpi_read_command(u32 port, u8 mut &value) -> acpi::result
-{
-  platform::in8(port, &mut value);
-
-  return ok;
-}
-
-fn acpi_write_command(u32 port, u8 value) -> acpi::result
-{
-  platform::out8(port, value);
-
-  return ok;
-}
-
-fn acpi_read_register(acpi::gas &gas, u64 mut &value) -> acpi::result
-{
-  var width = 0;
-  var offset = cast<u64>(gas.register_bit_offset);
-  var length = cast<u64>(gas.register_bit_length);
-
-  switch (gas.access_width)
-  {
-    case 0:
-      width = std::ceil_pow2(std::min(64, cast(length)) / 8);
-
-    case 1 ..= 4:
-      width = cast(gas.access_width);
-
-    else:
-      return invalid_access_width;
-  }
-
-  value = 0;
-
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width);
-
-  for (var i = byte; i < size; i += cast(width))
-  {
-    var data = 0;
-
-    var bit = offset & cast(width * 8 - 1);
-    var len = std::min(bit + length, cast(width * 8)) - bit;
-
-    switch (gas.address_space_id)
-    {
-      case 0:
-        switch (width)
-        {
-          case 1:
-            data = cast<u64>(std::volatile_load(cast<u8*>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr)));
-
-          case 2:
-            data = cast<u64>(std::volatile_load(cast<u16*>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr)));
-
-          case 4:
-            data = cast<u64>(std::volatile_load(cast<u32*>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr)));
-
-          case 8:
-            data = cast<u64>(std::volatile_load(cast<u64*>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr)));
-
-          else:
-            return invalid_access_width;
-        }
-
-      case 1:
-        switch (width)
-        {
-          case 1:
-            data = cast<u64>(platform::in8(cast<u32>(gas.address + i)));
-
-          case 2:
-            data = cast<u64>(platform::in16(cast<u32>(gas.address + i)));
-
-          case 4:
-            data = cast<u64>(platform::in32(cast<u32>(gas.address + i)));
-
-          else:
-            return invalid_access_width;
-        }
-
-      else:
-        return invalid_region_space;
-    }
-
-    value |= data << (64 - bit - len) >> (64 - len) << (length - len);
-
-    offset += len;
-    length -= len;
-  }
-
-  return ok;
-}
-
-fn acpi_read_register(acpi::gas &gas0, acpi::gas &gas1, u64 mut &value) -> acpi::result
-{
-  var pm1a = 0;
-
-  if (var rc = acpi_read_register(gas0, &mut pm1a); !rc)
-    return rc;
-
-  var pm1b = 0;
-
-  if (gas1.address != 0)
-    if (var rc = acpi_read_register(gas1, &mut pm1b); !rc)
-      return rc;
-
-  value = pm1a | pm1b;
-
-  return ok;
-}
-
-fn acpi_write_register(acpi::gas &gas, u64 value) -> acpi::result
-{
-  var width = 0;
-  var offset = cast<u64>(gas.register_bit_offset);
-  var length = cast<u64>(gas.register_bit_length);
-
-  switch (gas.access_width)
-  {
-    case 0:
-      width = std::ceil_pow2(std::min(64, cast(length)) / 8);
-
-    case 1 ..= 4:
-      width = cast(gas.access_width);
-
-    else:
-      return invalid_access_width;
-  }
-
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width);
-
-  for (var i = byte; i < size; i += cast(width))
-  {
-    var data = 0;
-
-    var bit = offset & cast(width * 8 - 1);
-    var len = std::min(bit + length, cast(width * 8)) - bit;
-
-    data |= value << (64 - len) >> (64 - bit - len);
-    data &= (1 << (width * 8)) - 1;
-
-    switch (gas.address_space_id)
-    {
-      case 0:
-        switch (width)
-        {
-          case 1:
-            std::volatile_store(cast<u8 mut *>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u8>(data));
-
-          case 2:
-            std::volatile_store(cast<u16 mut *>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u16>(data));
-
-          case 4:
-            std::volatile_store(cast<u32 mut *>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u32>(data));
-
-          case 8:
-            std::volatile_store(cast<u64 mut *>(vm::physaddr(cast<uintptr>(gas.address + i)).ptr), cast<u64>(data));
-
-          else:
-            return invalid_access_width;
-        }
-
-      case 1:
-        switch (width)
-        {
-          case 1:
-            platform::out8(cast<u32>(gas.address + i), cast<u8>(data));
-
-          case 2:
-            platform::out16(cast<u32>(gas.address + i), cast<u16>(data));
-
-          case 4:
-            platform::out32(cast<u32>(gas.address + i), cast<u32>(data));
-
-          else:
-            return invalid_access_width;
-        }
-
-      else:
-        return invalid_region_space;
-    }
-
-    value >>= len;
-
-    offset += len;
-    length -= len;
-  }
-
-  return ok;
-}
-
-fn acpi_write_register(acpi::gas &gas0, acpi::gas &gas1, u64 value) -> acpi::result
-{
-  if (var rc = acpi_write_register(gas0, value); !rc)
-    return rc;
-
-  if (gas1.address != 0)
-    if (var rc = acpi_write_register(gas1, 0); !rc)
-      return rc;
-
-  return ok;
-}
-
-fn acpi_enable(acpi::fadt *fadt) -> acpi::result
-{
-  enum mode
-  {
-    acpi,
-    legacy,
-  }
-
-  fn read_acpi_mode(acpi::fadt *fadt) -> mode
-  {
-    if (fadt.smi_command == 0)
-      return mode::acpi;
-
-    var control = 0;
-
-    if (var rc = acpi_read_register(fadt.x_pm1a_control_block, fadt.x_pm1b_control_block, &mut control); !rc)
-      return mode::legacy;
-
-    if (control & acpi::pm1::sci_enable == 0x1)
-      return mode::acpi;
-
-    return mode::legacy;
-  }
-
-  if (read_acpi_mode(fadt) == mode::acpi)
-    return ok;
-
-  if (fadt.acpi_enable == 0 && fadt.acpi_disable == 0)
-    return not_supported;
-
-  if (var rc = acpi_write_command(fadt.smi_command, fadt.acpi_enable); !rc)
-    return rc;
-
-  // TODO: timeout
-  while (read_acpi_mode(fadt) != mode::acpi)
-    ;
-
-  return ok;
-}
-
-fn acpi_reset(acpi::fadt *fadt) -> acpi::result
-{
-  if (var rc = acpi_write_register(fadt.x_pm1a_enable_block, fadt.x_pm1b_enable_block, 0); !rc)
-    return rc;
-
-  if (fadt.x_gpe0_block.address != 0 && fadt.gpe0_block_length != 0)
-  {
-    for (var i = 0; i < fadt.gpe0_block_length / 2; ++i)
-    {
-      if (var rc = acpi_write_register(fadt.x_gpe0_enable_block(i), 0); !rc)
-        return rc;
-
-      if (var rc = acpi_write_register(fadt.x_gpe0_status_block(i), 0xff); !rc)
-        return rc;
-    }
-  }
-
-  if (fadt.x_gpe1_block.address != 0 && fadt.gpe1_block_length != 0)
-  {
-    for (var i = 0; i < fadt.gpe1_block_length / 2; ++i)
-    {
-      if (var rc = acpi_write_register(fadt.x_gpe1_enable_block(i), 0); !rc)
-        return rc;
-
-      if (var rc = acpi_write_register(fadt.x_gpe1_status_block(i), 0xff); !rc)
-        return rc;
-    }
-  }
-
-  return ok;
-}
-
-extern fn acpi_sci_handler(namespace mut *cfg) -> void
-{
-  var status = 0;
-  if (var rc = acpi_read_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, &mut status); !rc)
-    std::panic("status: ", rc);
-
-  std::printf("SCI - {:04x}\n", status);
-
-  acpi_write_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, 0xffff);
-}
-
-fn initialise(namespace mut &cfg) -> acpi::result
-{
-  var ns = acpi::namespace();
-
-  acpi::initialise(&mut ns, &impl cfg);
-
-  var xsdt = acpi::tables(PHYSICAL_BASE, sys::acpi_root);
-
-  var fadt = acpi::find_fadt(xsdt);
-
-  if (!acpi::validate_fadt(fadt))
-    std::panic("bad_acpi_fadt");
-
-  if (var rc = acpi_enable(fadt); !rc)
-    std::panic("acpi enable failed: ", rc);
-
-  if (var rc = acpi_reset(fadt); !rc)
-    std::panic("acpi reset failed: ", rc);
-
-  cfg.fadt = fadt;
-
-  std::printf("acpi dsdt address: {:#08x}\n", fadt.dsdt_address);
-
-  var dsdt = cast<acpi::sdt*>(vm::physaddr(fadt.dsdt_address).ptr);
-
-  if (!dsdt)
-    std::panic("bad_acpi_dsdt");
-
-  if (var rc = acpi::parse(&mut ns, dsdt.payload); !rc)
-    std::panic("acpi dsdt parse error - ", rc);
-
-  for (var sdt : xsdt)
-  {
-    if (sdt.signature == std::span("SSDT"))
-    {
-      std::printf("acpi ssdt address: {:#08x}\n", sdt);
-
-      if (var rc = acpi::parse(&mut ns, sdt.payload); !rc)
-        std::print("acpi ssdt parse error - ", rc);
-    }
-  }
-
-  cfg.ns = &move ns;
-
-  return ok;
-}
-
-fn configure(namespace mut &cfg) -> acpi::result
+fn coldplug(namespace mut &cfg) -> acpi::result
 {
   var mut &ns = cfg.ns?!;
 
-  var irq = ioapic::resolve(cast<u32>(cfg.fadt.sci_interrupt));
+  var devlist = std::flat_hash_map<acpi::node*, dev::dev_t>();
 
-  io::install_handler(irq, &cast<fn (namespace mut *) -> void>(acpi_sci_handler), &cfg);
+  if (cfg.fadt.flags & acpi::fadt_power_button == 0)
+  {
+    var attributes = std::vector<dev::attr_t>();
 
-  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
-    return rc;
+    attributes.push_back(dev::attr_t::type::uid, "PNP0C0C");
 
-  if (var rc = ns.invoke(ns.root, "_PIC", &mut acpi::value(), acpi::value(1)); !rc)
-    return rc;
+    dev::register(dev::dev_t(), &move attributes);
+  }
+
+  if (cfg.fadt.flags & acpi::fadt_sleep_button == 0)
+  {
+    var attributes = std::vector<dev::attr_t>();
+
+    attributes.push_back(dev::attr_t::type::uid, "PNP0C0E");
+
+    dev::register(dev::dev_t(), &move attributes);
+  }
+
+  for (var node = ns.begin; node != ns.end; ++node)
+  {
+    var sta = acpi::value(0xf);
+    if (var rc = ns.invoke(*node, "_STA", &mut sta); !rc && rc != acpi::result::value_not_found)
+      std::panic("_STA: ", rc);
+
+    if (node.get("_INI"))
+    {
+      if (sta.integer & 0x1 != 0)
+      {
+        var ini = acpi::value();
+        if (var rc = ns.invoke(*node, "_INI", &mut ini); !rc)
+          std::panic("_INI: ", rc);
+
+        std::print(ns.pathname(*node), " {", " _STA: ", sta, ", _INI: ", ini, " }");
+      }
+    }
+
+    if (node.type == acpi::node::type::device)
+    {
+      var parent = dev::dev_t();
+
+      switch (devlist.get(node.parent))
+      {
+        case Some[dev]:
+          parent = dev;
+      }
+
+      var attributes = std::vector<dev::attr_t>();
+
+      attributes.push_back(dev::attr_t::type::path, ns.pathname(*node));
+
+      if (node.get("_HID"))
+      {
+        var hid = acpi::value();
+        if (var rc = ns.invoke(*node, "_HID", &mut hid); !rc && rc != acpi::result::value_not_found)
+          std::panic("_HID: ", rc);
+
+        if (acpi::eisaid_to_string(&mut hid))
+          attributes.push_back(dev::attr_t::type::hid, &move hid.string);
+      }
+
+      if (node.get("_UID"))
+      {
+        var uid = acpi::value();
+        if (var rc = ns.invoke(*node, "_UID", &mut uid); !rc && rc != acpi::result::value_not_found)
+          std::panic("_UID: ", rc);
+
+        if (ns.to_string(&mut uid))
+          attributes.push_back(dev::attr_t::type::uid, &move uid.string);
+      }
+
+      if (node.get("_CID"))
+      {
+        var cid = acpi::value();
+        if (var rc = ns.invoke(*node, "_CID", &mut cid); !rc && rc != acpi::result::value_not_found)
+          std::panic("_CID: ", rc);
+
+        //attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+      }
+
+      if (node.get("_ADR"))
+      {
+        var adr = acpi::value();
+        if (var rc = ns.invoke(*node, "_ADR", &mut adr); !rc && rc != acpi::result::value_not_found)
+          std::panic("_ADR: ", rc);
+
+        if (ns.to_integer(&mut adr))
+          attributes.push_back(dev::attr_t::type::adr, &move adr.integer);
+      }
+
+      var dev = dev::register(parent, &move attributes);
+
+      if (var bus = dev::get(dev))
+      {
+        if (var hid = bus.find(dev::attr_t::type::hid))
+        {
+          switch (hid?!.string)
+          {
+            case "PNP0303":
+              ps2::initialise();
+
+            case "PNP0A08":
+              pci::initialise();
+
+              for (var &device : pci::devices)
+              {
+                switch (device.class_code)
+                {
+                  case [1, 6, 1]:
+                    ahci::initialise(device);
+
+                  case [2, 8, 1]:
+                    nvme::initialise(device);
+                }
+              }
+          }
+        }
+      }
+
+      devlist.insert(*node, dev);
+    }
+
+    if (sta.integer & 0x9 == 0)
+      continue;
+
+    node.descend();
+  }
 
   return ok;
 }
 
 pub fn initialise() -> void
 {
-  if (var rc = initialise(&mut cfg); !rc)
-    std::panic("acpi initialise failed: ", rc);
+  var stack = std::vector<u8>::with_size(32768);
 
-  if (var rc = configure(&mut cfg); !rc)
-    std::panic("acpi configure failed: ", rc);
+  platform::on_stack(stack.data, stack.len, || {
+
+    if (var rc = initialise(&mut namespace::instance); !rc)
+      std::panic("acpi initialise failed: ", rc);
+
+    if (var rc = configure(&mut namespace::instance); !rc)
+      std::panic("acpi configure failed: ", rc);
+
+  });
 }
 
 pub fn coldplug() -> void
 {
   var stack = std::vector<u8>::with_size(32768);
 
-  platform::on_stack(stack.data, stack.capacity, || {
-    var mut &ns = cfg.ns?!;
+  platform::on_stack(stack.data, stack.len, || {
 
-    var devlist = std::flat_hash_map<acpi::node*, dev::dev_t>();
+    if (var rc = coldplug(&mut namespace::instance); !rc)
+      std::panic("acpi coldplug failed: ", rc);
 
-    if (cfg.fadt.flags & acpi::fadt_power_button == 0)
-    {
-      var attributes = std::vector<dev::attr_t>();
+    if (var rc = enable(&mut namespace::instance); !rc)
+      std::panic("acpi enable failed: ", rc);
 
-      attributes.push_back(dev::attr_t::type::uid, "PNP0C0C");
-
-      dev::register(dev::dev_t(), &move attributes);
-    }
-
-    if (cfg.fadt.flags & acpi::fadt_sleep_button == 0)
-    {
-      var attributes = std::vector<dev::attr_t>();
-
-      attributes.push_back(dev::attr_t::type::uid, "PNP0C0E");
-
-      dev::register(dev::dev_t(), &move attributes);
-    }
-
-    for (var node = ns.begin; node != ns.end; ++node)
-    {
-      var sta = acpi::value(0xf);
-      if (var rc = ns.invoke(*node, "_STA", &mut sta); !rc && rc != acpi::result::value_not_found)
-        std::panic("_STA: ", rc);
-
-      if (node.get("_INI"))
-      {
-        if (sta.integer & 0x1 != 0)
-        {
-          var ini = acpi::value();
-          if (var rc = ns.invoke(*node, "_INI", &mut ini); !rc)
-            std::panic("_INI: ", rc);
-
-          std::print(ns.pathname(*node), " {", " _STA: ", sta, ", _INI: ", ini, " }");
-        }
-      }
-
-      if (node.type == acpi::node::type::device)
-      {
-        var parent = dev::dev_t();
-
-        switch (devlist.get(node.parent))
-        {
-          case Some[dev]:
-            parent = dev;
-        }
-
-        var attributes = std::vector<dev::attr_t>();
-
-        attributes.push_back(dev::attr_t::type::path, ns.pathname(*node));
-
-        if (node.get("_HID"))
-        {
-          var hid = acpi::value();
-          if (var rc = ns.invoke(*node, "_HID", &mut hid); !rc && rc != acpi::result::value_not_found)
-            std::panic("_HID: ", rc);
-
-          if (acpi::eisaid_to_string(&mut hid))
-            attributes.push_back(dev::attr_t::type::hid, &move hid.string);
-        }
-
-        if (node.get("_UID"))
-        {
-          var uid = acpi::value();
-          if (var rc = ns.invoke(*node, "_UID", &mut uid); !rc && rc != acpi::result::value_not_found)
-            std::panic("_UID: ", rc);
-
-          if (ns.to_string(&mut uid))
-            attributes.push_back(dev::attr_t::type::uid, &move uid.string);
-        }
-
-        if (node.get("_CID"))
-        {
-          var cid = acpi::value();
-          if (var rc = ns.invoke(*node, "_CID", &mut cid); !rc && rc != acpi::result::value_not_found)
-            std::panic("_CID: ", rc);
-
-          //attributes.push_back(dev::attr_t::type::cid, &move cid.string);
-        }
-
-        if (node.get("_ADR"))
-        {
-          var adr = acpi::value();
-          if (var rc = ns.invoke(*node, "_ADR", &mut adr); !rc && rc != acpi::result::value_not_found)
-            std::panic("_ADR: ", rc);
-
-          if (ns.to_integer(&mut adr))
-            attributes.push_back(dev::attr_t::type::adr, &move adr.integer);
-        }
-
-        var dev = dev::register(parent, &move attributes);
-
-        if (var bus = dev::get(dev))
-        {
-          if (var hid = bus.find(dev::attr_t::type::hid))
-          {
-            switch (hid?!.string)
-            {
-              case "PNP0303":
-                ps2::initialise();
-
-              case "PNP0A08":
-                pci::initialise();
-
-                for (var &device : pci::devices)
-                {
-                  switch (device.class_code)
-                  {
-                    case #[1, 6, 1]:
-                      ahci::initialise(device);
-
-                    case #[2, 8, 1]:
-                      nvme::initialise(device);
-                  }
-                }
-            }
-          }
-        }
-
-        devlist.insert(*node, dev);
-      }
-
-      if (sta.integer & 0x9 == 0)
-        continue;
-
-      node.descend();
-    }
   });
 }

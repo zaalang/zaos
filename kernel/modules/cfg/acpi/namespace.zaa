@@ -1,0 +1,679 @@
+//
+// acpi cfg
+//
+
+import std.stdio;
+import std.atomic;
+import acpi.mcfg;
+import acpi.fadt;
+import acpi.parser;
+import acpi.utils;
+import ioapic;
+import io;
+import sys;
+import cpu;
+import vm : virtaddr, physaddr, virtrange, physrange;
+import scheduler;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import semaphore as _ : semaphore;
+import support.lockcell : LockCell;
+import platform : PHYSICAL_BASE;
+import cfg.acpi.registers : acpi_read_register, acpi_write_register;
+
+const MEMORY_SPACE = 0xffffa00000000000;
+
+pub struct namespace
+{
+  pub acpi::fadt *fadt;
+  pub acpi::mcfg *mcfg;
+  pub std::optional<acpi::namespace> ns;
+
+  struct system_memory_region
+  {
+    virtrange range;
+
+    system_memory_region(virtrange range)
+      : range(range)
+    {
+    }
+
+    system_memory_region(system_memory_region &&) = default;
+    fn =(system_memory_region mut &, system_memory_region &&) -> system_memory_region mut & = default;
+    ~system_memory_region() = default;
+  }
+
+  struct system_io_region
+  {
+    u32 port;
+
+    system_io_region(u32 port)
+      : port(port)
+    {
+    }
+
+    system_io_region(system_io_region &&) = default;
+    fn =(system_io_region mut &, system_io_region &&) -> system_io_region mut & = default;
+    ~system_io_region() = default;
+  }
+
+  struct pci_config_region
+  {
+    physaddr base;
+
+    pci_config_region(physaddr base)
+      : base(base)
+    {
+    }
+
+    pci_config_region(pci_config_region &&) = default;
+    fn =(pci_config_region mut &, pci_config_region &&) -> pci_config_region mut & = default;
+    ~pci_config_region() = default;
+  }
+
+  union region
+  {
+    system_memory(system_memory_region),
+    system_io(system_io_region),
+    pci_config(pci_config_region),
+
+    region(region &&) = default;
+    fn =(region mut &, region &&) -> region mut & = default;
+    ~region() = default;
+  }
+
+  uintptr heaptop = MEMORY_SPACE;
+
+  LockCell<std::flat_hash_map<acpi::opregion*, region>> regions;
+
+  fn sbrk(this mut &, usize size) -> vm::virtrange
+  {
+    var base = this.heaptop;
+    this.heaptop = std::align_up(this.heaptop + size, 65536);
+
+    return virtrange(base, size);
+  }
+
+  fn open(acpi::namespace mut &ns, acpi::opregion *opregion) -> region
+  {
+    var regions = instance.regions.lock();
+
+    if (var region = regions.get(opregion))
+      return region.value;
+
+    switch (opregion.space)
+    {
+      case acpi::opregion::space::system_memory:
+
+        var range = instance.sbrk(cast<usize>(opregion.length));
+        var pages = std::vector<physrange, N:1>::from([ physrange(cast<uintptr>(opregion.base), cast<usize>(opregion.length)) ]);
+
+        if (var result = vm::create_physical_region(range, pages, vm::protection::readwrite, vm::usage::shared | vm::usage::foreign); !result)
+          std::panic("acpi_bad_memmap");
+
+        if (var result = vm::set_memory_type(range, vm::mtype::uncached); !result)
+          std::panic("acpi_bad_memtype");
+
+        return regions.emplace(opregion, region::system_memory(range));
+
+      case acpi::opregion::space::system_io:
+
+        return regions.emplace(opregion, region::system_io(cast<u32>(opregion.base)));
+
+      case acpi::opregion::space::pci_config:
+
+        var seg = acpi::value(0);
+        var bbn = acpi::value(0);
+        var adr = acpi::value();
+
+        if (var rc = ns.invoke(opregion.scope, "_SEG", &mut seg); !rc && rc != acpi::result::value_not_found)
+          std::panic("acpi_bad_seg");
+
+        if (!ns.to_integer(&mut seg))
+          std::panic("acpi_bad_seg");
+
+        if (var rc = ns.invoke(opregion.scope, "_BBN", &mut bbn); !rc && rc != acpi::result::value_not_found)
+          std::panic("acpi_bad_bbn");
+
+        if (!ns.to_integer(&mut bbn))
+          std::panic("acpi_bad_bbn");
+
+        if (var rc = ns.invoke(opregion.scope, "_ADR", &mut adr); !rc)
+          std::panic("acpi_bad_adr");
+
+        if (!ns.to_integer(&mut adr))
+          std::panic("acpi_bad_adr");
+
+        var bus = bbn.integer;
+        var dev = (adr.integer & 0x00ff0000) >> 16;
+        var func = (adr.integer & 0x000000ff) >> 0;
+
+        var base = physaddr();
+
+        for (var config : instance.mcfg.entries)
+        {
+          if (config.segment_group == cast<u16>(seg.integer))
+          {
+            base = physaddr(cast<uintptr>(config.base_address)) + cast<uintptr>(bus) << 20 + cast<uintptr>(dev) << 15 + cast<uintptr>(func) << 12;
+          }
+        }
+
+        return regions.emplace(opregion, region::pci_config(base));
+
+      else:
+        std::panic("acpi_invalid_space");
+    }
+  }
+
+  fn read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
+  {
+    switch (open(&mut ns, opregion))
+    {
+      case system_memory[region]:
+
+        switch (width)
+        {
+          case 1:
+            data = cast<u64>(std::volatile_load(cast<u8*>(region.range.addr + cast(offset))));
+
+          case 2:
+            data = cast<u64>(std::volatile_load(cast<u16*>(region.range.addr + cast(offset))));
+
+          case 4:
+            data = cast<u64>(std::volatile_load(cast<u32*>(region.range.addr + cast(offset))));
+
+          case 8:
+            data = cast<u64>(std::volatile_load(cast<u64*>(region.range.addr + cast(offset))));
+
+          else:
+            std::panic("acpi_invalid_load");
+        }
+
+        //std::printf("read {:#x} {} {} {:#x}\n", region.range, offset, width, data);
+
+      case system_io[region]:
+
+        switch (width)
+        {
+          case 1:
+            data = cast<u64>(platform::in8(region.port + cast(offset)));
+
+          case 2:
+            data = cast<u64>(platform::in16(region.port + cast(offset)));
+
+          case 4:
+            data = cast<u64>(platform::in32(region.port + cast(offset)));
+
+          else:
+            std::panic("acpi_invalid_in");
+        }
+
+        //std::printf("read io {:#x} {} {} {:#x}\n", region.port, offset, width, data);
+
+      case pci_config[region]:
+
+        switch (width)
+        {
+          case 1:
+            data = cast<u64>(std::volatile_load(cast<u8*>((region.base + cast(offset)).ptr)));
+
+          case 2:
+            data = cast<u64>(std::volatile_load(cast<u16*>((region.base + cast(offset)).ptr)));
+
+          case 4:
+            data = cast<u64>(std::volatile_load(cast<u32*>((region.base + cast(offset)).ptr)));
+
+          else:
+            std::panic("acpi_invalid_load");
+        }
+
+        //std::printf("read pci {} {} {} {:#x}\n", region.base, offset, width, data);
+
+      else:
+        return invalid_region_space;
+    }
+
+    return ok;
+  }
+
+  fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
+  {
+    switch (open(&mut ns, opregion))
+    {
+      case system_memory[region]:
+
+        //std::printf("write {:#x} {} {} {:#x}\n", region.range, offset, width, data);
+
+        switch (width)
+        {
+          case 1:
+            std::volatile_store(cast<u8 mut *>(region.range.addr + cast(offset)), cast<u8>(data));
+
+          case 2:
+            std::volatile_store(cast<u16 mut *>(region.range.addr + cast(offset)), cast<u16>(data));
+
+          case 4:
+            std::volatile_store(cast<u32 mut *>(region.range.addr + cast(offset)), cast<u32>(data));
+
+          case 8:
+            std::volatile_store(cast<u64 mut *>(region.range.addr + cast(offset)), cast<u64>(data));
+
+          else:
+            std::panic("acpi_invalid_store");
+        }
+
+      case system_io[region]:
+
+        //std::printf("write io {:#x} {} {} {:#x}\n", region.port, offset, width, data);
+
+        switch (width)
+        {
+          case 1:
+            platform::out8(region.port + cast(offset), cast<u8>(data));
+
+          case 2:
+            platform::out16(region.port + cast(offset), cast<u16>(data));
+
+          case 4:
+            platform::out32(region.port + cast(offset), cast<u32>(data));
+
+          else:
+            std::panic("acpi_invalid_out");
+        }
+
+      case pci_config[region]:
+
+        //std::printf("write pci {} {} {} {:#x}\n", region.base, offset, width, data);
+
+        switch (width)
+        {
+          case 1:
+            std::volatile_store(cast<u8 mut *>((region.base + cast(offset)).ptr), cast<u8>(data));
+
+          case 2:
+            std::volatile_store(cast<u16 mut *>((region.base + cast(offset)).ptr), cast<u16>(data));
+
+          case 4:
+            std::volatile_store(cast<u32 mut *>((region.base + cast(offset)).ptr), cast<u32>(data));
+
+          else:
+            std::panic("acpi_invalid_store");
+        }
+
+      else:
+        return invalid_region_space;
+    }
+
+    return ok;
+  }
+
+  fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
+  {
+    var regions = instance.regions.lock();
+
+    switch (regions[opregion])
+    {
+      case system_memory[region]:
+
+        if (var result = vm::munmap(region.range); !result)
+          std::panic("acpi_bad_munmap");
+    }
+
+    regions.erase(opregion);
+
+    return ok;
+  }
+
+  struct gpe_event
+  {
+    union gpe_handler
+    {
+      method(acpi::method),
+
+      gpe_handler() = default;
+      gpe_handler(gpe_handler &&) = default;
+      fn =(gpe_handler mut &, gpe_handler &&) -> gpe_handler mut & = default;
+      ~gpe_handler() = default;
+    }
+
+    gpe_handler handler;
+
+    gpe_event() = default;
+    gpe_event(gpe_event &&) = default;
+    fn =(gpe_event mut &, gpe_event &&) -> gpe_event mut & = default;
+    ~gpe_event() = default;
+  }
+
+  struct gpe_register
+  {
+    acpi::gas status;
+    acpi::gas enable;
+
+    gpe_register(acpi::gas &status, acpi::gas &enable)
+      : status(status), enable(enable)
+    {
+    }
+
+    gpe_register(gpe_register &&) = default;
+    fn =(gpe_register mut &, gpe_register &&) -> gpe_register mut & = default;
+    ~gpe_register() = default;
+  }
+
+  std::vector<gpe_event> events;
+  std::vector<gpe_register> registers;
+
+  fn gpe_enable(this mut &cfg, usize idx) -> acpi::result
+  {
+    var enable = 0;
+    if (var rc = acpi_read_register(cfg.registers[idx >> 3].enable, &mut enable); !rc)
+      return rc;
+
+    if (var rc = acpi_write_register(cfg.registers[idx >> 3].enable, enable | (1 << (idx & 0x7))); !rc)
+      return rc;
+
+    return ok;
+  }
+
+  fn gpe_enable(this mut &cfg, usize idx, gpe_event::gpe_handler &handler) -> acpi::result
+  {
+    cfg.events[idx].handler = handler;
+
+    if (var rc = gpe_enable(&mut cfg, idx); !rc)
+      return rc;
+
+    return ok;
+  }
+
+  pub fn gpe_enable(this mut &cfg, usize idx, acpi::method &handler) -> acpi::result
+  {
+    if (cfg.events.len < idx)
+      return invalid_target;
+
+    return gpe_enable(&mut cfg, idx, gpe_event::gpe_handler::method(handler));
+  }
+
+  fn gpe_disable(this mut &cfg, usize idx) -> acpi::result
+  {
+    var enable = 0;
+    if (var rc = acpi_read_register(cfg.registers[idx >> 3].enable, &mut enable); !rc)
+      return rc;
+
+    if (var rc = acpi_write_register(cfg.registers[idx >> 3].enable, enable & ~(1 << (idx & 0x7))); !rc)
+      return rc;
+
+    return ok;
+  }
+
+  fn notify(acpi::namespace mut &ns, acpi::node *node, acpi::value &value) -> acpi::result
+  {
+    std::print("acpi: notify ", ns.pathname(node), " : ", value);
+
+    return ok;
+  }
+
+  fn sleep(acpi::namespace mut &ns, acpi::value &period) -> acpi::result
+  {
+    scheduler::sleep_until(cpu::system_time + 1_000_000 * period.integer);
+
+    return ok;
+  }
+
+  semaphore doorbell;
+  thread mut *electrician;
+
+  pub fn instance()
+  {
+    static instance = #namespace();
+
+    return &instance;
+  }
+
+  namespace() = default;
+  namespace(#namespace&) = default;
+  ~namespace() = default;
+}
+
+fn acpi_enable(acpi::fadt *fadt) -> acpi::result
+{
+  enum mode
+  {
+    acpi,
+    legacy,
+  }
+
+  fn read_acpi_mode(acpi::fadt *fadt) -> mode
+  {
+    if (fadt.smi_command == 0)
+      return mode::acpi;
+
+    var control = 0;
+
+    if (var rc = acpi_read_register(fadt.x_pm1a_control_block, fadt.x_pm1b_control_block, &mut control); !rc)
+      return mode::legacy;
+
+    if (control & acpi::pm1::sci_enable == 0x1)
+      return mode::acpi;
+
+    return mode::legacy;
+  }
+
+  if (read_acpi_mode(fadt) == mode::acpi)
+    return ok;
+
+  if (fadt.acpi_enable == 0 && fadt.acpi_disable == 0)
+    return not_supported;
+
+  platform::out8(fadt.smi_command, fadt.acpi_enable);
+
+  while (read_acpi_mode(fadt) != mode::acpi)
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+
+  return ok;
+}
+
+fn acpi_reset(acpi::fadt *fadt) -> acpi::result
+{
+  if (var rc = acpi_write_register(fadt.x_pm1a_enable_block, fadt.x_pm1b_enable_block, 0); !rc)
+    return rc;
+
+  if (fadt.x_gpe0_block.address != 0 && fadt.gpe0_block_length != 0)
+  {
+    for (var i = 0; i < fadt.gpe0_block_length / 2; ++i)
+    {
+      if (var rc = acpi_write_register(fadt.x_gpe0_enable_block(i), 0); !rc)
+        return rc;
+
+      if (var rc = acpi_write_register(fadt.x_gpe0_status_block(i), 0xff); !rc)
+        return rc;
+    }
+  }
+
+  if (fadt.x_gpe1_block.address != 0 && fadt.gpe1_block_length != 0)
+  {
+    for (var i = 0; i < fadt.gpe1_block_length / 2; ++i)
+    {
+      if (var rc = acpi_write_register(fadt.x_gpe1_enable_block(i), 0); !rc)
+        return rc;
+
+      if (var rc = acpi_write_register(fadt.x_gpe1_status_block(i), 0xff); !rc)
+        return rc;
+    }
+  }
+
+  return ok;
+}
+
+extern fn acpi_sci_handler(namespace mut *cfg) -> void
+{
+  cfg.doorbell.release();
+}
+
+fn electrician(void*) -> void
+{
+  var mut &cfg = namespace::instance;
+
+  while (true)
+  {
+    var status = 0;
+    if (var rc = acpi_read_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, &mut status); !rc)
+      std::panic("status: ", rc);
+
+    var enable = 0;
+    if (var rc = acpi_read_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, &mut enable); !rc)
+      std::panic("enable: ", rc);
+
+    std::printf("SCI - {:04x} {:04x}\n", status, enable);
+
+    if (var mask = status & enable; mask != 0)
+    {
+      if ((status & enable) & acpi::pm1::power_button_status != 0)
+      {
+        std::print("power button");
+      }
+
+      acpi_write_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, mask);
+    }
+
+    for (var &[index, register] : std::enumerate(cfg.registers))
+    {
+      if (var rc = acpi_read_register(register.status, &mut status); !rc)
+        std::panic("status: ", rc);
+
+      if (var rc = acpi_read_register(register.enable, &mut enable); !rc)
+        std::panic("enable: ", rc);
+
+      if (var mask = status & enable; mask != 0)
+      {
+        for (var i = std::ctz(mask); i < 8; ++i, i += std::ctz(mask >> i))
+        {
+          var &event = cfg.events[(index << 3) + cast<usize>(i)];
+
+          switch (event.handler)
+          {
+            case method[method]:
+              var dst = acpi::value();
+              if (var rc = acpi::execute(&mut cfg.ns?!, method, &mut dst); !rc)
+                std::print("acpi: execute event handler - ", rc);
+          }
+        }
+
+        acpi_write_register(register.status, mask);
+      }
+    }
+
+    cfg.doorbell.wait();
+  }
+}
+
+pub fn initialise(namespace mut &cfg) -> acpi::result
+{
+  var ns = acpi::namespace();
+
+  acpi::initialise(&mut ns, &impl cfg);
+
+  var xsdt = acpi::tables(PHYSICAL_BASE, sys::acpi_root);
+
+  var mcfg = acpi::find_mcfg(xsdt);
+
+  if (!acpi::validate_mcfg(mcfg))
+    std::panic("bad_acpi_mcfg");
+
+  cfg.mcfg = mcfg;
+
+  var fadt = acpi::find_fadt(xsdt);
+
+  if (!acpi::validate_fadt(fadt))
+    std::panic("bad_acpi_fadt");
+
+  if (var rc = acpi_enable(fadt); !rc)
+    std::panic("acpi enable failed: ", rc);
+
+  if (var rc = acpi_reset(fadt); !rc)
+    std::panic("acpi reset failed: ", rc);
+
+  cfg.fadt = fadt;
+
+  std::printf("acpi dsdt address: {:#08x}\n", fadt.dsdt_address);
+
+  var dsdt = cast<acpi::sdt*>(physaddr(fadt.dsdt_address).ptr);
+
+  if (!dsdt)
+    std::panic("bad_acpi_dsdt");
+
+  if (var rc = acpi::parse(&mut ns, dsdt.payload); !rc)
+    std::panic("acpi dsdt parse error - ", rc);
+
+  for (var sdt : xsdt)
+  {
+    if (sdt.signature == std::span("SSDT"))
+    {
+      std::printf("acpi ssdt address: {:#08x}\n", sdt);
+
+      if (var rc = acpi::parse(&mut ns, sdt.payload); !rc)
+        std::print("acpi ssdt parse error - ", rc);
+    }
+  }
+
+  cfg.ns = &move ns;
+
+  if (fadt.x_gpe0_block.address != 0 && fadt.gpe0_block_length != 0)
+  {
+    for (var i = 0; i < fadt.gpe0_block_length / 2; ++i)
+    {
+      cfg.registers.push_back(fadt.x_gpe0_status_block(i), fadt.x_gpe0_enable_block(i));
+    }
+  }
+
+  if (fadt.x_gpe1_block.address != 0 && fadt.gpe1_block_length != 0)
+  {
+    for (var i = 0; i < fadt.gpe1_block_length / 2; ++i)
+    {
+      cfg.registers.push_back(fadt.x_gpe1_status_block(i), fadt.x_gpe1_enable_block(i));
+    }
+  }
+
+  cfg.events.resize(cfg.registers.len * 8);
+
+  cfg.electrician = create_thread(process::current, &cast<fn (void mut *) -> void>(electrician), null);
+
+  return ok;
+}
+
+pub fn configure(namespace mut &cfg) -> acpi::result
+{
+  var mut &ns = cfg.ns?!;
+
+  var irq = ioapic::resolve(cast<u32>(cfg.fadt.sci_interrupt));
+
+  io::install_handler(irq, &cast<fn (namespace mut *) -> void>(acpi_sci_handler), &cfg);
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
+    return rc;
+
+  for (var &[name, value] : ns.root.find("_GPE")?!.values)
+  {
+    if (!value.is_method)
+      continue;
+
+    if (name.starts_with("_E") || name.starts_with("_L"))
+    {
+      var idx = usize(~0);
+      std::atoi(name.data + 2, name.end, &mut idx, 16);
+
+      cfg.gpe_enable(idx, value.method);
+    }
+  }
+
+  if (var rc = ns.invoke(ns.root, "_PIC", &mut acpi::value(), acpi::value(1)); !rc)
+    return rc;
+
+  return ok;
+}
+
+pub fn enable(namespace mut &cfg) -> acpi::result
+{
+  scheduler::enqueue(cfg.electrician);
+
+  return ok;
+}
