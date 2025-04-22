@@ -109,7 +109,7 @@ pub struct cursor
   }
 
   #[lifetime(depend(this))]
-  pub fn lookup(this&, u32 size) -> pixels
+  pub fn lookup(this &, u32 size) -> pixels
   {
     var header = cast<XcursorFileHeader*>(this.bytes.data);
 

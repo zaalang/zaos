@@ -47,6 +47,7 @@ pub enum op
   revision_op = 0x5b30,
   debug_op = 0x5b31,
   fatal_op = 0x5b32,
+  timer_op = 0x5b33,
   opregion_op = 0x5b80,
   field_op = 0x5b81,
   device_op = 0x5b82,

@@ -186,7 +186,7 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
 
       for (var addr = slab.allocation.range.begin; addr + sizeof<kmem_slab_entry> <= slab.allocation.range.end - sizeof<kmem_slab>; addr += sizeof<kmem_slab_entry>)
       {
-        kmem_slab_entry::~kmem_slab_entry(&mut *cast<kmem_slab_entry mut *>(addr.ptr));
+        kmem_slab_entry::~kmem_slab_entry(*cast<kmem_slab_entry mut *>(addr.ptr));
       }
 
       heap::free(slab.allocation);

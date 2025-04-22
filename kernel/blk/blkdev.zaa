@@ -9,19 +9,50 @@ import vm;
 import process as _ : process;
 import support.rc : Rc;
 
+pub enum query
+{
+  device_path,
+  device_part,
+  device_uuid,
+}
+
 pub struct blkdev
 {
   pub usize block_size;
   pub int block_shift;
   pub u64 block_count;
 
-  pub fn create<T>(var && ...args) -> shared_ptr<T>
+  pub fn create<T>(var && ...args) -> Rc<T>
   {
     var dev = std::allocator::new<T>(&&args...);
 
     dev.destroy = fn (blkdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
 
-    return shared_ptr(dev);
+    return Rc(dev);
+  }
+
+  pub fn query(this &, blk::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(this, query, &mut result);
+
+    return result;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
+  {
+    return this.ops.ioctl(&mut this, op, buffer);
+  }
+
+  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
+  {
+    return this.ops.enqueue(&mut this, request);
+  }
+
+  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
+  {
+    return this.ops.cancel(&mut this, request);
   }
 
   pub blkdev(device_operations &ops)
@@ -47,80 +78,18 @@ pub struct blkdev
   fn (*destroy)(blkdev mut *) -> void;
 }
 
-pub enum query
-{
-  device_path,
-  device_part,
-  device_uuid,
-}
-
 pub vtable device_operations
 {
-  pub fn query(this &dev, blk::query query, std::string mut &result) -> blk::result;
+  pub fn query(this &, blk::query query, std::string mut &result) -> blk::result;
 
-  pub fn ioctl(this mut &dev, u32 op, vm::iovec &buffer) -> blk::result;
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result;
 
-  pub fn enqueue(this mut &dev, blk::request mut *request) -> blk::result;
-  pub fn cancel(this mut &dev, blk::request mut *request) -> blk::result;
+  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result;
+  pub fn cancel(this mut &, blk::request mut *request) -> blk::result;
 }
 
-pub struct blkdev_ptr : pub Rc<blkdev>
+fn destroy(blkdev mut *device) -> void
 {
-  pub fn query(this &, blk::query query) -> std::string
-  {
-    var result = std::string();
-
-    this.ops.query(*this, query, &mut result);
-
-    return result;
-  }
-
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
-  {
-    return this.ops.ioctl(&mut *this, op, buffer);
-  }
-
-  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
-  {
-    return this.ops.enqueue(&mut *this, request);
-  }
-
-  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
-  {
-    return this.ops.cancel(&mut *this, request);
-  }
-
-  blkdev_ptr(blkdev mut *inner)
-    : super(inner)
-  {
-  }
-
-  pub blkdev_ptr() = default;
-  pub blkdev_ptr(blkdev_ptr &&other) = default;
-  pub fn =(blkdev_ptr mut &lhs, blkdev_ptr &&rhs) -> blkdev_ptr mut & = default;
-  pub ~blkdev_ptr() = default;
-}
-
-pub struct shared_ptr<T> : pub blkdev_ptr
-{
-  pub fn *(this &&)
-  {
-    return &cast<T&&>(*this.super);
-  }
-
-  shared_ptr(T mut *inner)
-    : super(inner)
-  {
-  }
-
-  pub shared_ptr() = default;
-  pub shared_ptr(shared_ptr &&other) = default;
-  pub fn =(shared_ptr mut &lhs, shared_ptr &&rhs) -> shared_ptr mut & = default;
-  pub ~shared_ptr() = default;
-}
-
-fn destroy(blkdev mut *dev) -> void
-{
-  if (dev.destroy)
-    dev.destroy(dev);
+  if (device.destroy)
+    device.destroy(device);
 }

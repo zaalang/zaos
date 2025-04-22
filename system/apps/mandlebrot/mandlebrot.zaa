@@ -47,7 +47,7 @@ fn plot(float xmin, float xmax, float xstep, float ymin, float ymax, float ystep
     for (var x = xmin; x < xmax; x = x + xstep)
       pd(converge(x, y));
 
-    putc('\n');
+    printf("\x1b[K\n");
   }
 }
 

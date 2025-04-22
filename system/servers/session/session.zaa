@@ -225,6 +225,7 @@ fn main() -> int
   //register("zaos.rings", "/zaos/root/rings");
   register("zaos.triangle", "/zaos/root/triangle");
   register("zaos.terminal", "/zaos/bin/terminal");
+  register("zaos.terminal2", "/zaos/bin/terminal");
 
   for (var mut &[uri, service] : session::services)
   {

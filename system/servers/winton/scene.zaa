@@ -38,7 +38,7 @@ pub struct window
 
   pub node *parent;
 
-  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
+  pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   window() = default;
   window(window&&) = default;
@@ -57,7 +57,7 @@ pub struct cursor
 
   pub transform world;
 
-  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
+  pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   cursor() = default;
   cursor(cursor&&) = default;
@@ -70,7 +70,7 @@ pub union node
   pub window(window),
   pub cursor(cursor),
 
-  pub fn surface(this&) -> void *
+  pub fn surface(this &) -> void *
   {
     switch (this)
     {
@@ -85,7 +85,7 @@ pub union node
     }
   }
 
-  pub fn transform(this&) -> transform
+  pub fn transform(this &) -> transform
   {
     switch (this)
     {

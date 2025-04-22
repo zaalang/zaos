@@ -9,6 +9,7 @@ import blk.cache;
 import std.memory;
 import ext2 : ext2_ino_t, ext2_super_block, ext2_group_descriptor, ext2_inode, ext2_dir_entry, ext2_ftype;
 import mutex as _ : mutex;
+import support.rc : Rc;
 import chrono;
 
 pub struct volume
@@ -38,9 +39,9 @@ pub struct volume
   mutex inode_allocator_lock;
   mutex block_allocator_lock;
 
-  pub fn is_readonly(this&) -> bool { return this.flags & flags::readonly == flags::readonly; }
+  pub fn is_readonly(this &) -> bool { return this.flags & flags::readonly == flags::readonly; }
 
-  pub fn blocksize(this&) -> usize { return 1 << this.block_shift; }
+  pub fn blocksize(this &) -> usize { return 1 << this.block_shift; }
 
   pub volume() = default;
   pub ~volume() = default;
@@ -60,9 +61,9 @@ fn rocompat_supported(ext2_super_block &superblock) -> bool
   return superblock.s_readonly_features & ~supported == cast(0);
 }
 
-fn identify(vfs::node_ptr &dev, ext2_super_block mut &superblock) -> vfs::result
+fn identify(Rc<vfs::node> &device, ext2_super_block mut &superblock) -> vfs::result
 {
-  if (var result = vfs::read(dev, EXT2_SUPER_BLOCK_OFFSET, &superblock, sizeof(superblock)); !result)
+  if (var result = vfs::read(device, EXT2_SUPER_BLOCK_OFFSET, &superblock, sizeof(superblock)); !result)
     return result;
 
   if (superblock.s_magic != EXT2_SUPER_BLOCK_MAGIC)
@@ -71,11 +72,11 @@ fn identify(vfs::node_ptr &dev, ext2_super_block mut &superblock) -> vfs::result
   return ok;
 }
 
-pub fn mount(volume mut &this, vfs::node_ptr &dev, volume::flags flags) -> vfs::result
+pub fn mount(volume mut &this, Rc<vfs::node> &device, volume::flags flags) -> vfs::result
 {
   var mut &superblock = this.superblock;
 
-  if (var result = identify(dev, &mut superblock); !result)
+  if (var result = identify(device, &mut superblock); !result)
     return result;
 
   if (!incompat_supported(superblock))
@@ -112,22 +113,22 @@ pub fn mount(volume mut &this, vfs::node_ptr &dev, volume::flags flags) -> vfs::
 
   var gdt_offset = cast<u64>(this.first_data_block + 1) << this.block_shift;
 
-  if (var result = vfs::read(dev, gdt_offset, this.group_descriptor_table.data, this.group_descriptor_table.len); !result)
+  if (var result = vfs::read(device, gdt_offset, this.group_descriptor_table.data, this.group_descriptor_table.len); !result)
     return result;
 
   return ok;
 }
 
-pub fn flush(volume mut &this, vfs::node_ptr &dev) -> vfs::result
+pub fn flush(volume mut &this, Rc<vfs::node> &device) -> vfs::result
 {
   var mut &superblock = this.superblock;
 
   var gdt_offset = cast<u64>(this.first_data_block + 1) << this.block_shift;
 
-  if (var result = vfs::write(dev, gdt_offset, this.group_descriptor_table.data, this.group_descriptor_table.len); !result)
+  if (var result = vfs::write(device, gdt_offset, this.group_descriptor_table.data, this.group_descriptor_table.len); !result)
     return result;
 
-  if (var result = vfs::write(dev, EXT2_SUPER_BLOCK_OFFSET, &superblock, sizeof(superblock)); !result)
+  if (var result = vfs::write(device, EXT2_SUPER_BLOCK_OFFSET, &superblock, sizeof(superblock)); !result)
     return result;
 
   return ok;
@@ -149,7 +150,7 @@ struct inode_info
   ~inode_info() = default;
 }
 
-pub fn lookup_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino) -> inode_info
+pub fn lookup_inode(volume mut &this, Rc<vfs::node> &device, ext2_ino_t ino) -> inode_info
 {
   var info = inode_info();
 
@@ -186,14 +187,14 @@ struct inode_result : pub inode_info
   ~inode_result() = default;
 }
 
-pub fn fetch_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino) -> inode_result
+pub fn fetch_inode(volume mut &this, Rc<vfs::node> &device, ext2_ino_t ino) -> inode_result
 {
   var inode = inode_result();
-  inode.super = this.lookup_inode(dev, ino);
+  inode.super = this.lookup_inode(device, ino);
 
   if (inode.result)
   {
-    inode.block = blk::fetch(dev, inode.offset);
+    inode.block = blk::fetch(device, inode.offset);
 
     if (inode.block.wait(); !inode.block)
       inode.result = cast(inode.block.result);
@@ -221,7 +222,7 @@ struct block_info
   ~block_info() = default;
 }
 
-pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 offset) -> block_info
+pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 offset) -> block_info
 {
   var info = block_info();
 
@@ -245,7 +246,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
   {
     var pos0 = cast<u64>(contents[EXT2_DIRECT_BLOCKS]) << this.block_shift;
 
-    var block0 = blk::fetch(dev, pos0);
+    var block0 = blk::fetch(device, pos0);
 
     if (block0.wait(); !block0)
       info.result = cast(block0.result);
@@ -266,7 +267,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
   {
     var pos0 = cast<u64>(contents[EXT2_DIRECT_BLOCKS + 1]) << this.block_shift;
 
-    var block0 = blk::fetch(dev, pos0);
+    var block0 = blk::fetch(device, pos0);
 
     if (block0.wait(); !block0)
       info.result = cast(block0.result);
@@ -277,7 +278,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
 
       var pos1 = cast<u64>(*(cast<u32*>(block0.ptr(pos0)) + index / (k1 - k0))) << this.block_shift;
 
-      var block1 = blk::fetch(dev, pos1);
+      var block1 = blk::fetch(device, pos1);
 
       if (block1.wait(); !block1)
         info.result = cast(block1.result);
@@ -299,7 +300,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
   {
     var pos0 = cast<u64>(contents[EXT2_DIRECT_BLOCKS + 2]) << this.block_shift;
 
-    var block0 = blk::fetch(dev, pos0);
+    var block0 = blk::fetch(device, pos0);
 
     if (block0.wait(); !block0)
       info.result = cast(block0.result);
@@ -310,7 +311,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
 
       var pos1 = cast<u64>(*(cast<u32*>(block0.ptr(pos0)) + index / (k2 - k1))) << this.block_shift;
 
-      var block1 = blk::fetch(dev, pos1);
+      var block1 = blk::fetch(device, pos1);
 
       if (block1.wait(); !block1)
         info.result = cast(block1.result);
@@ -321,7 +322,7 @@ pub fn lookup_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 off
 
         var pos2 = cast<u64>(*(cast<u32*>(block1.ptr(pos1)) + index / (k1 - k0))) << this.block_shift;
 
-        var block2 = blk::fetch(dev, pos2);
+        var block2 = blk::fetch(device, pos2);
 
         if (block2.wait(); !block2)
           info.result = cast(block2.result);
@@ -365,14 +366,14 @@ struct block_result : pub block_info
   ~block_result() = default;
 }
 
-pub fn fetch_block(volume &this, vfs::node_ptr &dev, u32[15] &contents, u64 offset) -> block_result
+pub fn fetch_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 offset) -> block_result
 {
   var block = block_result();
-  block.super = this.lookup_block(dev, contents, offset);
+  block.super = this.lookup_block(device, contents, offset);
 
   if (block.result)
   {
-    block.block = blk::fetch(dev, block.offset);
+    block.block = blk::fetch(device, block.offset);
 
     if (block.block.wait(); !block.block)
       block.result = cast(block.block.result);
@@ -389,12 +390,12 @@ fn now() -> u32
   return cast<u32>(chrono::system_clock::now.time_since_epoch.floor<chrono::seconds>.count & 0xffffffff);
 }
 
-fn acquire_bits(volume mut &this, vfs::node_ptr &dev, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 mut &count) -> vfs::result
+fn acquire_bits(volume mut &this, Rc<vfs::node> &device, u64 bitmapblock, u64 wanted, u64 mut &idx, u64 mut &count) -> vfs::result
 {
   var block_shift = this.block_shift;
   var bitmap_size = 1 << block_shift;
 
-  var block0 = blk::fetch(dev, bitmapblock << block_shift);
+  var block0 = blk::fetch(device, bitmapblock << block_shift);
 
   if (block0.wait(); !block0)
     return cast(block0.result);
@@ -438,12 +439,12 @@ fn acquire_bits(volume mut &this, vfs::node_ptr &dev, u64 bitmapblock, u64 wante
   return ok;
 }
 
-fn release_bits(volume mut &this, vfs::node_ptr &dev, u64 bitmapblock, u64 idx, u64 count) -> vfs::result
+fn release_bits(volume mut &this, Rc<vfs::node> &device, u64 bitmapblock, u64 idx, u64 count) -> vfs::result
 {
   var block_shift = this.block_shift;
   var bitmap_size = 1 << block_shift;
 
-  var block0 = blk::fetch(dev, bitmapblock << block_shift);
+  var block0 = blk::fetch(device, bitmapblock << block_shift);
 
   if (block0.wait(); !block0)
     return cast(block0.result);
@@ -466,7 +467,7 @@ fn release_bits(volume mut &this, vfs::node_ptr &dev, u64 bitmapblock, u64 idx, 
   return ok;
 }
 
-fn allocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t mut &ino, u16 mode) -> vfs::result
+fn allocate_inode(volume mut &this, Rc<vfs::node> &device, ext2_ino_t mut &ino, u16 mode) -> vfs::result
 {
   var guard = std::lock_guard(&mut this.inode_allocator_lock);
 
@@ -481,7 +482,7 @@ fn allocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t mut &ino, u16
     if (var n = get_free_inodes(&this.superblock, groupdesc); n == 0)
       continue;
 
-    if (var result = this.acquire_bits(dev, inodebitmap, 1, &mut idx, &mut count); !result)
+    if (var result = this.acquire_bits(device, inodebitmap, 1, &mut idx, &mut count); !result)
       return result;
 
     if (count != 0)
@@ -500,7 +501,7 @@ fn allocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t mut &ino, u16
   return no_space_remaining;
 }
 
-fn deallocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino, u16 mode) -> vfs::result
+fn deallocate_inode(volume mut &this, Rc<vfs::node> &device, ext2_ino_t ino, u16 mode) -> vfs::result
 {
   var guard = std::lock_guard(&mut this.inode_allocator_lock);
 
@@ -511,7 +512,7 @@ fn deallocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino, u16 mo
   var groupdesc = cast<ext2_group_descriptor mut *>(this.group_descriptor_table.data + cast(group) * this.group_descriptor_size);
   var inodebitmap = get_inode_bitmap(&this.superblock, groupdesc);
 
-  if (var result = this.release_bits(dev, inodebitmap, cast<u64>((ino - 1) % this.inodes_per_group), 1); !result)
+  if (var result = this.release_bits(device, inodebitmap, cast<u64>((ino - 1) % this.inodes_per_group), 1); !result)
     return result;
 
   if (mode & EXT2_IFMT == EXT2_IFDIR)
@@ -522,7 +523,7 @@ fn deallocate_inode(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino, u16 mo
   return ok;
 }
 
-fn allocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 wanted, u64 mut &block, u64 mut &count) -> vfs::result
+fn allocate_blocks(volume mut &this, Rc<vfs::node> &device, u64 wanted, u64 mut &block, u64 mut &count) -> vfs::result
 {
   var guard = std::lock_guard(&mut this.block_allocator_lock);
 
@@ -536,7 +537,7 @@ fn allocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 wanted, u64 mut &bl
       if (var n = get_free_blocks(&this.superblock, groupdesc); n == 0 || (k == 0 && n < 4*wanted))
         continue;
 
-      if (var result = this.acquire_bits(dev, blockbitmap, wanted, &mut block, &mut count); !result)
+      if (var result = this.acquire_bits(device, blockbitmap, wanted, &mut block, &mut count); !result)
         return result;
 
       if (count != 0)
@@ -553,7 +554,7 @@ fn allocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 wanted, u64 mut &bl
   return no_space_remaining;
 }
 
-fn deallocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 block, u64 count) -> vfs::result
+fn deallocate_blocks(volume mut &this, Rc<vfs::node> &device, u64 block, u64 count) -> vfs::result
 {
   var guard = std::lock_guard(&mut this.block_allocator_lock);
 
@@ -566,7 +567,7 @@ fn deallocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 block, u64 count)
   var groupdesc = cast<ext2_group_descriptor mut *>(this.group_descriptor_table.data + cast(group) * this.group_descriptor_size);
   var blockbitmap = get_block_bitmap(&this.superblock, groupdesc);
 
-  if (var result = this.release_bits(dev, blockbitmap, idx % this.blocks_per_group, count); !result)
+  if (var result = this.release_bits(device, blockbitmap, idx % this.blocks_per_group, count); !result)
     return result;
 
   release_free_blocks(&this.superblock, groupdesc, count);
@@ -574,7 +575,7 @@ fn deallocate_blocks(volume mut &this, vfs::node_ptr &dev, u64 block, u64 count)
   return ok;
 }
 
-fn free(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize beg, usize end) -> vfs::result
+fn free(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize beg, usize end) -> vfs::result
 {
   for (var i = beg; i < end; )
   {
@@ -584,7 +585,7 @@ fn free(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table,
       for (var j = 0; i + j < end && table[i + j] == block + cast(j); ++j)
         count += 1;
 
-      this.deallocate_blocks(dev, cast(block), count);
+      this.deallocate_blocks(device, cast(block), count);
 
       for (var j = 0; j < count; ++j)
         table[i++] = 0;
@@ -596,76 +597,76 @@ fn free(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table,
   return ok;
 }
 
-fn free_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn free_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
-    var block0 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block0 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block0.wait(); !block0)
       return cast(block0.result);
 
     var table0 = std::mutable_span(cast<u32 mut *>(block0.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.free(dev, &mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
+    if (var result = this.free(device, &mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
       return result;
 
     block0.commit(table0.data, 1 << block_shift);
   }
 
-  if (var result = this.free(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.free(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   return ok;
 }
 
-fn free_double_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn free_double_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
-    var block1 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block1 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block1.wait(); !block1)
       return cast(block1.result);
 
     var table1 = std::mutable_span(cast<u32 mut *>(block1.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.free_indirect(dev, &mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+    if (var result = this.free_indirect(device, &mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
     block1.commit(table1.data, 1 << block_shift);
   }
 
-  if (var result = this.free(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.free(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   return ok;
 }
 
-fn free_triple_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn free_triple_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && table[i] != 0; i += 1, k += dk)
   {
-    var block2 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block2 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block2.wait(); !block2)
       return cast(block2.result);
 
     var table2 = std::mutable_span(cast<u32 mut *>(block2.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.free_double_indirect(dev, &mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+    if (var result = this.free_double_indirect(device, &mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
     block2.commit(table2.data, 1 << block_shift);
   }
 
-  if (var result = this.free(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.free(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   return ok;
 }
 
-pub fn recover(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *inode, u64 last) -> vfs::result
+pub fn recover(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *inode, u64 last) -> vfs::result
 {
   let k0 = EXT2_DIRECT_BLOCKS;
   let k1 = k0 + this.blocksize / sizeof<u32>;
@@ -679,16 +680,16 @@ pub fn recover(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *inode, u64 
 
   var table = std::mutable_span(inode.i_contents.data, inode.i_contents.len);
 
-  if (var result = this.free(dev, &mut table, n, k0); !result)
+  if (var result = this.free(device, &mut table, n, k0); !result)
     return result;
 
-  if (var result = this.free_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, this.block_shift, std::max(n, k0), k1); !result)
+  if (var result = this.free_indirect(device, &mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, this.block_shift, std::max(n, k0), k1); !result)
     return result;
 
-  if (var result = this.free_double_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, this.block_shift, std::max(n, k1), k2); !result)
+  if (var result = this.free_double_indirect(device, &mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, this.block_shift, std::max(n, k1), k2); !result)
     return result;
 
-  if (var result = this.free_triple_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, this.block_shift, std::max(n, k2), k3); !result)
+  if (var result = this.free_triple_indirect(device, &mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, this.block_shift, std::max(n, k2), k3); !result)
     return result;
 
   inode.i_blocks = inode_block_usage(&this.superblock, cast(n));
@@ -696,14 +697,14 @@ pub fn recover(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *inode, u64 
   return ok;
 }
 
-fn alloc(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize beg, usize end) -> vfs::result
+fn alloc(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize beg, usize end) -> vfs::result
 {
   for (var i = beg; i < end; )
   {
     var first = 0;
     var count = 0;
 
-    if (var result = this.allocate_blocks(dev, cast<u64>(end - i), &mut first, &mut count); !result)
+    if (var result = this.allocate_blocks(device, cast<u64>(end - i), &mut first, &mut count); !result)
       return result;
 
     for (var j = 0; j < count; ++j)
@@ -713,21 +714,21 @@ fn alloc(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table
   return ok;
 }
 
-fn alloc_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn alloc_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
-  if (var result = this.alloc(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.alloc(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
-    var block0 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block0 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block0.wait(); !block0)
       return cast(block0.result);
 
     var table0 = std::mutable_span(cast<u32 mut *>(block0.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.alloc(dev, &mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
+    if (var result = this.alloc(device, &mut table0, std::max(first, k) - k, std::min(last, k + dk) - k); !result)
       return result;
 
     for (var j = last - k; j < table0.len; ++j)
@@ -739,21 +740,21 @@ fn alloc_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> m
   return ok;
 }
 
-fn alloc_double_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn alloc_double_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
-  if (var result = this.alloc(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.alloc(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
-    var block1 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block1 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block1.wait(); !block1)
       return cast(block1.result);
 
     var table1 = std::mutable_span(cast<u32 mut *>(block1.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.alloc_indirect(dev, &mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+    if (var result = this.alloc_indirect(device, &mut table1, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
     for (var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table1.len; ++j)
@@ -765,21 +766,21 @@ fn alloc_double_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span
   return ok;
 }
 
-fn alloc_triple_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
+fn alloc_triple_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_span<u32> mut &table, usize k0, usize dk, int block_shift, usize first, usize last) -> vfs::result
 {
-  if (var result = this.alloc(dev, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
+  if (var result = this.alloc(device, &mut table, std::ceil_div(first - k0, dk), std::ceil_div(last - k0, dk)); !result)
     return result;
 
   for (var i = (first - k0) / dk, var k = k0 + i * dk; i < table.len && k < last; i += 1, k += dk)
   {
-    var block2 = blk::fetch(dev, cast<u64>(table[i]) << block_shift);
+    var block2 = blk::fetch(device, cast<u64>(table[i]) << block_shift);
 
     if (block2.wait(); !block2)
       return cast(block2.result);
 
     var table2 = std::mutable_span(cast<u32 mut *>(block2.ptr(cast<u64>(table[i]) << block_shift)), 1 << (block_shift - 2));
 
-    if (var result = this.alloc_double_indirect(dev, &mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
+    if (var result = this.alloc_double_indirect(device, &mut table2, k, dk >> (block_shift - 2), block_shift, std::max(first, k), std::min(last, k + dk)); !result)
       return result;
 
     for (var j = std::ceil_div(last - k, dk >> (block_shift - 2)); j < table2.len; ++j)
@@ -791,7 +792,7 @@ fn alloc_triple_indirect(volume mut &this, vfs::node_ptr &dev, std::mutable_span
   return ok;
 }
 
-pub fn grow(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *inode, u64 first, u64 last) -> vfs::result
+pub fn grow(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *inode, u64 first, u64 last) -> vfs::result
 {
   let k0 = EXT2_DIRECT_BLOCKS;
   let k1 = k0 + this.blocksize / sizeof<u32>;
@@ -805,25 +806,25 @@ pub fn grow(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *inode, u64 fir
 
   if (n < k0)
   {
-    if (var result = this.alloc(dev, &mut table, n, std::min(last, k0)); !result)
+    if (var result = this.alloc(device, &mut table, n, std::min(last, k0)); !result)
       return result;
   }
 
   if (k0 < last && n < k1)
   {
-    if (var result = this.alloc_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, this.block_shift, std::max(n, k0), std::min(last, k1)); !result)
+    if (var result = this.alloc_indirect(device, &mut table[EXT2_DIRECT_BLOCKS .. EXT2_DIRECT_BLOCKS + 1], k0, k1 - k0, this.block_shift, std::max(n, k0), std::min(last, k1)); !result)
       return result;
   }
 
   if (k1 < last && n < k2)
   {
-    if (var result = this.alloc_double_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, this.block_shift, std::max(n, k1), std::min(last, k2)); !result)
+    if (var result = this.alloc_double_indirect(device, &mut table[EXT2_DIRECT_BLOCKS + 1 .. EXT2_DIRECT_BLOCKS + 2], k1, k2 - k1, this.block_shift, std::max(n, k1), std::min(last, k2)); !result)
       return result;
   }
 
   if (k2 < last && n < k3)
   {
-    if (var result = this.alloc_triple_indirect(dev, &mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, this.block_shift, std::max(n, k2), std::min(last, k3)); !result)
+    if (var result = this.alloc_triple_indirect(device, &mut table[EXT2_DIRECT_BLOCKS + 2 .. EXT2_DIRECT_BLOCKS + 3], k2, k3 - k2, this.block_shift, std::max(n, k2), std::min(last, k3)); !result)
       return result;
   }
 
@@ -843,7 +844,7 @@ struct entry_result
   {
   }
 
-  pub fn len(this&) -> usize
+  pub fn len(this &) -> usize
   {
     return cast<usize>(this.ptr.rec_len);
   }
@@ -871,11 +872,11 @@ struct entry_result
   ~entry_result() = default;
 }
 
-pub fn find(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_view name) -> entry_result
+pub fn find(volume &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name) -> entry_result
 {
   for (var position = 0; position < dir.size; )
   {
-    var block = this.fetch_block(dev, dir.i_contents, position);
+    var block = this.fetch_block(device, dir.i_contents, position);
 
     if (!block.result)
       return block.result;
@@ -885,7 +886,7 @@ pub fn find(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_v
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.name == name)
+      if (entry.ino != 0 && entry.name == name)
       {
         var data = entry_result();
 
@@ -904,11 +905,11 @@ pub fn find(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_v
   return vfs::result::not_found;
 }
 
-fn dir_not_empty(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir) -> bool
+fn dir_not_empty(volume &this, Rc<vfs::node> &device, ext2_inode mut *dir) -> bool
 {
   for (var position = 0; position < dir.size; )
   {
-    var block = this.fetch_block(dev, dir.i_contents, position);
+    var block = this.fetch_block(device, dir.i_contents, position);
 
     if (!block.result)
       break;
@@ -918,7 +919,7 @@ fn dir_not_empty(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir) -> bool
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.name != "." && entry.name != "..")
+      if (entry.ino != 0 && entry.name != "." && entry.name != "..")
         return true;
 
       entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
@@ -930,7 +931,7 @@ fn dir_not_empty(volume &this, vfs::node_ptr &dev, ext2_inode mut *dir) -> bool
   return false;
 }
 
-fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, u16 required_len) -> entry_result
+fn allocate_dir_entry(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, u16 required_len) -> entry_result
 {
   for (var position = 0;; )
   {
@@ -938,15 +939,15 @@ fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir,
     {
       var block_shift = this.block_shift;
 
-      if (var result = this.grow(dev, dir, dir.size >> block_shift, dir.size >> block_shift + 1); !result)
+      if (var result = this.grow(device, dir, dir.size >> block_shift, dir.size >> block_shift + 1); !result)
         return result;
 
-      var block = this.fetch_block(dev, dir.i_contents, position);
+      var block = this.fetch_block(device, dir.i_contents, position);
 
       if (!block.result)
         return block.result;
 
-      cast<ext2_dir_entry mut *>(block.ptr).inode = 0;
+      cast<ext2_dir_entry mut *>(block.ptr).ino = 0;
       cast<ext2_dir_entry mut *>(block.ptr).rec_len = (1 << block_shift);
 
       block.commit(block.ptr, sizeof<ext2_dir_entry>);
@@ -954,7 +955,7 @@ fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir,
       dir.size = dir.size + (1 << block_shift);
     }
 
-    var block = this.fetch_block(dev, dir.i_contents, position);
+    var block = this.fetch_block(device, dir.i_contents, position);
 
     if (!block.result)
       return block.result;
@@ -964,7 +965,7 @@ fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir,
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
+      if (entry.ino != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
       {
         var remaining = entry.rec_len - dentry_required_len(entry.name_len);
 
@@ -974,11 +975,11 @@ fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir,
 
         entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
 
-        entry.inode = 0;
+        entry.ino = 0;
         entry.rec_len = remaining;
       }
 
-      if (entry.inode == 0 && entry.rec_len >= required_len)
+      if (entry.ino == 0 && entry.rec_len >= required_len)
       {
         var data = entry_result();
 
@@ -995,9 +996,9 @@ fn allocate_dir_entry(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir,
   }
 }
 
-pub fn create(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
+pub fn create(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(dev, dir, dentry_required_len(cast(name.len)));
+  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
@@ -1006,10 +1007,10 @@ pub fn create(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
   entry.set_type(ext2_ftype::regular);
 
   var ino = 0;
-  if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFREG); !result)
+  if (var result = this.allocate_inode(device, &mut ino, EXT2_IFREG); !result)
     return result;
 
-  var inode = this.fetch_inode(dev, ino);
+  var inode = this.fetch_inode(device, ino);
 
   if (!inode.result)
     return inode.result;
@@ -1026,16 +1027,16 @@ pub fn create(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
 
   inode.commit(inode.ptr, sizeof<ext2_inode>);
 
-  entry.ptr.inode = ino;
+  entry.ptr.ino = ino;
 
   entry.commit(entry.ptr, entry.len);
 
   return entry;
 }
 
-pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_view name, std::string_view target, u32 uid, u32 gid, u16 mode) -> entry_result
+pub fn symlink(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, std::string_view target, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(dev, dir, dentry_required_len(cast(name.len)));
+  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
@@ -1044,10 +1045,10 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
   entry.set_type(ext2_ftype::symlink);
 
   var ino = 0;
-  if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFLNK); !result)
+  if (var result = this.allocate_inode(device, &mut ino, EXT2_IFLNK); !result)
     return result;
 
-  var inode = this.fetch_inode(dev, ino);
+  var inode = this.fetch_inode(device, ino);
 
   if (!inode.result)
     return inode.result;
@@ -1068,17 +1069,17 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
   }
   else
   {
-    if (var result = this.grow(dev, inode.ptr, 0, cast(std::ceil_div(target.len, this.blocksize))); !result)
+    if (var result = this.grow(device, inode.ptr, 0, cast(std::ceil_div(target.len, this.blocksize))); !result)
     {
-      this.recover(dev, inode.ptr, 0);
-      this.deallocate_inode(dev, ino, EXT2_IFLNK);
+      this.recover(device, inode.ptr, 0);
+      this.deallocate_inode(device, ino, EXT2_IFLNK);
 
       return result;
     }
 
     for (var position = 0; position < target.len; )
     {
-      var block = this.fetch_block(dev, inode.ptr.i_contents, cast(position));
+      var block = this.fetch_block(device, inode.ptr.i_contents, cast(position));
 
       if (!block.result)
         return block.result;
@@ -1097,16 +1098,16 @@ pub fn symlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::s
 
   inode.commit(inode.ptr, sizeof<ext2_inode>);
 
-  entry.ptr.inode = ino;
+  entry.ptr.ino = ino;
 
   entry.commit(entry.ptr, entry.len);
 
   return entry;
 }
 
-pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
+pub fn mkdir(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(dev, dir, dentry_required_len(cast(name.len)));
+  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
@@ -1115,10 +1116,10 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
   entry.set_type(ext2_ftype::regular);
 
   var ino = 0;
-  if (var result = this.allocate_inode(dev, &mut ino, EXT2_IFDIR); !result)
+  if (var result = this.allocate_inode(device, &mut ino, EXT2_IFDIR); !result)
     return result;
 
-  var inode = this.fetch_inode(dev, ino);
+  var inode = this.fetch_inode(device, ino);
 
   if (!inode.result)
     return inode.result;
@@ -1133,27 +1134,27 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
   inode.ptr.i_mtime = inode.ptr.i_ctime;
   inode.ptr.i_links = 1;
 
-  if (var result = this.grow(dev, inode.ptr, 0, 1); !result)
+  if (var result = this.grow(device, inode.ptr, 0, 1); !result)
   {
-    this.recover(dev, inode.ptr, 0);
-    this.deallocate_inode(dev, ino, EXT2_IFDIR);
+    this.recover(device, inode.ptr, 0);
+    this.deallocate_inode(device, ino, EXT2_IFDIR);
 
     return result;
   }
 
-  var block = this.fetch_block(dev, inode.ptr.i_contents, 0);
+  var block = this.fetch_block(device, inode.ptr.i_contents, 0);
 
   if (!block.result)
     return block.result;
 
-  var parent = this.find(dev, dir, std::string_view("."));
+  var parent = this.find(device, dir, std::string_view("."));
 
   if (!parent.result)
     return parent.result;
 
   var dotentry = cast<ext2_dir_entry mut *>(block.ptr);
 
-  dotentry.inode = ino;
+  dotentry.ino = ino;
   dotentry.type = ext2_ftype::directory;
   dotentry.file_name[0] = cast('.');
   dotentry.name_len = 1;
@@ -1163,7 +1164,7 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
 
   var dotdotentry = cast<ext2_dir_entry mut *>(block.ptr + 12);
 
-  dotdotentry.inode = parent.ptr.inode;
+  dotdotentry.ino = parent.ptr.ino;
   dotdotentry.type = ext2_ftype::directory;
   dotdotentry.file_name[0] = cast('.');
   dotdotentry.file_name[1] = cast('.');
@@ -1178,16 +1179,16 @@ pub fn mkdir(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::str
 
   inode.commit(inode.ptr, sizeof<ext2_inode>);
 
-  entry.ptr.inode = ino;
+  entry.ptr.ino = ino;
 
   entry.commit(entry.ptr, entry.len);
 
   return entry;
 }
 
-pub fn rename(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::string_view oldname, std::string_view newname) -> vfs::result
+pub fn rename(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view oldname, std::string_view newname) -> vfs::result
 {
-  var entry = this.find(dev, dir, oldname);
+  var entry = this.find(device, dir, oldname);
 
   if (!entry.result)
     return entry.result;
@@ -1196,15 +1197,15 @@ pub fn rename(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
 
   if (entry.ptr.rec_len < required_len)
   {
-    var newentry = this.allocate_dir_entry(dev, dir, required_len);
+    var newentry = this.allocate_dir_entry(device, dir, required_len);
 
     if (!newentry.result)
       return newentry.result;
 
-    newentry.ptr.inode = entry.ptr.inode;
+    newentry.ptr.ino = entry.ptr.ino;
     newentry.ptr.file_type = entry.ptr.file_type;
 
-    entry.ptr.inode = 0;
+    entry.ptr.ino = 0;
     entry.commit(entry.ptr, entry.len);
 
     entry = newentry;
@@ -1217,23 +1218,23 @@ pub fn rename(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, std::st
   return ok;
 }
 
-pub fn rename(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *olddir, std::string_view oldname, ext2_inode mut *newdir, std::string_view newname) -> vfs::result
+pub fn rename(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *olddir, std::string_view oldname, ext2_inode mut *newdir, std::string_view newname) -> vfs::result
 {
-  var oldentry = this.find(dev, olddir, oldname);
+  var oldentry = this.find(device, olddir, oldname);
 
   if (!oldentry.result)
     return oldentry.result;
 
-  var newentry = this.allocate_dir_entry(dev, newdir, dentry_required_len(cast(newname.len)));
+  var newentry = this.allocate_dir_entry(device, newdir, dentry_required_len(cast(newname.len)));
 
   if (!newentry.result)
     return newentry.result;
 
-  newentry.ptr.inode = oldentry.ptr.inode;
+  newentry.ptr.ino = oldentry.ptr.ino;
   newentry.ptr.file_type = oldentry.ptr.file_type;
   newentry.set_name(newname);
 
-  oldentry.ptr.inode = 0;
+  oldentry.ptr.ino = 0;
   oldentry.commit(oldentry.ptr, oldentry.len);
 
   newentry.commit(newentry.ptr, newentry.len);
@@ -1241,9 +1242,9 @@ pub fn rename(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *olddir, std:
   return ok;
 }
 
-pub fn unlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, ext2_dir_entry mut *entry) -> vfs::result
+pub fn unlink(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, ext2_dir_entry mut *entry) -> vfs::result
 {
-  var inode = this.fetch_inode(dev, entry.inode);
+  var inode = this.fetch_inode(device, entry.ino);
 
   if (!inode.result)
     return inode.result;
@@ -1251,7 +1252,7 @@ pub fn unlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, ext2_di
   if (inode.ptr.i_links == 0)
     return argument_out_of_domain;
 
-  if (inode.ptr.isdir && this.dir_not_empty(dev, inode.ptr))
+  if (inode.ptr.isdir && this.dir_not_empty(device, inode.ptr))
     return directory_not_empty;
 
   inode.ptr.i_links -= 1;
@@ -1266,19 +1267,19 @@ pub fn unlink(volume mut &this, vfs::node_ptr &dev, ext2_inode mut *dir, ext2_di
 
   inode.commit(inode.ptr, sizeof<ext2_inode>);
 
-  entry.inode = 0;
+  entry.ino = 0;
 
   return cast(inode.ptr.i_links);
 }
 
-pub fn delete(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino) -> vfs::result
+pub fn delete(volume mut &this, Rc<vfs::node> &device, ext2_ino_t ino) -> vfs::result
 {
-  var inode = this.fetch_inode(dev, ino);
+  var inode = this.fetch_inode(device, ino);
 
   if (!inode.result)
     return inode.result;
 
-  if (var result = this.recover(dev, inode.ptr, 0); !result)
+  if (var result = this.recover(device, inode.ptr, 0); !result)
     return result;
 
   inode.ptr.size = 0;
@@ -1286,7 +1287,7 @@ pub fn delete(volume mut &this, vfs::node_ptr &dev, ext2_ino_t ino) -> vfs::resu
 
   inode.commit(inode.ptr, sizeof<ext2_inode>);
 
-  this.deallocate_inode(dev, ino, inode.ptr.mode);
+  this.deallocate_inode(device, ino, inode.ptr.mode);
 
   return ok;
 }

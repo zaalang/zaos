@@ -63,6 +63,7 @@ pub fn current() -> int
   return self.id;
 }
 
+#[noinline]
 pub fn runqueue() -> run_queue mut &
 {
   std::assert(platform::interrupts_disabled);
@@ -70,14 +71,22 @@ pub fn runqueue() -> run_queue mut &
   return &*self.runqueue;
 }
 
-pub fn set_runqueue(run_queue mut *runqueue) -> void
+pub fn runqueue_inline() -> run_queue mut &
 {
   std::assert(platform::interrupts_disabled);
 
-  self.runqueue = runqueue;
+  return &*self.runqueue;
 }
 
+#[noinline]
 pub fn current_thread() -> thread mut *
+{
+  std::assert(platform::interrupts_disabled);
+
+  return self.current_thread;
+}
+
+pub fn current_thread_inline() -> thread mut *
 {
   std::assert(platform::interrupts_disabled);
 

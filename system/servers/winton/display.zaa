@@ -33,11 +33,11 @@ pub struct display
   std::mutable_span<u8> fb;
   std::vector<u8> back_buffer;
 
-  pub fn dt(this&) -> u64 { return 1_000_000_000/60; }
+  pub fn dt(this &) -> u64 { return 1_000_000_000/60; }
 
-  pub fn width(this&) { return cast<int>(this.si.width); }
-  pub fn height(this&) { return cast<int>(this.si.height); }
-  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.si.width), cast(this.si.height))); }
+  pub fn width(this &) { return cast<int>(this.si.width); }
+  pub fn height(this &) { return cast<int>(this.si.height); }
+  pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.si.width), cast(this.si.height))); }
 
   display() = default;
   pub ~display() = default;

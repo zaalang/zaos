@@ -9,7 +9,7 @@ import vfs;
 import process as _ : process;
 import result as _ : result;
 
-pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, virtaddr oldpathbuf, usize oldpathlen, i32 newdirfd, virtaddr newpathbuf, usize newpathlen, u64 flags) -> result
+pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, usize oldpathlen, virtaddr oldpathbuf, i32 newdirfd, usize newpathlen, virtaddr newpathbuf, u64 flags) -> result
 {
   if (oldpathbuf == 0 || oldpathlen == 0)
     return invalid_argument;
@@ -66,6 +66,11 @@ pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, virta
 
   if (var result = vfs::rename(oldbase, vfs::basename(oldpath), newbase, vfs::basename(newpath)); !result)
     return result;
+
+  if (oldbase != newbase)
+    vfs::notify(oldbase, oldnode, vfs::notify::moved);
+
+  vfs::notify(newbase, oldnode, vfs::notify::rename, vfs::basename(newpath));
 
   return ok;
 }

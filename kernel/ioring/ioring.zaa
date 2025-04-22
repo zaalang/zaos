@@ -27,7 +27,8 @@ import ioring.rename;
 import ioring.link;
 import ioring.symlink;
 import ioring.unlink;
-import ioring.epoll;
+import ioring.poll;
+import ioring.notify;
 import ioring.event;
 import ioring.buffer;
 import ioring.channel;
@@ -50,15 +51,21 @@ pub enum ioring_ops
   pub const link = 0x0c;
   pub const symlink = 0x0d;
   pub const unlink = 0x0e;
-  pub const epoll_create = 0x10;
-  pub const epoll_ctl = 0x11;
-  pub const epoll_wait = 0x12;
-  pub const event_create = 0x13;
-  pub const buffer_create = 0x14;
-  pub const channel_create = 0x15;
-  pub const channel_read = 0x16;
-  pub const channel_write = 0x17;
-  pub const channel_call = 0x18;
+  pub const poll_create = 0x10;
+  pub const poll_add = 0x11;
+  pub const poll_modify = 0x12;
+  pub const poll_remove = 0x13;
+  pub const poll_wait = 0x14;
+  pub const notify_create = 0x15;
+  pub const notify_add = 0x16;
+  pub const notify_modify = 0x17;
+  pub const notify_remove = 0x18;
+  pub const event_create = 0x19;
+  pub const buffer_create = 0x1a;
+  pub const channel_create = 0x1b;
+  pub const channel_read = 0x1c;
+  pub const channel_write = 0x1d;
+  pub const channel_call = 0x1e;
 }
 
 pub enum ioring_flags
@@ -183,7 +190,7 @@ pub struct io_ring : pub vfs::node
 
   pub io::response readable;
 
-  u8[0] reserved;
+  u8[48] reserved;
 
   fn allocator()
   {
@@ -197,7 +204,60 @@ pub struct io_ring : pub vfs::node
     return allocator.allocate();
   }
 
-  pub io_ring() = default;
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+  {
+    var mut &ring = cast<io_ring mut &>(*node);
+
+    readable = ring.readable.cb;
+
+    return ok;
+  }
+
+  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  {
+    var mut &ring = cast<io_ring mut &>(*node);
+
+    stat.size = cast(ring.region.length);
+
+    return ok;
+  }
+
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    var ring = cast<io_ring mut *>(node);
+
+    std::assert(!ring.next);
+    std::assert(!ring.process);
+
+    io_ring::allocator.free(ring);
+  }
+
+  pub io_ring()
+    : super(vfs::node::type::ioring, vfs::node_stream_operations())
+  {
+    io::initiate(&mut readable.cb, 1);
+  }
+
   pub ~io_ring() = default;
 }
 
@@ -211,14 +271,14 @@ pub fn dump(io_ring &ring) -> void
   }
 }
 
-pub fn create_ioring() -> vfs::node_ptr
+pub fn create_ioring() -> Rc<vfs::node>
 {
-  return vfs::node::new(io_ring::create(), vfs::node::type::ioring, vfs::node_operations());
+  return io_ring::create();
 }
 
-pub fn setup_ioring(vfs::node_ptr &ring, process mut *process, virtrange buffer) -> result
+pub fn setup_ioring(vfs::node mut *ring, process mut *process, virtrange buffer) -> result
 {
-  var ring = cast<io_ring mut &>(&*ring);
+  var mut &ring = cast<io_ring mut &>(*ring);
 
   std::assert(ring.region.host.empty);
 
@@ -250,12 +310,10 @@ pub fn setup_ioring(vfs::node_ptr &ring, process mut *process, virtrange buffer)
   ring.pending.clear();
   ring.pending.resize(1);
 
-  io::initiate(&mut ring.readable.cb, 1);
-
   process.lock.lock();
 
   ring.process = process;
-  ring.sibling = std::exchange(&mut process.iorings, ring);
+  ring.sibling = std::exchange(&mut process.iorings, &ring);
 
   process.lock.unlock();
 
@@ -264,9 +322,9 @@ pub fn setup_ioring(vfs::node_ptr &ring, process mut *process, virtrange buffer)
   return ok;
 }
 
-pub fn destroy_ioring(vfs::node_ptr &ring) -> result
+pub fn destroy_ioring(vfs::node mut *ring) -> result
 {
-  var ring = cast<io_ring mut *>(&*ring);
+  var ring = cast<io_ring mut *>(ring);
 
   if (process::current != ring.process)
     return not_permitted;
@@ -283,7 +341,7 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
     switch (sqe.op)
     {
       case ioring_ops::open:
-        ctx.status = sys_open(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]), cast(sqe.args[4] & 0xffffffff));
+        ctx.status = sys_open(ring.process, &mut ctx, cast(sqe.args[0] >> 32 & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3] & 0xffffffff));
 
       case ioring_ops::stat:
         ctx.status = sys_stat(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
@@ -310,28 +368,40 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
         ctx.status = sys_dup2(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff));
 
       case ioring_ops::mkdir:
-        ctx.status = sys_mkdir(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]), cast(sqe.args[4] & 0xffffffff));
+        ctx.status = sys_mkdir(ring.process, &mut ctx, cast(sqe.args[0] >> 32 & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3] & 0xffffffff));
 
       case ioring_ops::rename:
-        ctx.status = sys_rename(ring.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+        ctx.status = sys_rename(ring.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2] >> 32 & 0x7fffffff), cast(sqe.args[2] & 0xffffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]));
 
       case ioring_ops::link:
-        ctx.status = sys_link(ring.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+        ctx.status = sys_link(ring.process, &mut ctx, cast((sqe.args[0] >> 32) & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2] >> 32 & 0x7fffffff), cast(sqe.args[2] & 0xffffffff), virtaddr(sqe.args[3]), cast(sqe.args[4]));
 
       case ioring_ops::symlink:
-        ctx.status = sys_symlink(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+        ctx.status = sys_symlink(ring.process, &mut ctx, cast(sqe.args[0] >> 32 & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), virtaddr(sqe.args[3]), cast(sqe.args[4]));
 
       case ioring_ops::unlink:
-        ctx.status = sys_unlink(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+        ctx.status = sys_unlink(ring.process, &mut ctx, cast(sqe.args[0] >> 32 & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
 
-      case ioring_ops::epoll_create:
-        ctx.status = sys_epoll_create(ring.process, &mut ctx, cast(sqe.args[3]));
+      case ioring_ops::poll_create:
+        ctx.status = sys_poll_create(ring.process, &mut ctx, cast(sqe.args[0]));
 
-      case ioring_ops::epoll_ctl:
-        ctx.status = sys_epoll_ctl(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff), virtaddr(sqe.args[2]), cast(sqe.args[3]));
+      case ioring_ops::poll_add:
+        ctx.status = sys_poll_add(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff), cast(sqe.args[2] & 0xffff), cast(sqe.args[3] & 0xffff), cast(sqe.args[4]), cast(sqe.args[5]));
 
-      case ioring_ops::epoll_wait:
-        ctx.status = sys_epoll_wait(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+      case ioring_ops::poll_remove:
+        ctx.status = sys_poll_remove(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff), cast(sqe.args[2] & 0xffff));
+
+      case ioring_ops::poll_wait:
+        ctx.status = sys_poll_wait(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+
+      case ioring_ops::notify_create:
+        ctx.status = sys_notify_create(ring.process, &mut ctx, cast(sqe.args[0]));
+
+      case ioring_ops::notify_add:
+        ctx.status = sys_notify_add(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] >> 32 & 0x7fffffff), cast(sqe.args[1] & 0xffffffff), virtaddr(sqe.args[2]), cast(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
+
+      case ioring_ops::notify_remove:
+        ctx.status = sys_notify_remove(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] >> 32 & 0x7fffffff), cast(sqe.args[1] & 0xffffffff), virtaddr(sqe.args[2]));
 
       case ioring_ops::event_create:
         ctx.status = sys_event_create(ring.process, &mut ctx, cast(sqe.args[0]), cast(sqe.args[1]), cast(sqe.args[2]));
@@ -422,7 +492,7 @@ pub fn retire(io_ring mut &ring, ioring_sqe &sqe, result status) -> result
   return ok;
 }
 
-pub fn submit(vfs::node_ptr &ring, u32 max_submit) -> u32
+pub fn submit(vfs::node mut *ring, u32 max_submit) -> u32
 {
   var mut &ring = cast<io_ring mut &>(*ring);
 
@@ -482,7 +552,7 @@ pub fn submit(vfs::node_ptr &ring, u32 max_submit) -> u32
   return submitted;
 }
 
-pub fn wait(vfs::node_ptr &ring, u32 min_complete) -> u32
+pub fn wait(vfs::node mut *ring, u32 min_complete) -> u32
 {
   var mut &ring = cast<io_ring mut &>(*ring);
 
@@ -494,7 +564,7 @@ pub fn wait(vfs::node_ptr &ring, u32 min_complete) -> u32
   if (ring.region.host.empty)
     return 0;
 
-  while (true)
+  for (;;)
   {
     var header = cast<ioring_header mut *>(ring.region.host[0].addr.ptr);
 
@@ -515,26 +585,7 @@ pub fn wait(vfs::node_ptr &ring, u32 min_complete) -> u32
   }
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
-{
-  return ok;
-}
-
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
-{
-  var mut &ring = cast<io_ring mut &>(*node);
-
-  stat.size = cast(ring.region.length);
-
-  return ok;
-}
-
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
-{
-  return not_supported;
-}
-
-pub fn mmap(vfs::node_ptr &node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+pub fn mmap(vfs::node mut *node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
 {
   var mut &ring = cast<io_ring mut &>(*node);
 
@@ -603,14 +654,4 @@ pub fn shutdown(io_ring mut *ring) -> void
   ring.process = null;
 
   ring.unref();
-}
-
-fn destroy(vfs::node mut *node) -> void
-{
-  var ring = cast<io_ring mut *>(node);
-
-  std::assert(!ring.next);
-  std::assert(!ring.process);
-
-  io_ring::allocator.free(ring);
 }

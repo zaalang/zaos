@@ -53,7 +53,7 @@ pub struct buffer
     return this.inlet.buffer;
   }
 
-  pub fn open_read_node(this mut &) -> vfs::node_ptr
+  pub fn open_read_node(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
@@ -76,7 +76,7 @@ pub struct buffer
     return vfs::node::new(&this.outlet, vfs::node::type::buffer, vfs::node_stream_operations());
   }
 
-  pub fn open_write_node(this mut &) -> vfs::node_ptr
+  pub fn open_write_node(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
@@ -159,12 +159,12 @@ pub fn setup_buffer(Rc<buffer> mut &buffer, usize size) -> vfs::result
   return ok;
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
 }
 
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var buffer = cast<endpoint mut &>(*node).buffer;
 
@@ -173,12 +173,12 @@ pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
   var buffer = cast<endpoint mut &>(*node).buffer;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -189,7 +189,7 @@ pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var pipe = cast<endpoint mut &>(*node).buffer;
 
@@ -227,7 +227,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   return cast(count);
 }
 
-pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var pipe = cast<endpoint mut &>(*node).buffer;
 
@@ -268,7 +268,7 @@ pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length)
   return cast(count);
 }
 
-pub fn mmap(vfs::node_ptr &node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+pub fn mmap(vfs::node mut *node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
 {
   var buffer = cast<endpoint mut &>(*node).buffer;
   var mut &endpoint = cast<endpoint mut &>(*node);

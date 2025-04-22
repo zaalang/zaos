@@ -7,9 +7,6 @@ import std.vector;
 import vm;
 import io;
 import blk;
-import cpu;
-import scheduler;
-import thread as _ : thread;
 import slab : slab_allocator;
 import support.rc : Rc;
 
@@ -32,7 +29,7 @@ pub struct request
     write
   }
 
-  pub blk::blkdev_ptr device;
+  pub Rc<blk::blkdev> device;
 
   pub type type;
   pub u64 position;

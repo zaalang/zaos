@@ -1,0 +1,41 @@
+//
+// mv
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.fcntl : O_RDWR, O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_CREAT, O_TRUNC;
+import chrono : duration;
+import termios;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn main() -> i32
+{
+  var src = std::string();
+  var dst = std::string();
+
+  for (var arg : std::env::args.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    if (src == "")
+      src = arg;
+
+    else if (dst == "")
+      dst = arg;
+  }
+
+  if (src.empty || dst.empty)
+  {
+    std::printf("usage: mv <src> <dst>\n");
+
+    return -22;
+  }
+
+  if (var rc = os::rename(&mut thread_ring, os::string(src.data, src.len), os::string(dst.data, dst.len), 0); rc < 0)
+    return rc;
+
+  return 0;
+}

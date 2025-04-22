@@ -119,7 +119,7 @@ pub fn wake_from_stall() -> void
 
 fn kworkd(worker mut *worker) -> void
 {
-  while (true)
+  for (;;)
   {
     var now = cpu::system_time;
     var activity = std::atomic_load(&workman.activity);
@@ -236,7 +236,7 @@ pub fn initialise() -> void
 
   for (var mut &worker : workman.workers)
   {
-    worker.kworkd = create_thread(process::current, &cast<fn (worker mut *) -> void>(kworkd), &worker);
+    worker.kworkd = create_thread(process::current, &cast<(worker mut *) -> void>(kworkd), &worker);
   }
 
   platform::disable_interrupts();

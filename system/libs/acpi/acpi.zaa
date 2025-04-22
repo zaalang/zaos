@@ -8,6 +8,7 @@ pub enum result : i32
   not_found = -2,
   bad_address = -14,
   not_supported = -95,
+  timed_out = -110,
   bad_rsdp_root = -1001,
   bad_xsdt_address = -1002,
   invalid_signature = -1003,

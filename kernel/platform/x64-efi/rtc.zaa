@@ -69,7 +69,7 @@ pub fn get_hwclock() -> u64
 {
   var time1 = read_cmos_clock();
 
-  while (true)
+  for (;;)
   {
     var time2 = read_cmos_clock();
 

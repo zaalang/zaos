@@ -18,7 +18,7 @@ struct arg
   virtaddr beg;
   virtaddr end;
 
-  fn len(this&) -> usize
+  fn len(this &) -> usize
   {
     return this.end - this.beg;
   }

@@ -79,7 +79,7 @@ pub struct diag
   //  }
   //}
 
-  pub fn has_errored(this&) -> bool
+  pub fn has_errored(this &) -> bool
   {
     return this.errored;
   }

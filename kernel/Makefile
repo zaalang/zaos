@@ -61,6 +61,7 @@ vfs/node.zaa\
 vfs/result.zaa\
 vfs/fd.zaa\
 vfs/stat.zaa\
+vfs/notify.zaa\
 dev/dev.zaa\
 chr/chr.zaa\
 chr/chrdev.zaa\
@@ -102,6 +103,15 @@ modules/cfg/cfg.zaa\
 modules/cfg/acpi.zaa\
 modules/cfg/acpi/namespace.zaa\
 modules/cfg/acpi/registers.zaa\
+modules/usb/usb.zaa\
+modules/usb/usbdev.zaa\
+modules/usb/result.zaa\
+modules/usb/transfer.zaa\
+modules/usb/xhci/xhci.zaa\
+modules/usb/modules/hid/hid.zaa\
+modules/usb/modules/hid/hiddev.zaa\
+modules/usb/modules/hid/report.zaa\
+modules/usb/modules/modules.zaa\
 syscalls/syscalls.zaa\
 syscalls/thread.zaa\
 syscalls/process.zaa\
@@ -124,7 +134,8 @@ ioring/rename.zaa\
 ioring/link.zaa\
 ioring/symlink.zaa\
 ioring/unlink.zaa\
-ioring/epoll.zaa\
+ioring/poll.zaa\
+ioring/notify.zaa\
 ioring/event.zaa\
 ioring/buffer.zaa\
 ioring/channel.zaa\

@@ -9,6 +9,7 @@ import blk.blkdev;
 import chr.chrdev;
 import devfs;
 import mutex as _ : shared_mutex;
+import support.rc : Rc;
 
 pub struct dev_t
 {
@@ -21,9 +22,9 @@ pub struct dev_t
     id = generation << IndexBits + cast<i32>(index);
   }
 
-  pub fn bool(this&) -> bool { return this.id > 0; }
-  pub fn index(this&) -> usize { return cast<usize>(this.id & ((1 << IndexBits) - 1)); }
-  pub fn generation(this&) -> i32 { return this.id >> IndexBits; }
+  pub fn bool(this &) -> bool { return this.id > 0; }
+  pub fn index(this &) -> usize { return cast<usize>(this.id & ((1 << IndexBits) - 1)); }
+  pub fn generation(this &) -> i32 { return this.id >> IndexBits; }
 
   pub fn ==(dev_t &, dev_t &) -> bool = default;
 
@@ -104,10 +105,10 @@ pub struct bus
 pub union device
 {
   pub bus(bus),
-  pub blkdev(blk::blkdev_ptr),
-  pub chrdev(chr::chrdev_ptr),
+  pub blkdev(Rc<blk::blkdev>),
+  pub chrdev(Rc<chr::chrdev>),
 
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return this.kind != cast(0);
   }
@@ -195,12 +196,12 @@ fn register(device_manager mut &devman, dev_t parent, device device) -> dev_t
   return node.id;
 }
 
-pub fn register(dev_t parent, blk::blkdev_ptr &dev) -> dev_t
+pub fn register(dev_t parent, blk::blkdev mut *dev) -> dev_t
 {
   return devman.register(parent, device::blkdev(dev));
 }
 
-pub fn register(dev_t parent, chr::chrdev_ptr &dev) -> dev_t
+pub fn register(dev_t parent, chr::chrdev mut *dev) -> dev_t
 {
   return devman.register(parent, device::chrdev(dev));
 }
@@ -210,7 +211,7 @@ pub fn register(dev_t parent, std::vector<attr_t> &&attributes) -> dev_t
   return devman.register(parent, device::bus(&&attributes));
 }
 
-pub fn remove(blk::blkdev_ptr &dev) -> void
+pub fn remove(blk::blkdev mut *dev) -> void
 {
   var guard = std::lock_guard(&mut devman.lock);
 
@@ -233,7 +234,7 @@ pub fn remove(blk::blkdev_ptr &dev) -> void
   }
 }
 
-pub fn remove(chr::chrdev_ptr &dev) -> void
+pub fn remove(chr::chrdev mut *dev) -> void
 {
   var guard = std::lock_guard(&mut devman.lock);
 

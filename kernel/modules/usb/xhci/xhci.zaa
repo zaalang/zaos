@@ -1,0 +1,1888 @@
+//
+// xhci
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import ioapic;
+import pci;
+import msi;
+import vm;
+import io;
+import scheduler;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import semaphore as _ : semaphore;
+import support.rc : Rc;
+import heap;
+import usb;
+import usb.usbdev;
+import usb.result;
+import usb.transfer;
+import usb.modules as modules;
+
+using vm::physaddr;
+
+enum cap
+{
+  const length_mask = 0xff;         // HCI Capability Register Length
+  const length_shift = 0;
+  const version_mask = 0xffff;      // HCI Interface Version Number
+  const version_shift = 16;
+  const hcsparams1_mask = ~0x0;     // Structural Parameters 1
+  const hcsparams1_shift = 32;
+  const hcsparams2_mask = ~0x0;     // Structural Parameters 2
+  const hcsparams2_shift = 64;
+  const hcsparams3_mask = ~0x0;     // Structural Parameters 3
+  const hcsparams3_shift = 96;
+  const hccparams1_mask = ~0x0;     // Capability Parameters 1
+  const hccparams1_shift = 128;
+  const dboff_mask = ~0x1f;         // Doorbell Register offset
+  const dboff_shift = 160;
+  const rtsoff_mask = ~0x3;         // Runtime Register Space offset
+  const rtsoff_shift = 192;
+  const hccparams2_mask = ~0x0;     // Capability Parameters 2
+  const hccparams2_shift = 224;
+}
+
+enum hcs
+{
+  const max_slots_mask = 0xff;      // Number of Device Slots
+  const max_slots_shift = 0;
+  const max_intrs_mask = 0x7ff;     // Number of Interrupters
+  const max_intrs_shift = 8;
+  const max_ports_mask = 0xff;      // Number of Ports
+  const max_ports_shift = 24;
+
+  const ist_mask = 0xf;                        // Isochronous Scheduling Threshold
+  const ist_shift = 0;
+  const erst_max_mask = 0xf;                   // Event Ring Segment Table Max
+  const erst_max_shift = 4;
+  const max_scratchpad_bufs_hi_mask = 0x1f;    // Max Scratchpad Buffers Hi
+  const max_scratchpad_bufs_hi_shift = 21;
+  const max_scratchpad_bufs_lo_mask = 0x1f;    // Max Scratchpad Buffers Lo
+  const max_scratchpad_bufs_lo_shift = 27;
+
+  const u1_device_exit_latency_mask = 0xff;    // U1 Device Exit Latency
+  const u1_device_exit_latency_shift = 0;
+  const u2_device_exit_latency_mask = 0xffff;  // U2 Device Exit Latency
+  const u2_device_exit_latency_shift = 16;
+}
+
+enum hcc
+{
+  const ac64 = 0x1;             // 64-bit Addressing Capability
+  const bnc = 0x2;              // BW Negotiation Capability
+  const csz = 0x4;              // Context Size
+  const ppc = 0x8;              // Port Power Control
+  const pind = 0x10;            // Port Indicators
+  const lhrc = 0x20;            // Light HC Reset Capability
+  const ltc = 0x40;             // Latency Tolerance Messaging Capability
+  const nss = 0x80;             // No Secondary SID Support
+  const pae = 0x100;            // Parse All Event Data
+  const spc = 0x200;            // Stopped - Short Packet Capability
+  const sec = 0x400;            // Stopped EDTLA Capability
+  const cfc = 0x800;            // Contiguous Frame ID Capability
+
+  const maxpsasize_mask = 0xf;  // Maximum Primary Stream Array Size
+  const maxpsasize_shift = 12;
+  const xecp_mask = 0xffff;     // xHCI Extended Capabilities Pointer
+  const xecp_shift = 16;
+}
+
+enum xcap
+{
+  const id = 0xff;
+  const legacy_support = 1;
+  const supported_protocol = 2;
+
+  const legsup_osowned = 0x1000000;
+  const legsup_biosowned = 0x10000;
+
+  const legctlsts = 0x04;
+  const legctlsts_reserved_bits	= 0x0e1fee;
+  const legctlsts_readonly_bits	= 0x110000;
+
+  const next = 0xff00;
+}
+
+enum iman
+{
+  const pending = 0x1;
+  const enable = 0x2;
+}
+
+enum erdp
+{
+  const busy = 0x8;
+}
+
+enum cmd : u32
+{
+  run = 0x1,      // Run/Stop
+  hcrst = 0x2,    // Host Controller Reset
+  inte = 0x4,     // IRQ Enable
+  hsee = 0x8,     // Host System Error En
+  lhcrst = 0x80,  // Light Host Controller Reset
+  css = 0x100,    // Controller Save State
+  crs = 0x200,    // Controller Restore State
+  ewe = 0x400,    // Enable Wrap Event
+
+  pub const fn ~(cmd lhs) -> cmd { return cast<cmd>(~cast<u32>(lhs)); }
+  pub const fn &(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+enum sts : u32
+{
+  hch = 0x1,     // Host Controller Halt
+  hse = 0x4,     // Host System Error
+  eint = 0x8,    // Event Interrupt
+  pcd = 0x10,    // Port Change Detect
+  sss = 0x100,   // Save State Status
+  rss = 0x200,   // Restore State Status
+  sre = 0x400,   // Save Restore Error
+  cnr = 0x800,   // Controller Not Ready
+  hce = 0x1000,  // Host Controller Error
+
+  pub const fn &(sts lhs, sts rhs) -> sts { return cast<sts>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(sts lhs, sts rhs) -> sts { return cast<sts>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+enum crcr : u64
+{
+  rcs = 0x1,   // Ring Cycle State
+  cs = 0x2,    // Command Stop
+  ca = 0x4,    // Command Abort
+  crr = 0x8,   // Command Ring Running
+
+  pub const fn ~(crcr lhs) -> crcr { return cast<crcr>(~cast<u64>(lhs)); }
+  pub const fn &(crcr lhs, crcr rhs) -> crcr { return cast<crcr>(cast<u64>(lhs) & cast<u64>(rhs)); }
+  pub const fn |(crcr lhs, crcr rhs) -> crcr { return cast<crcr>(cast<u64>(lhs) | cast<u64>(rhs)); }
+  pub const fn |(physaddr lhs, crcr rhs) -> crcr { return cast<crcr>(cast<u64>(lhs) | cast<u64>(rhs)); }
+}
+
+enum portsc : u32
+{
+  ccs = 0x1,         // Current Connect Status
+  ped = 0x2,         // Port Enabled/Disabled
+  oca = 0x8,         // Over-current Active
+  pr  = 0x10,        // Port Reset
+  pls = 0x1e0,       // Port Link State
+  pp  = 0x200,       // Port Power
+  spd = 0x3c00,      // Port Speed
+  pic = 0xc000,      // Port Indicator Control
+  lws = 0x10000,     // Port Link State Write Strobe
+  csc = 0x20000,     // Connect Status Change
+  pec = 0x40000,     // Port Enabled/Disabled Change
+  wrc = 0x80000,     // Warm Port Reset Change
+  occ = 0x100000,    // Over-current Change
+  prc = 0x200000,    // Port Reset Change
+  plc = 0x400000,    // Port Link Status Change
+  cec = 0x800000,    // Port Config Error Change
+  cas = 0x100000,    // Cold Attach Status
+  wce = 0x200000,    // Wake on Connect Enable
+  wde = 0x400000,    // Wake on Disconnect Enable
+  woe = 0x800000,    // Wake on Over-current Enable
+  dr  = 0x40000000,  // Device Removable
+  wpr = 0x80000000,  // Warm Port Reset
+
+  none = 0x0,
+  status = 0x80ff00f7;
+
+  pub const fn ~(portsc lhs) -> portsc { return cast<portsc>(~cast<u32>(lhs)); }
+  pub const fn &(portsc lhs, portsc rhs) -> portsc { return cast<portsc>(cast<u32>(lhs) & cast<u32>(rhs)); }
+  pub const fn |(portsc lhs, portsc rhs) -> portsc { return cast<portsc>(cast<u32>(lhs) | cast<u32>(rhs)); }
+}
+
+struct xhci_port_reg
+{
+  portsc portsc;
+  u32 portpmsc;
+  u32 portli;
+  u32 thlpmc;
+}
+
+struct xhci_op_regs
+{
+  cmd cmd;
+  sts sts;
+  u32 pagesize;
+  u32[2] reserved1;
+  u32 dnctrl;
+  crcr crcr;
+  u32[4] reserved2;
+  physaddr dcbaap;
+  u32 config;
+  u32[241] reserved1;
+
+  xhci_port_reg[255] ports;
+}
+
+struct xhci_intr_reg
+{
+  u32 iman;
+  u32 imod;
+  u32 erstsz;
+  u32 reserved1;
+  physaddr erstba;
+  physaddr erdp;
+}
+
+struct xhci_rts_regs
+{
+  u32 mfindex;
+  u32[7] reserved1;
+
+  xhci_intr_reg[128] interrupts;
+}
+
+struct xhci_doorbell_array
+{
+  u32[256] db;
+}
+
+struct xhci_dcbaa
+{
+  physaddr[256] addresses;
+  physaddr[256] scratchpads;
+}
+
+enum trb
+{
+  enum type
+  {
+    normal = 1,
+    setup_stage = 2,
+    data_stage = 3,
+    status_stage = 4,
+    isoch = 5,
+    link = 6,
+    event_data = 7,
+    tr_noop = 8,
+
+    enable_slot = 9,
+    disable_slot = 10,
+    address_device = 11,
+    configure_endpoint = 12,
+    evaluate_context = 13,
+    reset_endpoint = 14,
+    stop_endpoint = 15,
+    set_tr_dequeue = 16,
+    reset_device = 17,
+    force_event = 18,
+    negociate_bw = 19,
+    set_latency_tolerance = 20,
+    get_port_bw = 21,
+    force_header = 22,
+    cmd_noop = 23,
+
+    transfer = 32,
+    command_completion = 33,
+    port_status_change = 34,
+    bandwidth_request = 35,
+    doorbell = 36,
+    host_controller = 37,
+    device_notification = 38,
+    mfindex_wrap = 39,
+  }
+
+  enum flags : u32
+  {
+    tc = 0x2,
+    ent = 0x2,
+    isp = 0x4,
+    chain = 0x10,
+    ioc = 0x20,
+    idt = 0x40,
+    dcep = 0x200,
+    preserve = 0x200,
+    bsr = 0x200,
+    suspend = 0x800000,
+
+    dir_in = 0x10000,
+    trt_out = 0x20000,
+    trt_in = 0x30000,
+
+    pub fn type(this &) -> type
+    {
+      return cast<type>(cast<u32>(this) >> 10 & 0x3f);
+    }
+
+    pub fn type(type type)
+    {
+      return cast<flags>(cast<u32>(type) << 10);
+    }
+
+    pub fn slot(this &) -> u8
+    {
+      return cast<u8>(cast<u32>(this) >> 24 & 0xff);
+    }
+
+    pub fn slot(u8 slot)
+    {
+      return cast<flags>(cast<u32>(slot) << 24);
+    }
+
+    pub fn endpoint(this &) -> u8
+    {
+      return cast<u8>(cast<u32>(this) >> 16 & 0x1f);
+    }
+
+    pub fn endpoint(u8 endpoint)
+    {
+      return cast<flags>(cast<u32>(endpoint) << 16);
+    }
+
+    pub const fn |(flags lhs, flags rhs) -> flags { return cast<flags>(cast<u32>(lhs) | cast<u32>(rhs)); }
+  }
+
+  enum status : u32
+  {
+    enum code
+    {
+      invalid = 0,
+      success = 1,
+      data_buffer_error = 2,
+      babble_detected = 3,
+      usb_transaction_error = 4,
+      invalid_trb = 5,
+      stalled = 6,
+      resource_not_available = 7,
+      insufficent_bandwidth = 8,
+      no_slots_available = 9,
+      invalid_stream_type = 10,
+      slot_not_enabled = 11,
+      endpoint_not_enabled = 12,
+      short_packet = 13,
+      ring_underrun = 14,
+      ring_overrun = 15,
+      vf_ring_full = 16,
+      invalid_parameter = 17,
+      bandwidth_overrun = 18,
+      illegal_context_state = 19,
+      no_ping_response = 20,
+      event_ring_full = 21,
+      incompatible_device = 22,
+      missed_service = 23,
+      command_ring_stopped = 24,
+      command_aborted = 25,
+      stopped = 26,
+      stopped_length_invalid = 27,
+      max_exit_latency = 29,
+      isoc_overrun = 31,
+      event_lost = 32,
+      undefined = 33,
+      invalid_stream_id = 34,
+      secondary_bandwidth_error = 35,
+      split_transaction_error = 36,
+    }
+
+    pub fn code(this &) -> code
+    {
+      return cast<code>(cast<u32>(this) >> 24 & 0xff);
+    }
+
+    pub fn remainder(this &) -> usize
+    {
+      return cast<usize>(this) >> 0 & 0xffffff;
+    }
+
+    pub fn irq(this &) -> u32
+    {
+      return cast<u32>(this) >> 22 & 0x3ff;
+    }
+
+    pub fn bytes(usize bytes)
+    {
+      return cast<status>(bytes << 0);
+    }
+
+    pub fn bytes(this &) -> usize
+    {
+      return cast<usize>(this) >> 0 & 0x1ffff;
+    }
+
+    pub fn tdsize(usize size)
+    {
+      return cast<status>(size << 17);
+    }
+
+    pub fn tdsize(this &) -> usize
+    {
+      return cast<usize>(this) >> 17 & 0x1f;
+    }
+
+    pub const fn |(status lhs, status rhs) -> status { return cast<status>(cast<u32>(lhs) | cast<u32>(rhs)); }
+  }
+
+  enum portsc : u64
+  {
+    pub fn id(this &) -> u8
+    {
+      return cast<u8>(cast<u64>(this) >> 24 & 0xf);
+    }
+  }
+}
+
+struct xhci_trb
+{
+  u32 cdw0;
+  u32 cdw1;
+  u32 cdw2;
+  u32 flags;
+
+  fn cqw0(this &) -> u64
+  {
+    return cast<u64>(this.cdw0) | cast<u64>(this.cdw1) << 32;
+  }
+
+  fn cqw0=(this mut &, u64 value) -> void
+  {
+    this.cdw0 = cast<u32>(value & 0xffffffff);
+    this.cdw1 = cast<u32>(value >> 32);
+  }
+
+  xhci_trb() = default;
+  xhci_trb(xhci_trb &) = default;
+  ~xhci_trb() = default;
+}
+
+struct xhci_erst
+{
+  physaddr addr;
+  u16 size;
+  u16 rsvdz;
+  u32 pad;
+
+  xhci_trb[239] evts;
+  xhci_trb[16] cmds;
+}
+
+enum context
+{
+  const slot_route_mask = 0xffff;
+  const slot_route_shift = 0;
+  const slot_speed_mask = 0xf;
+  const slot_speed_shift = 20;
+  const slot_mtt = 0x2000000;
+  const slot_hub = 0x4000000;
+  const slot_entries_mask = 0x1f;
+  const slot_entries_shift = 27;
+
+  const slot_max_exit_latency_mask = 0xffff;
+  const slot_max_exit_latency_shift = 0;
+  const slot_root_port_mask = 0xff;
+  const slot_root_port_shift = 16;
+  const slot_port_count_mask = 0xff;
+  const slot_port_count_shift = 24;
+
+  const slot_parent_hub_mask = 0xff;
+  const slot_parent_hub_shift = 0;
+  const slot_parent_port_mask = 0xff;
+  const slot_parent_port_shift = 8;
+  const slot_tt_think_time_mask = 0x3;
+  const slot_tt_think_time_shift = 16;
+  const slot_interrupter_target_mask = 0x7f;
+  const slot_interrupter_target_shift = 22;
+
+  const slot_address_mask = 0xff;
+  const slot_address_shift = 0;
+  const slot_state_mask = 0x1f;
+  const slot_state_shift = 27;
+
+  const endpoint_state_disabled	= 0;
+  const endpoint_state_running = 1;
+  const endpoint_state_halted = 2;
+  const endpoint_state_stopped = 3;
+  const endpoint_state_error = 4;
+
+  const endpoint_type_isoch_out = 0x08;
+  const endpoint_type_bulk_out = 0x10;
+  const endpoint_type_interrupt_out = 0x18;
+  const endpoint_type_control = 0x20;
+  const endpoint_type_isoch_in = 0x28;
+  const endpoint_type_bulk_in = 0x30;
+  const endpoint_type_interrupt_in = 0x38;
+
+  const endpoint_state_mask = 0x7;
+  const endpoint_state_shift = 0;
+  const endpoint_mult_mask = 0x3;
+  const endpoint_mult_shift = 8;
+  const endpoint_max_p_streams_mask = 0x1f;
+  const endpoint_max_p_streams_shift = 10;
+  const endpoint_lsa = 0x8000;
+  const endpoint_interval_mask = 0xff;
+  const endpoint_interval_shift = 16;
+
+  const endpoint_cerr_mask = 0x3;
+  const endpoint_cerr_shift = 1;
+  const endpoint_type = 0x38;
+  const endpoint_hid = 0x80;
+  const endpoint_max_burst_mask = 0xff;
+  const endpoint_max_burst_shift = 8;
+  const endpoint_max_packet_size_mask = 0xffff;
+  const endpoint_max_packet_size_shift = 16;
+
+  const endpoint_dcs = 0x1;
+
+  const endpoint_avg_trb_length_mask = 0xffff;
+  const endpoint_avg_trb_length_shift = 0;
+  const endpoint_max_esit_payload_mask = 0xffff;
+  const endpoint_max_esit_payload_shift = 16;
+}
+
+struct xhci_context
+{
+  u32 cdw0;
+  u32 cdw1;
+  u32 cdw2;
+  u32 cdw3;
+  u32 cdw4;
+  u32[3] reserved;
+
+  fn cqw0(this &) -> u64
+  {
+    return cast<u64>(this.cdw0) | cast<u64>(this.cdw1) << 32;
+  }
+
+  fn cqw0=(this mut &, u64 value) -> void
+  {
+    this.cdw0 = cast<u32>(value & 0xffffffff);
+    this.cdw1 = cast<u32>(value >> 32);
+  }
+
+  fn cqw2(this &) -> u64
+  {
+    return cast<u64>(this.cdw2) | cast<u64>(this.cdw3) << 32;
+  }
+
+  fn cqw2=(this mut &, u64 value) -> void
+  {
+    this.cdw2 = cast<u32>(value & 0xffffffff);
+    this.cdw3 = cast<u32>(value >> 32);
+  }
+}
+
+fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == mask)
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == cast(0))
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+pub struct controller
+{
+  pub controller(pci::device &device)
+    : device(&device)
+  {
+    cmd_ccs = 1;
+  }
+
+  fn halt(this mut &) -> usb::result
+  {
+    var opregs = this.opregs;
+
+    std::volatile_store(&opregs.cmd, opregs.cmd & ~cmd::run);
+
+    if (!wait_until_set(&opregs.sts, sts::hch, 500))
+      return timed_out;
+
+    return ok;
+  }
+
+  fn reset(this mut &) -> usb::result
+  {
+    std::print("xhci ", this.name, " controller reset");
+
+    var opregs = this.opregs;
+
+    std::volatile_store(&opregs.cmd, opregs.cmd | cmd::hcrst);
+
+    if (!wait_until_clear(&opregs.cmd, cmd::hcrst, 500))
+      return timed_out;
+
+    if (!wait_until_clear(&opregs.sts, sts::cnr, 500))
+      return timed_out;
+
+    return ok;
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
+  }
+
+  pub ~controller() = default;
+
+  mutex lock;
+
+  usize port_count;
+  usize slot_count;
+  int context_shift;
+
+  usb::speed[255] port_speeds;
+
+  u32 cmd_ccs;
+  usize cmd_idx;
+  xhci_trb cmd_trb;
+  semaphore cmd_sts;
+
+  xhci_erst mut *erstp;
+  xhci_dcbaa mut * dcbap;
+
+  thread mut *event_handler;
+  semaphore event_handler_doorbell;
+
+  thread mut *plug_handler;
+  semaphore plug_handler_doorbell;
+
+  u8[256] slots;
+  Rc<xhcidev>[256] devices;
+
+  u8 irq;
+  u32 mut *caps;
+  xhci_op_regs mut *opregs;
+  xhci_rts_regs mut *rtsregs;
+  xhci_doorbell_array mut *dbarray;
+  pci::device &device;
+}
+
+struct xhcidev : pub usb::usbdev
+{
+  controller mut *controller;
+
+  u8 port;
+  usb::speed speed;
+
+  u8 slot;
+  u8 address;
+  vm::page_allocation input_context;
+  vm::page_allocation output_context;
+  vm::page_allocation transfer_ring;
+  usb::transfer mut *[31*16] transfers;
+
+  struct endpoint
+  {
+    mutex lock;
+
+    u32 run;
+    u32 ccs;
+    usize idx;
+    usize tail;
+    usize base;
+    usize mask;
+
+    u16 max_burst_payload;
+
+    endpoint() = default;
+    ~endpoint() = default;
+  }
+
+  endpoint[31] endpoints;
+
+  pub fn query(this &, usb::query query, std::string mut &result) override -> usb::result
+  {
+    switch (query)
+    {
+      case device_name:
+        result = std::format("xhci/{}/{}", this.controller.name, this.port);
+    }
+
+    return ok;
+  }
+
+  pub fn configure(this mut &, std::span<u8> descriptors) override -> usb::result
+  {
+    this.controller.unconfigure(&this);
+
+    return this.controller.configure(&this, descriptors);
+  }
+
+  pub fn submit(this mut &, usb::transfer mut *transfer) override -> usb::result
+  {
+    return this.controller.submit(&this, transfer);
+  }
+
+  pub fn cancel(this mut &, usb::transfer mut *transfer) override -> usb::result
+  {
+    return this.controller.cancel(&this, transfer);
+  }
+
+  xhcidev(controller mut *controller, u8 port, usb::speed speed)
+    : super(&impl this),
+      controller(controller), port(port), speed(speed)
+  {
+  }
+
+  pub ~xhcidev()
+  {
+    controller.destroy(&this);
+  }
+}
+
+fn read_capability(u32 *caps, usize shift, u32 mask) -> u32
+{
+  return std::volatile_load(caps + (shift >> 5)) >> (shift & 0x1f) & mask;
+}
+
+fn input_control_context(physaddr input_context_address, int context_shift) -> xhci_context mut *
+{
+  return cast<xhci_context mut *>(input_context_address.ptr);
+}
+
+fn input_slot_context(physaddr input_context_address, int context_shift) -> xhci_context mut *
+{
+  return cast<xhci_context mut *>((input_context_address + (1 << context_shift)).ptr);
+}
+
+fn input_endpoint_context(physaddr input_context_address, int context_shift, usize index) -> xhci_context mut *
+{
+  return cast<xhci_context mut *>((input_context_address + ((index + 2) << context_shift)).ptr);
+}
+
+fn output_slot_context(physaddr output_context_address, int context_shift) -> xhci_context mut *
+{
+  return cast<xhci_context mut *>((output_context_address + (1 << context_shift)).ptr);
+}
+
+fn output_endpoint_context(physaddr output_context_address, int context_shift, usize index) -> xhci_context mut *
+{
+  return cast<xhci_context mut *>((output_context_address + ((index + 1) << context_shift)).ptr);
+}
+
+fn enable_slot(controller mut &controller, u8 mut &slot) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.flags = cast<u32>(trb::flags::type(trb::type::enable_slot));
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  slot = cast<trb::flags>(trb.flags).slot;
+
+  return ok;
+}
+
+fn disable_slot(controller mut &controller, u8 slot) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.flags = cast<u32>(trb::flags::type(trb::type::disable_slot) | trb::flags::slot(slot));
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn address_device(controller mut &controller, u8 slot, physaddr input_context_address, bool bsr = false) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.cqw0 = cast(input_context_address);
+  trb.flags = cast<u32>(trb::flags::type(trb::type::address_device) | trb::flags::slot(slot));
+
+  if (bsr)
+    trb.flags |= cast<u32>(trb::flags::bsr);
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn configure_endpoint(controller mut &controller, u8 slot, physaddr input_context_address, bool dcep = false) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.cqw0 = cast(input_context_address);
+  trb.flags = cast<u32>(trb::flags::type(trb::type::configure_endpoint) | trb::flags::slot(slot));
+
+  if (dcep)
+    trb.flags |= cast<u32>(trb::flags::dcep);
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn evaluate_context(controller mut &controller, u8 slot, physaddr input_context_address) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.cqw0 = cast(input_context_address);
+  trb.flags = cast<u32>(trb::flags::type(trb::type::evaluate_context) | trb::flags::slot(slot));
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn reset_endpoint(controller mut &controller, u8 slot, u8 ep, bool preserve = false) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.flags = cast<u32>(trb::flags::type(trb::type::reset_endpoint) | trb::flags::slot(slot) | trb::flags::endpoint(ep));
+
+  if (preserve)
+    trb.flags |= cast<u32>(trb::flags::preserve);
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn stop_endpoint(controller mut &controller, u8 slot, u8 ep, bool suspend = false) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.flags = cast<u32>(trb::flags::type(trb::type::stop_endpoint) | trb::flags::slot(slot) | trb::flags::endpoint(ep));
+
+  if (suspend)
+    trb.flags |= cast<u32>(trb::flags::suspend);
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
+fn execute(controller mut &controller, xhci_trb mut &trb) -> usb::result
+{
+  var guard = std::lock_guard(&mut controller.lock);
+
+  var idx = controller.cmd_idx;
+  var ccs = controller.cmd_ccs;
+
+  var sqe = &controller.erstp.cmds[idx];
+
+  sqe.cdw0 = trb.cdw0;
+  sqe.cdw1 = trb.cdw1;
+  sqe.cdw2 = trb.cdw2;
+  sqe.flags = trb.flags | ccs;
+
+  var next = idx + 1;
+
+  if (next == std::array_len<typeof(xhci_erst::cmds)> - 1)
+  {
+    (sqe + 1).cqw0 = cast(controller.erstp.addr + (offsetof(xhci_erst::cmds) - offsetof(xhci_erst::evts)));
+    (sqe + 1).flags = cast<u32>(trb::flags::type(trb::type::link) | trb::flags::tc) | ccs;
+
+    controller.cmd_ccs = ccs ^ 1;
+    next = 0;
+  }
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(&controller.dbarray.db[0], 0);
+
+  controller.cmd_idx = next;
+
+  controller.cmd_sts.wait();
+
+  trb.cdw2 = controller.cmd_trb.cdw2;
+  trb.flags = controller.cmd_trb.flags;
+
+  return ok;
+}
+
+fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
+{
+  var device = usb::usbdev::create<xhcidev>(controller, port, speed);
+
+  // Slot
+
+  var slot = u8();
+
+  if (var result = controller.enable_slot(&mut slot); !result)
+    return result;
+
+  device.slot = slot;
+
+  // Max Packet Size
+
+  var max_packet_size = 0;
+
+  switch (speed)
+  {
+    case low_speed:
+    case full_speed:
+      max_packet_size = 8;
+
+    case high_speed:
+      max_packet_size = 64;
+
+    else:
+      max_packet_size = 512;
+  }
+
+  device.max_packet_size = max_packet_size;
+
+  // Input Context
+
+  var input_context = vm::allocate_physical_pages(33 << controller.context_shift);
+
+  std::memset(input_context.addr.ptr, 0, input_context.size);
+
+  device.input_context = input_context;
+
+  // Input Control Context
+
+  var ictlctx = input_control_context(input_context.addr, controller.context_shift);
+
+  ictlctx.cdw0 = 0x0;
+  ictlctx.cdw1 = 0x3;
+
+  // Input Slot Context
+
+  var islotctx = input_slot_context(input_context.addr, controller.context_shift);
+
+  islotctx.cdw0 |= 1 << context::slot_entries_shift;
+  islotctx.cdw0 |= 0 << context::slot_route_shift;
+
+  switch (speed)
+  {
+    case low_speed:
+      islotctx.cdw0 |= 2 << context::slot_speed_shift;
+
+    case full_speed:
+      islotctx.cdw0 |= 1 << context::slot_speed_shift;
+
+    case high_speed:
+      islotctx.cdw0 |= 3 << context::slot_speed_shift;
+
+    case super_speed:
+      islotctx.cdw0 |= 4 << context::slot_speed_shift;
+
+    case super_speed_plus:
+      islotctx.cdw0 |= 5 << context::slot_speed_shift;
+  }
+
+  islotctx.cdw1 |= cast<u32>(port + 1) << context::slot_root_port_shift;
+
+  islotctx.cdw2 |= 0 << context::slot_parent_hub_shift;
+  islotctx.cdw2 |= 0 << context::slot_parent_port_shift;
+  islotctx.cdw2 |= 0 << context::slot_interrupter_target_shift;
+
+  islotctx.cdw3 |= 0 << context::slot_address_shift;
+  islotctx.cdw3 |= 0 << context::slot_state_shift;
+
+  // Default Input Endpoint Context
+
+  var transfer_ring = vm::allocate_physical_pages(device.transfers.len * sizeof<xhci_trb>);
+
+  device.endpoints[0].run = 1;
+  device.endpoints[0].ccs = 1;
+  device.endpoints[0].idx = 0;
+  device.endpoints[0].tail = 0;
+  device.endpoints[0].base = 0;
+  device.endpoints[0].mask = (1 << 4) - 1;
+
+  std::memset(transfer_ring.addr.ptr, 0, transfer_ring.size);
+
+  device.transfer_ring = transfer_ring;
+
+  var iepctx = input_endpoint_context(input_context.addr, controller.context_shift, 0);
+
+  iepctx.cdw1 = context::endpoint_type_control;
+  iepctx.cdw1 |= 3 << context::endpoint_cerr_shift;
+  iepctx.cdw1 |= 0 << context::endpoint_max_burst_shift;
+  iepctx.cdw1 |= cast<u32>(max_packet_size) << context::endpoint_max_packet_size_shift;
+
+  iepctx.cqw2 = cast(transfer_ring.addr) | context::endpoint_dcs;
+
+  iepctx.cdw4 = 8 << context::endpoint_avg_trb_length_shift;
+
+  // Device Output Context
+
+  var output_context = vm::allocate_physical_pages(32 << controller.context_shift);
+
+  std::memset(output_context.addr.ptr, 0, output_context.size);
+
+  controller.dcbap.addresses[cast<usize>(slot)] = output_context.addr;
+
+  device.output_context = output_context;
+
+  // Device Address
+
+  var oslotctx = output_slot_context(output_context.addr, controller.context_shift);
+
+  if (var result = controller.address_device(slot, input_context.addr); !result)
+    return result;
+
+  device.address = cast<u8>(oslotctx.cdw3 >> context::slot_address_shift & context::slot_address_mask);
+
+  scheduler::sleep_until(cpu::system_time + 10_000_000);
+
+  // Connected
+
+  controller.slots[cast<usize>(port)] = slot;
+  controller.devices[cast<usize>(slot)] = &move device;
+
+  return ok;
+}
+
+fn probe(controller mut *controller, u8 port) -> usb::result
+{
+  var slot = controller.slots[cast<usize>(port)];
+  var device = &*controller.devices[cast<usize>(slot)];
+
+  var buffer = std::vector<u8>::with_size(512);
+
+  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, buffer.data, 8))
+    return io_error;
+
+  var device_descriptor = cast<usb::device_descriptor*>(buffer.data);
+
+  if (var max_packet_size = (device.speed >= usb::speed::super_speed) ? (1 << device_descriptor.max_packet_size_0) : cast<u16>(device_descriptor.max_packet_size_0); max_packet_size != device.max_packet_size)
+  {
+    var ictlctx = input_control_context(device.input_context.addr, controller.context_shift);
+
+    ictlctx.cdw0 = 0x0;
+    ictlctx.cdw1 = 0x2;
+
+    var iepctx = input_endpoint_context(device.input_context.addr, controller.context_shift, 0);
+
+    iepctx.cdw1 &= ~(context::endpoint_max_packet_size_mask << context::endpoint_max_packet_size_shift);
+    iepctx.cdw1 |= cast<u32>(max_packet_size) << context::endpoint_max_packet_size_shift;
+
+    if (var result = controller.evaluate_context(slot, device.input_context.addr); !result)
+      return result;
+
+    device.max_packet_size = max_packet_size;
+  }
+
+  modules::probe(device);
+
+  return ok;
+}
+
+fn enqueue(controller mut &controller, xhcidev mut *device, usize ep, usb::transfer mut *transfer, xhci_trb *trbs, usize n) -> usb::result
+{
+  var guard = std::lock_guard(&mut device.endpoints[ep].lock);
+
+  if (device.endpoints[ep].run == 0)
+    return shutdown;
+
+  var idx = device.endpoints[ep].idx;
+  var ccs = device.endpoints[ep].ccs;
+  var base = device.endpoints[ep].base;
+  var mask = device.endpoints[ep].mask;
+
+  if ((idx + mask + 1 - std::volatile_load(&device.endpoints[ep].tail)) & mask + n >= mask)
+    return device_busy;
+
+  for (var i = 0; i < n; ++i)
+  {
+    var sqe = cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + idx;
+
+    sqe.cdw0 = (trbs + i).cdw0;
+    sqe.cdw1 = (trbs + i).cdw1;
+    sqe.cdw2 = (trbs + i).cdw2;
+    sqe.flags = (trbs + i).flags | (ccs ^ cast(i == 0));
+
+    if (sqe.flags & cast(trb::flags::ioc) != 0)
+      device.transfers[idx] = transfer;
+
+    var next = idx + 1;
+
+    if (next == base + mask)
+    {
+      (sqe + 1).cqw0 = cast(device.transfer_ring.addr + base * sizeof<xhci_trb>);
+      (sqe + 1).flags = cast<u32>(trb::flags::type(trb::type::link) | trb::flags::tc) | ccs;
+      (sqe + 1).flags |= (trbs + i).flags & cast(trb::flags::chain);
+
+      ccs ^= 1;
+      next = base;
+    }
+
+    idx = next;
+  }
+
+  std::atomic_thread_fence();
+
+  (cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + device.endpoints[ep].idx).flags ^= 1;
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(&controller.dbarray.db[cast<usize>(device.slot)], cast(ep + 1));
+
+  device.endpoints[ep].ccs = ccs;
+  device.endpoints[ep].idx = idx;
+
+  return ok;
+}
+
+fn submit(controller mut &controller, xhcidev mut *device, usb::transfer mut *transfer) -> usb::result
+{
+  switch (transfer.type)
+  {
+    case control:
+      var trbs = [xhci_trb(); 3];
+
+      trbs[0].cdw0 |= cast<u32>(transfer.address) << 0;
+      trbs[0].cdw0 |= cast<u32>(transfer.request) << 8;
+      trbs[0].cdw0 |= cast<u32>(transfer.value) << 16;
+      trbs[0].cdw1 |= cast<u32>(transfer.index) << 0;
+      trbs[0].cdw1 |= cast<u32>(transfer.length) << 16;
+      trbs[0].cdw2 = cast<u32>(trb::status::bytes(8));
+      trbs[0].flags = cast<u32>(trb::flags::type(trb::type::setup_stage) | trb::flags::idt);
+
+      if (transfer.address & 0x80 != 0)
+        trbs[0].flags |= cast<u32>(trb::flags::trt_in);
+      else
+        trbs[0].flags |= cast<u32>(trb::flags::trt_out);
+
+      trbs[1].cqw0 = (transfer.length != 0) ? cast(transfer.host[0].addr) : 0;
+      trbs[1].cdw2 = cast<u32>(trb::status::bytes(transfer.length));
+      trbs[1].flags = cast<u32>(trb::flags::type(trb::type::data_stage));
+
+      if (transfer.address & 0x80 != 0)
+        trbs[1].flags |= cast<u32>(trb::flags::dir_in);
+
+      trbs[2].flags = cast<u32>(trb::flags::type(trb::type::status_stage) | trb::flags::ioc);
+
+      if (transfer.address & 0x80 == 0)
+        trbs[2].flags |= cast<u32>(trb::flags::dir_in);
+
+      if (var result = controller.enqueue(device, 0, transfer, trbs.data, trbs.len); !result)
+        return result;
+
+    case interrupt:
+      var ep = cast<usize>((transfer.address << 1 & 0x1e) + (transfer.address >> 7 & 1)) - 1;
+
+      var max_burst_payload = cast<usize>(device.endpoints[ep].max_burst_payload);
+
+      var trbs = std::vector<xhci_trb>::with_capacity(16);
+
+      for (var host : transfer.host)
+      {
+        var remaining = host.size;
+
+        for (var addr = host.addr; addr < host.end; addr += max_burst_payload)
+        {
+          var mut &trb = trbs.push_back();
+
+          var bytes = std::min(remaining, max_burst_payload);
+          var tdsize = std::min(std::ceil_div(remaining, max_burst_payload) - 1, 31);
+
+          trb.cqw0 = cast(addr);
+          trb.cdw2 = cast<u32>(trb::status::bytes(bytes) | trb::status::tdsize(tdsize));
+          trb.flags = cast<u32>(trb::flags::type(trb::type::normal) | trb::flags::chain | trb::flags::isp);
+
+          remaining -= bytes;
+        }
+      }
+
+      trbs.back.flags &= ~cast<u32>(trb::flags::chain);
+      trbs.back.flags |= cast<u32>(trb::flags::ioc);
+
+      if (var result = controller.enqueue(device, ep, transfer, trbs.data, trbs.len); !result)
+        return result;
+  }
+
+  return ok;
+}
+
+fn cancel(controller mut &controller, xhcidev mut *device, usb::transfer mut *transfer) -> usb::result
+{
+  return not_supported;
+}
+
+fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var number_entries = 1;
+
+  var ictlctx = input_control_context(device.input_context.addr, controller.context_shift);
+
+  ictlctx.cdw0 = 0x0;
+  ictlctx.cdw1 = 0x1;
+
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    switch (descriptors[offset + 1])
+    {
+      case usb::descriptor::type::configuration:
+        var configuration = cast<usb::configuration_descriptor*>(descriptors.data + offset);
+
+        if (!usb::submit(device, usb::request::direction::host_to_device, usb::request::type::standard, usb::request::recipient::device, usb::request::set_configuration, cast<u16>(configuration.configuration_value), 0, null, 0))
+          return io_error;
+
+      case usb::descriptor::type::endpoint:
+        var endpoint = cast<usb::endpoint_descriptor*>(descriptors.data + offset);
+
+        var ep = cast<usize>((endpoint.endpoint_address << 1 & 0x1e) + (endpoint.endpoint_address >> 7 & 1)) - 1;
+
+        if (ep == 0 || ep >= device.endpoints.len)
+          return invalid_argument;
+
+        device.endpoints[ep].run = 1;
+        device.endpoints[ep].ccs = 1;
+        device.endpoints[ep].idx = ep << 4;
+        device.endpoints[ep].tail = ep << 4;
+        device.endpoints[ep].base = ep << 4;
+        device.endpoints[ep].mask = (1 << 4) - 1;
+
+        std::memset((device.transfer_ring.addr + device.endpoints[ep].base * sizeof<xhci_trb>).ptr, 0, (device.endpoints[ep].mask + 1) * sizeof<xhci_trb>);
+
+        var type = 0;
+
+        switch ((endpoint.endpoint_address & 0x80) | (endpoint.attributes & 0x03))
+        {
+          case 0x01:
+            type = context::endpoint_type_isoch_out;
+
+          case 0x81:
+            type = context::endpoint_type_isoch_in;
+
+          case 0x02:
+            type = context::endpoint_type_bulk_out;
+
+          case 0x82:
+            type = context::endpoint_type_bulk_in;
+
+          case 0x03:
+            type = context::endpoint_type_interrupt_out;
+
+          case 0x83:
+            type = context::endpoint_type_interrupt_in;
+
+          else:
+            return invalid_argument;
+        }
+
+        var interval = 0;
+
+        if (endpoint.attributes & 0x03 == 1 || endpoint.attributes & 0x03 == 3)
+        {
+          switch (device.speed)
+          {
+            case low_speed:
+              interval = 10 - cast<u8>(std::clz(std::clamp(endpoint.interval, 1, 255)));
+
+            case full_speed:
+              if (endpoint.attributes & 0x03 == 1)
+                interval = std::clamp(endpoint.interval, 1, 16) + 2;
+              if (endpoint.attributes & 0x03 == 3)
+                interval = 10 - cast<u8>(std::clz(std::clamp(endpoint.interval, 1, 255)));
+
+            case high_speed:
+            case super_speed:
+            case super_speed_plus:
+              interval = std::clamp(endpoint.interval, 1, 16) - 1;
+          }
+        }
+
+        var errc = 0;
+
+        if (endpoint.attributes & 0x03 == 2 || endpoint.attributes & 0x03 == 3)
+        {
+          errc = 3;
+        }
+
+        var max_burst = 0;
+        var max_esit_payload = 0;
+        var max_packet_size = endpoint.max_packet_size & 0x7ff;
+
+        if (endpoint.attributes & 0x03 == 1 || endpoint.attributes & 0x03 == 3)
+        {
+          switch (device.speed)
+          {
+            case high_speed:
+              max_burst = max_packet_size >> 11 & 0x3;
+          }
+
+          max_esit_payload = max_packet_size * (max_burst + 1);
+        }
+
+        var avg_trb_length = 1024;
+
+        if (endpoint.attributes & 0x03 == 1 || endpoint.attributes & 0x03 == 2)
+        {
+          avg_trb_length = max_packet_size * (max_burst + 1);
+        }
+
+        if (var offset1 = offset + cast(descriptors[offset]); offset1 < descriptors.len && descriptors[offset1 + 1] == usb::descriptor::type::endpoint_ss_companion)
+        {
+          var endpoint_ss_companion = cast<usb::endpoint_ss_companion_descriptor*>(descriptors.data + offset1);
+
+          max_burst = cast<u16>(endpoint_ss_companion.max_burst);
+
+          if (endpoint.attributes & 0x03 == 1 || endpoint.attributes & 0x03 == 3)
+          {
+            if (endpoint_ss_companion.bytes_per_interval != 0)
+              max_esit_payload = endpoint_ss_companion.bytes_per_interval;
+            else
+              max_esit_payload = max_packet_size * (max_burst + 1);
+          }
+
+          if (endpoint.attributes & 0x03 == 1 || endpoint.attributes & 0x03 == 2)
+          {
+            avg_trb_length = max_packet_size * (max_burst + 1);
+          }
+
+          offset += cast(descriptors[offset]);
+        }
+
+        device.endpoints[ep].max_burst_payload = max_packet_size * (max_burst + 1);
+
+        //std::print("xhci endpoint:", ep, " type:", type, " interval:", interval, " errc:", errc, " max_packet_size: ", max_packet_size, " max_burst:", max_burst, " max_esit_payload:", max_esit_payload, " avg_trb_length:", avg_trb_length);
+
+        var iepctx = input_endpoint_context(device.input_context.addr, controller.context_shift, ep);
+
+        iepctx.cdw0 = cast<u32>(interval) << context::endpoint_interval_shift;
+
+        iepctx.cdw1 = type;
+        iepctx.cdw1 |= 3 << context::endpoint_cerr_shift;
+        iepctx.cdw1 |= cast<u32>(max_burst) << context::endpoint_max_burst_shift;
+        iepctx.cdw1 |= cast<u32>(max_packet_size) << context::endpoint_max_packet_size_shift;
+
+        iepctx.cqw2 = cast(device.transfer_ring.addr + device.endpoints[ep].base * sizeof<xhci_trb>) | context::endpoint_dcs;
+
+        iepctx.cdw4 = cast<u32>(avg_trb_length) << context::endpoint_avg_trb_length_shift;
+        iepctx.cdw4 |= cast<u32>(max_esit_payload) << context::endpoint_max_esit_payload_shift;
+
+        ictlctx.cdw1 |= 1 << (ep + 1);
+
+        number_entries = std::max(number_entries, ep + 1);
+    }
+
+    offset += cast(descriptors[offset]);
+  }
+
+  var islotctx = input_slot_context(device.input_context.addr, controller.context_shift);
+
+  islotctx.cdw0 &= ~(context::slot_entries_mask << context::slot_entries_shift);
+  islotctx.cdw0 |= cast<u32>(number_entries) << context::slot_entries_shift;
+
+  if (var result = controller.configure_endpoint(device.slot, device.input_context.addr); !result)
+    return result;
+
+  return ok;
+}
+
+fn unconfigure(controller mut &controller, xhcidev mut *device) -> usb::result
+{
+  for (var ep = 1; ep != device.endpoints.len; ++ep)
+  {
+    if (device.endpoints[ep].run == 0)
+      continue;
+
+    device.endpoints[ep].lock.lock();
+
+    for (var index = device.endpoints[ep].tail; index != device.endpoints[ep].idx; )
+    {
+      if (device.transfers[index])
+      {
+        usb::complete(device.transfers[index], usb::result::cancelled);
+
+        device.transfers[index] = null;
+      }
+
+      index = device.endpoints[ep].base + (index + 1 - device.endpoints[ep].base) & device.endpoints[ep].mask;
+    }
+
+    device.endpoints[ep].run = 0;
+
+    device.endpoints[ep].lock.unlock();
+
+    var oepctx = output_endpoint_context(device.output_context.addr, controller.context_shift, ep);
+
+    switch (oepctx.cdw0 >> context::endpoint_state_shift & context::endpoint_state_mask)
+    {
+      case context::endpoint_state_running:
+        controller.stop_endpoint(device.slot, cast<u8>(ep + 1));
+
+      case context::endpoint_state_halted:
+        controller.reset_endpoint(device.slot, cast<u8>(ep + 1));
+    }
+  }
+
+  return ok;
+}
+
+fn release(controller mut &controller, xhcidev mut *device) -> usb::result
+{
+  if (device.unplugged)
+    device.unplugged();
+
+  unconfigure(&mut controller, device);
+
+  controller.devices[cast<usize>(device.slot)] = null;
+
+  return ok;
+}
+
+fn destroy(controller mut &controller, xhcidev mut *device) -> usb::result
+{
+  if (var result = controller.disable_slot(device.slot); !result)
+    return result;
+
+  controller.dcbap.addresses[cast<usize>(device.slot)] = physaddr();
+
+  vm::release_physical_pages(device.input_context);
+  vm::release_physical_pages(device.output_context);
+  vm::release_physical_pages(device.transfer_ring);
+
+  return ok;
+}
+
+fn xhci_io_handler(controller mut *controller) -> void
+{
+  var sts = controller.opregs.sts;
+  std::volatile_store(&controller.opregs.sts, sts);
+
+  if (sts & sts::hch == sts::hch)
+    return;
+
+  if (sts & sts::hse == sts::hse)
+    return;
+
+  if (sts & sts::hce == sts::hce)
+    return;
+
+  if (sts & sts::eint == sts::eint)
+    controller.event_handler_doorbell.release();
+
+  std::volatile_store(&controller.rtsregs.interrupts[0].iman, controller.rtsregs.interrupts[0].iman | iman::pending);
+}
+
+fn xhci_transfer_handler(controller mut &controller, xhci_trb &trb) -> usb::result
+{
+  var slot = cast<trb::flags>(trb.flags).slot;
+  var device = &*controller.devices[cast<usize>(slot)];
+  var ep = cast<trb::flags>(trb.flags).endpoint;
+  var code = cast<trb::status>(trb.cdw2).code;
+  var remainder = cast<trb::status>(trb.cdw2).remainder;
+  var index = cast<usize>(cast<uintptr>(trb.cqw0) - device.transfer_ring.addr.super) / sizeof<xhci_trb>;
+
+  if (ep == 0 || cast<usize>(ep - 1) >= device.endpoints.len)
+    return invalid_argument;
+
+  if (index >= device.transfers.len)
+    return invalid_argument;
+
+  var result = usb::result::ok;
+
+  switch (code)
+  {
+    case trb::status::code::success:
+    case trb::status::code::short_packet:
+      result = usb::result::ok;
+
+    case trb::status::code::stalled:
+      result = usb::result::stalled;
+
+    else:
+      result = usb::result::io_error;
+  }
+
+  var guard = std::lock_guard(&mut device.endpoints[cast<usize>(ep - 1)].lock);
+
+  var mut &endpoint = device.endpoints[cast<usize>(ep - 1)];
+
+  for (; (cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + index).flags & cast(trb::flags::ioc) == 0; )
+  {
+    index += 1;
+
+    if (index == endpoint.base + endpoint.mask)
+      index = endpoint.base;
+
+    remainder += cast<trb::status>((cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + index).cdw2).bytes;
+  }
+
+  if (var transfer = device.transfers[index])
+  {
+    if (code == trb::status::code::success || code == trb::status::code::short_packet)
+      result = cast(transfer.length - remainder);
+
+    usb::complete(transfer, result);
+
+    device.transfers[index] = null;
+
+    std::volatile_store(&endpoint.tail, index);
+  }
+
+  return ok;
+}
+
+fn xhci_event_handler(controller mut *controller) -> void
+{
+  var idx = 0;
+  var ccs = 1;
+
+  for (;;)
+  {
+    for (var k = 0; k < std::array_len<typeof(xhci_erst::evts)>; ++k)
+    {
+      var cqe = &controller.erstp.evts[idx];
+
+      if (cqe.flags & 0x1 != ccs)
+        break;
+
+      switch (var type = cast<trb::flags>(cqe.flags).type)
+      {
+        case command_completion:
+          controller.cmd_trb.cdw2 = cqe.cdw2;
+          controller.cmd_trb.flags = cqe.flags;
+          controller.cmd_sts.release();
+
+        case port_status_change:
+          controller.plug_handler_doorbell.release();
+
+        case transfer:
+          xhci_transfer_handler(&mut *controller, *cqe);
+
+        else:
+          std::print("xhci unhandled event - ", type);
+      }
+
+      idx += 1;
+
+      if (idx == std::array_len<typeof(xhci_erst::evts)>)
+      {
+        ccs ^= 1;
+        idx = 0;
+      }
+    }
+
+    std::volatile_store(&controller.rtsregs.interrupts[0].erdp, controller.erstp.addr + idx * sizeof<xhci_trb> | erdp::busy);
+
+    controller.event_handler_doorbell.wait();
+  }
+}
+
+fn xhci_plug_handler(controller mut *controller) -> void
+{
+  for (;;)
+  {
+    var mut &ports = controller.opregs.ports;
+
+    for (var index = 0; index < controller.port_count; ++index)
+    {
+      var portsc = ports[index].portsc;
+
+      if (portsc & portsc::csc == portsc::csc)
+      {
+        std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::csc);
+
+        if (portsc & portsc::ccs == portsc::ccs)
+        {
+          std::print("xhci ", controller.name, "/", index, " device attached");
+
+          for (var k = 0; k < 2; ++k)
+          {
+            if (wait_until_set(&ports[index].portsc, portsc::csc, 100))
+              break;
+
+            std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::pr);
+
+            if (!wait_until_set(&ports[index].portsc, portsc::prc, 100))
+              std::print("xhci ", controller.name, "/", index, " reset timeout");
+
+            std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::prc);
+
+            scheduler::sleep_until(cpu::system_time + 10_000_000);
+
+            portsc = std::volatile_load(&ports[index].portsc);
+
+            if (portsc & portsc::ccs != portsc::ccs)
+              break;
+
+            var speed = usb::speed::full_speed;
+
+            if (controller.port_speeds[index] >= usb::speed::super_speed)
+              speed = usb::speed::super_speed;
+
+            switch (cast<u32>(portsc & portsc::spd))
+            {
+              case 0x0800:
+                speed = usb::speed::low_speed;
+
+              case 0x0c00:
+                speed = usb::speed::high_speed;
+
+              case 0x1000:
+                speed = usb::speed::super_speed;
+
+              case 0x1400:
+                speed = usb::speed::super_speed_plus;
+            }
+
+            if (!connect(controller, cast<u8>(index), speed))
+              continue;
+
+            break;
+          }
+
+          probe(controller, cast<u8>(index));
+
+        }
+        else
+        {
+          std::print("xhci ", controller.name, "/", index, " device detached");
+
+          if (var slot = controller.slots[index]; slot != 0)
+            controller.release(controller.devices[cast<usize>(slot)]);
+        }
+      }
+    }
+
+    controller.plug_handler_doorbell.wait();
+  }
+}
+
+fn initialise(controller mut &controller) -> usb::result
+{
+  var &device = controller.device;
+
+  var base = device.read_base_address(0);
+  var size = device.read_size_register(0);
+  var mapped = heap::mmap(vm::physrange(base, size));
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var irq = ioapic::resolve(device.read_interrupt_line());
+
+  if (msi::count(device) != 0)
+  {
+    var vector = io::allocate_vectors(1);
+
+    if (msi::configure(device, vector))
+    {
+      msi::enable(device);
+
+      irq = vector.0;
+    }
+  }
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  controller.irq = irq;
+  controller.caps = cast<u32 mut *>(mapped.addr);
+
+  var version = read_capability(controller.caps, cap::version_shift, cap::version_mask);
+
+  if (version < 0x90)
+    return invalid_argument;
+
+  var hccparams1 = read_capability(controller.caps, cap::hccparams1_shift, cap::hccparams1_mask);
+
+  if (hccparams1 & hcc::ac64 == 0)
+    return invalid_argument;
+
+  controller.context_shift = (hccparams1 & hcc::csz == 0) ? 5 : 6;
+
+  controller.opregs = cast<xhci_op_regs mut *>(mapped.addr + cast(read_capability(controller.caps, cap::length_shift, cap::length_mask)));
+  controller.rtsregs = cast<xhci_rts_regs mut *>(mapped.addr + cast(read_capability(controller.caps, cap::rtsoff_shift, cap::rtsoff_mask)));
+  controller.dbarray = cast<xhci_doorbell_array mut *>(mapped.addr + cast(read_capability(controller.caps, cap::dboff_shift, cap::dboff_mask)));
+
+  for (var ecp = hccparams1 >> hcc::xecp_shift & hcc::xecp_mask; ecp != 0; )
+  {
+    var ec = std::volatile_load(controller.caps + cast(ecp));
+
+    switch (ec & xcap::id)
+    {
+      case xcap::legacy_support:
+
+        std::volatile_store(controller.caps + cast(ecp), ec | xcap::legsup_osowned);
+
+        if (!wait_until_clear(controller.caps + cast(ecp), xcap::legsup_biosowned, 1000))
+          return timed_out;
+
+        std::volatile_store(controller.caps + cast(ecp), ec | xcap::legsup_osowned & ~xcap::legsup_biosowned);
+
+        var legctlsts = std::volatile_load(controller.caps + cast(ecp) + xcap::legctlsts);
+
+        std::volatile_store(controller.caps + cast(ecp) + xcap::legctlsts, legctlsts & (xcap::legctlsts_reserved_bits | xcap::legctlsts_readonly_bits));
+
+      case xcap::supported_protocol:
+
+        var revision = (ec >> 16) & 0xffff;
+        var port_count = std::volatile_load(controller.caps + cast(ecp) + 2) >> 8 & 0xff;
+        var port_offset = std::volatile_load(controller.caps + cast(ecp) + 2) >> 0 & 0xff - 1;
+
+        for (var i = cast<usize>(port_offset); i < cast<usize>(port_offset + port_count); ++i)
+        {
+          switch (revision & 0xff00)
+          {
+            case 0x0200:
+              controller.port_speeds[i] = usb::speed::high_speed;
+
+            case 0x0300:
+              controller.port_speeds[i] = usb::speed::super_speed;
+          }
+        }
+
+        // var speeds_count = std::volatile_load(controller.caps + cast(ecp) + 3) >> 28 & 0xff;
+
+        // for (var i = 0; i < cast<usize>(speeds_count); ++i)
+        // {
+        //   std::print(std::volatile_load(controller.caps + cast(ecp) + 4 + i));
+        // }
+    }
+
+    if (ec & xcap::next == 0)
+      break;
+
+    ecp += (ec >> 8 & 0xff);
+  }
+
+  if (var result = controller.halt(); !result)
+    return result;
+
+  if (var result = controller.reset(); !result)
+    return result;
+
+  io::install_handler(irq, &cast<(controller mut *) -> void>(xhci_io_handler), &controller);
+
+  var hcsparams1 = read_capability(controller.caps, cap::hcsparams1_shift, cap::hcsparams1_mask);
+
+  controller.port_count = cast(hcsparams1 >> hcs::max_ports_shift & hcs::max_ports_mask);
+
+  if (controller.port_count == 0)
+    return invalid_argument;
+
+  controller.slot_count = cast(hcsparams1 >> hcs::max_slots_shift & hcs::max_slots_mask);
+
+  var hcsparams2 = read_capability(controller.caps, cap::hcsparams2_shift, cap::hcsparams2_mask);
+
+  var scratchpad_count = usize(0);
+  scratchpad_count |= cast<usize>(hcsparams2 >> hcs::max_scratchpad_bufs_hi_shift & hcs::max_scratchpad_bufs_hi_mask) << 5;
+  scratchpad_count |= cast<usize>(hcsparams2 >> hcs::max_scratchpad_bufs_lo_shift & hcs::max_scratchpad_bufs_lo_mask);
+
+  if (scratchpad_count > std::array_len<typeof(xhci_dcbaa::scratchpads)>)
+    return invalid_argument;
+
+  var hcsparams3 = read_capability(controller.caps, cap::hcsparams3_shift, cap::hcsparams3_mask);
+
+  // Device Context Base Address Array
+
+  var dcba = vm::allocate_physical_pages(sizeof<xhci_dcbaa> + scratchpad_count * 4096);
+
+  var dcbap = cast<xhci_dcbaa mut *>(dcba.addr.ptr);
+
+  std::memset(dcba.addr.ptr, 0, dcba.size);
+
+  for (var i = 0; i < scratchpad_count; ++i)
+  {
+    dcbap.scratchpads[i] = dcba.addr + sizeof<xhci_dcbaa> + i * 4096;
+  }
+
+  dcbap.addresses[0] = dcba.addr + offsetof(xhci_dcbaa::scratchpads);
+
+  controller.dcbap = dcbap;
+
+  std::volatile_store(&controller.opregs.config, cast<u32>(controller.slot_count));
+
+  std::volatile_store(&controller.opregs.dcbaap, dcba.addr);
+
+  // Event Ring Segment Table
+
+  var erst = vm::allocate_physical_pages(sizeof<xhci_erst>);
+
+  var erstp = cast<xhci_erst mut *>(erst.addr.ptr);
+
+  std::memset(erstp, 0, sizeof<xhci_erst>);
+
+  controller.erstp = erstp;
+  controller.erstp.addr = erst.addr + offsetof(xhci_erst::evts);
+  controller.erstp.size = cast(std::array_len<typeof(xhci_erst::evts)>);
+
+  std::volatile_store(&controller.rtsregs.interrupts[0].erstsz, 1);
+  std::volatile_store(&controller.rtsregs.interrupts[0].erdp, erstp.addr);
+  std::volatile_store(&controller.rtsregs.interrupts[0].erstba, erst.addr);
+  std::volatile_store(&controller.rtsregs.interrupts[0].imod, 0x3f8);
+  std::volatile_store(&controller.rtsregs.interrupts[0].iman, controller.rtsregs.interrupts[0].iman | iman::enable);
+
+  std::volatile_store(&controller.opregs.crcr, (erst.addr + offsetof(xhci_erst::cmds)) | crcr::rcs);
+
+  // Start
+
+  std::volatile_store(&controller.opregs.sts, controller.opregs.sts);
+  std::volatile_store(&controller.opregs.dnctrl, 0);
+
+  std::volatile_store(&controller.opregs.cmd, cmd::run | cmd::inte | cmd::hsee);
+
+  if (!wait_until_clear(&controller.opregs.sts, sts::hch, 500))
+    return timed_out;
+
+  for (var index = 0; index < controller.port_count; ++index)
+  {
+    var portsc = controller.opregs.ports[index].portsc;
+
+    if (portsc & portsc::ccs != portsc::ccs)
+      std::volatile_store(&controller.opregs.ports[index].portsc, portsc & ~portsc::status | portsc::csc);
+
+    std::volatile_store(&controller.opregs.ports[index].portsc, portsc & ~portsc::status | portsc::pp);
+  }
+
+  controller.event_handler = create_thread(process::current, &cast<(controller mut *) -> void>(xhci_event_handler), &controller);
+
+  scheduler::enqueue(controller.event_handler);
+
+  controller.plug_handler = create_thread(process::current, &cast<(controller mut *) -> void>(xhci_plug_handler), &controller);
+
+  scheduler::enqueue(controller.plug_handler);
+
+  return ok;
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var controller = std::allocator::new<controller>(device);
+
+  if (var result = controller.initialise(); !result)
+    std::print("xhci error initialising controller - ", result);
+}
+
+pub fn initialise() -> void
+{
+  for (var &device : pci::devices)
+  {
+    if (device.class_code == [48, 3, 12])
+      initialise(device);
+  }
+}

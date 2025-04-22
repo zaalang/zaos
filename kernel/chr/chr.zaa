@@ -10,32 +10,32 @@ import vm;
 import vfs;
 import support.rc : Rc;
 
-pub fn open(chrdev_ptr dev, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+pub fn open(chrdev mut *device, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
 {
-  return dev.open(&mut fd, flags, mode);
+  return device.open(&mut fd, flags, mode);
 }
 
-pub fn ioctl(chrdev_ptr dev, u32 op, vm::iovec &buffer) -> chr::result
+pub fn ioctl(chrdev mut *device, u32 op, vm::iovec &buffer) -> chr::result
 {
-  return dev.ioctl(op, buffer);
+  return device.ioctl(op, buffer);
 }
 
-pub fn poll(chrdev_ptr dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+pub fn poll(chrdev mut *device, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
 {
-  return dev.poll(&mut readable, &mut writeable);
+  return device.poll(&mut readable, &mut writeable);
 }
 
-pub fn read(chrdev_ptr dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+pub fn read(chrdev mut *device, vm::iovec &buffer, usize offset, usize length) -> chr::result
 {
-  return dev.read(buffer, offset, length);
+  return device.read(buffer, offset, length);
 }
 
-pub fn write(chrdev_ptr dev, vm::iovec &buffer, usize offset, usize length) -> chr::result
+pub fn write(chrdev mut *device, vm::iovec &buffer, usize offset, usize length) -> chr::result
 {
-  return dev.write(buffer, offset, length);
+  return device.write(buffer, offset, length);
 }
 
-pub fn mmap(chrdev_ptr dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+pub fn mmap(chrdev mut *device, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
 {
-  return dev.mmap(range, offset, prot, use);
+  return device.mmap(range, offset, prot, use);
 }

@@ -1,0 +1,36 @@
+//
+// rm
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.fcntl;
+import chrono : duration;
+import termios;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn main() -> i32
+{
+  var path = std::string();
+
+  for (var arg : std::env::args.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  if (path.empty)
+  {
+    std::printf("usage: rm <filepath>\n");
+
+    return -22;
+  }
+
+  if (var rc = os::unlink(&mut thread_ring, os::string(path.data, path.len), 0); rc < 0)
+    std::printf("rm: error {} - {}\n", path, std::errc(cast(-rc)));
+
+  return 0;
+}

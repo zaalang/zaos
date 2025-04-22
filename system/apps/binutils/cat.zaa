@@ -4,7 +4,6 @@
 
 import std.stdio;
 import std.env;
-import std.algorithm;
 import os.zaos.fcntl : O_RDONLY, O_DIRECTORY, O_NOFOLLOW;
 import chrono : duration;
 import termios;
@@ -18,10 +17,7 @@ pub fn main() -> i32
   for (var arg : std::env::args.drop_n(1))
   {
     if (arg.starts_with("-"))
-    {
-
       continue;
-    }
 
     path = arg;
   }

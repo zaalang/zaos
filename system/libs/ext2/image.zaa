@@ -43,7 +43,7 @@ pub struct image
   {
   }
 
-  pub fn superblock(this&) -> ext2_super_block *
+  pub fn superblock(this &) -> ext2_super_block *
   {
     return cast<ext2_super_block*>(cast<uintptr>(this.data) + EXT2_SUPER_BLOCK_OFFSET);
   }
@@ -68,7 +68,7 @@ pub struct image
     pub ~volume() = default;
   }
 
-  pub fn volume_info(this&) -> volume
+  pub fn volume_info(this &) -> volume
   {
     var vol = volume();
 
@@ -97,15 +97,15 @@ pub struct image
     u64 cursor;
     ext2_inode *desc;
 
-    pub fn mode(this&) -> u16 { return this.desc.mode; }
-    pub fn uid(this&) -> u32 { return this.desc.uid; }
-    pub fn gid(this&) -> u32 { return this.desc.gid; }
-    pub fn atime(this&) -> u32 { return this.desc.i_atime; }
-    pub fn ctime(this&) -> u32 { return this.desc.i_ctime; }
-    pub fn mtime(this&) -> u32 { return this.desc.i_mtime; }
+    pub fn mode(this &) -> u16 { return this.desc.mode; }
+    pub fn uid(this &) -> u32 { return this.desc.uid; }
+    pub fn gid(this &) -> u32 { return this.desc.gid; }
+    pub fn atime(this &) -> u32 { return this.desc.i_atime; }
+    pub fn ctime(this &) -> u32 { return this.desc.i_ctime; }
+    pub fn mtime(this &) -> u32 { return this.desc.i_mtime; }
 
-    pub fn cursor(this&) -> u64 { return this.cursor; }
-    pub fn filesize(this&) -> u64 { return this.desc.size; }
+    pub fn cursor(this &) -> u64 { return this.cursor; }
+    pub fn filesize(this &) -> u64 { return this.desc.size; }
 
     pub inode() = default;
     pub inode(inode&) = default;
@@ -124,7 +124,7 @@ pub struct image
     pub ~dentry() = default;
   }
 
-  pub fn root(this&) -> inode
+  pub fn root(this &) -> inode
   {
     var root = inode();
 
@@ -683,7 +683,7 @@ fn find(image &this, image::inode &dir, std::string_view name, ext2_dir_entry * 
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.name == name)
+      if (entry.ino != 0 && entry.name == name)
       {
         return ok;
       }
@@ -713,7 +713,7 @@ fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2
 
       var block = lookup_block(this, dentry, position);
 
-      cast<ext2_dir_entry mut *>(block.data).inode = 0;
+      cast<ext2_dir_entry mut *>(block.data).ino = 0;
       cast<ext2_dir_entry mut *>(block.data).rec_len = (1 << block_shift);
 
       dentry.size = dentry.size + (1 << block_shift);
@@ -726,7 +726,7 @@ fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
+      if (entry.ino != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
       {
         var remaining = entry.rec_len - dentry_required_len(entry.name_len);
 
@@ -734,11 +734,11 @@ fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2
 
         entry = cast<ext2_dir_entry mut *>(cast<uintptr>(entry) + cast<usize>(entry.rec_len));
 
-        entry.inode = 0;
+        entry.ino = 0;
         entry.rec_len = remaining;
       }
 
-      if (entry.inode == 0 && entry.rec_len >= required_len)
+      if (entry.ino == 0 && entry.rec_len >= required_len)
       {
         return ok;
       }
@@ -763,7 +763,7 @@ pub fn open(image &this, image::inode &dir, std::string_view name, image::inode 
   if (var result = find(this, dir, name, &mut entry); !result)
     return result;
 
-  fd.desc = lookup_inode(this, entry.inode);
+  fd.desc = lookup_inode(this, entry.ino);
   fd.cursor = 0;
 
   return ok;
@@ -808,7 +808,7 @@ pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) ->
 
       dir.cursor += cast(entry.rec_len);
 
-      if (entry.inode != 0)
+      if (entry.ino != 0)
       {
         dentry.name = entry.name;
         dentry.file_type = entry.file_type;
@@ -863,7 +863,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u32 uid
   inode.i_mtime = inode.i_ctime;
   inode.i_links = 1;
 
-  entry.inode = ino;
+  entry.ino = ino;
 
   fd.desc = inode;
   fd.cursor = 0;
@@ -1062,7 +1062,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
 
   var dotentry = cast<ext2_dir_entry mut *>(block.data);
 
-  dotentry.inode = ino;
+  dotentry.ino = ino;
   dotentry.type = ext2_ftype::directory;
   dotentry.file_name[0] = cast('.');
   dotentry.name_len = 1;
@@ -1072,7 +1072,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
 
   var dotdotentry = cast<ext2_dir_entry mut *>(block.data + 12);
 
-  dotdotentry.inode = parent.inode;
+  dotdotentry.ino = parent.ino;
   dotdotentry.type = ext2_ftype::directory;
   dotdotentry.file_name[0] = cast('.');
   dotdotentry.file_name[1] = cast('.');
@@ -1083,7 +1083,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
 
   inode.size = cast(block.len);
 
-  entry.inode = ino;
+  entry.ino = ino;
 
   fd.desc = inode;
   fd.cursor = 0;
@@ -1118,10 +1118,10 @@ pub fn rename(image mut &this, image::inode &dir, std::string_view oldname, std:
     if (var result = this.allocate_dir_entry(dir, required_len, &mut entry); !result)
       return result;
 
-    entry.inode = dentry.inode;
+    entry.ino = dentry.ino;
     entry.file_type = dentry.file_type;
 
-    cast<ext2_dir_entry mut *>(dentry).inode = 0;
+    cast<ext2_dir_entry mut *>(dentry).ino = 0;
   }
 
   entry.set_name(newname);
@@ -1146,7 +1146,7 @@ pub fn unlink(image mut &this, image::inode &dir, std::string_view name) -> resu
     return result;
 
   var entry = cast<ext2_dir_entry mut *>(dentry);
-  var inode = cast<ext2_inode mut *>(lookup_inode(this, entry.inode));
+  var inode = cast<ext2_inode mut *>(lookup_inode(this, entry.ino));
 
   if (inode.i_links == 0)
     return argument_out_of_domain;
@@ -1165,10 +1165,10 @@ pub fn unlink(image mut &this, image::inode &dir, std::string_view name) -> resu
     if (inode.isdir)
       cast<ext2_inode mut *>(dir.desc).i_links -= 1;
 
-    this.deallocate_inode(entry.inode, inode.mode);
+    this.deallocate_inode(entry.ino, inode.mode);
   }
 
-  entry.inode = 0;
+  entry.ino = 0;
 
   return ok;
 }

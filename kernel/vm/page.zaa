@@ -26,7 +26,7 @@ pub struct physaddr : pub platform::physaddr_t
   {
   }
 
-  pub fn ptr(this&) -> void mut *
+  pub fn ptr(this &) -> void mut *
   {
     return cast<void mut *>(PHYSICAL_BASE + this.super);
   }
@@ -89,22 +89,22 @@ pub struct physrange : pub platform::physrange_t
   {
   }
 
-  pub fn addr(this&) -> physaddr
+  pub fn addr(this &) -> physaddr
   {
     return physaddr(this.super.0);
   }
 
-  pub fn size(this&) -> usize
+  pub fn size(this &) -> usize
   {
     return this.super.1 - this.super.0;
   }
 
-  pub fn begin(this&) -> physaddr
+  pub fn begin(this &) -> physaddr
   {
     return physaddr(this.super.0);
   }
 
-  pub fn end(this&) -> physaddr
+  pub fn end(this &) -> physaddr
   {
     return physaddr(this.super.1);
   }
@@ -142,7 +142,7 @@ pub struct virtaddr : pub platform::virtaddr_t
   {
   }
 
-  pub fn ptr(this&) -> void mut *
+  pub fn ptr(this &) -> void mut *
   {
     return cast<void mut *>(this.super);
   }
@@ -210,22 +210,22 @@ pub struct virtrange : pub platform::virtrange_t
   {
   }
 
-  pub fn addr(this&) -> virtaddr
+  pub fn addr(this &) -> virtaddr
   {
     return virtaddr(this.super.0);
   }
 
-  pub fn size(this&) -> usize
+  pub fn size(this &) -> usize
   {
     return this.super.1 - this.super.0;
   }
 
-  pub fn begin(this&) -> virtaddr
+  pub fn begin(this &) -> virtaddr
   {
     return virtaddr(this.super.0);
   }
 
-  pub fn end(this&) -> virtaddr
+  pub fn end(this &) -> virtaddr
   {
     return virtaddr(this.super.1);
   }
@@ -240,12 +240,12 @@ pub struct virtrange : pub platform::virtrange_t
     return lhs.super.0 <=> rhs.super.0;
   }
 
-  pub fn contains(this&, virtaddr address) -> bool
+  pub fn contains(this &, virtaddr address) -> bool
   {
     return this.super.0 <= address && address < this.super.1;
   }
 
-  pub fn contains(this&, virtrange range) -> bool
+  pub fn contains(this &, virtrange range) -> bool
   {
     return this.super.0 <= range.super.1 && range.super.0 < this.super.1;
   }
@@ -478,17 +478,17 @@ pub struct page_allocation : pub std::mutable_span<page>
 {
   pub physaddr addr;
 
-  pub fn size(this&) -> usize
+  pub fn size(this &) -> usize
   {
     return this.len * PAGE_SIZE;
   }
 
-  pub fn range(this&) -> physrange
+  pub fn range(this &) -> physrange
   {
     return physrange(this.addr, this.size);
   }
 
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return this.len != 0;
   }
@@ -537,7 +537,7 @@ pub fn release(page_allocator mut &this, std::mutable_span<page> &pages) -> void
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-  for (var i = order; i != this.freelist.len - 1; ++i)
+  for (var i = order; index | (1 << i) < pages.len; ++i)
   {
     var mut &buddy = this.pages[index ^ (1 << i)];
 

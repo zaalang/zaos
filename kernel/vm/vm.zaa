@@ -205,17 +205,7 @@ pub fn unmap_physical_pages(virtrange range) -> void
   unmap_physical_pages(&mut platform::pagetable, range);
 }
 
-//pub fn query_physical(void *addr) -> physaddr
-//{
-//  return physaddr(platform::pagetable.query(virtaddr(addr)).address + cast<uintptr>(addr) & PAGE_MASK);
-//}
-//
-//pub fn query_physical(void *addr, usize len) -> physrange
-//{
-//  return physrange(query_physical(addr), len);
-//}
-
-fn addressspace(virtaddr addr) -> address_space mut &
+fn address_space(virtaddr addr) -> address_space mut &
 {
   if (is_kernel_address(addr))
     return &mm.kernelspace;
@@ -225,7 +215,7 @@ fn addressspace(virtaddr addr) -> address_space mut &
 
 fn lock_region(address_space mut &space, virtaddr addr) -> region mut *
 {
-  while (true)
+  for (;;)
   {
     {
       var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
@@ -238,9 +228,9 @@ fn lock_region(address_space mut &space, virtaddr addr) -> region mut *
   }
 }
 
-pub fn query_region(virtaddr addr) -> region mut *
+pub fn lock_region(virtaddr addr) -> region mut *
 {
-  return lock_region(&mut addressspace(addr), addr);
+  return lock_region(&mut address_space(addr), addr);
 }
 
 pub fn create_anonymous_region(address_space mut &space, virtrange range, protection prot, usage use) -> vm::result
@@ -267,7 +257,7 @@ pub fn create_anonymous_region(address_space mut &space, virtrange range, protec
 
 pub fn create_anonymous_region(virtrange range, protection prot, usage use) -> vm::result
 {
-  return create_anonymous_region(&mut addressspace(range.addr), range, prot, use);
+  return create_anonymous_region(&mut address_space(range.addr), range, prot, use);
 }
 
 pub fn create_physical_region(address_space mut &space, virtrange range, std::vector<physrange> &physical, protection prot, usage use) -> vm::result
@@ -308,10 +298,10 @@ pub fn create_physical_region(address_space mut &space, virtrange range, std::ve
 
 pub fn create_physical_region(virtrange range, std::vector<physrange> &physical, protection prot, usage use) -> vm::result
 {
-  return create_physical_region(&mut addressspace(range.addr), range, physical, prot, use);
+  return create_physical_region(&mut address_space(range.addr), range, physical, prot, use);
 }
 
-pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node_ptr &node, u64 offset, protection prot, usage use) -> vm::result
+pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node mut *node, u64 offset, protection prot, usage use) -> vm::result
 {
   var guard = std::lock_guard(&mut cpu::irqlock);
 
@@ -335,9 +325,9 @@ pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node
   return ok;
 }
 
-pub fn create_backed_region(virtrange range, vfs::node_ptr &node, u64 offset, protection prot, usage use) -> vm::result
+pub fn create_backed_region(virtrange range, vfs::node mut *node, u64 offset, protection prot, usage use) -> vm::result
 {
-  return create_backed_region(&mut addressspace(range.addr), range, node, offset, prot, use);
+  return create_backed_region(&mut address_space(range.addr), range, node, offset, prot, use);
 }
 
 pub fn set_memory_type(page_table mut &pagetable, address_space mut &space, virtrange range, mtype mtype) -> vm::result
@@ -356,7 +346,7 @@ pub fn set_memory_type(page_table mut &pagetable, address_space mut &space, virt
 
 pub fn set_memory_type(virtrange range, mtype mtype) -> vm::result
 {
-  return set_memory_type(&mut platform::pagetable, &mut addressspace(range.addr), range, mtype);
+  return set_memory_type(&mut platform::pagetable, &mut address_space(range.addr), range, mtype);
 }
 
 fn mprotect(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot) -> vm::result
@@ -384,7 +374,7 @@ fn mprotect(page_table mut &pagetable, address_space mut &space, virtrange range
 
 pub fn mprotect(virtrange range, protection prot)
 {
-  return mprotect(&mut platform::pagetable, &mut addressspace(range.addr), range, prot);
+  return mprotect(&mut platform::pagetable, &mut address_space(range.addr), range, prot);
 }
 
 pub fn mprotect(process mut *process, virtrange range, protection prot)
@@ -458,7 +448,7 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   }
 
   region.offset = 0;
-  region.backing = vfs::node_ptr();
+  region.backing = null;
 
   region.unlock();
 
@@ -469,7 +459,7 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
 
 pub fn munmap(virtrange range) -> vm::result
 {
-  return munmap(&mut platform::pagetable, &mut addressspace(range.addr), range);
+  return munmap(&mut platform::pagetable, &mut address_space(range.addr), range);
 }
 
 pub fn munmap(process mut *process, virtrange range) -> vm::result
@@ -480,6 +470,9 @@ pub fn munmap(process mut *process, virtrange range) -> vm::result
 fn lock(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot, std::vector<physrange> mut &result) -> vm::result
 {
   var status = result::ok;
+
+  if (range.addr == 0 && range.size == 0)
+    return ok;
 
   var region = lock_region(&mut space, range.addr);
 
@@ -537,7 +530,7 @@ fn lock(page_table mut &pagetable, address_space mut &space, virtrange range, pr
 
 pub fn lock(virtrange range, protection prot, std::vector<physrange> mut &result)
 {
-  return lock(&mut platform::pagetable, &mut addressspace(range.addr), range, prot, &mut result);
+  return lock(&mut platform::pagetable, &mut address_space(range.addr), range, prot, &mut result);
 }
 
 pub fn lock(process mut *process, virtrange range, protection prot, vm::iovec mut &result) -> vm::result
@@ -551,7 +544,7 @@ pub fn lock(virtrange range, protection prot, vm::iovec mut &result)
 {
   result.length += range.size;
 
-  return lock(&mut platform::pagetable, &mut addressspace(range.addr), range, prot, &mut result.host);
+  return lock(&mut platform::pagetable, &mut address_space(range.addr), range, prot, &mut result.host);
 }
 
 pub fn unlock(physrange range) -> void
@@ -738,7 +731,7 @@ fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bo
 extern fn page_fault(virtaddr addr, bool write, bool fetch, bool user) -> void
 {
   var status = result::ok;
-  var mut &space = addressspace(addr);
+  var mut &space = address_space(addr);
 
   var region = lock_region(&mut space, addr);
 

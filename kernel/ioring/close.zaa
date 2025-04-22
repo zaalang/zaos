@@ -15,6 +15,9 @@ pub fn sys_close(process mut *process, ioring_ctx mut &ctx, i32 fd) -> result
   if (!file)
     return vfs::result::bad_descriptor;
 
+  if (file.parent)
+    vfs::notify(file.parent, file.node, vfs::notify::close_write);
+
   process.free_fd(fd);
 
   return 0;

@@ -62,7 +62,7 @@ pub struct f2dot14 : pub i16
     return &this;
   }
 
-  pub fn value(this&) -> f64
+  pub fn value(this &) -> f64
   {
     return cast<f64>(this.super) / 16384.0;
   }
@@ -86,7 +86,7 @@ pub struct f16dot16 : pub i32
     return &this;
   }
 
-  pub fn value(this&) -> f64
+  pub fn value(this &) -> f64
   {
     return cast<f64>(this.super) / 65536.0;
   }
@@ -103,12 +103,12 @@ pub struct rect
   pub i16 x_max;
   pub i16 y_max;
 
-  pub fn width(this&) -> i16
+  pub fn width(this &) -> i16
   {
     return this.x_max - this.x_min;
   }
 
-  pub fn height(this&) -> i16
+  pub fn height(this &) -> i16
   {
     return this.y_max - this.y_min;
   }
@@ -364,7 +364,7 @@ pub struct glyph
 
   pub std::span<u8> data;
 
-  pub fn type(this&) -> type
+  pub fn type(this &) -> type
   {
     if (this.number_of_contours < 0)
       return type::composite;
@@ -446,12 +446,12 @@ struct kerning_pair
   u32 pair;
   i16 value;
 
-  fn left(this&) -> glyphid
+  fn left(this &) -> glyphid
   {
     return cast<u16>((this.pair >> 16) & 0xffff);
   }
 
-  fn right(this&) -> glyphid
+  fn right(this &) -> glyphid
   {
     return cast<u16>((this.pair >> 0) & 0xffff);
   }
@@ -661,12 +661,12 @@ pub struct face
     return parse_face(std::span(data));
   }
 
-  pub fn units_per_em(this&) -> u16
+  pub fn units_per_em(this &) -> u16
   {
     return this.head.units_per_em;
   }
 
-  pub fn ascender(this&) -> i16
+  pub fn ascender(this &) -> i16
   {
     switch (this.os_2)
     {
@@ -678,7 +678,7 @@ pub struct face
     return this.hhea.ascender;
   }
 
-  pub fn descender(this&) -> i16
+  pub fn descender(this &) -> i16
   {
     switch (this.os_2)
     {
@@ -690,7 +690,7 @@ pub struct face
     return this.hhea.descender;
   }
 
-  pub fn leading(this&) -> i16
+  pub fn leading(this &) -> i16
   {
     switch (this.os_2)
     {
@@ -702,12 +702,12 @@ pub struct face
     return this.hhea.linegap;
   }
 
-  pub fn height(this&) -> i16
+  pub fn height(this &) -> i16
   {
     return this.ascender - this.descender;
   }
 
-  pub fn width(this&) -> width
+  pub fn width(this &) -> width
   {
     switch (this.os_2)
     {
@@ -718,7 +718,7 @@ pub struct face
     return width::normal;
   }
 
-  pub fn weight(this&) -> weight
+  pub fn weight(this &) -> weight
   {
     switch (this.os_2)
     {
@@ -729,7 +729,7 @@ pub struct face
     return weight::normal;
   }
 
-  pub fn style(this&) -> style
+  pub fn style(this &) -> style
   {
     switch (this.os_2)
     {
@@ -743,22 +743,22 @@ pub struct face
     return style::normal;
   }
 
-  pub fn advance(this&, glyphid id) -> u16
+  pub fn advance(this &, glyphid id) -> u16
   {
     return this.metric(id).advance_width;
   }
 
-  pub fn leftside_bearing(this&, glyphid id) -> i16
+  pub fn leftside_bearing(this &, glyphid id) -> i16
   {
     return this.metric(id).leftside_bearing;
   }
 
-  pub fn max_bounding_box(this&) -> rect
+  pub fn max_bounding_box(this &) -> rect
   {
     return this.head.bounding_box;
   }
 
-  pub fn number_of_glyphs(this&) -> u16
+  pub fn number_of_glyphs(this &) -> u16
   {
     return this.maxp.number_of_glyphs;
   }
@@ -1002,12 +1002,12 @@ struct view<T>
   {
   }
 
-  fn len(this&) -> usize
+  fn len(this &) -> usize
   {
     return this.data.len / sizeof<T>;
   }
 
-  fn [](this&, usize index) throws -> T
+  fn [](this &, usize index) throws -> T
   {
     if (this.data.len < index * sizeof<T> + sizeof<T>)
       throw errc::insufficient_data;
@@ -1027,7 +1027,7 @@ struct view<T>
     return true;
   }
 
-  fn lower_bound<Value, Cmp>(this&, Value &value, Cmp &cmp = std::less) throws -> usize
+  fn lower_bound<Value, Cmp>(this &, Value &value, Cmp &cmp = std::less) throws -> usize
     match (T u, Value v, Cmp cmp) { cmp(u, v); }
   {
     var lo = 0;

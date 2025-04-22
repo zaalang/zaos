@@ -1,0 +1,275 @@
+//
+// usb
+//
+
+import std.stdio;
+import usb.usbdev;
+import usb.transfer;
+import vm;
+import io;
+import support.rc : Rc;
+
+pub enum speed
+{
+  low_speed = 0,
+  full_speed,
+  high_speed,
+  super_speed,
+  super_speed_plus,
+}
+
+pub enum request
+{
+  pub enum direction
+  {
+    host_to_device = 0x00,
+    device_to_host = 0x80,
+  }
+
+  pub enum type
+  {
+    standard = 0x00,
+    klass = 0x20,
+    vendor = 0x40,
+  }
+
+  pub enum recipient
+  {
+    device = 0x00,
+    interface = 0x01,
+    endpoint = 0x02,
+    other = 0x03,
+  }
+
+  get_status = 0,
+  clear_feature = 1,
+  set_feature = 3,
+  set_address = 5,
+  get_descriptor = 6,
+  set_descriptor = 7,
+  get_configuration = 8,
+  set_configuration = 9,
+  get_interface = 10,
+  set_interface = 11,
+  synch_frame = 12,
+}
+
+pub enum endpoint
+{
+  pub enum type
+  {
+    control = 0,
+    isochronous = 1,
+    bulk = 2,
+    interrupt = 3
+  }
+
+  pub enum direction
+  {
+    out = 0,
+    in = 1,
+    bidirectional = 2
+  }
+}
+
+#[packed]
+pub struct descriptor
+{
+  pub enum type
+  {
+    pub const device = 0x01;
+    pub const configuration = 0x02;
+    pub const string = 0x03;
+    pub const interface = 0x04;
+    pub const endpoint = 0x05;
+    pub const hub = 0x29;
+    pub const endpoint_ss_companion = 0x30;
+  }
+
+  pub u8 length;
+  pub u8 descriptor_type;
+}
+
+#[packed]
+pub struct device_descriptor : pub descriptor
+{
+  pub u16 usb_bcd;
+  pub u8 device_class;
+  pub u8 device_subclass;
+  pub u8 device_protocol;
+  pub u8 max_packet_size_0;
+  pub u16 vendor_id;
+  pub u16 product_id;
+  pub u16 device_bcd;
+  pub u8 manufacturer;
+  pub u8 product;
+  pub u8 serial_number;
+  pub u8 number_configurations;
+}
+
+#[packed]
+pub struct configuration_descriptor : pub descriptor
+{
+  pub u16 total_length;
+  pub u8 number_interfaces;
+  pub u8 configuration_value;
+  pub u8 configuration;
+  pub u8 attributes;
+  pub u8 max_power;
+}
+
+#[packed]
+pub struct string_descriptor : pub descriptor
+{
+  pub u8[0] string;
+
+  pub fn str(this &) -> std::string_view
+  {
+    return std::string_view(this.string.data, cast<usize>(this.length - 2));
+  }
+}
+
+#[packed]
+pub struct interface_descriptor : pub descriptor
+{
+  pub u8 interface_number;
+  pub u8 alternate_setting;
+  pub u8 number_endpoints;
+  pub u8 interface_class;
+  pub u8 interface_subclass;
+  pub u8 interface_protocol;
+  pub u8 interface;
+}
+
+#[packed]
+pub struct endpoint_descriptor : pub descriptor
+{
+  pub u8 endpoint_address;
+  pub u8 attributes;
+  pub u16 max_packet_size;
+  pub u8 interval;
+
+  pub fn type(this &) -> endpoint::type
+  {
+    switch (this.attributes & 0x3)
+    {
+      case 0x0:
+        return control;
+
+      case 0x1:
+        return isochronous;
+
+      case 0x2:
+        return bulk;
+
+      case 0x3:
+        return interrupt;
+    }
+
+    std::panic();
+  }
+
+  pub fn direction(this &) -> endpoint::direction
+  {
+    switch ((this.endpoint_address & 0x80) | (this.attributes & 0x03))
+    {
+      case 0x00:
+      case 0x80:
+        return bidirectional;
+
+      case 0x01:
+      case 0x02:
+      case 0x03:
+        return out;
+
+      case 0x81:
+      case 0x82:
+      case 0x83:
+        return in;
+    }
+
+    std::panic();
+  }
+}
+
+#[packed]
+pub struct hub_descriptor
+{
+  pub u8 number_ports;
+  pub u16 characteristics;
+  pub u8 power_on_to_power_good;
+  pub u8 max_power;
+}
+
+#[packed]
+pub struct endpoint_ss_companion_descriptor
+{
+  pub u8 max_burst;
+  pub u8 attributes;
+  pub u16 bytes_per_interval;
+}
+
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, usb::request request, u16 value, u16 index, vm::iovec &buffer, usize offset, usize length) -> void
+{
+  var tx = transfer::create();
+  tx.type = transfer::type::control;
+  tx.address = cast<u8>(direction) | cast<u8>(type) | cast<u8>(recipient);
+  tx.request = cast<u8>(request);
+  tx.value = value;
+  tx.index = index;
+  tx.length = length;
+  tx.cb = cb;
+  tx.ref();
+
+  buffer.foreach_region_in(offset, length, |region| {
+    tx.host.push_back(region);
+  });
+
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
+}
+
+pub fn submit(usbdev mut *device, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, usb::request request, u16 value, u16 index, void mut *buffer, usize length) -> usb::result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(buffer, length), vm::protection::readwrite, &mut iovec); !result)
+    return cast(result);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  submit(device, &mut response.cb, direction, type, recipient, request, value, index, iovec, 0, length);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(response.result);
+}
+
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, vm::iovec &buffer, usize offset, usize length) -> void
+{
+  var tx = transfer::create();
+  tx.type = cast(type);
+  tx.address = address;
+  tx.length = length;
+  tx.cb = cb;
+  tx.ref();
+
+  buffer.foreach_region_in(offset, length, |region| {
+    tx.host.push_back(region);
+  });
+
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
+}
+
+pub fn complete(transfer mut *tx, result result) -> void
+{
+  io::complete(&mut tx.cb, result);
+
+  tx.cb = null;
+
+  tx.unref();
+}

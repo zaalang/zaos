@@ -105,12 +105,12 @@ pub struct dirent
   pub u16 name_len;
   pub u8[0] file_name;
 
-  pub fn name(this&) -> std::string_view
+  pub fn name(this &) -> std::string_view
   {
     return std::string_view(this.file_name.data, cast<usize>(this.name_len));
   }
 
-  pub fn type(this&) -> filetype
+  pub fn type(this &) -> filetype
   {
     return cast<filetype>(this.file_type);
   }
@@ -119,9 +119,4 @@ pub struct dirent
   {
     this.file_type = cast<u16>(type);
   }
-
-  pub dirent() = default;
-  pub dirent(dirent&) = default;
-  pub fn =(dirent mut &, dirent &) -> dirent mut & = default;
-  pub ~dirent() = default;
 }

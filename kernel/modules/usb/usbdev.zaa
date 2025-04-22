@@ -1,0 +1,92 @@
+//
+// usb dev
+//
+
+import std.atomic;
+import std.function;
+import usb.result;
+import usb.transfer;
+import support.rc : Rc;
+
+pub enum query
+{
+  device_name,
+}
+
+pub struct usbdev
+{
+  pub u16 max_packet_size;
+
+  pub fn create<T>(var && ...args) -> Rc<T>
+  {
+    var dev = std::allocator::new<T>(&&args...);
+
+    dev.destroy = fn (usbdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
+
+    return Rc(dev);
+  }
+
+  pub fn query(this &, usb::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(this, query, &mut result);
+
+    return result;
+  }
+
+  pub fn configure(this mut &, std::span<u8> descriptors) -> usb::result
+  {
+    return this.ops.configure(&mut this, descriptors);
+  }
+
+  pub fn submit(this mut &, usb::transfer mut *transfer) -> usb::result
+  {
+    return this.ops.submit(&mut this, transfer);
+  }
+
+  pub fn cancel(this mut &, usb::transfer mut *transfer) -> usb::result
+  {
+    return this.ops.cancel(&mut this, transfer);
+  }
+
+  pub std::delegate<() -> usb::result> unplugged;
+
+  pub usbdev(device_operations &ops)
+    : ops(&ops)
+  {
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub ~usbdev() = default;
+
+  i32 refcnt;
+  device_operations &ops;
+  fn (*destroy)(usbdev mut *) -> void;
+}
+
+pub vtable device_operations
+{
+  pub fn query(this &, usb::query query, std::string mut &result) -> usb::result;
+
+  pub fn configure(this mut &, std::span<u8> descriptors) -> usb::result;
+
+  pub fn submit(this mut &, usb::transfer mut *transfer) -> usb::result;
+  pub fn cancel(this mut &, usb::transfer mut *transfer) -> usb::result;
+}
+
+fn destroy(usbdev mut *device) -> void
+{
+  if (device.destroy)
+    device.destroy(device);
+}

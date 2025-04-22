@@ -41,37 +41,38 @@ struct winsize
 
 pub struct ptm : pub vfs::node
 {
-  chr::shared_ptr<pty::ptty> ptty;
+  Rc<pty::ptty> ptty;
 
-  pub fn create(chr::shared_ptr<pty::ptty> ptty) -> vfs::node_ptr
+  pub fn create(Rc<pty::ptty> &ptty) -> Rc<vfs::node>
   {
-    var ptm = std::allocator::new<ptm>();
-
-    ptm.ptty = &move ptty;
-
-    return vfs::node::new(ptm, vfs::node::type::device, vfs::node_device_operations());
+    return std::allocator::new<ptm>(ptty);
   }
 
-  pub ptm() = default;
+  pub ptm(Rc<pty::ptty> &&ptty)
+    : super(vfs::node::type::device, vfs::node_device_operations()),
+      ptty(&&ptty)
+  {
+  }
+
   pub ~ptm() = default;
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
 }
 
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
@@ -81,7 +82,7 @@ pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
@@ -107,7 +108,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   return cast(count);
 }
 
-pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
@@ -133,7 +134,7 @@ pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length)
   return cast(count);
 }
 
-pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result
+pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
@@ -175,7 +176,7 @@ pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result
   return not_supported;
 }
 
-pub fn mmap(vfs::node_ptr &node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
+pub fn mmap(vfs::node mut *node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
 {
   return not_supported;
 }

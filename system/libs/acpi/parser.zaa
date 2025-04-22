@@ -97,8 +97,12 @@ enum state
   sizeof_op,
   acquire_op,
   release_op,
+  stall_op,
   sleep_op,
+  timer_op,
+  fatal_op,
   return_op,
+  breakpoint_op,
   method_invocation,
   method_call,
   end_scope,
@@ -115,10 +119,11 @@ struct frame
   usize rip;
   usize rbp;
   usize rsp;
-  acpi::node node;
+  acpi::node *scope;
   std::span<u8> ret;
 
   frame() = default;
+  frame(frame &&) = default;
   ~frame() = default;
 }
 
@@ -178,7 +183,7 @@ struct context
   std::vector<target> targets;
   std::vector<acpi::node*> scopes;
   std::vector<(std::span<u8>, std::span<u8>)> blocks;
-  std::list<frame> frames;
+  std::vector<frame> frames;
   std::list<value> values;
 
   namespace mut &namespace;
@@ -254,14 +259,14 @@ struct context
     frame.rip = this.text.len;
     frame.rbp = this.blocks.len;
     frame.rsp = this.stack.len + (NARGS - argc);
-    frame.node.parent = scope;
+    frame.scope = std::allocator::new<acpi::node>(acpi::node::type::method, scope);
     frame.ret = ret;
 
     std::assert(this.stack.len + (NARGS - argc) + NLOCALS < this.stack.capacity, "stack exhausted");
 
     this.stack.resize(this.stack.len + (NARGS - argc) + NLOCALS);
 
-    this.push_scope(&frame.node);
+    this.push_scope(frame.scope);
   }
 
   fn pop_frame(this mut &) -> std::span<u8>
@@ -274,6 +279,8 @@ struct context
       this.push_value(value());
 
     this.stack.erase(this.frame.rsp - NARGS - 1, this.stack.len - (this.frame.rsp - NARGS));
+
+    std::allocator::delete(this.frame.scope);
 
     this.frames.pop_back();
 
@@ -1154,7 +1161,7 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
 
     case concat_op:
       is.drop_front!(1);
-      ctx.push_state(state::index_op);
+      ctx.push_state(state::concat_op);
       ctx.push_state(state::target);
       ctx.push_state(state::term_arg);
       ctx.push_state(state::term_arg);
@@ -1186,13 +1193,17 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
     case sizeof_op:
       is.drop_front!(1);
       ctx.push_state(state::sizeof_op);
-      ctx.push_state(state::target);
+      ctx.push_state(state::term_arg);
+
+    case timer_op:
+      is.drop_front!(2);
+      ctx.push_state(state::timer_op);
 
     case acquire_op:
       is.drop_front!(2);
       ctx.push_state(state::acquire_op);
       ctx.push_state(state::word_data);
-      ctx.push_state(state::target);
+      ctx.push_state(state::term_arg);
 
     case store_op:
     case copyobject_op:
@@ -1407,13 +1418,31 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
       is.drop_front!(2);
       ctx.push_state(state::term_list);
       ctx.push_state(state::release_op);
-      ctx.push_state(state::target);
+      ctx.push_state(state::term_arg);
+
+    case stall_op:
+      is.drop_front!(2);
+      ctx.push_state(state::term_list);
+      ctx.push_state(state::stall_op);
+      ctx.push_state(state::term_arg);
 
     case sleep_op:
       is.drop_front!(2);
       ctx.push_state(state::term_list);
       ctx.push_state(state::sleep_op);
       ctx.push_state(state::term_arg);
+
+    case fatal_op:
+      is.drop_front!(2);
+      ctx.push_state(state::term_list);
+      ctx.push_state(state::fatal_op);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::dword_data);
+      ctx.push_state(state::byte_data);
+
+    case breakpoint_op:
+      is.drop_front!(1);
+      ctx.push_state(state::term_list);
 
     case if_op:
       is.drop_front!(1);
@@ -1513,7 +1542,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
 
 fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value *value) -> result
 {
-  if (ctx.frames.len != 0 && node != &ctx.frame.node)
+  if (ctx.frames.len != 0 && node != ctx.frame.scope)
     return invalid_path;
 
   ctx.namespace.define(node, name, value);
@@ -1523,7 +1552,7 @@ fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value *value) 
 
 fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value &&value) -> result
 {
-  if (ctx.frames.len != 0 && node != &ctx.frame.node)
+  if (ctx.frames.len != 0 && node != ctx.frame.scope)
     return invalid_path;
 
   ctx.namespace.define(node, name, ctx.alloc(&move value));
@@ -2039,7 +2068,12 @@ fn define_mutex(context mut &ctx, std::span<u8> mut &is) -> result
   switch (resolve(ctx, &mut name))
   {
     case Some[node]:
-      ctx.namespace.define(node, name.span, value::mutex(flags));
+      var mutex = acpi::mutex();
+
+      if (var rc = ctx.namespace.create_mutex(flags, &mut mutex); !rc)
+        return rc;
+
+      ctx.namespace.define(node, name.span, value::mutex(mutex));
 
     else:
       return invalid_path;
@@ -2147,12 +2181,6 @@ fn create_field(context mut &ctx, std::span<u8> mut &is) -> result
 
   if (!sourcebuff.is_reference)
     return bad_value;
-//  {
-//    if (!ctx.namespace.to_buffer(&mut sourcebuff.value))
-//      return bad_value;
-//
-//    sourcebuff = operand::ref(ctx.add_value(&move sourcebuff.value));
-//  }
 
   switch (resolve(ctx, &mut name))
   {
@@ -2497,7 +2525,7 @@ fn index_op(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_value(value::reference(base.0, indicies));
 
     else:
-      std::panic();
+      return invalid_target;
   }
 
   if (var rc = store(&mut ctx, &mut is); !rc)
@@ -2807,27 +2835,71 @@ fn to_integer(context mut &ctx, std::span<u8> mut &is) -> result
 #[noinline]
 fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
-  var value = value();
+  var source = ctx.stack.take_back();
 
-  if (var rc = load(&mut ctx, ctx.targets.back, &mut value); !rc)
-    return rc;
+  if (source.is_value && source.value.is_reference)
+    source = operand::ref(source.value.reference);
 
-  switch (value)
+  if (!source.is_reference)
+    return bad_value;
+
+  switch (source.ref)
   {
-    case string[string]:
-      ctx.push_value(value(string.len));
+    case value[value]:
+      switch (*value)
+      {
+        case string[string]:
+          ctx.push_value(value(string.len));
 
-    case buffer[buffer]:
-      ctx.push_value(value(buffer.size));
+        case buffer[buffer]:
+          ctx.push_value(value(buffer.size));
 
-    case package[package]:
-      ctx.push_value(value(package.size));
+        case package[package]:
+          ctx.push_value(value(package.size));
+
+        else:
+          return bad_value;
+      }
+
+    case index[index]:
+      switch (*index.0)
+      {
+        case package[package]:
+          var package = &package;
+
+          for (var idx : index.1.drop_back(1))
+          {
+            if (idx >= package.elements.len)
+              return bad_access;
+
+            if (!package.elements[idx].is_package)
+              return bad_access;
+
+            package = &package.elements[idx].package;
+          }
+
+          switch (package.elements[index.1.back])
+          {
+            case string[string]:
+              ctx.push_value(value(string.len));
+
+            case buffer[buffer]:
+              ctx.push_value(value(buffer.size));
+
+            case package[package]:
+              ctx.push_value(value(package.size));
+
+            else:
+              return bad_value;
+          }
+
+        else:
+          return bad_value;
+      }
 
     else:
-      return bad_value;
+      return invalid_target;
   }
-
-  ctx.targets.pop_back();
 
   return ok;
 }
@@ -2836,24 +2908,18 @@ fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
 fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var timeout = ctx.stack.take_back().word;
+  var source = ctx.stack.take_back();
 
-  switch (ctx.targets.take_back())
+  if (!source.is_reference)
+    return bad_value;
+
+  switch (source.ref)
   {
-    case arg[idx]:
+    case value[value]:
+      if (!value.is_mutex)
+        return bad_value;
 
-      ctx.push_value(value::boolean(false));
-
-    case local[idx]:
-
-      ctx.push_value(value::boolean(false));
-
-    case name[name]:
-      var obj = lookup(ctx, name);
-
-      if (!obj)
-        return name_not_found;
-
-      ctx.push_value(value::boolean(false));
+      ctx.push_value(value::boolean(!ctx.namespace.try_lock(value.mutex, timeout)));
 
     else:
       return invalid_target;
@@ -2865,25 +2931,38 @@ fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
 #[noinline]
 fn release_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
-  switch (ctx.targets.take_back())
+  var source = ctx.stack.take_back();
+
+  if (!source.is_reference)
+    return bad_value;
+
+  switch (source.ref)
   {
-    case arg[idx]:
-      ;
+    case value[value]:
+      if (!value.is_mutex)
+        return bad_value;
 
-    case local[idx]:
-      ;
-
-    case name[name]:
-      var obj = lookup(ctx, name);
-
-      if (!obj)
-        return name_not_found;
-
-      ;
+      ctx.namespace.unlock(value.mutex);
 
     else:
       return invalid_target;
   }
+
+  return ok;
+}
+
+#[noinline]
+fn stall_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var period = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut period); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut period.value))
+    return bad_value;
+
+  ctx.namespace.sleep(1_000 * period.value.integer);
 
   return ok;
 }
@@ -2899,9 +2978,35 @@ fn sleep_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut period.value))
     return bad_value;
 
-  ctx.namespace.sleep(period.value);
+  ctx.namespace.sleep(1_000_000 * period.value.integer);
 
   return ok;
+}
+
+#[noinline]
+fn timer_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var now = u64();
+
+  if (var rc = ctx.namespace.timer(&mut now); !rc)
+    return rc;
+
+  ctx.push_value(value::integer(now));
+
+  return ok;
+}
+
+#[noinline]
+fn fatal_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var arg = ctx.stack.take_back();
+  var code = ctx.stack.take_back().dword;
+  var type = ctx.stack.take_back().byte;
+
+  if (var rc = load(&mut ctx, &mut arg); !rc)
+    return rc;
+
+  std::panic("acpi fatal: ", type, " ", code, " ", arg);
 }
 
 #[noinline]
@@ -2927,7 +3032,7 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
   switch (*obj?!)
   {
     case method[method]:
-      var argc = cast<usize>(method.flags & 0x3);
+      var argc = cast<usize>(method.flags & 0x7);
 
       ctx.push_state(state::method_call);
 
@@ -2937,7 +3042,7 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_operand(operand::callee(*obj?!));
 
     case callback[callback]:
-      var argc = cast<usize>(callback.flags & 0x3);
+      var argc = cast<usize>(callback.flags & 0x7);
 
       ctx.push_state(state::method_call);
 
@@ -3181,6 +3286,9 @@ fn end(context mut &ctx, std::span<u8> &is) -> result
     {
       case opregion[opregion]:
         ctx.namespace.close(opregion);
+
+      case mutex[mutex]:
+        ctx.namespace.destroy_mutex(mutex);
     }
   }
 
@@ -3476,9 +3584,24 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
         if (var rc = release_op(&mut ctx, &mut is); !rc)
           return rc;
 
+      case stall_op:
+
+        if (var rc = stall_op(&mut ctx, &mut is); !rc)
+          return rc;
+
       case sleep_op:
 
         if (var rc = sleep_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case timer_op:
+
+        if (var rc = timer_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case fatal_op:
+
+        if (var rc = fatal_op(&mut ctx, &mut is); !rc)
           return rc;
 
       case return_op:

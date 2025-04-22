@@ -50,7 +50,7 @@ struct nvme_regs
   u32 intms;
   u32 intmc;
   u32 cc;
-  u32 reserved0;
+  u32[1] reserved1;
   u32 csts;
   u32 nssr;
   u32 aqa;
@@ -58,7 +58,7 @@ struct nvme_regs
   physaddr acq;
   u32 cmbloc;
   u32 cmbsz;
-  u32[1008] reserved1;
+  u32[1008] reserved2;
 }
 
 enum cmd : u8
@@ -114,8 +114,8 @@ struct nvme_sqe
 {
   u32 cdw0;         // Command dword 0
   u32 nsid;         // Namespace Identifier
-  u32 reserved0;
   u32 reserved1;
+  u32 reserved2;
   physaddr mptr;    // Metadata Pointer
   physaddr[2] prpp; // Data Pointer
   u32[6] cdw;       // command-specific
@@ -344,7 +344,7 @@ pub struct queue
   controller mut &controller;
 }
 
-extern fn nvme_queue_handler(queue mut *queue) -> void
+fn nvme_queue_handler(queue mut *queue) -> void
 {
   var guard = std::lock_guard(&mut queue.lock);
 
@@ -387,7 +387,7 @@ extern fn nvme_queue_handler(queue mut *queue) -> void
   }
 }
 
-extern fn nvme_controller_handler(controller mut *controller) -> void
+fn nvme_controller_handler(controller mut *controller) -> void
 {
   nvme_queue_handler(controller.admin);
 
@@ -447,7 +447,7 @@ fn initialise(controller mut &controller) -> result
   if (var result = controller.enable(); !result)
     return result;
 
-  io::install_handler(irq, &cast<fn (controller mut *) -> void>(nvme_controller_handler), &controller);
+  io::install_handler(irq, &cast<(controller mut *) -> void>(nvme_controller_handler), &controller);
 
   var queue_entries = std::min(cast<u32>((cap >> cap::mqes_shift) & cap::mqes_mask + 1), 1024);
 
@@ -473,7 +473,7 @@ fn initialise(controller mut &controller) -> result
 
   for (var irq = controller.irqs.0; irq < controller.irqs.1; ++irq)
   {
-    io::install_handler(irq, &cast<fn (queue mut *) -> void>(nvme_queue_handler), controller.queues[cast<usize>(irq - controller.irqs.0)]);
+    io::install_handler(irq, &cast<(queue mut *) -> void>(nvme_queue_handler), controller.queues[cast<usize>(irq - controller.irqs.0)]);
   }
 
   if (controller.status.wait(); !controller.status)

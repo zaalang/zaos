@@ -1,0 +1,68 @@
+//
+// usb modules
+//
+
+import std.stdlib;
+import usb;
+import usb.usbdev;
+
+import usb.modules.hid as hid;
+
+pub fn probe(usb::usbdev mut *device) -> usb::result
+{
+  var buffer = std::vector<u8>::with_size(512);
+
+  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, buffer.data, sizeof<usb::device_descriptor>))
+    return io_error;
+
+  var device_descriptor = cast<usb::device_descriptor*>(buffer.data);
+
+  for (var config = 0; config < device_descriptor.number_configurations; ++config)
+  {
+    var buffer = std::vector<u8>::with_size(512);
+
+    if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, sizeof<usb::configuration_descriptor>))
+      return io_error;
+
+    var configuration = cast<usb::configuration_descriptor*>(buffer.data);
+
+    if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, cast(configuration.total_length)))
+      return io_error;
+
+    if (var result = device.configure(std::span(buffer.data, cast(configuration.total_length))); !result)
+      return result;
+
+    for (var offset = sizeof<usb::configuration_descriptor>; offset < cast(configuration.total_length); )
+    {
+      var start = offset;
+
+      for (offset += cast(buffer[offset]); offset < cast(configuration.total_length); )
+      {
+        if (buffer[offset + 1] == usb::descriptor::type::interface)
+          break;
+
+        offset += cast(buffer[offset]);
+      }
+
+      if (buffer[start + 1] != usb::descriptor::type::interface)
+        continue;
+
+      var interface = cast<usb::interface_descriptor*>(buffer.data + start);
+
+      if (interface.alternate_setting != 0)
+        continue;
+
+      switch (interface.interface_class)
+      {
+        case 3:
+          if (hid::initialise(device, std::span(buffer.data + start, buffer.data + offset)))
+            return ok;
+
+        else:
+          std::print("usb: unsupported interface class ", interface.interface_class);
+      }
+    }
+  }
+
+  return ok;
+}

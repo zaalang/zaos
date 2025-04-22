@@ -1,0 +1,294 @@
+//
+// vfs notify
+//
+
+import std.stdlib;
+import std.atomic;
+import vfs.node;
+import cpu;
+import mutex as _ : shared_mutex;
+import support.rc : Rc;
+
+pub enum notify
+{
+  pub const access = 0x1;
+  pub const attrib = 0x2;
+  pub const close_write = 0x4;
+  pub const close_nowrite = 0x8;
+  pub const mkdir = 0x10;
+  pub const create = 0x20;
+  pub const unlink = 0x40;
+  pub const modify = 0x100;
+  pub const moved = 0x400;
+  pub const rename = 0x1000;
+  pub const open = 0x2000;
+
+  pub const filesystem = 1 << 56;
+
+  pub const reserved = 1 << 63;
+}
+
+pub struct watcher
+{
+  u64 mask;
+  fn (*callback)(watcher *, u64, uintptr, uintptr, std::string_view) -> void;
+
+  watcher mut *next;
+  watcher mut * mut *prev;
+
+  Rc<watchlist> watchlist;
+
+  pub fn node(this &) -> vfs::node *
+  {
+    return this.watchlist.node;
+  }
+
+  pub watcher() = default;
+  pub ~watcher() = default;
+}
+
+pub struct watchlist
+{
+  shared_mutex lock;
+  vfs::node mut *node;
+  watcher mut *watchers;
+
+  fn create() -> watchlist mut *
+  {
+    return std::allocator::new<watchlist>();
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub watchlist() = default;
+  pub ~watchlist() = default;
+
+  i32 refcnt;
+}
+
+struct node_lock
+{
+  vfs::node mut *node;
+
+  const locked = 1 << 63;
+
+  pub fn lock(this mut &) -> void
+  {
+    for (;;)
+    {
+      if (std::atomic_or(&this.node.watching, locked, std::memory_order::acquire) & locked == 0)
+        break;
+    }
+  }
+
+  pub fn unlock(this mut &) -> void
+  {
+    std::atomic_and(&this.node.watching, ~locked, std::memory_order::release);
+  }
+
+  node_lock(vfs::node mut *node)
+    : node(node)
+  {
+  }
+
+  ~node_lock() = default;
+}
+
+fn grab_watchlist(watcher mut *watcher) -> watchlist mut *
+{
+  watcher.watchlist.lock.lock();
+
+  return watcher.watchlist;
+}
+
+fn grab_watchlist_shared(watcher mut *watcher) -> watchlist mut *
+{
+  watcher.watchlist.lock.lock_shared();
+
+  return watcher.watchlist;
+}
+
+fn grab_watchlist(vfs::node mut *node) -> watchlist mut *
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+
+  if (node.watchlist)
+    node.watchlist.lock.lock();
+
+  return node.watchlist;
+}
+
+fn grab_watchlist_shared(vfs::node mut *node) -> watchlist mut *
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+
+  if (node.watchlist)
+    node.watchlist.lock.lock_shared();
+
+  return node.watchlist;
+}
+
+fn attach_watchlist(vfs::node mut *node) -> bool
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+
+  if (!node.watchlist)
+  {
+    node.watchlist = watchlist::create();
+
+    node.watchlist.node = node;
+
+    return true;
+  }
+
+  return false;
+}
+
+fn detach_watchlist(vfs::node mut *node, watchlist mut *watchlist) -> bool
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+
+  if (node.watchlist == watchlist)
+  {
+    watchlist.node = null;
+    node.watchlist = null;
+
+    std::atomic_store(&node.watching, 0);
+
+    return true;
+  }
+
+  return false;
+}
+
+fn destroy(watchlist mut *watchlist) -> void
+{
+  std::allocator::delete(watchlist);
+}
+
+pub fn watch(vfs::node mut *node, watcher mut *watcher, fn (*callback)(watcher *, u64, uintptr, uintptr, std::string_view) -> void, u64 mask) -> void
+{
+  var watchlist = grab_watchlist(node);
+
+  for (; !watchlist; watchlist = grab_watchlist(node))
+    attach_watchlist(node);
+
+  std::atomic_or(&node.watching, mask);
+
+  if (!watcher.watchlist)
+  {
+    if (watchlist.watchers)
+      watchlist.watchers.prev = &watcher.next;
+
+    watcher.prev = &watchlist.watchers;
+    watcher.next = std::exchange(&mut watchlist.watchers, watcher);
+
+    watcher.watchlist = watchlist;
+  }
+
+  watcher.mask = mask;
+  watcher.callback = callback;
+
+  watchlist.lock.unlock();
+}
+
+pub fn unwatch(watcher mut *watcher) -> void
+{
+  var watchlist = grab_watchlist(watcher);
+
+  *watcher.prev = watcher.next;
+
+  if (watcher.next)
+    watcher.next.prev = watcher.prev;
+
+  if (watchlist.node)
+  {
+    if (watchlist.watchers)
+    {
+      var mask = 0;
+      for (var watcher = watchlist.watchers; watcher; watcher = watcher.next)
+        mask |= watcher.mask;
+
+      std::atomic_and(&watchlist.node.watching, ~watcher.mask | mask);
+    }
+    else
+    {
+      detach_watchlist(watchlist.node, watchlist);
+    }
+  }
+
+  watchlist.lock.unlock();
+
+  watcher.next = null;
+  watcher.prev = null;
+  watcher.watchlist = null;
+}
+
+pub fn unwatch(vfs::node mut *node) -> void
+{
+  if (std::volatile_load(&node.watching) == 0)
+    return;
+
+  var watchlist = grab_watchlist(node);
+
+  if (!watchlist)
+    return;
+
+  detach_watchlist(node, watchlist);
+
+  watchlist.lock.unlock();
+}
+
+fn notify(vfs::node mut *node, u64 mask, uintptr id, uintptr dir, std::string_view name) -> vfs::result
+{
+  var watchlist = grab_watchlist_shared(node);
+
+  if (!watchlist)
+    return ok;
+
+  for (var watcher = watchlist.watchers; watcher; watcher = watcher.next)
+  {
+    if (watcher.mask & mask != mask)
+      continue;
+
+    watcher.callback(watcher, mask, id, dir, name);
+  }
+
+  watchlist.lock.unlock_shared();
+
+  return ok;
+}
+
+pub fn notify(vfs::node mut *node, u64 mask, uintptr id = 0) -> vfs::result
+{
+  if (std::volatile_load(&node.watching) & mask != 0)
+  {
+    notify(node, mask, id, 0, std::string_view());
+  }
+
+  return ok;
+}
+
+pub fn notify(vfs::node mut *root, vfs::node mut *node, u64 mask, uintptr id, uintptr dir = 0, std::string_view name = std::string_view()) -> vfs::result
+{
+  if (std::volatile_load(&root.watching) & mask != 0)
+  {
+    notify(root, notify::filesystem | mask, id, dir, name);
+  }
+
+  if (std::volatile_load(&node.watching) & mask != 0)
+  {
+    notify(node, mask, id, dir, name);
+  }
+
+  return ok;
+}

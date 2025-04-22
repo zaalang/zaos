@@ -42,17 +42,17 @@ pub struct image
   {
   }
 
-  pub fn header(this&) -> fat_header *
+  pub fn header(this &) -> fat_header *
   {
     return cast<fat_header*>(this.data);
   }
 
-  pub fn header12(this&) -> fat12_header *
+  pub fn header12(this &) -> fat12_header *
   {
     return cast<fat12_header*>(this.data);
   }
 
-  pub fn header32(this&) -> fat32_header *
+  pub fn header32(this &) -> fat32_header *
   {
     return cast<fat32_header*>(this.data);
   }
@@ -79,7 +79,7 @@ pub struct image
     pub ~volume() = default;
   }
 
-  pub fn volume_info(this&) -> volume
+  pub fn volume_info(this &) -> volume
   {
     var vol = volume();
 
@@ -121,7 +121,7 @@ pub struct image
     return vol;
   }
 
-  pub fn fs_info(this&, volume &vol) -> fat32_fsinfo *
+  pub fn fs_info(this &, volume &vol) -> fat32_fsinfo *
   {
     return cast<fat32_fsinfo*>(cast<uintptr>(this.data) + cast<usize>(vol.fsinfo_sector * vol.bytes_per_sector));
   }
@@ -144,7 +144,7 @@ pub struct image
     u8 *base;
     u32 bytes_per_cluster;
 
-    pub fn mode(this&) -> u16
+    pub fn mode(this &) -> u16
     {
       switch (this.type)
       {
@@ -158,12 +158,12 @@ pub struct image
       return 0;
     }
 
-    pub fn atime(this&) -> u32 { return timestamp(this.dentry.last_access_date, 0, 0); }
-    pub fn ctime(this&) -> u32 { return timestamp(this.dentry.creation_date, this.dentry.creation_time, this.dentry.creation_time_tenths); }
-    pub fn mtime(this&) -> u32 { return timestamp(this.dentry.write_date, this.dentry.write_time, 0); }
+    pub fn atime(this &) -> u32 { return timestamp(this.dentry.last_access_date, 0, 0); }
+    pub fn ctime(this &) -> u32 { return timestamp(this.dentry.creation_date, this.dentry.creation_time, this.dentry.creation_time_tenths); }
+    pub fn mtime(this &) -> u32 { return timestamp(this.dentry.write_date, this.dentry.write_time, 0); }
 
-    pub fn cursor(this&) -> u32 { return this.cursor; }
-    pub fn filesize(this&) -> u32 { return this.dentry.filesize; }
+    pub fn cursor(this &) -> u32 { return this.cursor; }
+    pub fn filesize(this &) -> u32 { return this.dentry.filesize; }
 
     pub inode() = default;
     pub inode(inode&) = default;
@@ -191,7 +191,7 @@ pub struct image
     pub ~dentry() = default;
   }
 
-  pub fn root(this&) -> inode
+  pub fn root(this &) -> inode
   {
     var root = inode();
 

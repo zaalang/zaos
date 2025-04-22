@@ -53,8 +53,11 @@ image:
         - md:
             dest: /data
         - cp:
-            src: data/us.keymap
-            dest: /data/us.keymap
+            src: data/us.ps2.keymap
+            dest: /data/us.ps2.keymap
+        - cp:
+            src: data/us.hid.keymap
+            dest: /data/us.hid.keymap
         - cp:
             src: data/left_ptr
             dest: /data/left_ptr
@@ -120,6 +123,9 @@ image:
         - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco
+        - cp:
+            src: build/system/servers/test/test
+            dest: /srv/test
         - md:
             dest: /bin
         - cp:
@@ -134,6 +140,21 @@ image:
         - cp:
             src: build/system/apps/binutils/cat
             dest: /bin/cat
+        - cp:
+            src: build/system/apps/binutils/mkdir
+            dest: /bin/mkdir
+        - cp:
+            src: build/system/apps/binutils/touch
+            dest: /bin/touch
+        - cp:
+            src: build/system/apps/binutils/rm
+            dest: /bin/rm
+        - cp:
+            src: build/system/apps/binutils/cp
+            dest: /bin/cp
+        - cp:
+            src: build/system/apps/binutils/mv
+            dest: /bin/mv
         - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar

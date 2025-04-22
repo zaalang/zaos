@@ -9,7 +9,7 @@ import vfs;
 import process as _ : process;
 import result as _ : result;
 
-pub fn sys_symlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr pathbuf, usize pathlen, virtaddr targetbuf, usize targetlen, u64 flags) -> result
+pub fn sys_symlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize pathlen, virtaddr pathbuf, usize targetlen, virtaddr targetbuf, u64 flags) -> result
 {
   if (pathbuf == 0 || pathlen == 0)
     return invalid_argument;
@@ -47,8 +47,12 @@ pub fn sys_symlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtadd
   if (!base)
     return vfs::result::invalid_argument;
 
-  if (var result = vfs::symlink(base, vfs::basename(path), target, &mut node, 0, 0, 0o777); !result)
+  var name = vfs::basename(path);
+
+  if (var result = vfs::symlink(base, name, target, &mut node, 0, 0, 0o777); !result)
     return result;
+
+  vfs::notify(base, node, vfs::notify::create, name);
 
   return ok;
 }

@@ -42,7 +42,7 @@ pub struct image
     ctx.written += std::print_to(os, *header.shdr);
   }
 
-  pub fn data(this&, section_header &header) -> std::span<u8>
+  pub fn data(this &, section_header &header) -> std::span<u8>
   {
     var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(header.shdr.sh_offset));
 
@@ -52,7 +52,7 @@ pub struct image
     return std::span(data, cast(header.shdr.sh_size));
   }
 
-  pub fn get_string(this&, section_header &table, u32 offset) -> std::string_view
+  pub fn get_string(this &, section_header &table, u32 offset) -> std::string_view
   {
     var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(table.shdr.sh_offset + cast(offset)));
 
@@ -93,12 +93,12 @@ pub struct image
     elf::elf64_shdr *shdr;
   }
 
-  pub fn [](this&, section_header_iterator iter) -> section_header
+  pub fn [](this &, section_header_iterator iter) -> section_header
   {
     return section_header(iter.shdr);
   }
 
-  pub fn section_headers(this&)
+  pub fn section_headers(this &)
   {
     var beg = cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff));
     var end = cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff + cast(this.ehdr.e_shnum * this.ehdr.e_shentsize)));
@@ -106,12 +106,12 @@ pub struct image
     return std::range_view(&this, section_header_iterator(this.ehdr, beg), section_header_iterator(this.ehdr, end));
   }
 
-  pub fn section(this&, usize index) -> section_header
+  pub fn section(this &, usize index) -> section_header
   {
     return section_header(cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff) + index * cast(this.ehdr.e_shentsize)));
   }
 
-  pub fn section_string_table(this&)
+  pub fn section_string_table(this &)
   {
     return section_header(cast<elf::elf64_shdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_shoff) + cast(this.ehdr.e_shstrndx * this.ehdr.e_shentsize)));
   }
@@ -133,7 +133,7 @@ pub struct image
     ctx.written += std::print_to(os, *header.phdr);
   }
 
-  pub fn data(this&, program_header &header) -> std::span<u8>
+  pub fn data(this &, program_header &header) -> std::span<u8>
   {
     var data = cast<u8*>(cast<uintptr>(this.ehdr) + cast(header.phdr.p_offset));
 
@@ -171,12 +171,12 @@ pub struct image
     elf::elf64_phdr *phdr;
   }
 
-  pub fn [](this&, program_header_iterator iter) -> program_header
+  pub fn [](this &, program_header_iterator iter) -> program_header
   {
     return program_header(iter.phdr);
   }
 
-  pub fn program_headers(this&)
+  pub fn program_headers(this &)
   {
     var beg = cast<elf::elf64_phdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_phoff));
     var end = cast<elf::elf64_phdr*>(cast<uintptr>(this.ehdr) + cast(this.ehdr.e_phoff + cast(this.ehdr.e_phnum * this.ehdr.e_phentsize)));

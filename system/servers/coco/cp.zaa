@@ -77,7 +77,7 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
           continue;
         }
 
-        terminal.write(std::format("cp: error on write src - {}\n", std::errc(cast(-dstres))));
+        terminal.write(std::format("cp: error on write dst - {}\n", std::errc(cast(-dstres))));
 
         close(&mut thread_ring, fin);
         close(&mut thread_ring, fout);

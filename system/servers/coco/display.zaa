@@ -31,8 +31,8 @@ pub struct display
   screeninfo si;
   std::mutable_span<u8> fb;
 
-  pub fn width(this&) { return cast<int>(this.si.width); }
-  pub fn height(this&) { return cast<int>(this.si.height); }
+  pub fn width(this &) { return cast<int>(this.si.width); }
+  pub fn height(this &) { return cast<int>(this.si.height); }
 
   display() = default;
   pub ~display() = default;

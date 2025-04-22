@@ -14,15 +14,13 @@ import sys;
 import cpu;
 import vm : virtaddr, physaddr, virtrange, physrange;
 import scheduler;
+import heap;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import process as _ : process;
 import semaphore as _ : semaphore;
-import support.lockcell : LockCell;
 import platform : PHYSICAL_BASE;
 import cfg.acpi.registers : acpi_read_register, acpi_write_register;
-
-const MEMORY_SPACE = 0xffffa00000000000;
 
 pub struct namespace
 {
@@ -83,21 +81,11 @@ pub struct namespace
     ~region() = default;
   }
 
-  uintptr heaptop = MEMORY_SPACE;
+  std::flat_hash_map<acpi::opregion*, region> regions;
 
-  LockCell<std::flat_hash_map<acpi::opregion*, region>> regions;
-
-  fn sbrk(this mut &, usize size) -> vm::virtrange
+  fn region_open(acpi::namespace mut &ns, acpi::opregion *opregion) -> region
   {
-    var base = this.heaptop;
-    this.heaptop = std::align_up(this.heaptop + size, 65536);
-
-    return virtrange(base, size);
-  }
-
-  fn open(acpi::namespace mut &ns, acpi::opregion *opregion) -> region
-  {
-    var regions = instance.regions.lock();
+    var mut &regions = instance.regions;
 
     if (var region = regions.get(opregion))
       return region.value;
@@ -106,11 +94,7 @@ pub struct namespace
     {
       case acpi::opregion::space::system_memory:
 
-        var range = instance.sbrk(cast<usize>(opregion.length));
-        var pages = std::vector<physrange, N:1>::from([ physrange(cast<uintptr>(opregion.base), cast<usize>(opregion.length)) ]);
-
-        if (var result = vm::create_physical_region(range, pages, vm::protection::readwrite, vm::usage::shared | vm::usage::foreign); !result)
-          std::panic("acpi_bad_memmap");
+        var range = heap::mmap(physrange(cast<uintptr>(opregion.base), cast<usize>(opregion.length)));
 
         if (var result = vm::set_memory_type(range, vm::mtype::uncached); !result)
           std::panic("acpi_bad_memtype");
@@ -166,9 +150,9 @@ pub struct namespace
     }
   }
 
-  fn read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
+  fn region_read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
   {
-    switch (open(&mut ns, opregion))
+    switch (region_open(&mut ns, opregion))
     {
       case system_memory[region]:
 
@@ -237,9 +221,9 @@ pub struct namespace
     return ok;
   }
 
-  fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
+  fn region_write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
   {
-    switch (open(&mut ns, opregion))
+    switch (region_open(&mut ns, opregion))
     {
       case system_memory[region]:
 
@@ -308,16 +292,14 @@ pub struct namespace
     return ok;
   }
 
-  fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
+  fn region_close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
   {
-    var regions = instance.regions.lock();
+    var mut &regions = instance.regions;
 
     switch (regions[opregion])
     {
       case system_memory[region]:
-
-        if (var result = vm::munmap(region.range); !result)
-          std::panic("acpi_bad_munmap");
+        heap::munmap(region.range);
     }
 
     regions.erase(opregion);
@@ -390,10 +372,13 @@ pub struct namespace
     if (cfg.events.len < idx)
       return invalid_target;
 
-    return gpe_enable(&mut cfg, idx, gpe_event::gpe_handler::method(handler));
+    if (var rc = gpe_enable(&mut cfg, idx, gpe_event::gpe_handler::method(handler)); !rc)
+      return rc;
+
+    return ok;
   }
 
-  fn gpe_disable(this mut &cfg, usize idx) -> acpi::result
+  pub fn gpe_disable(this mut &cfg, usize idx) -> acpi::result
   {
     var enable = 0;
     if (var rc = acpi_read_register(cfg.registers[idx >> 3].enable, &mut enable); !rc)
@@ -405,6 +390,40 @@ pub struct namespace
     return ok;
   }
 
+  fn thread_getid(acpi::namespace mut &namespace, u32 mut &id) -> acpi::result
+  {
+    id = cast(thread::current.id);
+
+    return ok;
+  }
+
+  fn clock_gettime(acpi::namespace mut &namespace, u64 mut &clock) -> acpi::result
+  {
+    clock = __rdtsc();
+
+    return ok;
+  }
+
+  fn mutex_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result
+  {
+    return ok;
+  }
+
+  fn mutex_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result
+  {
+    return ok;
+  }
+
+  fn mutex_acquire(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result
+  {
+    return ok;
+  }
+
+  fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result
+  {
+    return ok;
+  }
+
   fn notify(acpi::namespace mut &ns, acpi::node *node, acpi::value &value) -> acpi::result
   {
     std::print("acpi: notify ", ns.pathname(node), " : ", value);
@@ -412,15 +431,15 @@ pub struct namespace
     return ok;
   }
 
-  fn sleep(acpi::namespace mut &ns, acpi::value &period) -> acpi::result
+  fn sleep(acpi::namespace mut &ns, u64 period) -> acpi::result
   {
-    scheduler::sleep_until(cpu::system_time + 1_000_000 * period.integer);
+    scheduler::sleep_until(cpu::system_time + period);
 
     return ok;
   }
 
-  semaphore doorbell;
-  thread mut *electrician;
+  thread mut *event_handler;
+  semaphore event_handler_doorbell;
 
   pub fn instance()
   {
@@ -504,16 +523,14 @@ fn acpi_reset(acpi::fadt *fadt) -> acpi::result
   return ok;
 }
 
-extern fn acpi_sci_handler(namespace mut *cfg) -> void
+fn acpi_sci_handler(namespace mut *cfg) -> void
 {
-  cfg.doorbell.release();
+  cfg.event_handler_doorbell.release();
 }
 
-fn electrician(void*) -> void
+fn acpi_event_handler(namespace mut *cfg) -> void
 {
-  var mut &cfg = namespace::instance;
-
-  while (true)
+  for (;;)
   {
     var status = 0;
     if (var rc = acpi_read_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, &mut status); !rc)
@@ -562,7 +579,7 @@ fn electrician(void*) -> void
       }
     }
 
-    cfg.doorbell.wait();
+    cfg.event_handler_doorbell.wait();
   }
 }
 
@@ -635,7 +652,7 @@ pub fn initialise(namespace mut &cfg) -> acpi::result
 
   cfg.events.resize(cfg.registers.len * 8);
 
-  cfg.electrician = create_thread(process::current, &cast<fn (void mut *) -> void>(electrician), null);
+  cfg.event_handler = create_thread(process::current, &cast<(namespace mut *) -> void>(acpi_event_handler), &cfg);
 
   return ok;
 }
@@ -646,7 +663,7 @@ pub fn configure(namespace mut &cfg) -> acpi::result
 
   var irq = ioapic::resolve(cast<u32>(cfg.fadt.sci_interrupt));
 
-  io::install_handler(irq, &cast<fn (namespace mut *) -> void>(acpi_sci_handler), &cfg);
+  io::install_handler(irq, &cast<(namespace mut *) -> void>(acpi_sci_handler), &cfg);
 
   if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
     return rc;
@@ -673,7 +690,7 @@ pub fn configure(namespace mut &cfg) -> acpi::result
 
 pub fn enable(namespace mut &cfg) -> acpi::result
 {
-  scheduler::enqueue(cfg.electrician);
+  scheduler::enqueue(cfg.event_handler);
 
   return ok;
 }

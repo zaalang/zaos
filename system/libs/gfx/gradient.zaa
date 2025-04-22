@@ -29,7 +29,7 @@ pub struct gradient
 {
   std::vector<color_stop, N:2> stops;
 
-  pub fn stops(this&)
+  pub fn stops(this &)
   {
     return &this.stops;
   }

@@ -5,6 +5,7 @@
 import std.string;
 import vfs.fd;
 import vfs.stat;
+import vfs.notify;
 import vfs.result;
 import blk;
 import io;
@@ -22,17 +23,123 @@ pub struct node
     symlink,
     volume,
     device,
-    ioring,
+    watchset,
     pollset,
+    ioring,
     event,
     buffer,
     channel,
     //socket,
   }
 
-  type type;
-  node_ptr covers;
-  node_ptr covered;
+  pub type type;
+  pub Rc<node> covers;
+  pub Rc<node> covered;
+
+  pub u64 watching;
+  pub Rc<vfs::watchlist> watchlist;
+
+  pub fn is_file(this &) -> bool
+  {
+    return this.type == node::type::file;
+  }
+
+  pub fn is_directory(this &) -> bool
+  {
+    return this.type == node::type::directory;
+  }
+
+  pub fn is_symlink(this &) -> bool
+  {
+    return this.type == node::type::symlink;
+  }
+
+  pub fn is_volume(this &) -> bool
+  {
+    return this.type == node::type::volume;
+  }
+
+  pub fn is_device(this &) -> bool
+  {
+    return this.type == node::type::device;
+  }
+
+  pub fn is_watchset(this &) -> bool
+  {
+    return this.type == node::type::watchset;
+  }
+
+  pub fn is_pollset(this &) -> bool
+  {
+    return this.type == node::type::pollset;
+  }
+
+  pub fn is_ioring(this &) -> bool
+  {
+    return this.type == node::type::ioring;
+  }
+
+  pub fn is_event(this &) -> bool
+  {
+    return this.type == node::type::event;
+  }
+
+  pub fn is_buffer(this &) -> bool
+  {
+    return this.type == node::type::buffer;
+  }
+
+  pub fn is_channel(this &) -> bool
+  {
+    return this.type == node::type::channel;
+  }
+
+  pub fn node_operations(this &) -> node_operations *
+  {
+    return this.ops;
+  }
+
+  pub fn file_operations(this &) -> node_file_operations *
+  {
+    std::assert(is_file(this) || is_volume(this));
+
+    return cast<node_file_operations*>(this.ops);
+  }
+
+  pub fn directory_operations(this &) -> node_directory_operations *
+  {
+    std::assert(is_directory(this));
+
+    return cast<node_directory_operations*>(this.ops);
+  }
+
+  pub fn symlink_operations(this &) -> node_symlink_operations *
+  {
+    std::assert(is_symlink(this));
+
+    return cast<node_symlink_operations*>(this.ops);
+  }
+
+  pub fn volume_operations(this &) -> node_volume_operations *
+  {
+    std::assert(is_volume(this));
+
+    return cast<node_volume_operations*>(this.ops);
+  }
+
+  pub fn stream_operations(this &) -> node_stream_operations *
+  {
+    std::assert(is_event(this) || is_buffer(this) || is_channel(this) || is_device(this) || is_watchset(this) || is_pollset(this) || is_ioring(this));
+
+    return cast<node_stream_operations*>(this.ops);
+  }
+
+  pub fn device_operations(this &) -> node_device_operations *
+  {
+    std::assert(is_device(this));
+
+    return cast<node_device_operations*>(this.ops);
+  }
 
   pub fn ref(this mut &) -> void
   {
@@ -50,12 +157,12 @@ pub struct node
   {
   }
 
-  pub fn new(node mut *this, type type, node_operations &ops) -> vfs::node_ptr
+  pub fn new(node mut *this, type type, node_operations &ops) -> Rc<node>
   {
     this.type = type;
     this.ops = &ops;
 
-    return vfs::node_ptr(this);
+    return Rc(this);
   }
 
   pub node() = default;
@@ -67,183 +174,60 @@ pub struct node
 
 pub vtable node_operations
 {
-  pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result;
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result;
 
-  pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result;
-  pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result;
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result;
 
   fn destroy(vfs::node mut *node) -> void;
 }
 
 pub vtable node_file_operations : node_operations
 {
-  pub fn read(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
-  pub fn write(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
 }
 
 pub vtable node_directory_operations : node_operations
 {
-  pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr;
-  pub fn create(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
-  pub fn symlink(vfs::node_ptr &path, std::string_view name, std::string_view target, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
-  pub fn mkdir(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
-  pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &newpath, std::string_view newname) -> vfs::result;
-  pub fn link(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &newpath, std::string_view newname) -> vfs::result;
-  pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
-  pub fn unlink(vfs::node_ptr &path, std::string_view name) -> vfs::result;
+  pub fn lookup(vfs::node mut *path, std::string_view name) -> Rc<vfs::node>;
+  pub fn create(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
+  pub fn symlink(vfs::node mut *path, std::string_view name, std::string_view target, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
+  pub fn mkdir(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
+  pub fn rename(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result;
+  pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result;
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn unlink(vfs::node mut *path, std::string_view name) -> vfs::result;
+  pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_view name) -> vfs::result;
 }
 
 pub vtable node_symlink_operations : node_operations
 {
-  pub fn readlink(vfs::node_ptr &node, std::string mut &buffer) -> vfs::result;
+  pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result;
 }
 
 pub vtable node_volume_operations : node_file_operations
 {
-  pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result;
+  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result;
 }
 
 pub vtable node_stream_operations : node_operations
 {
-  pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result;
-  pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
-  pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result;
+  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
 }
 
 pub vtable node_device_operations : node_stream_operations
 {
-  pub fn ioctl(vfs::node_ptr &node, u32 op, vm::iovec &buffer) -> vfs::result;
-  pub fn mmap(vfs::node_ptr &node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result;
-}
-
-pub struct node_ptr : pub Rc<node>
-{
-  pub fn type(this&) -> node::type
-  {
-    return (*this).type;
-  }
-
-  pub fn is_file(this&) -> bool
-  {
-    return (*this).type == node::type::file;
-  }
-
-  pub fn is_directory(this&) -> bool
-  {
-    return (*this).type == node::type::directory;
-  }
-
-  pub fn is_symlink(this&) -> bool
-  {
-    return (*this).type == node::type::symlink;
-  }
-
-  pub fn is_volume(this&) -> bool
-  {
-    return (*this).type == node::type::volume;
-  }
-
-  pub fn is_device(this&) -> bool
-  {
-    return (*this).type == node::type::device;
-  }
-
-  pub fn is_ioring(this&) -> bool
-  {
-    return (*this).type == node::type::ioring;
-  }
-
-  pub fn is_pollset(this&) -> bool
-  {
-    return (*this).type == node::type::pollset;
-  }
-
-  pub fn is_event(this&) -> bool
-  {
-    return (*this).type == node::type::event;
-  }
-
-  pub fn is_buffer(this&) -> bool
-  {
-    return (*this).type == node::type::buffer;
-  }
-
-  pub fn is_channel(this&) -> bool
-  {
-    return (*this).type == node::type::channel;
-  }
-
-  pub fn node_operations(this&) -> node_operations *
-  {
-    return (*this).ops;
-  }
-
-  pub fn file_operations(this&) -> node_file_operations *
-  {
-    std::assert(is_file(this) || is_volume(this));
-
-    return cast<node_file_operations*>((*this).ops);
-  }
-
-  pub fn directory_operations(this&) -> node_directory_operations *
-  {
-    std::assert(is_directory(this));
-
-    return cast<node_directory_operations*>((*this).ops);
-  }
-
-  pub fn symlink_operations(this&) -> node_symlink_operations *
-  {
-    std::assert(is_symlink(this));
-
-    return cast<node_symlink_operations*>((*this).ops);
-  }
-
-  pub fn volume_operations(this&) -> node_volume_operations *
-  {
-    std::assert(is_volume(this));
-
-    return cast<node_volume_operations*>((*this).ops);
-  }
-
-  pub fn stream_operations(this&) -> node_stream_operations *
-  {
-    std::assert(is_event(this) || is_buffer(this) || is_channel(this) || is_device(this));
-
-    return cast<node_stream_operations*>((*this).ops);
-  }
-
-  pub fn device_operations(this&) -> node_device_operations *
-  {
-    std::assert(is_device(this));
-
-    return cast<node_device_operations*>((*this).ops);
-  }
-
-  pub fn covers(this &&)
-  {
-    return &(*this).covers;
-  }
-
-  pub fn covered(this &&)
-  {
-    return &(*this).covered;
-  }
-
-  pub node_ptr(node mut *inner)
-    : super(inner)
-  {
-  }
-
-  pub node_ptr() = default;
-  pub node_ptr(node_ptr &&other) = default;
-  pub fn =(node_ptr mut &lhs, node_ptr &&rhs) -> node_ptr mut & = default;
-  pub node_ptr(#node_ptr&) = default;
-  pub ~node_ptr() = default;
+  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result;
+  pub fn mmap(vfs::node mut *node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result;
 }
 
 fn destroy(node mut *node) -> void
 {
+  vfs::unwatch(node);
+
   blk::purge(node);
 
   node.ops.destroy(node);

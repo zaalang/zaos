@@ -58,12 +58,16 @@ pub enum button
 pub struct mouse
 {
   pub Button[32] buttons;
+  pub f64[6] calibration;
 
   pub mouse()
   {
     buttons[button::left - 0x100] = Button::Primary;
     buttons[button::right - 0x100] = Button::Secondary;
     buttons[button::middle - 0x100] = Button::Middle;
+
+    calibration[0] = 1.0 / 65535.0;
+    calibration[4] = 1.0 / 65535.0;
   }
 
   pub mouse(mouse&) = default;

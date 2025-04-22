@@ -5,6 +5,7 @@
 import std.stdio;
 import std.string;
 import vfs.node;
+import support.rc : Rc;
 
 pub struct file_system
 {
@@ -20,7 +21,7 @@ pub struct file_system
 
 pub struct file_system_context
 {
-  pub vfs::node_ptr source;
+  pub Rc<vfs::node> source;
 
   pub file_system_context() = default;
   pub ~file_system_context() = default;
@@ -34,5 +35,5 @@ pub vtable file_system_type
 
 pub vtable file_system_operations
 {
-  pub fn mount(this mut *fs, vfs::node_ptr mut &dentry) -> vfs::result;
+  pub fn mount(this mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result;
 }

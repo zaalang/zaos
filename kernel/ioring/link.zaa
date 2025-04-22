@@ -9,7 +9,7 @@ import vfs;
 import process as _ : process;
 import result as _ : result;
 
-pub fn sys_link(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, virtaddr oldpathbuf, usize oldpathlen, i32 newdirfd, virtaddr newpathbuf, usize newpathlen, u64 flags) -> result
+pub fn sys_link(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, usize oldpathlen, virtaddr oldpathbuf, i32 newdirfd, usize newpathlen, virtaddr newpathbuf, u64 flags) -> result
 {
   return not_implemented;
 }

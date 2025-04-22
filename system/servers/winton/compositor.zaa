@@ -115,7 +115,7 @@ struct buffer
   usize size;
   u8 mut *data;
 
-  pub fn bound(this&) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
+  pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   ~buffer()
   {
@@ -1382,6 +1382,8 @@ fn pointer_motion(compositor mut *compositor, u64 time, vec2 position) -> void
   var oldpos = pointer.position;
 
   pointer.position = clamp(&move position, compositor.display.bound);
+  pointer.position.x = std::floor(pointer.position.x + 0.5);
+  pointer.position.y = std::floor(pointer.position.y + 0.5);
 
   if (pointer.pressed_count == 0)
   {
@@ -1657,14 +1659,17 @@ fn input_handler(compositor mut *compositor, input::event &event) -> void
     case keyboard_key[evt]:
       keyboard_key(compositor, evt.time, cast(evt.key), cast(evt.state), evt.sym);
 
-    case pointer_motion[evt]:
-      pointer_motion(compositor, evt.time, vec2(compositor.pointer.position.x + cast(evt.dx), compositor.pointer.position.y - cast(evt.dy)));
+    case pointer_motion_rel[evt]:
+      pointer_motion(compositor, evt.time, vec2(compositor.pointer.position.x + cast(evt.x), compositor.pointer.position.y - cast(evt.y)));
+
+    case pointer_motion_abs[evt]:
+      pointer_motion(compositor, evt.time, vec2(cast<f32>(compositor.display.width) * cast(evt.x), cast<f32>(compositor.display.height) * cast(evt.y)));
 
     case pointer_button[evt]:
       pointer_button(compositor, evt.time, cast(evt.button), cast(evt.state));
 
     case pointer_wheel[evt]:
-      pointer_wheel(compositor, evt.time, cast(evt.dx), cast(evt.dy));
+      pointer_wheel(compositor, evt.time, cast(evt.x), cast(evt.y));
   }
 }
 

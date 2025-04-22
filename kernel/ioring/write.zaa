@@ -81,11 +81,19 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
 
       file.writecursor = position;
 
+      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+        return result;
+
+      vfs::notify(file.parent, file.node, vfs::notify::modify);
+
       return cast<i32>(count);
 
     case vfs::node::type::event:
     case vfs::node::type::buffer:
     case vfs::node::type::channel:
+    case vfs::node::type::watchset:
+    case vfs::node::type::pollset:
+    case vfs::node::type::ioring:
     case vfs::node::type::device:
       return node.stream_operations.write(node, iovec, 0, length);
 

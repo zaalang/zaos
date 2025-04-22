@@ -9,6 +9,11 @@ LIBS := -lzrt
 BINS=\
 $(BUILD)/ls\
 $(BUILD)/cat\
+$(BUILD)/mkdir\
+$(BUILD)/touch\
+$(BUILD)/rm\
+$(BUILD)/cp\
+$(BUILD)/mv\
 
 default: $(BINS)
 

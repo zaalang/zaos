@@ -129,7 +129,7 @@ fn exit_boot_services(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable)
   var DescriptorSize = usize();
   var DescriptorVersion = u32();
 
-  while (true)
+  for (;;)
   {
     MemoryMapSize = memorylen;
     SystemTable.BootServices.GetMemoryMap(&MemoryMapSize, MemoryMap, &MapKey, &DescriptorSize, &DescriptorVersion);

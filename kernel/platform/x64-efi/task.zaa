@@ -3,6 +3,7 @@
 //
 
 import std.stdlib;
+import std.span : Span;
 import platform.x64-efi.cpu as cpu;
 
 pub struct task
@@ -93,7 +94,7 @@ pub fn task_self() -> task mut *
   return cast<task mut *>(cpu::gsbase() - sizeof<typeof(task::kernel_stack)>);
 }
 
-pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback)
+pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback) -> void
 {
   fn trampoline(void mut *callback) -> void
   {
@@ -106,6 +107,11 @@ pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback)
   platform_task_on_stack(&callback, cast<fn (*)(void mut *) -> void>(trampoline), base + size);
 
   task_self.tp = tp;
+}
+
+pub fn on_stack<Callback>(Span<u8> mut &stack, Callback &&callback) -> void
+{
+  on_stack(stack.data, stack.len, &&callback);
 }
 
 extern fn platform_task_fork(uintptr mut &sp, uintptr ip, void mut *data) -> void;

@@ -62,12 +62,12 @@ pub struct handle
     return &this;
   }
 
-  pub fn fd(this&) -> i32
+  pub fn fd(this &) -> i32
   {
     return this.fd;
   }
 
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return this.fd != ~0;
   }

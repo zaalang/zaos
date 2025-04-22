@@ -178,7 +178,7 @@ struct msg_queue
 
     var index = 0;
 
-    while (true)
+    for (;;)
     {
       index = std::volatile_load(&this.writetail);
 
@@ -191,7 +191,7 @@ struct msg_queue
 
     this.messages[index].delegate = &move delegate;
 
-    while (true)
+    for (;;)
     {
       if (std::atomic_cmpxchg_weak(&this.writehead, index, (index + 1) & (this.messages.len - 1)))
         break;
@@ -204,7 +204,7 @@ struct msg_queue
   {
     var index = 0;
 
-    while (true)
+    for (;;)
     {
       index = std::volatile_load(&this.readtail);
 
@@ -217,7 +217,7 @@ struct msg_queue
 
     delegate = &move this.messages[index].delegate;
 
-    while (true)
+    for (;;)
     {
       if (std::atomic_cmpxchg_weak(&this.readhead, index, (index + 1) & (this.messages.len - 1)))
         break;
@@ -243,7 +243,7 @@ extern fn ipi() -> void
 
 pub fn unicast_ipi_message<Callback>(int cpu, Callback &&callback) -> bool
 {
-  if (!sys.ipiqueue[cast(cpu)].push(&move std::delegate<() -> void>(callback)))
+  if (!sys.ipiqueue[cast(cpu)].push(std::delegate<() -> void>(&&callback)))
     return false;
 
   platform::unicast_ipi_interrupt(sys.apic_ids[cast(cpu)]);
@@ -260,7 +260,7 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
     if (i == cast(cpu::current))
       continue;
 
-    while (!sys.ipiqueue[i].push(&move std::delegate<() -> void>(callback)))
+    while (!sys.ipiqueue[i].push(std::delegate<() -> void>(&&callback)))
       ipi();
   }
 

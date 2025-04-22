@@ -1,0 +1,93 @@
+//
+// test
+//
+
+import std.stdio;
+import os.zaos.fcntl;
+import os.zaos.sched;
+import os.zaos.mman;
+import os.zaos.time;
+import input.driver;
+
+struct input_event
+{
+  u64 time;
+  u16 type;
+  u16 code;
+  i32 value;
+
+  ~input_event() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn main() -> int
+{
+  std::print("test started");
+
+  var pollfd = os::poll_create(&mut thread_ring, 0);
+
+  if (pollfd < 0)
+    std::panic("poll_create - ", pollfd);
+
+  var input = input_event(void);
+
+  for (;;)
+  {
+    var fd = os::open(&mut thread_ring, os::string("/dev/input/mouse/usb/0"), 0, 0);
+
+    if (fd < 0)
+      continue;
+
+    std::print("kbd fd: ", fd);
+
+//    std::print(os::read(&mut thread_ring, fd, &input, sizeof(input)));
+//
+//    var evt = os::pollevt();
+//    evt.id = fd;
+//    evt.type = os::POLLFD;
+//    evt.mask = os::POLLIN;
+//
+//    os::poll_ctl(&mut thread_ring, pollfd, os::POLL_CTL_ADD, &evt, 0);
+//
+//    for (;;)
+//    {
+//      var evts = [ os::pollevt(); 32 ];
+//
+//      var count = os::poll_wait(&mut thread_ring, pollfd, evts.data, evts.len, ~0);
+//
+//      if (count <= 0)
+//        continue;
+//
+//      if (var rc = os::read(&mut thread_ring, fd, &input, sizeof(input)); rc >= 0)
+//        std::print(input);
+//    }
+
+    var driver = input::driver();
+    if (var rc = driver.initialise(); rc < 0)
+      std::print("coco: failed to initialise input driver - ", cast<std::errc>(-rc));
+
+    var keymap = input::keymap();
+    if (var rc = keymap.initialise("/zaos/data/us.hid.keymap", "/zaos/data/us.hid.keymap"); rc < 0)
+      std::print("coco: failed to initialise input keymap - ", cast<std::errc>(-rc));
+
+    driver.add_device("/dev/input/keyboard/usb/0", keymap);
+
+    driver.add_device("/dev/input/mouse/usb/0", input::mouse());
+
+    for (;;)
+    {
+      driver.dispatch();
+
+      while (driver.has_events)
+      {
+        std::print(driver.next_event);
+      }
+    }
+
+    break;
+
+  }
+
+  std::panic("test terminated");
+}

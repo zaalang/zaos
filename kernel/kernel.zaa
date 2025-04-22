@@ -20,15 +20,16 @@ import console;
 import thread as _ : thread, spawn_undertaker;
 import process as _ : process, create_kernel_process;
 import platform : BootInfo;
+import support.rc : Rc;
 import syscalls;
-import ioring.workman;
+import ioring;
 import cfg.acpi;
 
 fn bootstrap_filesystem() -> void
 {
   import ext2fs;
 
-  var rootdev = blk::blkdev_ptr();
+  var rootdev = Rc<blk::blkdev>();
   var rootuuid = sys::cmdline("root");
 
   blk::enumerate(|id, dev| [rootdev, rootuuid] {
@@ -117,7 +118,7 @@ extern fn kernel_start(BootInfo &bootinfo, int cpu) -> void
 
   platform::finalise_boot(bootinfo, cpu);
 
-  create_kernel_process(&cast<fn (void mut *) -> void>(kernel_main), null);
+  create_kernel_process(&cast<(void mut *) -> void>(kernel_main), null);
 
   scheduler::start();
 }

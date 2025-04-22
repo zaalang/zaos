@@ -22,7 +22,7 @@ enum flags
   const nofollow = 0o400000;
 }
 
-pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr pathbuf, usize pathlen, u64 flags, u32 mode) -> result
+pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize pathlen, virtaddr pathbuf, u64 flags, u32 mode) -> result
 {
   if (pathbuf == 0 && pathlen != 0)
     return invalid_argument;
@@ -48,6 +48,9 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr p
 
   if (flags & flags::create == flags::create)
   {
+    if (flags & flags::directory == flags::directory)
+      return vfs::result::invalid_argument;
+
     if (node && (flags & flags::exclusive == flags::exclusive))
       return vfs::result::already_exists;
 
@@ -55,22 +58,10 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr p
     {
       var name = vfs::basename(path);
 
-      if (flags & flags::directory == flags::directory)
-      {
-        if (var result = vfs::mkdir(base, name, &mut node, 0, 0, mode); !result)
-        {
-          if (!node || (flags & flags::exclusive == flags::exclusive))
-            return result;
-        }
-      }
-      else
-      {
-        if (var result = vfs::create(base, name, &mut node, 0, 0, mode); !result)
-        {
-          if (!node || (flags & flags::exclusive == flags::exclusive))
-            return result;
-        }
-      }
+      if (var result = vfs::create(base, name, &mut node, 0, 0, mode); !result)
+        return result;
+
+      vfs::notify(base, node, vfs::notify::create, name);
     }
   }
 
@@ -83,13 +74,16 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr p
       return result;
   }
 
-  if ((flags & (flags::create | flags::directory) == flags::create) && node.type == vfs::node::type::directory)
+  if ((flags & flags::create == flags::create) && node.type == vfs::node::type::directory)
     return vfs::result::is_a_directory;
 
   if ((flags & flags::directory == flags::directory) && node.type != vfs::node::type::directory)
     return vfs::result::not_a_directory;
 
-  var fd = vfs::file_descriptor::create(node);
+  if (base == node)
+    base = dir.parent;
+
+  var fd = vfs::file_descriptor::create(base, node);
 
   if (var result = vfs::open(node, &mut fd, flags, mode); !result)
     return result;

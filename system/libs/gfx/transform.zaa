@@ -45,7 +45,7 @@ pub struct transform : pub f64[3][3]
     return &this.super[i][j];
   }
 
-  pub fn translation(this&) -> gfx::point
+  pub fn translation(this &) -> gfx::point
   {
     return gfx::point(this[0][2], this[1][2]);
   }

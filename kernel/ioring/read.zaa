@@ -93,6 +93,9 @@ pub fn sys_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buff
     case vfs::node::type::event:
     case vfs::node::type::buffer:
     case vfs::node::type::channel:
+    case vfs::node::type::watchset:
+    case vfs::node::type::pollset:
+    case vfs::node::type::ioring:
     case vfs::node::type::device:
       return node.stream_operations.read(node, iovec, 0, length);
 

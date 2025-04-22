@@ -9,29 +9,59 @@ import acpi.mcfg;
 import acpi.fadt;
 import acpi.parser;
 
-fn read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
+fn thread_getid(acpi::namespace mut &ns, u32 mut &id) -> acpi::result
 {
-  return not_supported;
+  return ok;
 }
 
-fn write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
+fn clock_gettime(acpi::namespace mut &ns, u64 mut &clock) -> acpi::result
 {
-  return not_supported;
+  return ok;
 }
 
-fn close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
+fn region_read(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result
 {
-  return not_supported;
+  return ok;
+}
+
+fn region_write(acpi::namespace mut &ns, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result
+{
+  return ok;
+}
+
+fn region_close(acpi::namespace mut &ns, acpi::opregion *opregion) -> acpi::result
+{
+  return ok;
+}
+
+fn mutex_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result
+{
+  return ok;
+}
+
+fn mutex_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result
+{
+  return ok;
+}
+
+fn mutex_acquire(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result
+{
+  return ok;
+}
+
+fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result
+{
+  return ok;
 }
 
 fn notify(acpi::namespace mut &ns, acpi::node *node, acpi::value &value) -> acpi::result
 {
-  return not_supported;
+  return ok;
 }
 
-fn sleep(acpi::namespace mut &ns, acpi::value &period) -> acpi::result
+fn sleep(acpi::namespace mut &ns, u64 period) -> acpi::result
 {
-  return not_supported;
+  return ok;
 }
 
 extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32

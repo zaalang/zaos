@@ -38,23 +38,23 @@ pub struct bootfb : pub chr::chrdev
     std::printf("boot frame buffer {}x{}x{}\n", fb.width, fb.height, fb.depth);
   }
 
-  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
   {
     switch (query)
     {
-      case device_name:
+      case device_path:
         result = "fb0";
     }
 
     return ok;
   }
 
-  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) override -> chr::result
   {
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
   {
     switch (op)
     {
@@ -78,22 +78,22 @@ pub struct bootfb : pub chr::chrdev
     return not_supported;
   }
 
-  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
   {
     if (offset != 0)
       return invalid_argument;

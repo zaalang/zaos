@@ -137,7 +137,7 @@ pub struct run_queue
 
   fn wake(this mut &, thread mut *thread) -> void
   {
-    while (true)
+    for (;;)
     {
       thread.wakenext = std::volatile_load(&this.wakelist);
 
@@ -200,20 +200,18 @@ pub fn dump(run_queue &this) -> void
   }
 }
 
-extern fn idle(void mut *data) -> void
+extern fn thread_idle(void mut *) -> void
 {
   cpu::runqueue.lock.unlock();
   platform::enable_interrupts();
   platform::set_timer_deadline(0);
 
-  while (true)
+  for (;;)
     platform::idle();
 }
 
 extern fn thread_main(thread mut *thread) -> void
 {
-  std::assert(thread);
-
   cpu::runqueue.lock.unlock();
   cpu::current_thread.tick_start_time = cpu::tsc;
   platform::enable_interrupts();
@@ -265,10 +263,11 @@ fn pick_next(run_queue mut &runqueue) -> thread mut *
   return runqueue.remove(runqueue.ready_head(thread::priority::idle));
 }
 
+#[noinline]
 fn reschedule(thread::state state, bool adopt_lock = false) -> void
 {
-  var mut &runqueue = cpu::runqueue;
-  var current_thread = cpu::current_thread;
+  var mut &runqueue = cpu::runqueue_inline;
+  var current_thread = cpu::current_thread_inline;
 
   let quantum = cpu::clockspeed >> 11 | 0x1fff;
   let quantum_leap = quantum & ~0xfff;
@@ -312,14 +311,9 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
     platform::task_switch(&mut current_thread.task, next_thread.task);
   }
 
-  reschedule_resume();
-}
-
-#[noinline]
-fn reschedule_resume() -> void
-{
   cpu::runqueue.lock.unlock();
-  cpu::current_thread.tick_start_time = cpu::tsc;
+
+  current_thread.tick_start_time = cpu::tsc;
 }
 
 fn rebalance(run_queue mut &runqueue) -> void
@@ -363,7 +357,6 @@ fn rebalance(run_queue mut &runqueue) -> void
   runqueue.last_balance = cpu::tsc;
 }
 
-#[noinline]
 pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority::normal) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -378,7 +371,6 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
   platform::task_fork(&mut thread.task, extern(thread_main), thread);
 }
 
-#[noinline]
 pub fn sleep_yield() -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -391,7 +383,6 @@ pub fn sleep_yield() -> void
   reschedule(thread::state::ready);
 }
 
-#[noinline]
 pub fn sleep_until(u64 abstime) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -410,8 +401,8 @@ pub fn sleep_until(u64 abstime) -> void
 #[noinline]
 pub fn prepare_to_block() -> void
 {
-  var mut &runqueue = cpu::runqueue;
-  var current_thread = cpu::current_thread;
+  var mut &runqueue = cpu::runqueue_inline;
+  var current_thread = cpu::current_thread_inline;
 
   std::atomic_store(&current_thread.wait_status, 1);
 }
@@ -419,8 +410,8 @@ pub fn prepare_to_block() -> void
 #[noinline]
 pub fn block() -> i32
 {
-  var mut &runqueue = cpu::runqueue;
-  var current_thread = cpu::current_thread;
+  var mut &runqueue = cpu::runqueue_inline;
+  var current_thread = cpu::current_thread_inline;
 
   runqueue.lock.lock();
 
@@ -444,8 +435,8 @@ pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
 {
   lock.unlock();
 
-  var mut &runqueue = cpu::runqueue;
-  var current_thread = cpu::current_thread;
+  var mut &runqueue = cpu::runqueue_inline;
+  var current_thread = cpu::current_thread_inline;
 
   runqueue.lock.lock();
 
@@ -498,12 +489,12 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
 #[noinline]
 pub fn bury(semaphore mut &undertaker, thread mut * mut &graveyard) -> void
 {
-  var mut &runqueue = cpu::runqueue;
-  var current_thread = cpu::current_thread;
+  var mut &runqueue = cpu::runqueue_inline;
+  var current_thread = cpu::current_thread_inline;
 
   runqueue.lock.lock();
 
-  while (true)
+  for (;;)
   {
     current_thread.next = std::volatile_load(&graveyard);
 
@@ -542,5 +533,5 @@ pub fn start() -> void
 
   cpu::switch_current_thread(idle_thread);
   platform::task_init(&mut idle_thread.task);
-  platform::task_enter(&mut idle_thread.task, extern(idle), null);
+  platform::task_enter(&mut idle_thread.task, extern(thread_idle), null);
 }

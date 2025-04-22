@@ -4,7 +4,6 @@
 
 import std.stdio;
 import std.env;
-import std.algorithm;
 import os.zaos.fcntl : O_RDONLY, O_DIRECTORY, O_NOFOLLOW;
 import chrono : duration;
 import termios;

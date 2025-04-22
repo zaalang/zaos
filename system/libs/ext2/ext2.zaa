@@ -147,27 +147,27 @@ pub struct ext2_super_block
   pub u32[98] s_reserved6;
   pub u32 s_checksum;
 
-  pub fn is64bit(this&) -> bool
+  pub fn is64bit(this &) -> bool
   {
     return this.s_incompatible_features & incompat::x64bit == incompat::x64bit;
   }
 
-  pub fn block_shift(this&) -> int
+  pub fn block_shift(this &) -> int
   {
     return 10 + cast<int>(this.s_block_shift);
   }
 
-  pub fn inodes(this&) -> u64
+  pub fn inodes(this &) -> u64
   {
     return cast<u64>(this.s_inodes);
   }
 
-  pub fn free_inodes(this&) -> u64
+  pub fn free_inodes(this &) -> u64
   {
     return cast<u64>(this.s_free_inodes);
   }
 
-  pub fn blocks(this&) -> u64
+  pub fn blocks(this &) -> u64
   {
     var blocks = cast<u64>(this.s_blocks);
 
@@ -177,7 +177,7 @@ pub struct ext2_super_block
     return blocks;
   }
 
-  pub fn free_blocks(this&) -> u64
+  pub fn free_blocks(this &) -> u64
   {
     var blocks = cast<u64>(this.s_free_blocks);
 
@@ -417,16 +417,16 @@ pub struct ext2_inode
   pub u32 i_crtime_extra;
   pub u32 i_version_high;
 
-  pub fn isreg(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFREG; }
-  pub fn isdir(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFDIR; }
-  pub fn islnk(this&) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFLNK; }
+  pub fn isreg(this &) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFREG; }
+  pub fn isdir(this &) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFDIR; }
+  pub fn islnk(this &) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFLNK; }
 
-  pub fn mode(this&) -> u16
+  pub fn mode(this &) -> u16
   {
     return this.i_mode;
   }
 
-  pub fn type(this&) -> ext2_ftype
+  pub fn type(this &) -> ext2_ftype
   {
     switch (this.i_mode & EXT2_IFMT)
     {
@@ -443,7 +443,7 @@ pub struct ext2_inode
     return ext2_ftype::unknown;
   }
 
-  pub fn size(this&) -> u64
+  pub fn size(this &) -> u64
   {
     var size = cast<u64>(this.i_size);
 
@@ -461,7 +461,7 @@ pub struct ext2_inode
       this.i_directory_access_control = cast<u32>(size >> 32);
   }
 
-  pub fn uid(this&) -> u32
+  pub fn uid(this &) -> u32
   {
     return cast<u32>(this.i_uid) | cast<u32>(this.i_uid_high);
   }
@@ -472,7 +472,7 @@ pub struct ext2_inode
     this.i_uid_high = cast<u16>(uid >> 16);
   }
 
-  pub fn gid(this&) -> u32
+  pub fn gid(this &) -> u32
   {
     return cast<u32>(this.i_gid) | cast<u32>(this.i_gid_high);
   }
@@ -525,18 +525,18 @@ pub fn inode_block_usage(ext2_super_block *superblock, u32 blocks) -> u32
 #[packed]
 pub struct ext2_dir_entry
 {
-  pub u32 inode;
+  pub u32 ino;
   pub u16 rec_len;
   pub u8 name_len;
   pub u8 file_type;
   pub u8[EXT2_NAME_LENGTH] file_name;
 
-  pub fn name(this&) -> std::string_view
+  pub fn name(this &) -> std::string_view
   {
     return std::string_view(this.file_name.data, cast<usize>(this.name_len));
   }
 
-  pub fn type(this&) -> ext2_ftype
+  pub fn type(this &) -> ext2_ftype
   {
     return cast<ext2_ftype>(this.file_type);
   }

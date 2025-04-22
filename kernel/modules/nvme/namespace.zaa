@@ -38,7 +38,7 @@ pub struct namespace : pub blk::blkdev
     return std::format("{}/{}", this.controller.name, this.nsid);
   }
 
-  pub fn query(this &, blk::query query, std::string mut &result) -> blk::result
+  pub fn query(this &, blk::query query, std::string mut &result) override -> blk::result
   {
     switch (query)
     {
@@ -55,12 +55,12 @@ pub struct namespace : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
   {
     return not_supported;
   }
 
-  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
+  pub fn enqueue(this mut &, blk::request mut *request) override -> blk::result
   {
     if (var result = this.controller.enqueue(this.nsid, request); !result)
       return cast<blk::result>(result);
@@ -68,7 +68,7 @@ pub struct namespace : pub blk::blkdev
     return ok;
   }
 
-  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
+  pub fn cancel(this mut &, blk::request mut *request) override -> blk::result
   {
     if (var result = this.controller.cancel(this.nsid, request); !result)
       return cast<blk::result>(result);

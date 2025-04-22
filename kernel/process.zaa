@@ -71,22 +71,22 @@ pub struct process
     return thread::current.process;
   }
 
-  pub fn name(this&) -> std::string &
+  pub fn name(this &) -> std::string &
   {
     return &this.name;
   }
 
-  pub fn envp(this&) -> std::vector<vm::virtrange> &
+  pub fn envp(this &) -> std::vector<vm::virtrange> &
   {
     return &this.envp;
   }
 
-  pub fn argv(this&) -> std::vector<vm::virtrange> &
+  pub fn argv(this &) -> std::vector<vm::virtrange> &
   {
     return &this.argv;
   }
 
-  pub fn auxv(this&) -> std::vector<elf::auxval> &
+  pub fn auxv(this &) -> std::vector<elf::auxval> &
   {
     return &this.auxv;
   }
@@ -102,7 +102,7 @@ pub struct process
 
     var process = procman.processes[j].value;
 
-    while (true)
+    for (;;)
     {
       var refcnt = std::volatile_load(&process.refcnt);
 
@@ -344,7 +344,7 @@ fn process_main(void *args) -> void
 pub fn create_process(process mut *parent, String &&name) -> process mut *
 {
   var process = process::create();
-  var mainthread = create_thread(process, &cast<fn (void mut *) -> void>(process_main), null);
+  var mainthread = create_thread(process, &cast<(void mut *) -> void>(process_main), null);
 
   process.name = &&name;
   process.id = mainthread.id;

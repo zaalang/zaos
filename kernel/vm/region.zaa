@@ -7,6 +7,7 @@ import vm.page : virtaddr, virtrange, protection;
 import vfs.node;
 import cpu;
 import thread as _ : thread;
+import support.rc : Rc;
 
 pub enum usage
 {
@@ -26,21 +27,21 @@ pub struct region
   pub usage usage;
 
   pub u64 offset;
-  pub vfs::node_ptr backing;
+  pub Rc<vfs::node> backing;
 
-  pub fn is_private(this&) -> bool { return this.usage & usage::private == usage::private; }
-  pub fn is_foreign(this&) -> bool { return this.usage & usage::foreign == usage::foreign; }
+  pub fn is_private(this &) -> bool { return this.usage & usage::private == usage::private; }
+  pub fn is_foreign(this &) -> bool { return this.usage & usage::foreign == usage::foreign; }
 
-  pub fn is_readable(this&) -> bool { return this.protection != protection::none; }
-  pub fn is_writeable(this&) -> bool { return this.protection == protection::readwrite; }
-  pub fn is_executable(this&) -> bool { return this.protection == protection::executable; }
+  pub fn is_readable(this &) -> bool { return this.protection != protection::none; }
+  pub fn is_writeable(this &) -> bool { return this.protection == protection::readwrite; }
+  pub fn is_executable(this &) -> bool { return this.protection == protection::executable; }
 
-  pub fn contains(this&, virtaddr address) -> bool
+  pub fn contains(this &, virtaddr address) -> bool
   {
     return this.range.contains(address);
   }
 
-  pub fn contains(this&, virtrange range) -> bool
+  pub fn contains(this &, virtrange range) -> bool
   {
     return this.range.contains(range);
   }
@@ -61,9 +62,11 @@ pub struct region
 
 pub fn try_lock(region mut &this) -> bool
 {
-  if (std::atomic_load(&this.holder) != cpu::current_thread)
+  var current_thread = cpu::current_thread;
+
+  if (std::atomic_load(&this.holder) != current_thread)
   {
-    if (!std::atomic_cmpxchg_strong(&this.holder, null, cpu::current_thread))
+    if (!std::atomic_cmpxchg_strong(&this.holder, null, current_thread))
       return false;
   }
 

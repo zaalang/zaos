@@ -16,7 +16,7 @@ pub struct semaphore
 
   pub fn wait(this mut &) -> void
   {
-    while (true)
+    for (;;)
     {
       var current = std::volatile_load(&this.value);
 
@@ -39,7 +39,7 @@ pub struct semaphore
 
   pub fn wait_until(this mut &, u64 abstime) -> bool
   {
-    while (true)
+    for (;;)
     {
       var current = std::volatile_load(&this.value);
 

@@ -12,6 +12,7 @@ import pci;
 import ps2;
 import ahci;
 import nvme;
+import usb.xhci as xhci;
 
 fn coldplug(namespace mut &cfg) -> acpi::result
 {
@@ -131,6 +132,9 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 
                   case [2, 8, 1]:
                     nvme::initialise(device);
+
+                  case [48, 3, 12]:
+                    xhci::initialise(device);
                 }
               }
           }
@@ -151,9 +155,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 
 pub fn initialise() -> void
 {
-  var stack = std::vector<u8>::with_size(32768);
-
-  platform::on_stack(stack.data, stack.len, || {
+  platform::on_stack(std::vector<u8>::with_size(32768), || {
 
     if (var rc = initialise(&mut namespace::instance); !rc)
       std::panic("acpi initialise failed: ", rc);
@@ -166,9 +168,7 @@ pub fn initialise() -> void
 
 pub fn coldplug() -> void
 {
-  var stack = std::vector<u8>::with_size(32768);
-
-  platform::on_stack(stack.data, stack.len, || {
+  platform::on_stack(std::vector<u8>::with_size(32768), || {
 
     if (var rc = coldplug(&mut namespace::instance); !rc)
       std::panic("acpi coldplug failed: ", rc);

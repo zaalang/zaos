@@ -41,7 +41,7 @@ pub struct page_table
   uintptr pml4;
   i32 refcnt;
 
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return this.pml4 != 0;
   }
@@ -86,9 +86,9 @@ pub struct page_table_query
 {
   uintptr entry;
 
-  pub fn present(this&) -> bool { return this.entry & pdbits::present != 0; }
-  pub fn writeable(this&) -> bool { return this.entry & pdbits::writeable != 0; }
-  pub fn address(this&) -> physaddr_t { return physaddr_t(this.entry & 0x7ffffffffffff000); }
+  pub fn present(this &) -> bool { return this.entry & pdbits::present != 0; }
+  pub fn writeable(this &) -> bool { return this.entry & pdbits::writeable != 0; }
+  pub fn address(this &) -> physaddr_t { return physaddr_t(this.entry & 0x7ffffffffffff000); }
 
   page_table_query(uintptr entry)
     : entry(entry)

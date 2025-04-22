@@ -80,10 +80,10 @@ pub struct directory_entry
   pub u16 first_cluster_lo;
   pub u32 filesize;
 
-  pub fn isreg(this&) -> bool { return this.attributes & 0x10 == 0; }
-  pub fn isdir(this&) -> bool { return this.attributes & 0x10 != 0; }
+  pub fn isreg(this &) -> bool { return this.attributes & 0x10 == 0; }
+  pub fn isdir(this &) -> bool { return this.attributes & 0x10 != 0; }
 
-  pub fn first_cluster(this&) -> u32
+  pub fn first_cluster(this &) -> u32
   {
     var cluster = cast<u32>(this.first_cluster_hi) << 16 + cast<u32>(this.first_cluster_lo);
 

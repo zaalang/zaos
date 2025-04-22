@@ -23,27 +23,27 @@ pub struct painter
   int saved_x;
   int saved_y;
 
-  pub fn x(this&) -> int
+  pub fn x(this &) -> int
   {
     return this.x;
   }
 
-  pub fn y(this&) -> int
+  pub fn y(this &) -> int
   {
     return this.y;
   }
 
-  pub fn width(this&) -> int
+  pub fn width(this &) -> int
   {
     return this.width;
   }
 
-  pub fn height(this&) -> int
+  pub fn height(this &) -> int
   {
     return this.height;
   }
 
-  pub fn lines(this&) -> int
+  pub fn lines(this &) -> int
   {
     return this.lines;
   }

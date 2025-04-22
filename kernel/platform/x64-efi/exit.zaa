@@ -27,7 +27,7 @@ extern fn exit(u32) -> void
     rbp = cast<uintptr*>(*rbp);
   }
 
-  while (true)
+  for (;;)
   {
     __asm("cli", "");
     __asm("hlt", "");

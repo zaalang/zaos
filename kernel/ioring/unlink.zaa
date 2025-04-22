@@ -9,7 +9,7 @@ import vfs;
 import process as _ : process;
 import result as _ : result;
 
-pub fn sys_unlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr pathbuf, usize pathlen, u64 flags) -> result
+pub fn sys_unlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize pathlen, virtaddr pathbuf, u64 flags) -> result
 {
   if (pathbuf == 0 || pathlen == 0)
     return invalid_argument;
@@ -36,13 +36,17 @@ pub fn sys_unlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, virtaddr
   if (!node)
     return vfs::result::not_found;
 
+  var name = vfs::basename(path);
+
   switch (node.type)
   {
     case vfs::node::type::file:
     case vfs::node::type::symlink:
     case vfs::node::type::directory:
-      if (var result = vfs::unlink(base, vfs::basename(path)); !result)
+      if (var result = vfs::unlink(base, name); !result)
         return result;
+
+      vfs::notify(base, node, vfs::notify::unlink);
 
     else:
       return vfs::result::bad_descriptor;

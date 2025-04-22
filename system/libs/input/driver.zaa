@@ -9,7 +9,7 @@ import input.keys : Key;
 import input.buttons : Button;
 import os.zaos.time;
 import os.zaos.fcntl;
-import std.vector;
+import std.list;
 import std.circular_buffer;
 import std.string : String;
 
@@ -45,8 +45,9 @@ pub union event
   pub device_added(device*),
   pub device_removed(device*),
   pub keyboard_key(key_event),
-  pub pointer_motion(pointer_event),
-  pub pointer_button(pointer_event),
+  pub pointer_motion_rel(pointer_event),
+  pub pointer_motion_abs(pointer_event),
+  pub pointer_button(button_event),
   pub pointer_wheel(pointer_event),
 
   pub event(event&&) = default;
@@ -82,21 +83,29 @@ pub enum button_state
   released = 0,
 }
 
-pub struct pointer_event
+pub struct button_event
 {
   pub u64 time;
-  pub f64 dx;
-  pub f64 dy;
   pub Button button;
   pub button_state state;
 
-  pointer_event(u64 time, f64 dx, f64 dy)
-    : time(time), dx(dx), dy(dy)
+  button_event(u64 time, Button button, button_state state)
+    : time(time), button(button), state(state)
   {
   }
 
-  pointer_event(u64 time, Button button, button_state state)
-    : time(time), button(button), state(state)
+  button_event(button_event&) = default;
+  ~button_event() = default;
+}
+
+pub struct pointer_event
+{
+  pub u64 time;
+  pub f64 x;
+  pub f64 y;
+
+  pointer_event(u64 time, f64 x, f64 y)
+    : time(time), x(x), y(y)
   {
   }
 
@@ -108,13 +117,14 @@ pub struct driver
 {
   i32 fd;
 
-  std::vector<device mut *> devices;
+  std::list<device> devices;
 
   std::circular_buffer<event> events;
 
   u8[256] keys;
   u8[32] buttons;
   f64[9] motion;
+  input::type[9] type;
 
   pub driver() = default;
   pub ~driver() = default;
@@ -137,22 +147,14 @@ fn post_event(driver mut &driver, event &&event) -> void
 
 fn add_device(driver mut &driver, String &&path) -> device mut *
 {
-  var device = std::allocator::new<device>(&&path);
+  var device = &driver.devices.push_back(&&path);
 
   device.fd = os::open(&mut thread_ring, os::string(device.path.data, device.path.len), 0, 0);
 
   if (device.fd >= 0)
   {
-    var evt = os::pollevt();
-    evt.id = device.fd;
-    evt.type = os::POLLFD;
-    evt.mask = os::POLLIN;
-    evt.user_data = cast(device);
-
-    os::epoll_ctl(&mut thread_ring, driver.fd, os::EPOLL_CTL_ADD, &evt, 0);
+    os::poll_add(&mut thread_ring, driver.fd, device.fd, os::POLLFD, os::POLLIN, cast(device), 0);
   }
-
-  driver.devices.push_back(device);
 
   driver.post_event(event::device_added(device));
 
@@ -161,7 +163,7 @@ fn add_device(driver mut &driver, String &&path) -> device mut *
 
 pub fn initialise(driver mut &driver) -> i32
 {
-  driver.fd = os::epoll_create(&mut thread_ring, 0);
+  driver.fd = os::poll_create(&mut thread_ring, 0);
 
   if (driver.fd < 0)
     return driver.fd;
@@ -169,6 +171,15 @@ pub fn initialise(driver mut &driver) -> i32
   driver.events.reserve(8);
 
   return 0;
+}
+
+pub fn lookup(driver mut &driver, String &path) -> device *
+{
+  for (var &device : driver.devices)
+    if (device.path == path)
+      return &device;
+
+  return null;
 }
 
 pub fn add_device(driver mut &driver, String &&path, keymap &keymap) -> device *
@@ -189,6 +200,18 @@ pub fn add_device(driver mut &driver, String &&path, mouse &mouse) -> device *
   return device;
 }
 
+pub fn remove(driver mut &driver, device *device) -> void
+{
+  if (device.fd >= 0)
+  {
+    os::poll_remove(&mut thread_ring, driver.fd, device.fd, 0);
+  }
+
+  driver.devices.erase_if(|dev| &dev == device);
+
+  driver.post_event(event::device_removed(device));
+}
+
 pub fn dispatch(driver mut &driver) -> i32
 {
   struct input_event
@@ -202,12 +225,7 @@ pub fn dispatch(driver mut &driver) -> i32
   }
 
   var evts = [ os::pollevt(); 32 ];
-
-  var tp = os::timespec(void);
-  if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
-    return rc;
-
-  var count = os::epoll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, tp);
+  var count = os::poll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, 0);
 
   if (count < 0)
     return count;
@@ -230,13 +248,29 @@ pub fn dispatch(driver mut &driver) -> i32
 
               if (input.code == input::syn::report)
               {
-                if (driver.motion[0] != 0.0 || driver.motion[1] != 0.0)
-                  driver.post_event(event::pointer_motion(input.time, driver.motion[0], driver.motion[1]));
+                if (driver.type[0] == input::type::rel && driver.type[1] == input::type::rel)
+                {
+                  driver.post_event(event::pointer_motion_rel(input.time, driver.motion[0], driver.motion[1]));
+
+                  driver.type[0] = driver.type[1] = input::type::syn;
+                }
+
+                if (driver.type[0] == input::type::abs && driver.type[1] == input::type::abs)
+                {
+                  var x = driver.motion[0] * config.calibration[0] + driver.motion[1] * config.calibration[1] + config.calibration[2];
+                  var y = driver.motion[0] * config.calibration[3] + driver.motion[1] * config.calibration[4] + config.calibration[5];
+
+                  driver.post_event(event::pointer_motion_abs(input.time, x, y));
+
+                  driver.type[0] = driver.type[1] = input::type::syn;
+                }
 
                 if (driver.motion[8] != 0.0)
+                {
                   driver.post_event(event::pointer_wheel(input.time, 0.0, driver.motion[8]));
 
-                driver.motion[0] = driver.motion[1] = driver.motion[8] = 0.0;
+                  driver.motion[8] = 0.0;
+                }
               }
           }
 
@@ -249,7 +283,6 @@ pub fn dispatch(driver mut &driver) -> i32
               switch (device.config)
               {
                 case keymap[keymap]:
-
                   var key = keymap.keys[cast(input.code)];
 
                   if (driver.keys[cast(key)] == 0)
@@ -261,7 +294,6 @@ pub fn dispatch(driver mut &driver) -> i32
                     driver.post_event(event::keyboard_key(input.time, key, key_state::released));
 
                 case mouse[config]:
-
                   var key = config.buttons[cast(input.code - 0x100)];
 
                   if (driver.buttons[cast(key)] == 0)
@@ -278,7 +310,6 @@ pub fn dispatch(driver mut &driver) -> i32
               switch (device.config)
               {
                 case keymap[keymap]:
-
                   var key = keymap.keys[cast(input.code)];
 
                   var sym = 0;
@@ -299,7 +330,6 @@ pub fn dispatch(driver mut &driver) -> i32
                     driver.post_event(event::keyboard_key(input.time, key, key_state::pressed, sym));
 
                 case mouse[config]:
-
                   var key = config.buttons[cast(input.code - 0x100)];
 
                   driver.buttons[cast(key)] += 1;
@@ -311,15 +341,13 @@ pub fn dispatch(driver mut &driver) -> i32
 
         case input::type::rel:
 
-          switch (device.config)
-          {
-            case mouse[config]:
-
-              driver.motion[cast(input.code)] = cast<f64>(input.value);
-          }
+          driver.type[cast(input.code)] = input::type::rel;
+          driver.motion[cast(input.code)] = cast<f64>(input.value);
 
         case input::type::abs:
-          ;
+
+          driver.type[cast(input.code)] = input::type::abs;
+          driver.motion[cast(input.code)] = cast<f64>(input.value);
 
         case input::type::msc:
           ;

@@ -95,7 +95,6 @@ enum isr : u32
   error = 0x7dc00050,       // errors
   all = 0x7dc0007f,         // errors and interrupts
 
-  pub const fn ~(isr lhs) -> isr { return cast<isr>(~cast<u32>(lhs)); }
   pub const fn &(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) & cast<u32>(rhs)); }
   pub const fn |(isr lhs, isr rhs) -> isr { return cast<isr>(cast<u32>(lhs) | cast<u32>(rhs)); }
 }
@@ -132,7 +131,7 @@ struct ahci_hba
   u32 em_ctl;
   u32 cap2;
   u32 bohc;
-  u32[29] reserved0;
+  u32[29] reserved1;
   u32[24] vendor;
   ahci_port[32] ports;
 }
@@ -144,7 +143,7 @@ struct ahci_port
   isr is;
   isr ie;
   cmd cmd;
-  u32 reserved0;
+  u32[1] reserved1;
   tfd tfd;
   u32 sig;
   u32 ssts;
@@ -155,7 +154,7 @@ struct ahci_port
   u32 sntf;
   u32 fbs;
   u32 devslp;
-  u32[10] reserved1;
+  u32[10] reserved2;
   u32[4] vs;
 }
 
@@ -168,21 +167,21 @@ struct ahci_command
   u16 prdtl;
   u32 prdbc;
   physaddr ctba;
-  u32[4] reserved0;
+  u32[4] reserved1;
 }
 
 struct ahci_command_table
 {
   u8[64] cfis;
   u8[32] acmd;
-  u8[32] reserved0;
+  u8[32] reserved1;
   ahci_prdt[8] prdt;
 }
 
 struct ahci_prdt
 {
   physaddr dba;
-  u32 reserved0;
+  u32 reserved1;
   u32 dbc;
 }
 
@@ -284,10 +283,9 @@ pub struct port
   pub port(controller mut &controller, usize index)
     : controller(&controller), index(index)
   {
-    var size = sizeof<ahci_command[32]> + sizeof<fis> + sizeof<ahci_command_table[CLSZ]>;
-    var memory = vm::allocate_physical_pages(size);
+    var memory = vm::allocate_physical_pages(sizeof<ahci_command[32]> + sizeof<fis> + sizeof<ahci_command_table[CLSZ]>);
 
-    std::memset(memory.addr.ptr, 0, size);
+    std::memset(memory.addr.ptr, 0, memory.size);
 
     regs = &this.controller.hba.ports[this.index];
     regs.clb = memory.addr;
@@ -328,8 +326,6 @@ pub struct port
   fn reset(this mut &) -> result
   {
     std::print("ahci ", this.name, " port reset");
-
-    disable(this);
 
     std::volatile_store(&this.regs.serr, this.regs.serr);
 
@@ -385,7 +381,7 @@ pub struct port
   controller mut &controller;
 }
 
-extern fn ahci_io_handler(controller mut *controller) -> void
+fn ahci_io_handler(controller mut *controller) -> void
 {
   var pending = controller.hba.is;
 
@@ -480,7 +476,7 @@ fn initialise(controller mut &controller) -> result
   if (var result = controller.reset(); !result)
     return result;
 
-  io::install_handler(irq, &cast<fn (controller mut *) -> void>(ahci_io_handler), &controller);
+  io::install_handler(irq, &cast<(controller mut *) -> void>(ahci_io_handler), &controller);
 
   var port_count = 1 + cast<usize>(hba.cap & 0b11111);
 

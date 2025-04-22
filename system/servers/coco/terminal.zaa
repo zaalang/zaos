@@ -7,8 +7,8 @@ import std.span : Span;
 import std.string : String;
 import chrono : duration;
 import os.zaos.fcntl;
-import input.driver;
 import display;
+import seat;
 import font;
 import pty;
 import vt;
@@ -48,11 +48,11 @@ const cursor_palette = [
 
 pub struct terminal
 {
-  input::driver mut &driver;
+  seat::seat mut &seat;
   display::display mut &display;
 
-  terminal(input::driver mut &driver, display::display mut &display)
-    : driver(&driver), display(&display)
+  terminal(seat::seat mut &seat, display::display mut &display)
+    : seat(&seat), display(&display)
   {
   }
 
@@ -69,22 +69,22 @@ pub struct terminal
 
   readline::default_history history;
 
-  pub fn x(this&) { return this.screen.cursor.0; }
-  pub fn y(this&) { return this.screen.cursor.1; }
+  pub fn x(this &) { return this.screen.cursor.0; }
+  pub fn y(this &) { return this.screen.cursor.1; }
 
-  pub fn rows(this&) { return this.screen.rows; }
-  pub fn columns(this&) { return this.screen.columns; }
+  pub fn rows(this &) { return this.screen.rows; }
+  pub fn columns(this &) { return this.screen.columns; }
 
-  pub fn pty(this&) { return this.pty; }
+  pub fn pty(this &) { return this.pty; }
 
   pub ~terminal() = default;
 }
 
 extern fn thread_ring() -> os::ioring mut &;
 
-pub fn create(input::driver mut &driver, display::display mut &display) -> terminal
+pub fn create(seat::seat mut &seat, display::display mut &display) -> terminal
 {
-  return terminal(&mut driver, &mut display);
+  return terminal(&mut seat, &mut display);
 }
 
 pub fn initialise(terminal mut &terminal) -> i32
@@ -160,7 +160,8 @@ pub fn render(terminal mut &this) -> void
 pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanoseconds(-1)) -> i32
 {
   var mut &pty = terminal.pty;
-  var mut &driver = terminal.driver;
+  var mut &seat = terminal.seat;
+  var mut &driver = seat.driver;
 
   var events = 0;
 
@@ -296,10 +297,17 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
 
     var pollset = [
       os::pollevt(pty.master, os::POLLFD, os::POLLIN, 0),
-      os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0)
+      os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0),
+      os::pollevt(seat.plugfd, os::POLLFD, os::POLLIN, 0),
     ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8);
+    var cnt = os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8);
+
+    for (var i = 0; i < cnt; ++i)
+    {
+      if (pollset[cast<usize>(i)].id == seat.plugfd)
+        seat::hotplug(&mut seat);
+    }
   }
 }
 

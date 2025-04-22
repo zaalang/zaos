@@ -10,12 +10,12 @@ import thread as _ : thread;
 
 pub struct wait_queue
 {
-  pub fn empty(this&) -> bool
+  pub fn empty(this &) -> bool
   {
     return !this.waiters;
   }
 
-  pub fn head(this&) -> thread *
+  pub fn head(this &) -> thread *
   {
     return this.waiters.thread;
   }

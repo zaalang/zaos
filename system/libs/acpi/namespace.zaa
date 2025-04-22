@@ -13,13 +13,22 @@ import acpi.parser;
 
 pub vtable interface
 {
-  fn read(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result;
-  fn write(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result;
-  fn close(acpi::namespace mut &namespace, acpi::opregion *opregion) -> acpi::result;
+  fn thread_getid(acpi::namespace mut &namespace, u32 mut &id) -> acpi::result;
+
+  fn clock_gettime(acpi::namespace mut &namespace, u64 mut &clock) -> acpi::result;
+
+  fn region_read(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 mut &data) -> acpi::result;
+  fn region_write(acpi::namespace mut &namespace, acpi::opregion *opregion, u64 offset, usize width, u64 &data) -> acpi::result;
+  fn region_close(acpi::namespace mut &namespace, acpi::opregion *opregion) -> acpi::result;
+
+  fn mutex_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result;
+  fn mutex_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result;
+  fn mutex_acquire(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result;
+  fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result;
 
   fn notify(acpi::namespace mut &namespace, acpi::node *node, acpi::value &value) -> acpi::result;
 
-  fn sleep(acpi::namespace mut &namespace, acpi::value &period) -> acpi::result;
+  fn sleep(acpi::namespace mut &namespace, u64 period) -> acpi::result;
 }
 
 pub struct package
@@ -87,10 +96,9 @@ pub struct mutex
 {
   pub u8 flags;
 
-  pub mutex(u8 flags)
-    : flags(flags)
-  {
-  }
+  u32 owner;
+  u32 depth;
+  void *handle;
 
   pub mutex() = default;
   pub mutex(mutex &&) = default;
@@ -417,7 +425,8 @@ pub struct node
     device,
     processor,
     power_resource,
-    thermal_zone
+    thermal_zone,
+    method,
   }
 
   pub type type;
@@ -527,7 +536,7 @@ pub struct namespace
   pub ~namespace() = default;
 }
 
-pub fn initialise(namespace mut &ns, interface &interface) -> void
+pub fn initialise(namespace mut &ns, interface &interface) -> acpi::result
 {
   ns.root = &ns.nodes.push_back(node::type::scope, null);
 
@@ -540,10 +549,44 @@ pub fn initialise(namespace mut &ns, interface &interface) -> void
   ns.define(ns.root, node::type::scope, "_SI_");
   ns.define(ns.root, node::type::scope, "_TZ_");
 
-  ns.define(ns.root, "_GL_", value::mutex());
+  var gl = mutex();
+  if (var rc = interface.mutex_create(&mut ns, &mut gl.handle); !rc)
+    return rc;
+
+  ns.define(ns.root, "_GL_", value::mutex(gl));
+
   ns.define(ns.root, "_OSI", value::callback(1, |ns, dst, args| osi(&mut ns, &mut dst, args[0])));
 
   ns.interface = &interface;
+
+  return ok;
+}
+
+pub fn try_lock(namespace mut &ns, mutex &mutex, u16 timeout) -> bool
+{
+  var mut &mutex = cast<mutex mut &>(mutex);
+
+  var tid = 0;
+  ns.interface.thread_getid(&mut ns, &mut tid);
+
+  if (std::atomic_load(&mutex.owner) != tid)
+    if (!ns.interface.mutex_acquire(&mut ns, mutex.handle, timeout))
+      return false;
+
+  mutex.owner = tid;
+  mutex.depth += 1;
+
+  return true;
+}
+
+pub fn unlock(namespace mut &ns, mutex &mutex) -> void
+{
+  var mut &mutex = cast<mutex mut &>(mutex);
+
+  mutex.owner = 0;
+
+  if (--mutex.depth == 0)
+    ns.interface.mutex_release(&mut ns, mutex.handle);
 }
 
 pub fn get(node &node, String &name) -> std::optional<value *>
@@ -814,7 +857,7 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
     var bit = offset & cast(width * 8 - 1);
     var len = std::min(bit + length, cast(width * 8)) - bit;
 
-    if (var rc = ns.interface.read(&mut ns, &opregion, i, width, &mut data); !rc)
+    if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
       return rc;
 
     value.integer |= data << (64 - bit - len) >> (64 - len) << (length - len);
@@ -953,7 +996,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
       switch (flags & 0x60)
       {
         case 0x00:
-          if (var rc = ns.interface.read(&mut ns, &opregion, i, width, &mut data); !rc)
+          if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
             return rc;
 
         case 0x20:
@@ -965,7 +1008,7 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
     data |= value << (64 - len) >> (64 - bit - len);
     data &= (1 << (width * 8)) - 1;
 
-    if (var rc = ns.interface.write(&mut ns, &opregion, i, width, data); !rc)
+    if (var rc = ns.interface.region_write(&mut ns, &opregion, i, width, data); !rc)
       return rc;
 
     value >>= len;
@@ -1210,7 +1253,30 @@ pub fn store(namespace mut &ns, value *obj, std::vector<usize> &index, value mut
 
 pub fn close(namespace mut &ns, opregion &opregion) -> void
 {
-  ns.interface.close(&mut ns, &opregion);
+  ns.interface.region_close(&mut ns, &opregion);
+}
+
+pub fn timer(namespace mut &ns, u64 mut &clock) -> acpi::result
+{
+  if (var rc = ns.interface.clock_gettime(&mut ns, &mut clock); !rc)
+    return rc;
+
+  return ok;
+}
+
+pub fn create_mutex(namespace mut &ns, u8 flags, mutex mut &mutex) -> acpi::result
+{
+  mutex.flags = flags;
+
+  if (var rc = ns.interface.mutex_create(&mut ns, &mut mutex.handle); !rc)
+    return rc;
+
+  return ok;
+}
+
+pub fn destroy_mutex(namespace mut &ns, mutex &mutex) -> void
+{
+  ns.interface.mutex_destroy(&mut ns, mutex.handle);
 }
 
 pub fn notify(namespace mut &ns, node *node, value &value) -> void
@@ -1218,7 +1284,7 @@ pub fn notify(namespace mut &ns, node *node, value &value) -> void
   ns.interface.notify(&mut ns, node, value);
 }
 
-pub fn sleep(namespace mut &ns, value &period) -> void
+pub fn sleep(namespace mut &ns, u64 period) -> void
 {
   ns.interface.sleep(&mut ns, period);
 }

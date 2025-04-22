@@ -1,0 +1,399 @@
+//
+// usb keyboard
+//
+
+import std.stdio;
+import std.atomic;
+import std.circular_buffer;
+import dev;
+import chr;
+import usb;
+import usb.modules.hid as hid;
+import io;
+import vm;
+import cpu;
+import vfs;
+import input;
+import support.rc : Rc;
+
+pub struct hiddev : pub chr::chrdev
+{
+  pub hiddev(usb::usbdev mut *device)
+    : super(&impl this),
+      device(device)
+  {
+    device.unplugged = || unplugged(&this);
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = this.device_path;
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
+  {
+    readable = this.readable.cb;
+
+    return ok;
+  }
+
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  {
+    var count = 0;
+
+    if (this.readable.ready)
+    {
+      decode(&mut this);
+
+      while (count + sizeof<input::event> <= length)
+      {
+        if (this.events.empty)
+          break;
+
+        var event = this.events.take_front();
+
+        if (var result = vm::memcpy(buffer, offset, &event, sizeof(event)); !result)
+          return cast(result);
+
+        count += sizeof(event);
+        offset += sizeof(event);
+      }
+
+      if (this.events.empty)
+        schedule_read(&mut this);
+    }
+
+    if (count == 0)
+      return would_block;
+
+    return cast(count);
+  }
+
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub ~hiddev() = default;
+
+  vm::iovec region;
+  io::response readable;
+  std::vector<u8> buffer;
+
+  u8 endpoint_address;
+  std::string device_path;
+  std::vector<hid::collection> collections;
+
+  u8[8] button_state;
+  u8[8] button_state_prev;
+  i32[3] pointer_state_rel;
+  i32[3] pointer_state_abs;
+  i32[3] pointer_state_abs_prev;
+  std::vector<u16> keyboard_state;
+  std::vector<u16> keyboard_state_prev;
+
+  const axis = [ input::axis::x, input::axis::y, input::axis::wheel ];
+  const buttons = [ input::button::left, input::button::right, input::button::middle, input::button::side, input::button::extra ];
+
+  std::circular_buffer<input::event, N:64> events;
+
+  Rc<usb::usbdev> device;
+}
+
+fn add_event(hiddev mut &this, input::event &evt) -> void
+{
+  if (this.events.full)
+  {
+    var mut &back = this.events.back;
+
+    back.type = input::type::syn;
+    back.code = input::syn::dropped;
+    back.value = 0;
+
+    return;
+  }
+
+  this.events.push_back(evt);
+}
+
+fn schedule_read(hiddev mut &this) -> usb::result
+{
+  io::initiate(&mut this.readable.cb, 1);
+
+  usb::submit(this.device, &mut this.readable.cb, this.endpoint_address, usb::endpoint::type::interrupt, this.region, 0, this.region.length);
+
+  return ok;
+}
+
+fn decode(hiddev mut &this) -> usb::result
+{
+  if (!this.readable)
+    return io_error;
+
+  for (var byte = 0, var end = cast<usize>(this.readable.result); byte < end; )
+  {
+    var bits = 0;
+    var report_id = 0;
+
+    var syn = false;
+    var mouse = false;
+    var keyboard = false;
+
+    var evt = input::event(void);
+    evt.time = cpu::system_time();
+
+    for (var &collection : this.collections)
+    {
+      for (var &report : hid::report_view(collection))
+      {
+        if (report.type != hid::report::type::input)
+          continue;
+
+        if (report.report_id != report_id)
+        {
+          if (report_id == 0)
+            report_id = cast(this.buffer[byte++]);
+
+          if (report.report_id != report_id)
+            continue;
+        }
+
+        for (var index = 0; index < report.report_count; ++index)
+        {
+          var value = i64(void);
+          var usage = u32(void);
+
+          if (hid::extract(report, index, this.buffer, byte, bits, &mut value, &mut usage))
+          {
+            var page = usage >> 16;
+            var usage = usage & 0xffff;
+
+            switch (page)
+            {
+              case 1:
+                switch (usage)
+                {
+                  case 0x30:
+                    if (report.flags & hid::report::flags::relative != 0)
+                      this.pointer_state_rel[0] = cast(value);
+                    else
+                      this.pointer_state_abs[0] = cast((value - cast<i64>(report.logical_minimum)) * 65535 / (cast<i64>(report.logical_maximum) - cast<i64>(report.logical_minimum)));
+
+                  case 0x31:
+                    if (report.flags & hid::report::flags::relative != 0)
+                      this.pointer_state_rel[1] = cast(-value);
+                    else
+                      this.pointer_state_abs[1] = cast((value - cast<i64>(report.logical_minimum)) * 65535 / (cast<i64>(report.logical_maximum) - cast<i64>(report.logical_minimum)));
+
+                  case 0x38:
+                    if (report.flags & hid::report::flags::relative != 0)
+                      this.pointer_state_rel[2] = cast(-value);
+                }
+
+              case 7:
+                if (value != 0 && usage != 0)
+                  this.keyboard_state.push_back(cast<u16>(usage));
+
+                keyboard = true;
+
+              case 9:
+                if (usage > 0 && usage <= cast(this.button_state.len))
+                  this.button_state[cast<usize>(usage - 1)] = cast(value & 0x1);
+
+                mouse = true;
+            }
+          }
+
+          bits += cast<usize>(report.report_size);
+        }
+      }
+    }
+
+    if (keyboard)
+    {
+      for (var key : this.keyboard_state_prev)
+      {
+        if (std::find(this.keyboard_state, key) != this.keyboard_state.end)
+          continue;
+
+        evt.type = input::type::key;
+        evt.code = key;
+        evt.value = 0;
+
+        add_event(&mut this, evt);
+      }
+
+      for (var key : this.keyboard_state)
+      {
+        if (std::find(this.keyboard_state_prev, key) != this.keyboard_state_prev.end)
+          continue;
+
+        evt.type = input::type::key;
+        evt.code = key;
+        evt.value = 1;
+
+        add_event(&mut this, evt);
+      }
+
+      std::swap(&mut this.keyboard_state_prev, &mut this.keyboard_state);
+
+      this.keyboard_state.clear();
+    }
+
+    if (mouse)
+    {
+      for (var i = 0; i < hiddev::buttons.len; ++i)
+      {
+        if (this.button_state[i] == this.button_state_prev[i])
+          continue;
+
+        evt.type = input::type::key;
+        evt.code = hiddev::buttons[i];
+        evt.value = cast(this.button_state[i]);
+
+        add_event(&mut this, evt);
+      }
+
+      this.button_state_prev = this.button_state;
+
+      for (var i = 0; i < hiddev::axis.len; ++i)
+      {
+        if (this.pointer_state_rel[i] != 0)
+        {
+          evt.type = input::type::rel;
+          evt.code = hiddev::axis[i];
+          evt.value = this.pointer_state_rel[i];
+
+          add_event(&mut this, evt);
+
+          syn = true;
+        }
+
+        if (this.pointer_state_abs[i] != this.pointer_state_abs_prev[i])
+        {
+          evt.type = input::type::abs;
+          evt.code = hiddev::axis[i];
+          evt.value = this.pointer_state_abs[i];
+
+          add_event(&mut this, evt);
+
+          syn = true;
+        }
+      }
+
+      this.pointer_state_abs_prev = this.pointer_state_abs;
+    }
+
+    if (syn)
+    {
+      evt.type = input::type::syn;
+      evt.code = input::syn::report;
+      evt.value = 0;
+
+      add_event(&mut this, evt);
+    }
+
+    if (bits == 0)
+      return not_found;
+
+    byte += (bits >> 3);
+  }
+
+  io::reset(&mut this.readable.cb);
+
+  return ok;
+}
+
+fn device_path(std::vector<hid::collection> &collections) -> std::string
+{
+  var type = 0;
+
+  static mouses = u32(0);
+  static keyboards = u32(0);
+  static generics = u32(0);
+
+  for (var &collection : collections)
+  {
+    switch (collection.usage)
+    {
+      case 0x10001: // generic desktop mouse
+      case 0x10002: // generic desktop pointer
+        type |= 0x1;
+
+      case 0x10006: // generic desktop keyboard
+      case 0x10007: // generic desktop keypad
+        type |= 0x2;
+    }
+  }
+
+  switch (type)
+  {
+    case 0x1:
+      return std::format("input/mouse/usb/{}", std::atomic_add(&mouses, 1));
+
+    case 0x2:
+      return std::format("input/keyboard/usb/{}", std::atomic_add(&keyboards, 1));
+
+    case 0x3:
+      return std::format("input/composite/usb/{}", std::atomic_add(&generics, 1));
+
+    else:
+      return std::format("input/unknown/usb/{}", std::atomic_add(&generics, 1));
+  }
+}
+
+pub fn initialise(hiddev mut *hiddev, u8 endpoint_address, std::vector<hid::collection> &&collections) -> usb::result
+{
+  var max_report_size = 0;
+
+  for (var &collection : collections)
+  {
+    max_report_size += hid::report_size(collection, hid::report::type::input);
+  }
+
+  if (max_report_size == 0)
+    return invalid_argument;
+
+  hiddev.buffer.resize(max_report_size + 3);
+
+  if (var result = vm::lock(vm::virtrange(hiddev.buffer.data, max_report_size), vm::protection::readwrite, &mut hiddev.region); !result)
+    return cast(result);
+
+  std::print("usb-hid device on ", hiddev.device.query(usb::query::device_name));
+
+  hiddev.device_path = device_path(collections);
+  hiddev.endpoint_address = endpoint_address;
+  hiddev.collections = &&collections;
+
+  hiddev.schedule_read();
+
+  return ok;
+}
+
+pub fn unplugged(hiddev mut *hiddev) -> usb::result
+{
+  dev::remove(hiddev);
+
+  return ok;
+}

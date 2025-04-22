@@ -36,7 +36,7 @@ struct pollset
 
   fn create(this mut &pollset) -> i32
   {
-    pollset.fd = os::epoll_create(&mut thread_ring, 0);
+    pollset.fd = os::poll_create(&mut thread_ring, 0);
 
     if (pollset.fd < 0)
       return pollset.fd;
@@ -44,22 +44,22 @@ struct pollset
     return 0;
   }
 
-  fn add(this mut &pollset, os::pollevt &evt) -> i32
+  fn add(this mut &pollset, i32 id, u16 type, u16 mask, uintptr user_data, u64 flags) -> i32
   {
-    if (var rc = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_ADD, &evt, 0); rc < 0)
+    if (var rc = os::poll_add(&mut thread_ring, pollset.fd, id, type, mask, user_data, flags); rc < 0)
       return rc;
 
     return 0;
   }
 
-  fn remove(this mut &pollset, os::pollevt &evt) -> i32
+  fn remove(this mut &pollset, i32 id, u16 type) -> i32
   {
-    if (var rc = os::epoll_ctl(&mut thread_ring, pollset.fd, os::EPOLL_CTL_DEL, &evt, 0); rc < 0)
+    if (var rc = os::poll_remove(&mut thread_ring, pollset.fd, id, type); rc < 0)
       return rc;
 
     for (var i = pollset.head; i < pollset.head + pollset.count; ++i)
     {
-      if (pollset.events[i].id == evt.id)
+      if (pollset.events[i].id == id)
         pollset.events[i].user_data = 0;
     }
 
@@ -68,7 +68,7 @@ struct pollset
 
   fn wait(this mut &pollset, u64 timeout) -> i32
   {
-    var count = os::epoll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
+    var count = os::poll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
 
     if (count < 0)
       return count;
@@ -155,14 +155,13 @@ pub struct loop
     return thread_default_loop;
   }
 
-  pub fn begin_wait(this mut &loop, os::pollevt evt, wait_t mut *handler) -> i32
+  pub fn begin_wait(this mut &loop, i32 id, u16 type, u16 mask, wait_t mut *handler) -> i32
   {
-    handler.id = evt.id;
-    handler.type = evt.type;
-    handler.mask = evt.mask;
-    evt.user_data = cast(handler);
+    handler.id = id;
+    handler.type = type;
+    handler.mask = mask;
 
-    if (var rc = loop.pollset.add(evt); rc < 0)
+    if (var rc = loop.pollset.add(id, type, mask, cast(handler), 0); rc < 0)
       return rc;
 
     return 0;
@@ -170,12 +169,7 @@ pub struct loop
 
   pub fn begin_wait_fd(this mut &loop, i32 fd, wait_t mut *handler) -> i32
   {
-    var evt = os::pollevt();
-    evt.id = fd;
-    evt.type = os::POLLFD;
-    evt.mask = os::POLLIN;
-
-    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
+    if (var rc = begin_wait(&mut loop, fd, os::POLLFD, os::POLLIN, handler); rc < 0)
       return rc;
 
     return 0;
@@ -183,12 +177,7 @@ pub struct loop
 
   pub fn begin_wait_pid(this mut &loop, i32 tid, wait_t mut *handler) -> i32
   {
-    var evt = os::pollevt();
-    evt.id = tid;
-    evt.type = os::POLLTHREAD;
-    evt.mask = os::POLLIN;
-
-    if (var rc = begin_wait(&mut loop, evt, handler); rc < 0)
+    if (var rc = begin_wait(&mut loop, tid, os::POLLTHREAD, os::POLLIN, handler); rc < 0)
       return rc;
 
     return 0;
@@ -196,12 +185,7 @@ pub struct loop
 
   pub fn cancel_wait(this mut &loop, wait_t mut *handler) -> i32
   {
-    var evt = os::pollevt();
-    evt.id = handler.id;
-    evt.type = handler.type;
-    evt.mask = handler.mask;
-
-    loop.pollset.remove(evt);
+    loop.pollset.remove(handler.id, handler.type);
 
     return 0;
   }
@@ -303,14 +287,9 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
 
   if (flags & options::manage_system_service)
   {
-    var evt = os::pollevt();
-    evt.id = STDSYS_FILENO;
-    evt.type = os::POLLFD;
-    evt.mask = os::POLLIN;
-
     loop.system_service_handler.callback = &cast<fn (loop mut &, loop::wait_t mut *) -> void>(system_service_handler);
 
-    loop.begin_wait(evt, &loop.system_service_handler);
+    loop.begin_wait_fd(STDSYS_FILENO, &loop.system_service_handler);
   }
 
   loop.state = loop::state::runnable;

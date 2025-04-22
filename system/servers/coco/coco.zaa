@@ -5,28 +5,21 @@
 import std.stdio;
 import display;
 import terminal;
-import input.driver;
-import input.keymap;
+import seat;
 import env;
 import tab;
 
 fn main()
 {
-  var driver = input::driver();
-  if (var rc = driver.initialise(); rc < 0)
-    std::print("coco: failed to initialise input driver - ", cast<std::errc>(-rc));
-
-  var keymap = input::keymap();
-  if (var rc = keymap.initialise("/zaos/data/us.keymap", "/zaos/data/us.keymap"); rc < 0)
-    std::print("coco: failed to initialise input keymap - ", cast<std::errc>(-rc));
-
-  driver.add_device("/dev/input/keyboard/ps2/0", keymap);
+  var seat = seat::create();
+  if (var rc = seat::initialise(&mut seat); rc < 0)
+    std::print("coco: failed to initialise input - ", cast<std::errc>(-rc));
 
   var display = display::create();
   if (var rc = display::initialise(&mut display); rc < 0)
     std::print("coco: failed to initialise display - ", cast<std::errc>(-rc));
 
-  var terminal = terminal::create(&mut driver, &mut display);
+  var terminal = terminal::create(&mut seat, &mut display);
   if (var rc = terminal::initialise(&mut terminal); rc < 0)
     std::print("coco: failed to initialise terminal - ", cast<std::errc>(-rc));
 

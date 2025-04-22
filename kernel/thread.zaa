@@ -41,9 +41,9 @@ pub struct thread
     high = 20,
     max = 50,
 
-    pub fn level(this&) -> usize { return cast<usize>(this); }
-    pub fn +(this&, int offset) -> priority { return cast<priority>(cast<int>(this) + offset); }
-    pub fn -(this&, int offset) -> priority { return cast<priority>(cast<int>(this) - offset); }
+    pub fn level(this &) -> usize { return cast<usize>(this); }
+    pub fn +(this &, int offset) -> priority { return cast<priority>(cast<int>(this) + offset); }
+    pub fn -(this &, int offset) -> priority { return cast<priority>(cast<int>(this) - offset); }
   }
 
   pub id id;
@@ -95,7 +95,7 @@ pub struct thread
 
     var thread = threadman.threads[j].value;
 
-    while (true)
+    for (;;)
     {
       var refcnt = std::volatile_load(&thread.refcnt);
 
@@ -152,7 +152,7 @@ pub struct thread
 
     io::complete(&mut thread.rval.cb, rval);
 
-    scheduler::bury(&mut threadman.doorbell, &mut threadman.graveyard);
+    scheduler::bury(&mut threadman.graveyard_doorbell, &mut threadman.graveyard);
   }
 
   pub fn ref(this mut &) -> void
@@ -184,9 +184,9 @@ struct thread_manager
   thread::id nextid;
   std::flat_hash_map<thread::id, thread mut *> threads;
 
-  semaphore doorbell;
   thread mut *undertaker;
   thread mut *graveyard;
+  semaphore graveyard_doorbell;
 
   fn instance()
   {
@@ -232,7 +232,7 @@ fn allocate(thread_manager mut &threadman) -> thread mut *
 
   var thread = thread::create();
 
-  while (true)
+  for (;;)
   {
     thread.id = ++threadman.nextid;
 
@@ -344,7 +344,7 @@ fn destroy(thread mut *thread) -> void
 
 fn undertaker(void*) -> void
 {
-  while (true)
+  for (;;)
   {
     for (var thread = std::atomic_xchg(&threadman.graveyard, null); thread; )
     {
@@ -369,13 +369,13 @@ fn undertaker(void*) -> void
       thread = next;
     }
 
-    threadman.doorbell.wait();
+    threadman.graveyard_doorbell.wait();
   }
 }
 
 pub fn spawn_undertaker() -> void
 {
-  threadman.undertaker = create_thread(process::current, &cast<fn (void mut *) -> void>(undertaker), null);
+  threadman.undertaker = create_thread(process::current, &cast<(void mut *) -> void>(undertaker), null);
 
   scheduler::enqueue(threadman.undertaker, thread::priority::high);
 }

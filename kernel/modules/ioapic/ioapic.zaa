@@ -9,12 +9,42 @@ import platform : PHYSICAL_BASE;
 import sys;
 import io;
 
+pub enum trigger
+{
+  bus = 0,
+  edge = 0,
+  level = 1,
+}
+
+pub enum polarity
+{
+  bus = 0,
+  active_high = 0,
+  active_low = 1,
+}
+
+pub struct override
+{
+  pub u8 bus;
+  pub u8 bus_irq;
+  pub u32 gsi;
+  pub polarity polarity;
+  pub trigger triggermode;
+
+  pub override() = default;
+  pub override(override &) = default;
+  pub fn =(override mut &, override &) -> override mut & = default;
+  pub ~override() = default;
+}
+
 struct interrupt_controller
 {
   uintptr ioapic;
   u32 gsi_base;
   u32 gsi_count;
   (u8, u8) vectors;
+
+  std::vector<override> overrides;
 
   fn instance() -> interrupt_controller mut &
   {
@@ -47,10 +77,47 @@ fn ioapic_write(uintptr base, u32 register, u32 value) -> void
   std::volatile_store(cast<u32 mut *>(PHYSICAL_BASE + base + 0x10), value);
 }
 
-pub fn resolve(u32 gsi) -> u8
+fn add_src_override(interrupt_controller mut &ic, acpi::interrupt_source_override *apic) -> void
 {
-  if (gsi == 0)
-    return 0;
+  var override = override();
+
+  override.bus = apic.bus;
+  override.bus_irq = apic.source;
+  override.gsi = apic.interrupt;
+
+  switch (apic.flags & 0x3)
+  {
+    case 0:
+      override.polarity = polarity::bus;
+
+    case 1:
+      override.polarity = polarity::active_high;
+
+    case 3:
+      override.polarity = polarity::active_low;
+  }
+
+  switch ((apic.flags & 0xc) >> 2)
+  {
+    case 0:
+      override.triggermode = trigger::bus;
+
+    case 1:
+      override.triggermode = trigger::edge;
+
+    case 3:
+      override.triggermode = trigger::level;
+  }
+
+  ic.overrides.push_back(override);
+}
+
+pub fn resolve(u32 irq) -> u8
+{
+  var gsi = irq;
+
+  if (var j = ic.overrides.find_if(|override| override.bus == 0 && cast(override.bus_irq) == irq); j != ic.overrides.end)
+    gsi = ic.overrides[j].gsi;
 
   if (gsi < ic.gsi_base || gsi >= ic.gsi_base + ic.gsi_count)
     return 0;
@@ -95,6 +162,10 @@ pub fn initialise() -> void
 
         ic.gsi_base = io_apic.interrupt_base;
         ic.gsi_count = (ioapic_read(ic.ioapic, 0x1) >> 16) & 0xff + 1;
+
+      case interrupt_source_override:
+
+        ic.add_src_override(cast<acpi::interrupt_source_override*>(apic));
     }
   }
 
@@ -103,10 +174,21 @@ pub fn initialise() -> void
   for (var idx = 0; idx < ic.gsi_count; ++idx)
   {
     var vector = cast<u32>(ic.vectors.0) + idx;
+    var polarity = polarity::bus;
+    var triggermode = trigger::bus;
 
-    ioapic_write(ic.ioapic, 0x10 + 2*idx, vector | 0x10900);
+    if (var j = ic.overrides.find_if(|override| override.gsi == ic.gsi_base + idx); j != ic.overrides.end)
+    {
+      polarity = ic.overrides[j].polarity;
+      triggermode = ic.overrides[j].triggermode;
+    }
+
+    ioapic_write(ic.ioapic, 0x10 + 2*idx, vector | cast<u32>(polarity) << 13 | cast<u32>(triggermode) << 15 | 0x10900);
     ioapic_write(ic.ioapic, 0x10 + 2*idx + 1, 0xff000000);
   }
 
   std::print("ioapic: interrupts ", ic.gsi_base, " through ", ic.gsi_base + ic.gsi_count - 1);
+
+  for (var &override : ic.overrides)
+    std::print("ioapic: override bus ", override.bus, " irq ", override.bus_irq, " to gsi ", override.gsi, " ", override.polarity, " ", override.triggermode);
 }

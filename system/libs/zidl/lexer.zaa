@@ -46,12 +46,12 @@ pub struct source_text
     return src;
   }
 
-  pub fn path(this&) { return this.path; }
+  pub fn path(this &) { return this.path; }
 
-  pub fn len(this&) -> usize { return this.contents.len; }
+  pub fn len(this &) -> usize { return this.contents.len; }
 
-  pub fn head(this&) -> u8 * { return this.contents.data; }
-  pub fn tail(this&) -> u8 * { return this.contents.data + this.contents.len; }
+  pub fn head(this &) -> u8 * { return this.contents.data; }
+  pub fn tail(this &) -> u8 * { return this.contents.data + this.contents.len; }
 
   pub source_text() = default;
   pub source_text(source_text &&) = default;

@@ -179,7 +179,7 @@ pub struct port
   u8[32] pressed;
 
   std::spin_lock lock;
-  std::circular_buffer<input::event, N:256> buffer;
+  std::circular_buffer<input::event, N:64> events;
 
   pub io::response readable;
 
@@ -187,12 +187,12 @@ pub struct port
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-    if (this.buffer.empty)
+    if (this.events.empty)
       return false;
 
-    evt = this.buffer.take_front();
+    evt = this.events.take_front();
 
-    if (this.buffer.len == 0)
+    if (this.events.len == 0)
       io::initiate(&mut this.readable.cb, 1);
 
     return true;
@@ -213,9 +213,9 @@ pub struct port
 
 fn add_event(port mut *port, input::event &evt) -> void
 {
-  if (port.buffer.full)
+  if (port.events.full)
   {
-    var mut &back = port.buffer.back;
+    var mut &back = port.events.back;
 
     back.type = input::type::syn;
     back.code = input::syn::dropped;
@@ -224,9 +224,9 @@ fn add_event(port mut *port, input::event &evt) -> void
     return;
   }
 
-  port.buffer.push_back(evt);
+  port.events.push_back(evt);
 
-  if (port.buffer.len == 1)
+  if (port.events.len == 1)
     io::complete(&mut port.readable.cb, 0);
 }
 
@@ -258,6 +258,11 @@ fn keyboard_handler(port mut *port, u8 data) -> void
         case 0x2a:
         case 0xb7:
           port.state = 0;
+
+        case 0xaa:
+          code = 0xb7;
+          value = 1;
+          port.state = 0xff;
 
         else:
           code = 0x80 | (data & 0x7f);
@@ -435,7 +440,7 @@ fn mouse_handler(port mut *port, u8 data) -> void
   }
 }
 
-extern fn ps2_io_handler(controller mut *controller) -> void
+fn ps2_io_handler(controller mut *controller) -> void
 {
   var ctrl = read_ctrl_port();
 
@@ -456,7 +461,7 @@ fn probe_mouse() -> result
 
   for (var cmd : [ 0xf3, 0xc8, 0xf3, 0x64, 0xf3, 0x50])
   {
-    while (true)
+    for (;;)
     {
       if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
         return timed_out;
@@ -531,7 +536,7 @@ fn initialise(controller mut &controller) -> result
     if (!wait_then_write(PS2_CTRL_PORT, command::keyboard_enable, 500))
       return timed_out;
 
-    while (true)
+    for (;;)
     {
       if (!wait_then_write(PS2_DATA_PORT, request::reset, 500))
         return timed_out;
@@ -571,7 +576,7 @@ fn initialise(controller mut &controller) -> result
     if (!wait_then_write(PS2_CTRL_PORT, command::mouse_enable, 500))
       return timed_out;
 
-    while (true)
+    for (;;)
     {
       if (!wait_then_write(PS2_CTRL_PORT, command::write_aux, 500))
         return timed_out;
@@ -618,8 +623,8 @@ fn initialise(controller mut &controller) -> result
     flush();
   }
 
-  io::install_handler(ioapic::resolve(0x01), cast(extern(ps2_io_handler)), &controller);
-  io::install_handler(ioapic::resolve(0x0c), cast(extern(ps2_io_handler)), &controller);
+  io::install_handler(ioapic::resolve(0x01), &cast<(controller mut *) -> void>(ps2_io_handler), &controller);
+  io::install_handler(ioapic::resolve(0x0c), &cast<(controller mut *) -> void>(ps2_io_handler), &controller);
 
   if (!wait_then_write(PS2_CTRL_PORT, command::write, 500))
     return timed_out;

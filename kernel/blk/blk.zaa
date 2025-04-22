@@ -117,12 +117,12 @@ fn blkman() -> blkdev_manager mut &
   return &blkdev_manager::instance;
 }
 
-pub fn open(blkdev_ptr &dev, vfs::fd mut &fd, u64 flags, u32 mode) -> blk::result
+pub fn open(blkdev mut *device, vfs::fd mut &fd, u64 flags, u32 mode) -> blk::result
 {
   return ok;
 }
 
-pub fn read(blkdev_ptr &dev, u64 position, void mut *buffer, usize length) -> blk::result
+pub fn read(blkdev mut *device, u64 position, void mut *buffer, usize length) -> blk::result
 {
   var iovec = vm::iovec();
 
@@ -133,7 +133,7 @@ pub fn read(blkdev_ptr &dev, u64 position, void mut *buffer, usize length) -> bl
 
   io::initiate(&mut response.cb, 1);
 
-  blk::read(dev, &mut response.cb, position, iovec, 0, length);
+  blk::read(device, &mut response.cb, position, iovec, 0, length);
 
   if (response.wait(); !response)
     return cast(response.result);
@@ -141,7 +141,7 @@ pub fn read(blkdev_ptr &dev, u64 position, void mut *buffer, usize length) -> bl
   return cast(length);
 }
 
-pub fn write(blkdev_ptr &dev, u64 position, void *buffer, usize length) -> blk::result
+pub fn write(blkdev mut *device, u64 position, void *buffer, usize length) -> blk::result
 {
   var iovec = vm::iovec();
 
@@ -152,7 +152,7 @@ pub fn write(blkdev_ptr &dev, u64 position, void *buffer, usize length) -> blk::
 
   io::initiate(&mut response.cb, 1);
 
-  blk::write(dev, response.cb, position, iovec, 0, length);
+  blk::write(device, &mut response.cb, position, iovec, 0, length);
 
   if (response.wait(); !response)
     return cast(response.result);
@@ -160,10 +160,10 @@ pub fn write(blkdev_ptr &dev, u64 position, void *buffer, usize length) -> blk::
   return cast(length);
 }
 
-pub fn read(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
 {
   var rq = request::create();
-  rq.device = dev;
+  rq.device = device;
   rq.type = request::type::read;
   rq.position = position;
   rq.length = length;
@@ -191,10 +191,10 @@ pub fn read(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buff
   }
 }
 
-pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
 {
   var rq = request::create();
-  rq.device = dev;
+  rq.device = device;
   rq.type = request::type::write;
   rq.position = position;
   rq.length = length;
@@ -211,7 +211,7 @@ pub fn write(blkdev_ptr &dev, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buf
     blkman.doorbell.release();
 }
 
-pub fn ioctl(blkdev_ptr dev, u32 op, vm::iovec &buffer) -> result
+pub fn ioctl(blkdev mut *dev, u32 op, vm::iovec &buffer) -> result
 {
   return dev.ioctl(op, buffer);
 }
@@ -233,9 +233,9 @@ pub fn complete(request mut *rq, request::status status) -> void
       std::panic("bad_status");
   }
 
-  rq.cb = Rc<io::iocb>();
-  rq.device = blk::blkdev_ptr();
+  rq.cb = null;
   rq.status = status;
+  rq.device = null;
   rq.next = null;
 
   rq.unref();
@@ -248,7 +248,7 @@ pub fn wake_from_stall() -> void
 
 fn kblockd(void*) -> void
 {
-  while (true)
+  for (;;)
   {
     var entries = blkman.ioqueue.take();
 
@@ -256,7 +256,7 @@ fn kblockd(void*) -> void
     {
       var rq = *entry;
 
-      if ((*rq.cb).result < 0)
+      if (rq.cb.result < 0)
       {
         *entry = entry.next;
 
@@ -301,7 +301,7 @@ pub fn initialise() -> void
 {
   blkman.ioqueue.last = &blkman.ioqueue.head;
 
-  blkman.kblockd = create_thread(process::current, &cast<fn (void mut *) -> void>(kblockd), null);
+  blkman.kblockd = create_thread(process::current, &cast<(void mut *) -> void>(kblockd), null);
 
   scheduler::enqueue(blkman.kblockd);
 

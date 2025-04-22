@@ -1,0 +1,128 @@
+//
+// hid device
+//
+
+import std.stdio;
+import std.atomic;
+import dev;
+import chr;
+import usb;
+import usb.usbdev;
+import usb.modules.hid.hiddev as hid.hiddev;
+import usb.modules.hid.report as hid.report;
+
+pub enum request
+{
+  get_report = 1;
+  get_idle = 2;
+  get_protocol = 3;
+  set_report = 9;
+  set_idle = 10;
+  set_protocol = 11;
+}
+
+#[packed]
+pub struct descriptor
+{
+  pub enum type
+  {
+    pub const hid = 0x21;
+    pub const report = 0x22;
+    pub const physical = 0x23;
+  }
+
+  pub u8 length;
+  pub u8 descriptor_type;
+}
+
+#[packed]
+pub struct hid_descriptor : pub descriptor
+{
+  pub u16 hid_bcd;
+  pub u8 country_code;
+  pub u8 number_descriptors;
+}
+
+fn find_descriptor(std::span<u8> descriptors, u8 type) -> std::span<u8>
+{
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    if (descriptors[offset + 1] == type)
+      return descriptors[offset .. offset + cast<usize>(descriptors[offset])];
+
+    offset += cast(descriptors[offset]);
+  }
+
+  return std::span<u8>();
+}
+
+fn find_report_length(std::span<u8> hidinfo) -> usize
+{
+  for (var offset = sizeof<hid_descriptor>; offset < hidinfo.len; )
+  {
+    if (hidinfo[offset] == descriptor::type::report)
+      return cast<usize>(hidinfo[offset + 2]) << 16 + cast<usize>(hidinfo[offset + 1]);
+
+    offset += 3;
+  }
+
+  return 0;
+}
+
+fn find_endpoint_address(std::span<u8> descriptors) -> u8
+{
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    switch (descriptors[offset + 1])
+    {
+      case usb::descriptor::type::endpoint:
+        var endpoint = cast<usb::endpoint_descriptor*>(descriptors.data + offset);
+
+        if (endpoint.type == usb::endpoint::type::interrupt && endpoint.direction == usb::endpoint::direction::in)
+          return endpoint.endpoint_address;
+    }
+
+    offset += cast(descriptors[offset]);
+  }
+
+  return 0;
+}
+
+pub fn initialise(usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var interface = cast<usb::interface_descriptor*>(descriptors.data);
+
+  var hidinfo = find_descriptor(descriptors, descriptor::type::hid);
+
+  if (hidinfo.empty)
+    return not_found;
+
+  var report_length = find_report_length(hidinfo);
+
+  if (report_length == 0)
+    return not_found;
+
+  var buffer = std::vector<u8>::with_size(report_length);
+
+  if (var result = usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::interface, usb::request::get_descriptor, descriptor::type::report << 8, cast<u16>(interface.interface_number), buffer.data, buffer.len); !result)
+    return result;
+
+  var report = hid::parse_report_descriptor(buffer.span);
+
+  if (report.error)
+    return invalid_argument;
+
+  var endpoint_address = find_endpoint_address(descriptors);
+
+  if (endpoint_address == 0)
+    return not_found;
+
+  var hiddev = chr::chrdev::create<hid::hiddev>(device);
+
+  if (var result = hid::initialise(&mut hiddev, endpoint_address, &move report.collections); !result)
+    return result;
+
+  dev::register(dev::dev_t(), hiddev);
+
+  return ok;
+}

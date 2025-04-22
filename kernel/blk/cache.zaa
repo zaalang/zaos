@@ -117,17 +117,17 @@ fn destroy(cache_entry mut *entry) -> void
 
 pub struct block_ptr
 {
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return !!this.response;
   }
 
-  pub fn ready(this&) -> bool
+  pub fn ready(this &) -> bool
   {
     return this.response.ready;
   }
 
-  pub fn result(this&) -> i32
+  pub fn result(this &) -> i32
   {
     return this.response.result;
   }
@@ -139,7 +139,7 @@ pub struct block_ptr
 
   pub fn base(this mut &) -> u8 mut *
   {
-    return cast<u8 mut *>((*this.entry).allocation.addr);
+    return cast<u8 mut *>(this.entry.allocation.addr);
   }
 
   pub fn size(this mut &) -> usize
@@ -149,12 +149,12 @@ pub struct block_ptr
 
   pub fn state(this &&)
   {
-    return &(*this.entry).state;
+    return &this.entry.state;
   }
 
   pub fn response(this &&)
   {
-    return &(*this.entry).response;
+    return &this.entry.response;
   }
 
   Rc<cache_entry> entry;
@@ -186,8 +186,8 @@ struct block_cache
 
   std::flat_hash_map<cache_key, cache_entry mut *> entries;
 
-  semaphore doorbell;
   thread mut *plumber;
+  semaphore plumber_doorbell;
   cache_entry mut *drain;
 
   fn get(block_cache mut &pagecache, cache_key &key) -> block_ptr
@@ -234,7 +234,7 @@ fn pagecache() -> block_cache mut &
   return &block_cache::instance;
 }
 
-pub fn fetch(vfs::node_ptr node, u64 offset) -> block_ptr
+pub fn fetch(Rc<vfs::node> &node, u64 offset) -> block_ptr
 {
   offset &= ~BLOCK_MASK;
 
@@ -246,7 +246,7 @@ pub fn fetch(vfs::node_ptr node, u64 offset) -> block_ptr
     block.entry.offset = offset;
     block.entry.response = io::response();
 
-    if (var result = node.file_operations.read(node, &mut block.response.cb, offset, (*block.entry).iovs, 0, block.size); !result)
+    if (var result = node.file_operations.read(node, &mut block.response.cb, offset, block.entry.iovs, 0, block.size); !result)
       io::cancel(&mut block.response.cb, result);
 
     block.state = cache_entry::state::initialised;
@@ -275,7 +275,7 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
     block.entry.ref();
     block.entry.node.ref();
 
-    while (true)
+    for (;;)
     {
       block.entry.next = std::volatile_load(&pagecache.drain);
 
@@ -283,7 +283,7 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
         break;
     }
 
-    pagecache.doorbell.release();
+    pagecache.plumber_doorbell.release();
   }
 }
 
@@ -294,14 +294,14 @@ pub fn purge(vfs::node *node) -> void
 
 fn plumber(void*) -> void
 {
-  while (true)
+  for (;;)
   {
     scheduler::sleep_until(cpu::system_time + 1_000_000_000);
 
     for (var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
     {
       var next = entry.next;
-      var node = vfs::node_ptr(entry.node);
+      var node = entry.node;
       var dirty = std::atomic_xchg(&entry.dirty, 0);
       var response = io::response();
       var position = entry.offset;
@@ -339,13 +339,13 @@ fn plumber(void*) -> void
       entry = next;
     }
 
-    pagecache.doorbell.wait();
+    pagecache.plumber_doorbell.wait();
   }
 }
 
 pub fn spawn_plumber() -> void
 {
-  pagecache.plumber = create_thread(process::current, &cast<fn (void mut *) -> void>(plumber), null);
+  pagecache.plumber = create_thread(process::current, &cast<(void mut *) -> void>(plumber), null);
 
   scheduler::enqueue(pagecache.plumber);
 }

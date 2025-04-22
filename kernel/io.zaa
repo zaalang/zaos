@@ -8,7 +8,8 @@ import sys;
 import cpu;
 import platform;
 import scheduler;
-import ioring : ioring_pollset;
+import ioring;
+import ioring.poll;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import slab : slab_allocator;
@@ -133,7 +134,7 @@ pub struct iocb
 
   std::spin_lock lock;
   wait_queue waiters;
-  std::vector<ioring_pollset mut *> pollsets;
+  std::vector<ioring::pollset mut *> pollsets;
 
   u8[0] reserved;
 
@@ -149,9 +150,9 @@ pub struct iocb
     return allocator.allocate();
   }
 
-  pub fn result(this&) -> i32
+  pub fn result(this &) -> i32
   {
-    return std::volatile_load(&this.result);
+    return std::atomic_load(&this.result);
   }
 
   pub fn ref(this mut &) -> void
@@ -178,24 +179,24 @@ fn destroy(iocb mut *cb) -> void
 
 pub struct response
 {
-  pub fn bool(this&) -> bool
+  pub fn bool(this &) -> bool
   {
     return this.result >= 0 && this.outstanding == 0;
   }
 
-  pub fn ready(this&) -> bool
+  pub fn ready(this &) -> bool
   {
     return this.outstanding <= 0;
   }
 
-  pub fn result(this&) -> i32
+  pub fn result(this &) -> i32
   {
-    return (*this.cb).result;
+    return std::atomic_load(&this.cb.result);
   }
 
-  pub fn outstanding(this&) -> i32
+  pub fn outstanding(this &) -> i32
   {
-    return (*this.cb).outstanding;
+    return std::atomic_load(&this.cb.outstanding);
   }
 
   pub Rc<iocb> cb;
@@ -208,8 +209,8 @@ pub struct response
   pub response(var result = i32(0))
     : cb(iocb::create())
   {
-    (*cb).result = cast(result);
-    (*cb).outstanding = 0;
+    cb.result = cast(result);
+    cb.outstanding = 0;
   }
 
   pub response(response &&other) = default;
@@ -219,99 +220,99 @@ pub struct response
 
 pub fn wait(response mut &rq) -> void
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*rq.cb).lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
 
-  if (rq.outstanding <= 0)
+  if (std::atomic_load(&rq.cb.outstanding) <= 0)
     return;
 
-  (*rq.cb).waiters.wait(&mut (*rq.cb).lock);
+  rq.cb.waiters.wait(&mut rq.cb.lock);
 }
 
 pub fn wait_until(response mut &rq, u64 abstime) -> bool
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut (*rq.cb).lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
 
-  if (rq.outstanding <= 0)
+  if (std::atomic_load(&rq.cb.outstanding) <= 0)
     return true;
 
-  return (*rq.cb).waiters.wait_until((*rq.cb).lock, abstime);
+  return rq.cb.waiters.wait_until(rq.cb.lock, abstime);
 }
 
-pub fn add_notify(Rc<iocb> mut &cb, ioring_pollset mut *pollset) -> void
+pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void
 {
   for (;;)
   {
-    var tmp = std::vector<ioring_pollset mut *>::with_size((*cb).pollsets.len + 1);
+    var tmp = std::vector<ioring::pollset mut *>::with_size(cb.pollsets.len + 1);
 
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
 
-      if (tmp.len != (*cb).pollsets.len + 1)
+      if (tmp.len != cb.pollsets.len + 1)
         continue;
 
-      std::memcpy(tmp.data, (*cb).pollsets.data, (*cb).pollsets.len * sizeof<ioring_pollset mut *>);
+      std::memcpy(tmp.data, cb.pollsets.data, cb.pollsets.len * sizeof<ioring::pollset mut *>);
 
-      std::swap(&mut (*cb).pollsets, &mut tmp);
+      std::swap(&mut cb.pollsets, &mut tmp);
 
-      (*cb).pollsets.back = pollset;
+      cb.pollsets.back = pollset;
 
       break;
     }
   }
 }
 
-pub fn remove_notify(Rc<iocb> mut &cb, ioring_pollset *pollset) -> void
+pub fn remove_notify(Rc<iocb> mut &cb, ioring::pollset *pollset) -> void
 {
-  var tmp = std::vector<ioring_pollset mut *>();
+  var tmp = std::vector<ioring::pollset mut *>();
 
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
 
-    (*cb).pollsets.erase(pollset);
+    cb.pollsets.erase(pollset);
 
-    if ((*cb).pollsets.empty)
-      std::swap(&mut (*cb).pollsets, &mut tmp);
+    if (cb.pollsets.empty)
+      std::swap(&mut cb.pollsets, &mut tmp);
   }
 }
 
 pub fn initiate(Rc<iocb> mut &cb, usize count) -> void
 {
-  std::atomic_add(&(*cb).outstanding, cast(count));
+  std::atomic_add(&cb.outstanding, cast(count));
 }
 
 pub fn complete(Rc<iocb> mut &cb, var result) -> void
 {
-  while (true)
+  for (;;)
   {
-    var current = std::volatile_load(&(*cb).result);
+    var current = std::volatile_load(&cb.result);
 
     if (current < 0)
       break;
 
-    if (std::atomic_cmpxchg_weak(&(*cb).result, current, result < cast(0) ? cast(result) : current + cast(result)))
+    if (std::atomic_cmpxchg_weak(&cb.result, current, result < cast(0) ? cast(result) : current + cast(result)))
       break;
   }
 
-  if (std::atomic_sub(&(*cb).outstanding, 1) == 1)
+  if (std::atomic_sub(&cb.outstanding, 1) == 1)
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut (*cb).lock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
 
-    for (var mut &pollset : (*cb).pollsets)
+    for (var mut &pollset : cb.pollsets)
       ioring::trigger(pollset);
 
     ioring::workman.trigger();
 
-    (*cb).waiters.wake_all();
+    cb.waiters.wake_all();
   }
 }
 
 pub fn cancel(Rc<iocb> mut &cb, var result = i32(-125)) -> void
 {
-  std::atomic_store(&(*cb).result, cast(result));
+  std::atomic_store(&cb.result, cast(result));
 }
 
 pub fn reset(Rc<iocb> mut &cb, var result = i32(0)) -> void
 {
-  std::atomic_store(&(*cb).result, cast(result));
-  std::atomic_store(&(*cb).outstanding, 0);
+  std::atomic_store(&cb.result, cast(result));
+  std::atomic_store(&cb.outstanding, 0);
 }

@@ -1,0 +1,315 @@
+//
+// poll
+//
+
+import std.stdlib;
+import ioring : io_ring, ioring_ctx;
+import vm : virtaddr;
+import io;
+import cpu;
+import vfs;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import result as _ : result;
+import support.rc : Rc;
+
+enum type
+{
+  const fd = 0x1;
+  const thread = 0x2;
+}
+
+enum events
+{
+  const pollin = 0x001;
+  const pollout = 0x004;
+}
+
+struct pollevt
+{
+  i32 id;
+  u16 type;
+  u16 mask;
+  uintptr user_data;
+
+  pollevt(i32 id, u16 type, u16 mask, uintptr user_data)
+    : id(id), type(type), mask(mask), user_data(user_data)
+  {
+  }
+
+  pollevt() = default;
+  pollevt(pollevt&) = default;
+  ~pollevt() = default;
+}
+
+pub struct pollset : pub vfs::node
+{
+  pub io::response readable;
+
+  struct event
+  {
+    i32 id;
+    u16 type;
+    u16 mask;
+    uintptr user_data;
+
+    io::response readable;
+    io::response writeable;
+
+    event() = default;
+    event(event&) = default;
+    ~event() = default;
+  }
+
+  mutex lock;
+  std::vector<event> events;
+
+  fn create() -> pollset mut *
+  {
+    return std::allocator::new<pollset>();
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+  {
+    var mut &this = cast<pollset mut &>(*node);
+
+    readable = this.readable.cb;
+
+    return ok;
+  }
+
+  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    destroy(cast<pollset mut *>(node));
+  }
+
+  pub pollset()
+    : super(vfs::node::type::pollset, vfs::node_stream_operations())
+  {
+    io::initiate(&mut readable.cb, 1);
+  }
+
+  pub ~pollset() = default;
+}
+
+pub fn create_pollset(process mut *process) -> Rc<vfs::node>
+{
+  return pollset::create();
+}
+
+pub fn trigger(pollset mut *pollset) -> void
+{
+  io::complete(&mut pollset.readable.cb, 0);
+}
+
+pub fn sys_poll_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> result
+{
+  var pollset = create_pollset(process);
+
+  return process.new_fd(vfs::file_descriptor::create(pollset));
+}
+
+pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u16 type, u16 mask, uintptr user_data, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::pollset)
+    return vfs::result::bad_descriptor;
+
+  var mut &pollset = cast<pollset mut &>(*file.node);
+
+  var guard = std::lock_guard(&mut pollset.lock);
+
+  if (var j = std::find_if(pollset.events, |event| event.id == id && event.type == type); j != pollset.events.end)
+    return vfs::result::already_exists;
+
+  var event = pollset::event();
+
+  switch (type)
+  {
+    case type::fd:
+
+      var file = process.fd(id);
+
+      if (!file)
+        return vfs::result::bad_descriptor;
+
+      switch (var &node = file.node; node.type)
+      {
+        case vfs::node::type::event:
+        case vfs::node::type::buffer:
+        case vfs::node::type::channel:
+        case vfs::node::type::watchset:
+        case vfs::node::type::pollset:
+        case vfs::node::type::ioring:
+        case vfs::node::type::device:
+
+          if (var result = node.stream_operations.poll(node, &mut event.readable.cb, &mut event.writeable.cb); !result)
+            return result;
+
+        else:
+          return vfs::result::bad_descriptor;
+      }
+
+    case type::thread:
+
+      var thread = thread::find(id);
+
+      if (!thread)
+        return vm::result::no_such_process;
+
+      event.readable = thread.rval;
+
+    else:
+      return invalid_argument;
+  }
+
+  event.id = id;
+  event.type = type;
+  event.mask = mask;
+  event.user_data = user_data;
+
+  if (event.mask & events::pollin == events::pollin)
+    io::add_notify(&mut event.readable.cb, &pollset);
+
+  if (event.mask & events::pollout == events::pollout)
+    io::add_notify(&mut event.writeable.cb, &pollset);
+
+  pollset.events.push_back(event);
+
+  return 0;
+}
+
+pub fn sys_poll_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u16 type) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::pollset)
+    return vfs::result::bad_descriptor;
+
+  var mut &pollset = cast<pollset mut &>(*file.node);
+
+  var guard = std::lock_guard(&mut pollset.lock);
+
+  var j = std::find_if(pollset.events, |event| event.id == id && event.type == type);
+
+  if (j == pollset.events.end)
+    return vfs::result::not_found;
+
+  var mut &event = pollset.events[j];
+
+  if (event.mask & events::pollin == events::pollin)
+    io::remove_notify(&mut event.readable.cb, &pollset);
+
+  if (event.mask & events::pollout == events::pollout)
+    io::remove_notify(&mut event.writeable.cb, &pollset);
+
+  pollset.events.erase(j);
+
+  return 0;
+}
+
+pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr evtsbuf, usize n, u64 abstime) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::pollset)
+    return vfs::result::bad_descriptor;
+
+  var evts = std::vector<pollevt>();
+
+  var mut &pollset = cast<pollset mut &>(*file.node);
+
+  var guard = std::lock_guard(&mut pollset.lock);
+
+  io::reset(&mut pollset.readable.cb);
+  io::initiate(&mut pollset.readable.cb, 1);
+
+  for (var mut &event : pollset.events)
+  {
+    var revents = 0;
+
+    if (event.mask & events::pollin == events::pollin && event.readable.ready)
+      revents |= events::pollin;
+
+    if (event.mask & events::pollout == events::pollout && event.writeable.ready)
+      revents |= events::pollout;
+
+    if (revents != 0)
+    {
+      if (evts.len == n)
+      {
+        io::complete(&mut pollset.readable.cb, 0);
+
+        break;
+      }
+
+      evts.push_back(event.id, event.type, revents, event.user_data);
+    }
+  }
+
+  if (evts.len == 0)
+  {
+    ctx.wake_time = abstime;
+    ctx.blockers.push_back(pollset.readable);
+
+    if (abstime != 0 && abstime < cpu::system_time)
+      return 0;
+
+    return ioring::result::should_block;
+  }
+
+  if (var result = vm::write_process_memory(process, evtsbuf, evts.data, evts.len * sizeof<pollevt>); !result)
+    return result;
+
+  return cast(evts.len);
+}
+
+fn destroy(pollset mut *pollset) -> void
+{
+  for (var mut &event : pollset.events)
+  {
+    if (event.mask & events::pollin == events::pollin)
+      io::remove_notify(&mut event.readable.cb, pollset);
+
+    if (event.mask & events::pollout == events::pollout)
+      io::remove_notify(&mut event.writeable.cb, pollset);
+  }
+
+  std::allocator::delete(pollset);
+}

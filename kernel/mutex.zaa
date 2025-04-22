@@ -13,7 +13,7 @@ pub struct mutex
 {
   const waiting = 1 << 31;
 
-  pub fn owner(this&) -> thread::id
+  pub fn owner(this &) -> thread::id
   {
     return cast<thread::id>(std::atomic_load(&this.holder) & ~waiting);
   }
@@ -92,7 +92,7 @@ pub struct shared_mutex
 {
   const max_readers = 1 << 30;
 
-  pub fn owner(this&) -> thread::id
+  pub fn owner(this &) -> thread::id
   {
     return this.writelock.owner();
   }

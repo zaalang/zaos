@@ -37,7 +37,7 @@ struct inode : pub vfs::node
 
   bool unlinked;
 
-  u8[28] reserved;
+  u8[12] reserved;
 
   fn allocator()
   {
@@ -54,11 +54,11 @@ pub struct ext2fs : pub vfs::file_system
 {
   mutex lock;
   volume volume;
-  vfs::node_ptr dev;
-  vfs::node_ptr root;
-  std::flat_hash_map<ext2_ino_t, vfs::node_ptr> node_cache;
+  Rc<vfs::node> dev;
+  Rc<vfs::node> root;
+  std::flat_hash_map<ext2_ino_t, Rc<vfs::node>> node_cache;
 
-  ext2fs(vfs::node_ptr &dev)
+  ext2fs(vfs::node mut *dev)
     : super(&impl this), dev(dev)
   {
   }
@@ -71,7 +71,7 @@ pub fn create(vfs::file_system_context &ctx) -> ext2fs mut *
   return new<ext2fs>(std::allocator().allocate(sizeof<ext2fs>, alignof<ext2fs>))(ctx.source);
 }
 
-fn get_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_ino_t ino) -> vfs::result
+fn get_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_ino_t ino) -> vfs::result
 {
   var guard = std::lock_guard(&mut fs.lock);
 
@@ -125,7 +125,7 @@ fn get_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_ino_t ino) -> vfs::res
   return ok;
 }
 
-fn unlink_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_inode mut *dir, ext2_dir_entry mut *entry) -> vfs::result
+fn unlink_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_inode mut *dir, ext2_dir_entry mut *entry) -> vfs::result
 {
   var mut &node = cast<inode mut &>(*node);
 
@@ -145,7 +145,7 @@ fn unlink_node(ext2fs mut &fs, vfs::node_ptr mut &node, ext2_inode mut *dir, ext
   return result;
 }
 
-pub fn mount(ext2fs mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
+pub fn mount(ext2fs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
 {
   if (!fs.dev)
     return invalid_argument;
@@ -163,7 +163,7 @@ pub fn mount(ext2fs mut *fs, vfs::node_ptr mut &dentry) -> vfs::result
   return ok;
 }
 
-pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr
+pub fn lookup(vfs::node mut *path, std::string_view name) -> Rc<vfs::node>
 {
   var fs = cast<inode mut &>(*path).fs;
   var mut &this = cast<inode mut &>(*path);
@@ -175,18 +175,18 @@ pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr
     var block = fs.volume.fetch_block(fs.dev, this.contents, position);
 
     if (!block.result)
-      return vfs::node_ptr();
+      return null;
 
     for (var entry = cast<ext2_dir_entry*>(block.ptr); entry < cast<ext2_dir_entry*>(block.ptr + block.length); )
     {
       if (entry.rec_len == 0)
         break;
 
-      if (entry.inode != 0 && entry.name == name)
+      if (entry.ino != 0 && entry.name == name)
       {
-        var node = vfs::node_ptr();
-        if (var result = fs.get_node(&mut node, entry.inode); !result)
-          return vfs::node_ptr();
+        var node = Rc<vfs::node>();
+        if (var result = fs.get_node(&mut node, entry.ino); !result)
+          return null;
 
         return node;
       }
@@ -197,10 +197,10 @@ pub fn lookup(vfs::node_ptr &path, std::string_view name) -> vfs::node_ptr
     position += cast(block.length);
   }
 
-  return vfs::node_ptr();
+  return null;
 }
 
-pub fn create(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
+pub fn create(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
   var fs = cast<inode mut &>(*path).fs;
   var mut &this = cast<inode mut &>(*path);
@@ -223,7 +223,7 @@ pub fn create(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &den
 
   if (var entry = fs.volume.find(fs.dev, rawinode.ptr, name); entry.result)
   {
-    if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+    if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
       return result;
 
     return already_exists;
@@ -241,13 +241,13 @@ pub fn create(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &den
 
   fs.volume.flush(fs.dev);
 
-  if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+  if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
     return result;
 
   return ok;
 }
 
-pub fn symlink(vfs::node_ptr &path, std::string_view name, std::string_view target, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
+pub fn symlink(vfs::node mut *path, std::string_view name, std::string_view target, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
   var fs = cast<inode mut &>(*path).fs;
   var mut &this = cast<inode mut &>(*path);
@@ -273,7 +273,7 @@ pub fn symlink(vfs::node_ptr &path, std::string_view name, std::string_view targ
 
   if (var entry = fs.volume.find(fs.dev, rawinode.ptr, name); entry.result)
   {
-    if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+    if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
       return result;
 
     return already_exists;
@@ -291,13 +291,13 @@ pub fn symlink(vfs::node_ptr &path, std::string_view name, std::string_view targ
 
   fs.volume.flush(fs.dev);
 
-  if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+  if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
     return result;
 
   return ok;
 }
 
-pub fn mkdir(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
+pub fn mkdir(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
 {
   var fs = cast<inode mut &>(*path).fs;
   var mut &this = cast<inode mut &>(*path);
@@ -320,7 +320,7 @@ pub fn mkdir(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dent
 
   if (var entry = fs.volume.find(fs.dev, rawinode.ptr, name); entry.result)
   {
-    if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+    if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
       return result;
 
     return already_exists;
@@ -338,13 +338,13 @@ pub fn mkdir(vfs::node_ptr &path, std::string_view name, vfs::node_ptr mut &dent
 
   fs.volume.flush(fs.dev);
 
-  if (var result = fs.get_node(&mut dentry, entry.ptr.inode); !result)
+  if (var result = fs.get_node(&mut dentry, entry.ptr.ino); !result)
     return result;
 
   return ok;
 }
 
-pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &newpath, std::string_view newname) -> vfs::result
+pub fn rename(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result
 {
   var fs = cast<inode mut &>(*oldpath).fs;
   var mut &olddir = cast<inode mut &>(*oldpath);
@@ -390,8 +390,8 @@ pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &n
 
   if (var entry = fs.volume.find(fs.dev, newdirinode.ptr, newname); entry.result)
   {
-    var node = vfs::node_ptr();
-    if (var result = fs.get_node(&mut node, entry.ptr.inode); !result)
+    var node = Rc<vfs::node>();
+    if (var result = fs.get_node(&mut node, entry.ptr.ino); !result)
       return result;
 
     if (var result = fs.unlink_node(&mut node, newdirinode.ptr, entry.ptr); !result)
@@ -434,12 +434,12 @@ pub fn rename(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &n
   return ok;
 }
 
-pub fn link(vfs::node_ptr &oldpath, std::string_view oldname, vfs::node_ptr &newpath, std::string_view newname) -> vfs::result
+pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
 {
   switch (node.type)
   {
@@ -456,7 +456,7 @@ pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::r
   return not_supported;
 }
 
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -475,7 +475,7 @@ pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -530,7 +530,7 @@ pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
   return ok;
 }
 
-pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -555,22 +555,21 @@ pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize of
 
       cursor += cast(entry.rec_len);
 
-      if (entry.inode != 0)
+      if (entry.ino != 0)
       {
         fn emit[buffer, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
         {
-          var dirent = vfs::dirent();
+          var head = [u8(); sizeof<vfs::dirent>];
 
+          var dirent = cast<vfs::dirent mut *>(head.data);
           dirent.rec_len = cast(std::align_up(sizeof<vfs::dirent> + name.len, 16));
-
           dirent.type = file_type;
-
           dirent.name_len = cast(name.len);
 
-          if (var result = vm::memcpy(buffer, offset, &dirent, sizeof(dirent)); !result)
+          if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
             return result;
 
-          if (var result = vm::memcpy(buffer, offset + sizeof(dirent), name.data, name.len); !result)
+          if (var result = vm::memcpy(buffer, offset + head.len, name.data, name.len); !result)
             return result;
 
           count += cast(dirent.rec_len);
@@ -606,7 +605,7 @@ pub fn readdir(vfs::node_ptr &node, u64 mut &cursor, vm::iovec &buffer, usize of
   return cast(count);
 }
 
-pub fn readlink(vfs::node_ptr &node, std::string mut &buffer) -> vfs::result
+pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -637,7 +636,7 @@ pub fn readlink(vfs::node_ptr &node, std::string mut &buffer) -> vfs::result
   return cast(buffer.len);
 }
 
-pub fn read(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -676,7 +675,7 @@ pub fn read(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   return cast(length);
 }
 
-pub fn write(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -712,7 +711,7 @@ pub fn write(vfs::node_ptr &node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
   return cast(length);
 }
 
-pub fn unlink(vfs::node_ptr &path, std::string_view name) -> vfs::result
+pub fn unlink(vfs::node mut *path, std::string_view name) -> vfs::result
 {
   var fs = cast<inode mut &>(*path).fs;
   var mut &this = cast<inode mut &>(*path);
@@ -738,8 +737,8 @@ pub fn unlink(vfs::node_ptr &path, std::string_view name) -> vfs::result
   if (!entry.result)
     return entry.result;
 
-  var node = vfs::node_ptr();
-  if (var result = fs.get_node(&mut node, entry.ptr.inode); !result)
+  var node = Rc<vfs::node>();
+  if (var result = fs.get_node(&mut node, entry.ptr.ino); !result)
     return result;
 
   if (var result = fs.unlink_node(&mut node, rawinode.ptr, entry.ptr); !result)
@@ -750,6 +749,16 @@ pub fn unlink(vfs::node_ptr &path, std::string_view name) -> vfs::result
   rawinode.commit(rawinode.ptr, sizeof<ext2_inode>);
 
   fs.volume.flush(fs.dev);
+
+  return ok;
+}
+
+pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_view name) -> vfs::result
+{
+  var fs = cast<inode mut &>(*path).fs;
+
+  vfs::notify(node, mask, cast<uintptr>(cast<inode mut &>(*node).ino));
+  vfs::notify(fs.root, path, mask, cast<uintptr>(cast<inode mut &>(*node).ino), cast<uintptr>(cast<inode mut &>(*path).ino), name);
 
   return ok;
 }

@@ -37,7 +37,7 @@ pub struct image
     this.block_shift = std::ctz(block_size);
   }
 
-  pub fn header(this&) -> gpt::header *
+  pub fn header(this &) -> gpt::header *
   {
     return cast<gpt::header*>(cast<uintptr>(this.data) + 1 << this.block_shift);
   }
@@ -87,12 +87,12 @@ pub struct image
     return entry_iterator(lhs.header, cast<gpt::entry*>(cast<uintptr>(lhs.entry) + rhs * cast(lhs.header.entry_size)));
   }
 
-  pub fn [](this&, entry_iterator iter) -> gpt::entry *
+  pub fn [](this &, entry_iterator iter) -> gpt::entry *
   {
     return iter.entry;
   }
 
-  pub fn entries(this&)
+  pub fn entries(this &)
   {
     var header = this.header;
     var entries = cast<uintptr>(this.data) + cast(header.entries_block << this.block_shift);

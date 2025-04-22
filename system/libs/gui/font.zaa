@@ -60,7 +60,7 @@ pub struct font
     }
   }
 
-  pub fn family(this&) -> std::string
+  pub fn family(this &) -> std::string
   {
     switch (this.fontfile.font)
     {

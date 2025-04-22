@@ -40,8 +40,8 @@ pub struct screen
   pub u32 foreground_color = 0xffffffff;
   pub u32 background_color = 0xff000000;
 
-  pub fn rows(this&) { return this.rows; }
-  pub fn columns(this&) { return this.columns; }
+  pub fn rows(this &) { return this.rows; }
+  pub fn columns(this &) { return this.columns; }
 
   pub std::delegate<(u8*, usize) -> void> on_reply;
 

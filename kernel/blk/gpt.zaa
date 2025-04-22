@@ -39,28 +39,28 @@ struct gpt_entry
   u16[36] name;
 }
 
-pub fn read_gpt_header(blk::blkdev_ptr &dev, std::vector<u8> mut &buffer) -> gpt_header *
+pub fn read_gpt_header(blk::blkdev mut *device, std::vector<u8> mut &buffer) -> gpt_header *
 {
-  if (var result = blk::read(dev, 1 << dev.block_shift, buffer.data, buffer.len); !result)
+  if (var result = blk::read(device, 1 << device.block_shift, buffer.data, buffer.len); !result)
     return null;
 
   return cast<gpt_header*>(buffer.data);
 }
 
-pub fn read_gpt_entries(blk::blkdev_ptr &dev, gpt_header *header, std::vector<u8> mut &buffer) -> u8 *
+pub fn read_gpt_entries(blk::blkdev mut *device, gpt_header *header, std::vector<u8> mut &buffer) -> u8 *
 {
-  if (var result = blk::read(dev, header.entries_block << dev.block_shift, buffer.data, buffer.len); !result)
+  if (var result = blk::read(device, header.entries_block << device.block_shift, buffer.data, buffer.len); !result)
     return null;
 
   return cast<u8*>(buffer.data);
 }
 
-pub fn detect(blk::blkdev_ptr &dev) -> std::vector<partition>
+pub fn detect(blk::blkdev mut *device) -> std::vector<partition>
 {
   var results = std::vector<partition>();
 
-  var buffer1 = std::vector<u8>::with_size(dev.block_size);
-  var header = read_gpt_header(dev, &mut buffer1);
+  var buffer1 = std::vector<u8>::with_size(device.block_size);
+  var header = read_gpt_header(device, &mut buffer1);
 
   if (!header)
     return results;
@@ -69,7 +69,7 @@ pub fn detect(blk::blkdev_ptr &dev) -> std::vector<partition>
     return results;
 
   var buffer2 = std::vector<u8>::with_size(cast(header.entry_count * header.entry_size));
-  var entries = read_gpt_entries(dev, header, &mut buffer2);
+  var entries = read_gpt_entries(device, header, &mut buffer2);
 
   if (!entries)
     return results;

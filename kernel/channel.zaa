@@ -73,7 +73,7 @@ pub struct channel
     return this.node1.channel;
   }
 
-  pub fn open_node0(this mut &) -> vfs::node_ptr
+  pub fn open_node0(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
@@ -99,7 +99,7 @@ pub struct channel
     return vfs::node::new(&this.node0, vfs::node::type::channel, vfs::node_stream_operations());
   }
 
-  pub fn open_node1(this mut &) -> vfs::node_ptr
+  pub fn open_node1(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
@@ -185,12 +185,12 @@ pub fn create_channel() -> Rc<channel>
   return channel::create();
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
 }
 
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -203,12 +203,12 @@ pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -219,7 +219,7 @@ pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node_ptr &node, i32 mut &sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> vfs::result
+pub fn read(vfs::node mut *node, i32 mut &sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> vfs::result
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -238,7 +238,7 @@ pub fn read(vfs::node_ptr &node, i32 mut &sid, std::vector<u8> mut &bytes, std::
   return cast(1);
 }
 
-pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var sid = i32();
   var bytes = std::vector<u8>();
@@ -253,7 +253,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   return cast(bytes.len);
 }
 
-pub fn write(vfs::node_ptr &node, i32 sid, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
+pub fn write(vfs::node mut *node, i32 sid, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -287,7 +287,7 @@ pub fn write(vfs::node_ptr &node, i32 sid, std::vector<u8> &&bytes, std::vector<
   return cast(1);
 }
 
-pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var sid = i32();
   var bytes = std::vector<u8>::with_uninitialised_size(length);
@@ -302,7 +302,7 @@ pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length)
   return cast(length);
 }
 
-pub fn begin_transaction(vfs::node_ptr &node, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
+pub fn begin_transaction(vfs::node mut *node, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);
@@ -330,7 +330,7 @@ pub fn begin_transaction(vfs::node_ptr &node, std::vector<u8> &&bytes, std::vect
   return cast(sid);
 }
 
-pub fn query_transaction(vfs::node_ptr &node, i32 sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> io::response
+pub fn query_transaction(vfs::node mut *node, i32 sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> io::response
 {
   var channel = cast<endpoint mut &>(*node).channel;
   var mut &endpoint = cast<endpoint mut &>(*node);

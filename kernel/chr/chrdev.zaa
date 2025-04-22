@@ -9,15 +9,59 @@ import vm;
 import vfs : fd;
 import support.rc : Rc;
 
+pub enum query
+{
+  device_path,
+}
+
 pub struct chrdev
 {
-  pub fn create<T>(var && ...args) -> shared_ptr<T>
+  pub fn create<T>(var && ...args) -> Rc<T>
   {
     var dev = std::allocator::new<T>(&&args...);
 
     dev.destroy = fn (chrdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
 
-    return shared_ptr(dev);
+    return Rc(dev);
+  }
+
+  pub fn query(this &, chr::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(this, query, &mut result);
+
+    return result;
+  }
+
+  pub fn open(this mut &, fd mut &fd, u64 flags, u32 mode) -> chr::result
+  {
+    return this.ops.open(&mut this, &mut fd, flags, mode);
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  {
+    return this.ops.ioctl(&mut this, op, buffer);
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  {
+    return this.ops.poll(&mut this, &mut readable, &mut writeable);
+  }
+
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return this.ops.read(&mut this, buffer, offset, length);
+  }
+
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  {
+    return this.ops.write(&mut this, buffer, offset, length);
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  {
+    return this.ops.mmap(&mut this, range, offset, prot, use);
   }
 
   pub chrdev(device_operations &ops)
@@ -43,99 +87,24 @@ pub struct chrdev
   fn (*destroy)(chrdev mut *) -> void;
 }
 
-pub enum query
-{
-  device_name,
-}
-
 pub vtable device_operations
 {
-  pub fn query(this &dev, chr::query query, std::string mut &result) -> chr::result;
+  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result;
 
-  pub fn open(this mut &dev, fd mut &fd, u64 flags, u32 mode) -> chr::result;
+  pub fn open(this mut &, fd mut &fd, u64 flags, u32 mode) -> chr::result;
 
-  pub fn ioctl(this mut &dev, u32 op, vm::iovec &buffer) -> chr::result;
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result;
 
-  pub fn poll(this mut &dev, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result;
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result;
 
-  pub fn read(this mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result;
-  pub fn write(this mut &dev, vm::iovec &buffer, usize offset, usize length) -> chr::result;
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result;
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result;
 
-  pub fn mmap(this mut &dev, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result;
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result;
 }
 
-pub struct chrdev_ptr : pub Rc<chrdev>
+fn destroy(chrdev mut *device) -> void
 {
-  pub fn query(this &, chr::query query) -> std::string
-  {
-    var result = std::string();
-
-    this.ops.query(*this, query, &mut result);
-
-    return result;
-  }
-
-  pub fn open(this mut &, fd mut &fd, u64 flags, u32 mode) -> chr::result
-  {
-    return this.ops.open(&mut *this, &mut fd, flags, mode);
-  }
-
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
-  {
-    return this.ops.ioctl(&mut *this, op, buffer);
-  }
-
-  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
-  {
-    return this.ops.poll(&mut *this, &mut readable, &mut writeable);
-  }
-
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
-  {
-    return this.ops.read(&mut *this, buffer, offset, length);
-  }
-
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
-  {
-    return this.ops.write(&mut *this, buffer, offset, length);
-  }
-
-  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
-  {
-    return this.ops.mmap(&mut *this, range, offset, prot, use);
-  }
-
-  chrdev_ptr(chrdev mut *inner)
-    : super(inner)
-  {
-  }
-
-  pub chrdev_ptr() = default;
-  pub chrdev_ptr(chrdev_ptr &&other) = default;
-  pub fn =(chrdev_ptr mut &lhs, chrdev_ptr &&rhs) -> chrdev_ptr mut & = default;
-  pub ~chrdev_ptr() = default;
-}
-
-pub struct shared_ptr<T> : pub chrdev_ptr
-{
-  pub fn *(this &&)
-  {
-    return &cast<T&&>(*this.super);
-  }
-
-  shared_ptr(T mut *inner)
-    : super(inner)
-  {
-  }
-
-  pub shared_ptr() = default;
-  pub shared_ptr(shared_ptr &&other) = default;
-  pub fn =(shared_ptr mut &lhs, shared_ptr &&rhs) -> shared_ptr mut & = default;
-  pub ~shared_ptr() = default;
-}
-
-fn destroy(chrdev mut *dev) -> void
-{
-  if (dev.destroy)
-    dev.destroy(dev);
+  if (device.destroy)
+    device.destroy(device);
 }

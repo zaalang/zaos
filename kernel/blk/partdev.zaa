@@ -8,6 +8,7 @@ import dev;
 import blk;
 import blk.gpt as gpt;
 import vm;
+import support.rc : Rc;
 
 pub struct guid
 {
@@ -57,17 +58,17 @@ pub struct partition
 
 pub struct partdev : pub blk::blkdev
 {
-  pub partdev(blk::blkdev_ptr &dev, partition &part)
+  pub partdev(blk::blkdev mut *device, partition &part)
     : super(&impl this),
       partition(part),
-      device(dev),
+      device(device),
   {
-    this.block_size = dev.block_size;
-    this.block_shift = dev.block_shift;
+    this.block_size = device.block_size;
+    this.block_shift = device.block_shift;
     this.block_count = cast(part.end_block - part.start_block + 1);
   }
 
-  pub fn query(this &, blk::query query, std::string mut &result) -> blk::result
+  pub fn query(this &, blk::query query, std::string mut &result) override -> blk::result
   {
     switch (query)
     {
@@ -84,12 +85,12 @@ pub struct partdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
   {
     return not_supported;
   }
 
-  pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
+  pub fn enqueue(this mut &, blk::request mut *request) override -> blk::result
   {
     request.position += this.partition.start_block << this.block_shift;
 
@@ -103,7 +104,7 @@ pub struct partdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn cancel(this mut &, blk::request mut *request) -> blk::result
+  pub fn cancel(this mut &, blk::request mut *request) override -> blk::result
   {
     if (var result = this.device.cancel(request); !result)
       return cast<blk::result>(result);
@@ -113,19 +114,19 @@ pub struct partdev : pub blk::blkdev
 
   pub ~partdev() = default;
 
+  Rc<blk::blkdev> device;
   partition partition;
-  blk::blkdev_ptr device;
 }
 
-pub fn scan_for_partitions(blk::blkdev_ptr &dev) -> void
+pub fn scan_for_partitions(blk::blkdev mut *device) -> void
 {
-  var partitions = gpt::detect(dev);
+  var partitions = gpt::detect(device);
 
   for (var &part : partitions)
   {
-    std::printf("  detected partition, {} bytes\n", (part.end_block - part.start_block + 1) << dev.block_shift);
+    std::printf("  detected partition, {} bytes\n", (part.end_block - part.start_block + 1) << device.block_shift);
 
-    var dev = blk::blkdev::create<partdev>(dev, part);
+    var dev = blk::blkdev::create<partdev>(device, part);
 
     dev::register(dev::dev_t(), dev);
   }

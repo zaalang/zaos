@@ -19,18 +19,18 @@ pub struct ptmx : pub chr::chrdev
     std::print("ptmx inited");
   }
 
-  pub fn query(this &, chr::query query, std::string mut &result) -> chr::result
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
   {
     switch (query)
     {
-      case device_name:
+      case device_path:
         result = "pts/ptmx";
     }
 
     return ok;
   }
 
-  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) override -> chr::result
   {
     if (flags & 0x3 != 0)
     {
@@ -50,27 +50,27 @@ pub struct ptmx : pub chr::chrdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> chr::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) -> chr::result
+  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
   {
     return not_supported;
   }

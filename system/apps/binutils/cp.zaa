@@ -1,0 +1,99 @@
+//
+// cp
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.fcntl : O_RDWR, O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_CREAT, O_TRUNC;
+import chrono : duration;
+import termios;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub fn main() -> i32
+{
+  var src = std::string();
+  var dst = std::string();
+
+  for (var arg : std::env::args.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    if (src == "")
+      src = arg;
+
+    else if (dst == "")
+      dst = arg;
+  }
+
+  if (src.empty || dst.empty)
+  {
+    std::printf("usage: cp <src> <dst>\n");
+
+    return -22;
+  }
+
+  var fin = os::open(&mut thread_ring, os::string(src.data, src.len), O_RDONLY, 0);
+
+  if (fin < 0)
+    std::printf("cp: error opening file {} - {}\n", src, std::errc(cast(-fin)));
+
+  if (fin < 0)
+    return fin;
+
+  var fout = os::open(&mut thread_ring, os::string(dst.data, dst.len), O_RDWR | O_CREAT | O_TRUNC, 0o640);
+
+  if (fout < 0)
+    std::printf("cp: error opening file {} - {}\n", dst, std::errc(cast(-fout)));
+
+  if (fout < 0)
+    return fout;
+
+  var buffer = [u8(0); 4096];
+
+  for (;;)
+  {
+    var srcres = os::read(&mut thread_ring, fin, buffer.data, buffer.len);
+
+    if (srcres <= 0)
+    {
+      if (srcres < 0)
+        std::print("cp: error on read src - {}\n", std::errc(cast(-srcres)));
+
+      break;
+    }
+
+    for (var data = buffer.data, var len = cast<usize>(srcres); len != 0; )
+    {
+      var dstres = os::write(&mut thread_ring, fout, data, len);
+
+      if (dstres < 0)
+      {
+        if (dstres == os::EAGAIN)
+        {
+          var pollset = [ os::pollevt(fout, os::POLLFD, os::POLLOUT, 0) ];
+
+          os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+
+          continue;
+        }
+
+        std::print("cp: error on write dst - {}\n", std::errc(cast(-dstres)));
+
+        os::close(&mut thread_ring, fin);
+        os::close(&mut thread_ring, fout);
+
+        return dstres;
+      }
+
+      data += cast(dstres);
+      len -= cast(dstres);
+    }
+  }
+
+  os::close(&mut thread_ring, fin);
+  os::close(&mut thread_ring, fout);
+
+  return 0;
+}

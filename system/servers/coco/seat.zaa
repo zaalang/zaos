@@ -1,0 +1,190 @@
+//
+// seat
+//
+
+import std.stdlib;
+import std.flat_hash_map;
+import std.string : String;
+import input.driver;
+import input.keymap;
+import input.device;
+import os.zaos.fcntl;
+import sys.fs;
+
+extern fn thread_ring() -> os::ioring mut &;
+
+pub struct seat
+{
+  pub int plugfd;
+  pub input::driver driver;
+
+  std::flat_hash_map<os::ino_t, std::string> nodes;
+
+  seat() = default;
+  pub ~seat() = default;
+}
+
+pub fn create() -> seat
+{
+  return seat();
+}
+
+fn add_device(seat mut &seat, std::string_view &path) -> i32
+{
+  if (seat.driver.lookup(path))
+    return -17;
+
+  if (path.starts_with("/dev/input/keyboard"))
+  {
+    var keymap = input::keymap();
+
+    if (path.starts_with("/dev/input/keyboard/ps2"))
+    {
+      if (var rc = keymap.initialise("/zaos/data/us.ps2.keymap", "/zaos/data/us.ps2.keymap"); rc < 0)
+        return rc;
+    }
+
+    if (path.starts_with("/dev/input/keyboard/usb"))
+    {
+      if (var rc = keymap.initialise("/zaos/data/us.hid.keymap", "/zaos/data/us.hid.keymap"); rc < 0)
+        return rc;
+    }
+
+    seat.driver.add_device(path, keymap);
+  }
+
+  if (path.starts_with("/dev/input/mouse"))
+  {
+    seat.driver.add_device(path, input::mouse());
+  }
+
+  return 0;
+}
+
+fn add_device(seat mut &seat, String &path) -> i32
+{
+  return seat.add_device(std::string_view(path));
+}
+
+fn device_added(seat mut &seat, std::string &path) -> i32
+{
+  seat.add_device(path);
+
+  return 0;
+}
+
+fn device_removed(seat mut &seat, std::string &path) -> i32
+{
+  if (var device = seat.driver.lookup(path))
+    seat.driver.remove(device);
+
+  return 0;
+}
+
+pub fn coldplug(seat mut &seat) -> i32
+{
+  try
+  {
+    var dir = sys::read_dir("/dev/input");
+
+    for (var i = dir.descend(); i != dir.end(); ++i)
+    {
+      switch (dir[i].type)
+      {
+        case character_device:
+
+          seat.add_device(dir[i].path);
+
+        case directory:
+
+          i.descend();
+      }
+
+      seat.nodes.insert(dir[i].stat.inode, dir[i].path);
+    }
+  }
+  catch (std::error e)
+  {
+    return -5;
+  }
+
+  return 0;
+}
+
+pub fn hotplug(seat mut &seat) -> i32
+{
+  var buffer = [<u8>: 0; 4096];
+  var bytes = os::read(&mut thread_ring, seat.plugfd, buffer.data, buffer.len);
+
+  for (var offset = 0; offset < bytes; )
+  {
+    var evt = cast<os::watchevt *>(buffer.data + cast<usize>(offset));
+
+    var id = 0;
+    var dir = 0;
+    var name = std::string_view();
+
+    for (var info = cast<os::watchevt::info *>(evt + 1); info < cast<os::watchevt::info *>(cast<uintptr>(evt) + cast(evt.len)); )
+    {
+      switch (info.type)
+      {
+        case os::watchevt::info::id:
+          id = cast<os::watchevt::id_info*>(info).id;
+
+        case os::watchevt::info::dir:
+          dir = cast<os::watchevt::dir_info*>(info).id;
+
+        case os::watchevt::info::name:
+          name = cast<os::watchevt::name_info*>(info).name;
+      }
+
+      info = cast<os::watchevt::info *>(cast<uintptr>(info) + cast(info.len));
+    }
+
+    if (evt.mask & (os::N_MKDIR | os::N_CREATE) != 0)
+    {
+      if (name == "input")
+        seat.nodes.insert(id, "/dev/input");
+
+      if (seat.nodes.contains(dir) && !seat.nodes.contains(id))
+      {
+        seat.nodes.insert(id, seat.nodes[dir] + '/' + name);
+
+        if (evt.mask & os::N_CREATE != 0)
+          seat.device_added(seat.nodes[id]);
+      }
+    }
+
+    if (evt.mask & os::N_UNLINK != 0)
+    {
+      if (seat.nodes.contains(id))
+        seat.device_removed(seat.nodes[id]);
+
+      seat.nodes.erase(id);
+    }
+
+    offset += cast(evt.len);
+  }
+
+  return 0;
+}
+
+pub fn initialise(seat mut &seat) -> i32
+{
+  using os;
+
+  if (var rc = seat.driver.initialise(); rc < 0)
+    return rc;
+
+  seat.plugfd = os::notify_create(&mut thread_ring, 0);
+
+  if (seat.plugfd < 0)
+    return seat.plugfd;
+
+  if (var rc = os::notify_add(&mut thread_ring, seat.plugfd, STDROOT_FILENO, os::string("/dev"), N_MKDIR | N_CREATE | N_UNLINK, 0, O_FILESYSTEM); rc < 0)
+    return rc;
+
+  coldplug(&mut seat);
+
+  return 0;
+}

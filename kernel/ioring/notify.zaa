@@ -1,0 +1,412 @@
+//
+// notify
+//
+
+import std.stdlib;
+import std.circular_buffer;
+import ioring : io_ring, ioring_ctx;
+import vm : virtaddr;
+import io;
+import cpu;
+import vfs;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import result as _ : result;
+import support.rc : Rc;
+
+enum flags
+{
+  const directory = 0o200000;
+  const nofollow = 0o400000;
+  const filesystem = 0o1000000;
+}
+
+enum mask
+{
+  const access = 0x1;
+  const attrib = 0x2;
+  const close_write = 0x4;
+  const close_nowrite = 0x8;
+  const mkdir = 0x10;
+  const create = 0x20;
+  const unlink = 0x40;
+  const modify = 0x100;
+  const moved = 0x400;
+  const rename = 0x1000;
+  const open = 0x2000;
+
+  const dropped = 0x10000000;
+
+  const filesystem = 1 << 56;
+
+  const reserved = 1 << 63;
+}
+
+pub struct watchevt
+{
+  pub u32 len;
+  pub u32 pad;
+  pub u64 mask;
+  pub uintptr user_data;
+
+  pub struct info
+  {
+    pub const id = 1;
+    pub const dir = 2;
+    pub const name = 3;
+
+    pub u16 type;
+    pub u16 len;
+  }
+
+  pub struct id_info : pub info
+  {
+    pub uintptr id;
+  }
+
+  pub struct dir_info : pub info
+  {
+    pub uintptr id;
+  }
+
+  pub struct name_info : pub info
+  {
+    pub u8[0] name;
+  }
+}
+
+pub struct watchset : pub vfs::node
+{
+  pub io::response readable;
+
+  struct watch
+  {
+    u64 mask;
+    uintptr user_data;
+
+    vfs::watcher watcher;
+    watchset mut *watchset;
+
+    watch() = default;
+    ~watch() = default;
+  }
+
+  struct event
+  {
+    u64 mask;
+    uintptr user_data;
+
+    uintptr id;
+    uintptr dir;
+    std::string name;
+
+    event() = default;
+    event(event &&) = default;
+    fn =(event mut &, event &&) -> event mut & = default;
+    ~event() = default;
+  }
+
+  mutex lock;
+  std::list<watch> watches;
+  std::circular_buffer<event, N:64> events;
+
+  fn create() -> watchset mut *
+  {
+    return std::allocator::new<watchset>();
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+  {
+    var mut &this = cast<watchset mut &>(*node);
+
+    readable = this.readable.cb;
+
+    return ok;
+  }
+
+  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    var mut &this = cast<watchset mut &>(*node);
+
+    var guard = std::lock_guard(&mut this.lock);
+
+    var count = 0;
+    var event = std::vector<u8>::with_size(512);
+
+    while (count <= length)
+    {
+      if (this.events.empty)
+        break;
+
+      var mut &evt = this.events.front;
+
+      var bytes = sizeof<watchevt>;
+      var watchevt = cast<watchevt mut *>(event.data);
+
+      if (evt.id != 0)
+      {
+        var id_info = cast<watchevt::id_info mut *>(event.data + bytes);
+
+        id_info.type = watchevt::info::id;
+        id_info.len = sizeof<watchevt::id_info>;
+        id_info.id = evt.id;
+
+        bytes += cast(id_info.len);
+      }
+
+      if (evt.dir != 0)
+      {
+        var dir_info = cast<watchevt::dir_info mut *>(event.data + bytes);
+
+        dir_info.type = watchevt::info::dir;
+        dir_info.len = sizeof<watchevt::dir_info>;
+        dir_info.id = evt.dir;
+
+        bytes += cast(dir_info.len);
+      }
+
+      if (evt.name.len != 0)
+      {
+        var name_info = cast<watchevt::name_info mut *>(event.data + bytes);
+
+        name_info.type = watchevt::info::name;
+        name_info.len = sizeof<watchevt::name_info> + cast(evt.name.len);
+        std::memcpy(event.data + bytes + sizeof<watchevt::name_info>, evt.name.data, evt.name.len);
+
+        bytes += cast(name_info.len);
+      }
+
+      watchevt.mask = evt.mask;
+      watchevt.user_data = evt.user_data;
+      watchevt.len = cast(bytes);
+
+      if (count + bytes > length)
+        break;
+
+      if (var result = vm::memcpy(buffer, offset, event.data, bytes); !result)
+        return cast(result);
+
+      this.events.pop_front();
+
+      if (this.events.len == 0)
+        io::initiate(&mut this.readable.cb, 1);
+
+      count += bytes;
+      offset += bytes;
+    }
+
+    if (count == 0)
+      return would_block;
+
+    return cast(count);
+  }
+
+  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    destroy(cast<watchset mut *>(node));
+  }
+
+  pub watchset()
+    : super(vfs::node::type::watchset, vfs::node_stream_operations())
+  {
+    io::initiate(&mut readable.cb, 1);
+  }
+
+  pub ~watchset() = default;
+}
+
+pub fn create_watchset(process mut *process) -> Rc<vfs::node>
+{
+  return watchset::create();
+}
+
+pub fn trigger(watchset mut *watchset) -> void
+{
+  io::complete(&mut watchset.readable.cb, 0);
+}
+
+pub fn sys_notify_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> result
+{
+  var watchset = create_watchset(process);
+
+  return process.new_fd(vfs::file_descriptor::create(watchset));
+}
+
+pub fn sys_notify_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 dirfd, usize pathlen, virtaddr pathbuf, u64 mask, uintptr user_data, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::watchset)
+    return vfs::result::bad_descriptor;
+
+  var mut &watchset = cast<watchset mut &>(*file.node);
+
+  if (pathbuf == 0 && pathlen != 0)
+    return invalid_argument;
+
+  if (pathlen > 4096)
+    return vfs::result::name_too_long;
+
+  var path = std::string<N:256>::with_size(pathlen);
+
+  if (var result = vm::read_process_memory(process, pathbuf, path.data, path.len); !result)
+    return result;
+
+  var dir = process.fd(dirfd);
+
+  if (!dir)
+    return vfs::result::bad_descriptor;
+
+  if (dir.node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var base = dir.node;
+  var node = vfs::lookup(&mut base, path);
+
+  if (!node)
+    return vfs::result::not_found;
+
+  if (flags & flags::nofollow != flags::nofollow)
+  {
+    if (var result = vfs::resolve(&mut base, &mut node); !result)
+      return result;
+  }
+
+  if ((flags & flags::directory == flags::directory) && node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var guard = std::lock_guard(&mut watchset.lock);
+
+  if ((mask & 0x0000_ffff_ffff_ffff == 0) || (mask & 0xffff_0000_0000_0000 != 0))
+    return invalid_argument;
+
+  if (var j = watchset.watches.find_if(|watch| watch.watcher.node == node); j != watchset.watches.end)
+    return vfs::result::already_exists;
+
+  var mut &watch = watchset.watches.push_back();
+
+  watch.mask = mask;
+  watch.user_data = user_data;
+  watch.watchset = &watchset;
+
+  if (flags & flags::filesystem == flags::filesystem)
+    watch.mask |= mask::filesystem;
+
+  vfs::watch(node, &watch.watcher, &cast<(vfs::watcher *, u64, uintptr, uintptr, std::string_view) -> void>(callback), watch.mask);
+
+  return ok;
+}
+
+pub fn sys_notify_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 dirfd, usize pathlen, virtaddr pathbuf) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::watchset)
+    return vfs::result::bad_descriptor;
+
+  var mut &watchset = cast<watchset mut &>(*file.node);
+
+  if (pathbuf == 0 && pathlen != 0)
+    return invalid_argument;
+
+  if (pathlen > 4096)
+    return vfs::result::name_too_long;
+
+  var path = std::string<N:256>::with_size(pathlen);
+
+  if (var result = vm::read_process_memory(process, pathbuf, path.data, path.len); !result)
+    return result;
+
+  var dir = process.fd(dirfd);
+
+  if (!dir)
+    return vfs::result::bad_descriptor;
+
+  if (dir.node.type != vfs::node::type::directory)
+    return vfs::result::not_a_directory;
+
+  var base = dir.node;
+  var node = vfs::lookup(&mut base, path);
+
+  if (!node)
+    return vfs::result::not_found;
+
+  var guard = std::lock_guard(&mut watchset.lock);
+
+  var j = watchset.watches.find_if(|watch| watch.watcher.node == node);
+
+  if (j == watchset.watches.end)
+    return vfs::result::not_found;
+
+  var mut &watch = watchset.watches[j];
+
+  vfs::unwatch(&watch.watcher);
+
+  watchset.watches.erase(j);
+
+  return ok;
+}
+
+fn callback(vfs::watcher *watcher, u64 mask, uintptr id, uintptr dir, std::string_view name) -> void
+{
+  var watch = cast<watchset::watch mut *>(cast<uintptr>(watcher) - offsetof(watchset::watch::watcher));
+
+  var guard = std::lock_guard(&mut watch.watchset.lock);
+
+  if (watch.watchset.events.full)
+  {
+    var mut &back = watch.watchset.events.back;
+
+    back.mask = mask::dropped;
+
+    return;
+  }
+
+  var event = watchset::event();
+
+  event.id = id;
+  event.dir = dir;
+  event.name = name;
+  event.mask = mask;
+  event.user_data = watch.user_data;
+
+  watch.watchset.events.push_back(event);
+
+  if (watch.watchset.events.len == 1)
+    io::complete(&mut watch.watchset.readable.cb, 0);
+}
+
+fn destroy(watchset mut *watchset) -> void
+{
+  for (var mut &watch : watchset.watches)
+    vfs::unwatch(&watch.watcher);
+
+  std::allocator::delete(watchset);
+}

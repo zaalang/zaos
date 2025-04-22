@@ -124,7 +124,7 @@ pub fn call<zidl_request_t, zidl_response_t, Args, Callback>(i32 fd, Args && ...
 
       callback(&move (*recv)...);
 
-      zidl_response_t::~this(&mut *recv);
+      zidl_response_t::~this(*recv);
 
     else:
 
@@ -238,7 +238,7 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
 
             callback(&mut zidl_protocol_t::dispatch_t::${decl}(&*recv), &mut completer);
 
-            ${msgtype}::~this(&mut *recv);
+            ${msgtype}::~this(*recv);
         }
       }
     }

@@ -25,18 +25,20 @@ pub struct event : pub vfs::node
     return std::allocator::new<event>();
   }
 
-  pub event() = default;
+  pub event()
+    : super(vfs::node::type::event, vfs::node_stream_operations())
+  {
+  }
+
   pub ~event() = default;
 }
 
-pub fn create_event(process mut *process) -> vfs::node_ptr
+pub fn create_event(process mut *process) -> Rc<vfs::node>
 {
-  var event = event::create();
-
-  return vfs::node::new(event, vfs::node::type::event, vfs::node_stream_operations());
+  return event::create();
 }
 
-pub fn setup_event(vfs::node_ptr &event, u64 value, u64 maxvalue) -> vfs::result
+pub fn setup_event(vfs::node mut *event, u64 value, u64 maxvalue) -> vfs::result
 {
   var mut &this = cast<event mut &>(*event);
 
@@ -52,22 +54,22 @@ pub fn setup_event(vfs::node_ptr &event, u64 value, u64 maxvalue) -> vfs::result
   return ok;
 }
 
-pub fn open(vfs::node_ptr &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
 }
 
-pub fn getattr(vfs::node_ptr &node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   return ok;
 }
 
-pub fn setattr(vfs::node_ptr &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
   var mut &this = cast<event mut &>(*node);
 
@@ -77,7 +79,7 @@ pub fn poll(vfs::node_ptr &node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<event mut &>(*node);
 
@@ -100,7 +102,7 @@ pub fn read(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) 
   return cast(8);
 }
 
-pub fn write(vfs::node_ptr &node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<event mut &>(*node);
 
