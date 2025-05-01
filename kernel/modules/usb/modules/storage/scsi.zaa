@@ -1,0 +1,9 @@
+//
+// scsi
+//
+
+pub enum op
+{
+  pub const inquiry = 0x12;
+  pub const report_luns = 0xa0;
+}

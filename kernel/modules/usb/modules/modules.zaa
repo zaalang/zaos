@@ -7,15 +7,16 @@ import usb;
 import usb.usbdev;
 
 import usb.modules.hid as hid;
+import usb.modules.storage as storage;
 
 pub fn probe(usb::usbdev mut *device) -> usb::result
 {
-  var buffer = std::vector<u8>::with_size(512);
+  var devbuf = std::vector<u8>::with_size(512);
 
-  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, buffer.data, sizeof<usb::device_descriptor>))
+  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, devbuf.data, sizeof<usb::device_descriptor>))
     return io_error;
 
-  var device_descriptor = cast<usb::device_descriptor*>(buffer.data);
+  var device_descriptor = cast<usb::device_descriptor*>(devbuf.data);
 
   for (var config = 0; config < device_descriptor.number_configurations; ++config)
   {
@@ -56,6 +57,10 @@ pub fn probe(usb::usbdev mut *device) -> usb::result
       {
         case 3:
           if (hid::initialise(device, std::span(buffer.data + start, buffer.data + offset)))
+            return ok;
+
+        case 8:
+          if (storage::initialise(device, std::span(buffer.data + start, buffer.data + offset)))
             return ok;
 
         else:

@@ -13,12 +13,12 @@ import usb.modules.hid.report as hid.report;
 
 pub enum request
 {
-  get_report = 1;
-  get_idle = 2;
-  get_protocol = 3;
-  set_report = 9;
-  set_idle = 10;
-  set_protocol = 11;
+  pub const get_report = 1;
+  pub const get_idle = 2;
+  pub const get_protocol = 3;
+  pub const set_report = 9;
+  pub const set_idle = 10;
+  pub const set_protocol = 11;
 }
 
 #[packed]

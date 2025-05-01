@@ -104,12 +104,10 @@ enum tfd : u32
   error = 0x1,              // error
   index = 0x2,              // obsolete
   corr = 0x4,               // obsolete
-  request = 0x8,            // data request
-  dsc = 0x10,               // reserved
-  service = 0x10,           // ready to service device
-  dwf = 0x20,               // reserved
-  dma = 0x20,               // reserved
-  dma_ready = 0x20,         // packet: DMA ready
+  drq = 0x8,                // data request
+  dsc = 0x10,               // drive seek complete
+  dwf = 0x20,               // device fault
+  dma_ready = 0x20,         // dma ready
   device_fault = 0x20,      // device fault
   device_ready = 0x40,      // device ready
   busy = 0x80,              // busy
@@ -298,7 +296,7 @@ pub struct port
       cl[i].ctba = memory.addr + sizeof<ahci_command[32]> + sizeof<fis> + i * sizeof<ahci_command_table>;
     }
 
-    this.slots = (~1 << ((controller.hba.cap >> 8) & 0b11111)) & (CLSZ - 1);
+    this.slots = (~1 << ((controller.hba.cap >> 8) & 0b11111)) & (1 << CLSZ - 1);
 
     std::volatile_store(&regs.sctl, regs.sctl | 0x00000300);
   }
@@ -329,7 +327,7 @@ pub struct port
 
     std::volatile_store(&this.regs.serr, this.regs.serr);
 
-    if (!wait_until_clear(&this.regs.tfd, tfd::busy | tfd::request, 500))
+    if (!wait_until_clear(&this.regs.tfd, tfd::busy | tfd::drq, 500))
     {
       std::volatile_store(&this.regs.sctl, 0x0100 | 0x0200 | 0x0004);
 
@@ -348,20 +346,18 @@ pub struct port
 
   fn find_slot(this mut &) -> usize
   {
-    var slot = 0;
-
-    for (; slot < CLSZ; ++slot)
+    for (;;)
     {
       var mask = std::volatile_load(&this.slots);
 
-      if (mask & (1 << slot) == 0)
-      {
-        if (std::atomic_cmpxchg_weak(&this.slots, mask, mask | (1 << slot)))
-          break;
-      }
-    }
+      if (mask == 1 << CLSZ - 1)
+        return CLSZ;
 
-    return slot;
+      var slot = std::ctz(~mask);
+
+      if (std::atomic_cmpxchg_weak(&this.slots, mask, mask | (1 << slot)))
+        return cast(slot);
+    }
   }
 
   pub fn name(this &) -> std::string
@@ -372,6 +368,7 @@ pub struct port
   pub ~port() = default;
 
   u32 slots;
+  u32 issued;
   blk::request mut *[CLSZ] requests;
 
   ahci_port mut *regs;
@@ -384,6 +381,7 @@ pub struct port
 fn ahci_io_handler(controller mut *controller) -> void
 {
   var pending = controller.hba.is;
+  std::volatile_store(&controller.hba.is, pending);
 
   for (var i = 0; i < controller.ports.len; ++i)
   {
@@ -395,8 +393,6 @@ fn ahci_io_handler(controller mut *controller) -> void
 
         var is = port.regs.is;
         std::volatile_store(&port.regs.is, is);
-
-        var ci = port.slots & ~(port.regs.sact | port.regs.ci);
 
         var status = blk::request::status::success;
 
@@ -414,96 +410,31 @@ fn ahci_io_handler(controller mut *controller) -> void
           status = blk::request::status::errored;
         }
 
-        for (var slot = 0; ci != 0; ++slot)
+        var issued = std::atomic_load(&port.issued);
+        var completed = issued & ~(port.regs.sact | port.regs.ci);
+
+        for (var slot = 0; completed != 0; ++slot)
         {
-          if (ci & 1 != 0)
+          if (completed & 1 != 0)
           {
-            if (port.requests[slot])
+            if (var request = port.requests[slot])
             {
-              blk::complete(port.requests[slot], status);
+              blk::complete(request, status);
 
               port.requests[slot] = null;
 
-              if (std::atomic_and(&port.slots, ~(1 << slot)) == port::CLSZ - 1)
+              if (std::atomic_and(&port.slots, ~(1 << slot)) == 1 << port::CLSZ - 1)
                 blk::wake_from_stall();
             }
+
+            std::atomic_and(&port.issued, ~(1 << slot));
           }
 
-          ci >>= 1;
+          completed >>= 1;
         }
       }
     }
   }
-
-  std::volatile_store(&controller.hba.is, pending);
-}
-
-fn initialise(controller mut &controller) -> result
-{
-  var &device = controller.device;
-
-  var base = device.read_base_address(5);
-  var size = device.read_size_register(5);
-  var mapped = heap::mmap(vm::physrange(base, size));
-
-  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
-  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
-
-  var irq = ioapic::resolve(device.read_interrupt_line());
-
-  if (msi::count(device) != 0)
-  {
-    var vector = io::allocate_vectors(1);
-
-    if (msi::configure(device, vector))
-    {
-      msi::enable(device);
-
-      irq = vector.0;
-    }
-  }
-
-  if (irq == 0 || irq == 0xff)
-    return invalid_argument;
-
-  controller.irq = irq;
-  controller.hba = cast<ahci_hba mut *>(mapped.addr);
-
-  var hba = controller.hba;
-
-  std::volatile_store(&hba.ghc, hba.ghc & ~ghc::interrupt_enabled);
-
-  if (var result = controller.reset(); !result)
-    return result;
-
-  io::install_handler(irq, &cast<(controller mut *) -> void>(ahci_io_handler), &controller);
-
-  var port_count = 1 + cast<usize>(hba.cap & 0b11111);
-
-  for (var i = 0; i < port_count; ++i)
-  {
-    if (hba.pi & (1 << i) != 0)
-    {
-      if (hba.ports[i].ssts & 0xdf == 0x13)
-      {
-        controller.ports[i] = std::allocator::new<port>(&mut controller, i);
-      }
-    }
-  }
-
-  std::volatile_store(&hba.is, hba.is);
-  std::volatile_store(&hba.ghc, hba.ghc | ghc::interrupt_enabled);
-
-  for (var i = 0; i < controller.ports.len; ++i)
-  {
-    if (controller.ports[i])
-    {
-      if (var result = controller.ports[i].initialise(); !result)
-        std::print("ahci error initialising port ", i, " - ", result);
-    }
-  }
-
-  return ok;
 }
 
 fn initialise(port mut &port) -> result
@@ -562,6 +493,77 @@ fn initialise(port mut &port) -> result
   return ok;
 }
 
+fn initialise(controller mut &controller) -> result
+{
+  var &device = controller.device;
+
+  var base = device.read_base_address(5);
+  var size = device.read_size_register(5);
+  var mapped = heap::mmap(vm::physrange(base, size));
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var irq = ioapic::resolve(device.read_interrupt_line());
+
+  if (msi::count(device) != 0)
+  {
+    var vector = io::allocate_vectors(1);
+
+    if (msi::configure(device, vector))
+    {
+      msi::enable(device);
+
+      irq = vector.0;
+    }
+  }
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  controller.irq = irq;
+  controller.hba = cast<ahci_hba mut *>(mapped.addr);
+
+  var hba = controller.hba;
+
+  std::volatile_store(&hba.ghc, hba.ghc & ~ghc::interrupt_enabled);
+
+  if (var result = controller.reset(); !result)
+    return result;
+
+  if (hba.cap & cap::sncq != cap::sncq)
+    return invalid_argument;
+
+  io::install_handler(irq, &cast<(controller mut *) -> void>(ahci_io_handler), &controller);
+
+  var port_count = 1 + cast<usize>(hba.cap & 0b11111);
+
+  for (var i = 0; i < port_count; ++i)
+  {
+    if (hba.pi & (1 << i) != 0)
+    {
+      if (hba.ports[i].ssts & 0xdf == 0x13)
+      {
+        controller.ports[i] = std::allocator::new<port>(&mut controller, i);
+      }
+    }
+  }
+
+  std::volatile_store(&hba.is, hba.is);
+  std::volatile_store(&hba.ghc, hba.ghc | ghc::interrupt_enabled);
+
+  for (var i = 0; i < controller.ports.len; ++i)
+  {
+    if (controller.ports[i])
+    {
+      if (var result = controller.ports[i].initialise(); !result)
+        std::print("ahci error initialising port ", i, " - ", result);
+    }
+  }
+
+  return ok;
+}
+
 pub fn initialise(pci::device &device) -> void
 {
   var controller = std::allocator::new<controller>(device);
@@ -600,11 +602,11 @@ pub fn identify(port mut &port, vm::physaddr buffer) -> result
   cmd.prdtl = 1;
   cmd.prdbc = 0;
 
-  if (!wait_until_clear(&port.regs.tfd, tfd::busy | tfd::request, 1000))
+  if (!wait_until_clear(&port.regs.tfd, tfd::busy | tfd::drq, 1000))
     return device_busy;
 
   std::atomic_thread_fence();
-  std::volatile_store(&port.regs.ci, 1 << slot);
+  std::atomic_store(&port.regs.ci, 1 << slot);
 
   if (!wait_until_clear(&port.regs.ci, 1 << slot, 1000))
     return timed_out;
@@ -671,9 +673,10 @@ pub fn enqueue(port mut &port, blk::request mut *request) -> result
 
   std::atomic_thread_fence();
 
-  std::volatile_store(&port.regs.sact, 1 << slot);
-  std::volatile_store(&port.requests[slot], request);
-  std::volatile_store(&port.regs.ci, 1 << slot);
+  std::atomic_store(&port.requests[slot], request);
+  std::atomic_store(&port.regs.sact, 1 << slot);
+  std::atomic_or(&port.issued, 1 << slot);
+  std::atomic_store(&port.regs.ci, 1 << slot);
 
   return ok;
 }

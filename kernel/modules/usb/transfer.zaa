@@ -26,13 +26,14 @@ pub struct transfer
   pub u8 request;
   pub u16 value;
   pub u16 index;
+  pub usize stream;
   pub usize length;
 
   pub std::vector<vm::physrange, N:8> host;
 
   pub Rc<io::iocb> cb;
 
-  u8[56] reserved;
+  u8[48] reserved;
 
   fn allocator()
   {

@@ -111,6 +111,11 @@ modules/usb/xhci/xhci.zaa\
 modules/usb/modules/hid/hid.zaa\
 modules/usb/modules/hid/hiddev.zaa\
 modules/usb/modules/hid/report.zaa\
+modules/usb/modules/storage/storage.zaa\
+modules/usb/modules/storage/bot.zaa\
+modules/usb/modules/storage/botdev.zaa\
+modules/usb/modules/storage/uas.zaa\
+modules/usb/modules/storage/uasdev.zaa\
 modules/usb/modules/modules.zaa\
 syscalls/syscalls.zaa\
 syscalls/thread.zaa\
@@ -178,7 +183,7 @@ $(BUILD)/kernel.efi: kernel.ld $(OBJS)
 	@echo "LD kernel"
 	@$(LD) -T kernel.ld -pie --no-dynamic-linker -Bsymbolic -znocombreloc -nostdlib -o $(BUILD)/kernel.elf $(OBJS) 
 	@$(OBJCOPY) -j .text -j .data -j .tls -j .dynamic -j .rela -j .reloc --output-target pei-x86-64 --subsystem=efi-app $(BUILD)/kernel.elf $(BUILD)/kernel.efi
-	@$(OBJDUMP) -dC -Mintel -S $(BUILD)/kernel.elf > $(BUILD)/kernel.asm
+	@$(OBJDUMP) -dC -Mintel -S -l $(BUILD)/kernel.elf > $(BUILD)/kernel.asm
 	@$(OBJDUMP) -t $(BUILD)/kernel.elf | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(BUILD)/kernel.sym
 
 $(BUILD)/%.s.o: %.s 

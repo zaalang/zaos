@@ -49,9 +49,9 @@ pub struct ptm : pub vfs::node
   }
 
   pub ptm(Rc<pty::ptty> &&ptty)
-    : super(vfs::node::type::device, vfs::node_device_operations()),
-      ptty(&&ptty)
+    : ptty(&&ptty)
   {
+    vfs::node::new(&super, vfs::node::type::device, vfs::node_device_operations());
   }
 
   pub ~ptm() = default;

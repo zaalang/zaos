@@ -1,0 +1,80 @@
+//
+// usb mass storage
+//
+
+import std.stdio;
+import std.atomic;
+import dev;
+import blk;
+import usb;
+import io;
+import vm;
+import cpu;
+import vfs;
+import support.rc : Rc;
+
+pub struct uasdev : pub blk::blkdev
+{
+  pub uasdev(usb::usbdev mut *device)
+    : super(&impl this),
+      device(device)
+  {
+    this.block_size = 512;
+    this.block_shift = std::ctz(this.block_size);
+  }
+
+  pub fn query(this &, blk::query query, std::string mut &result) override -> blk::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = std::format("disk/{}/{}", this.device.query(usb::query::device_name), this.lun >> 48 & 0xff);
+
+      case device_part:
+        result = "0";
+
+      case device_uuid:
+        result = "";
+    }
+
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub fn enqueue(this mut &, blk::request mut *request) override -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub fn cancel(this mut &, blk::request mut *request) override -> blk::result
+  {
+    return not_supported;
+  }
+
+  pub ~uasdev() = default;
+
+  u64 lun;
+  u8 ep_cmd;
+  u8 ep_sts;
+  u8 ep_data_in;
+  u8 ep_data_out;
+
+  Rc<usb::usbdev> device;
+}
+
+pub fn initialise(uasdev mut *uasdev, u64 lun, u8 cmd, u8 sts, u8 data_in, u8 data_out) -> usb::result
+{
+  std::print("usb-storage device on ", uasdev.device.query(usb::query::device_name), "/", lun >> 48 & 0xff);
+
+  uasdev.lun = lun;
+  uasdev.ep_cmd = cmd;
+  uasdev.ep_sts = sts;
+  uasdev.ep_data_in = data_in;
+  uasdev.ep_data_out = data_out;
+
+  return ok;
+}

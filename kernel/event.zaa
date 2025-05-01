@@ -11,45 +11,60 @@ import mutex as _ : mutex;
 import process as _ : process;
 import support.rc : Rc;
 
-pub struct event : pub vfs::node
+pub struct event
 {
-  std::spin_lock lock;
+  mutex lock;
 
   u64 value;
   u64 maxvalue;
   io::response readable;
   io::response writeable;
 
+  vfs::node node;
+
   fn create() -> event mut *
   {
     return std::allocator::new<event>();
   }
 
-  pub event()
-    : super(vfs::node::type::event, vfs::node_stream_operations())
+  pub fn node(this mut &) -> Rc<vfs::node>
   {
+    return &this.node;
+  }
+
+  pub event()
+  {
+    vfs::node::new(&node, vfs::node::type::event, vfs::node_stream_operations());
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    this.node.ref();
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    this.node.unref();
   }
 
   pub ~event() = default;
 }
 
-pub fn create_event(process mut *process) -> Rc<vfs::node>
+pub fn create_event(process mut *process) -> Rc<event>
 {
   return event::create();
 }
 
-pub fn setup_event(vfs::node mut *event, u64 value, u64 maxvalue) -> vfs::result
+pub fn setup_event(Rc<event> mut &event, u64 value, u64 maxvalue) -> vfs::result
 {
-  var mut &this = cast<event mut &>(*event);
-
-  this.value = value;
-  this.maxvalue = maxvalue;
+  event.value = value;
+  event.maxvalue = maxvalue;
 
   if (value == 0)
-    io::initiate(&mut this.readable.cb, 1);
+    io::initiate(&mut event.readable.cb, 1);
 
   if (value == maxvalue)
-    io::initiate(&mut this.writeable.cb, 1);
+    io::initiate(&mut event.writeable.cb, 1);
 
   return ok;
 }
@@ -71,68 +86,68 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 
 pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
-  var mut &this = cast<event mut &>(*node);
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
-  readable = this.readable.cb;
-  writeable = this.writeable.cb;
+  readable = event.readable.cb;
+  writeable = event.writeable.cb;
 
   return ok;
 }
 
 pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
-  var mut &this = cast<event mut &>(*node);
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+  var guard = std::lock_guard(&mut event.lock);
 
-  if (this.value == 0)
+  if (event.value == 0)
     return would_block;
 
-  if (var result = vm::memcpy(buffer, offset, &this.value, 8); !result)
+  if (var result = vm::memcpy(buffer, offset, &event.value, 8); !result)
     return cast(result);
 
-  this.value -= 1;
+  event.value -= 1;
 
-  if (this.value == 0)
-    io::initiate(&mut this.readable.cb, 1);
+  if (event.value == 0)
+    io::initiate(&mut event.readable.cb, 1);
 
-  if (this.value == this.maxvalue)
-    io::complete(&mut this.writeable.cb, 0);
+  if (event.value == event.maxvalue)
+    io::complete(&mut event.writeable.cb, 0);
 
   return cast(8);
 }
 
 pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
-  var mut &this = cast<event mut &>(*node);
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+  var guard = std::lock_guard(&mut event.lock);
 
   var addend = 0;
 
   if (var result = vm::memcpy(&addend, buffer, offset, 8); !result)
     return cast(result);
 
-  if (addend > this.maxvalue)
+  if (addend > event.maxvalue)
     return invalid_argument;
 
-  if (this.value > this.maxvalue - addend)
+  if (event.value > event.maxvalue - addend)
     return would_block;
 
-  this.value += addend;
+  event.value += addend;
 
-  if (this.value == addend)
-    io::complete(&mut this.readable.cb, 0);
+  if (event.value == addend)
+    io::complete(&mut event.readable.cb, 0);
 
-  if (this.value == this.maxvalue)
-    io::initiate(&mut this.writeable.cb, 1);
+  if (event.value == event.maxvalue)
+    io::initiate(&mut event.writeable.cb, 1);
 
   return cast(8);
 }
 
 fn destroy(vfs::node mut *node) -> void
 {
-  var event = cast<event mut *>(node);
+  var event = cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
   std::allocator::delete(event);
 }

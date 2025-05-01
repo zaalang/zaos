@@ -420,7 +420,7 @@ fn mouse_handler(port mut *port, u8 data) -> void
     {
       evt.type = input::type::rel;
       evt.code = input::axis::wheel;
-      evt.value = (port.packet[3] & 0x8 != 0) ? cast<i32>(port.packet[3] & 0x7) : cast<i32>(port.packet[3] & 0x7) - 0x8;
+      evt.value = ((port.packet[3] & 0x8 != 0) ? cast<i32>(port.packet[3] & 0x7) - 0x8 : cast<i32>(port.packet[3] & 0x7)) * 120;
 
       add_event(port, evt);
     }

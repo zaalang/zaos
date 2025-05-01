@@ -76,9 +76,11 @@ pub struct watchevt
   }
 }
 
-pub struct watchset : pub vfs::node
+pub struct watchset
 {
-  pub io::response readable;
+  io::response readable;
+
+  vfs::node node;
 
   struct watch
   {
@@ -116,6 +118,11 @@ pub struct watchset : pub vfs::node
     return std::allocator::new<watchset>();
   }
 
+  pub fn node(this mut &) -> Rc<vfs::node>
+  {
+    return &this.node;
+  }
+
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
   {
     return not_supported;
@@ -123,7 +130,7 @@ pub struct watchset : pub vfs::node
 
   pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
   {
-    var mut &this = cast<watchset mut &>(*node);
+    var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
 
     readable = this.readable.cb;
 
@@ -132,7 +139,7 @@ pub struct watchset : pub vfs::node
 
   pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
   {
-    var mut &this = cast<watchset mut &>(*node);
+    var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
 
     var guard = std::lock_guard(&mut this.lock);
 
@@ -222,21 +229,27 @@ pub struct watchset : pub vfs::node
     return not_supported;
   }
 
-  fn destroy(vfs::node mut *node) -> void
+  pub watchset()
   {
-    destroy(cast<watchset mut *>(node));
+    vfs::node::new(&node, vfs::node::type::watchset, vfs::node_stream_operations());
+
+    io::initiate(&mut readable.cb, 1);
   }
 
-  pub watchset()
-    : super(vfs::node::type::watchset, vfs::node_stream_operations())
+  pub fn ref(this mut &) -> void
   {
-    io::initiate(&mut readable.cb, 1);
+    this.node.ref();
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    this.node.unref();
   }
 
   pub ~watchset() = default;
 }
 
-pub fn create_watchset(process mut *process) -> Rc<vfs::node>
+pub fn create_watchset(process mut *process) -> Rc<watchset>
 {
   return watchset::create();
 }
@@ -250,7 +263,7 @@ pub fn sys_notify_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -
 {
   var watchset = create_watchset(process);
 
-  return process.new_fd(vfs::file_descriptor::create(watchset));
+  return process.new_fd(vfs::file_descriptor::create(Rc(&watchset.node)));
 }
 
 pub fn sys_notify_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 dirfd, usize pathlen, virtaddr pathbuf, u64 mask, uintptr user_data, u64 flags) -> result
@@ -263,7 +276,7 @@ pub fn sys_notify_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 dir
   if (file.node.type != vfs::node::type::watchset)
     return vfs::result::bad_descriptor;
 
-  var mut &watchset = cast<watchset mut &>(*file.node);
+  var mut &watchset = *cast<watchset mut *>(cast<uintptr>(file.node) - offsetof(watchset::node));
 
   if (pathbuf == 0 && pathlen != 0)
     return invalid_argument;
@@ -331,7 +344,7 @@ pub fn sys_notify_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 
   if (file.node.type != vfs::node::type::watchset)
     return vfs::result::bad_descriptor;
 
-  var mut &watchset = cast<watchset mut &>(*file.node);
+  var mut &watchset = *cast<watchset mut *>(cast<uintptr>(file.node) - offsetof(watchset::node));
 
   if (pathbuf == 0 && pathlen != 0)
     return invalid_argument;
@@ -403,8 +416,10 @@ fn callback(vfs::watcher *watcher, u64 mask, uintptr id, uintptr dir, std::strin
     io::complete(&mut watch.watchset.readable.cb, 0);
 }
 
-fn destroy(watchset mut *watchset) -> void
+fn destroy(vfs::node mut *node) -> void
 {
+  var watchset = cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
+
   for (var mut &watch : watchset.watches)
     vfs::unwatch(&watch.watcher);
 

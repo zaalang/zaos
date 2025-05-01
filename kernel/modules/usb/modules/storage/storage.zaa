@@ -1,0 +1,66 @@
+//
+// mass storage device
+//
+
+import std.stdio;
+import std.atomic;
+import std.box;
+import dev;
+import blk;
+import usb;
+import usb.usbdev;
+import usb.modules.storage.bot as bot;
+import usb.modules.storage.uas as uas;
+import support.rc : Rc;
+
+pub struct driver
+{
+  pub driver(usb::usbdev mut *device)
+    : device(device)
+  {
+    device.unplugged = || unplugged(&this);
+  }
+
+  pub fn register(this mut &, blk::blkdev mut *device) -> void
+  {
+    dev::register(dev::dev_t(), device);
+
+    this.devices.push_back(device);
+  }
+
+  pub ~driver() = default;
+
+  Rc<usb::usbdev> device;
+  std::vector<Rc<blk::blkdev>> devices;
+}
+
+fn unplugged(driver mut *driver) -> usb::result
+{
+  for (var &blkdev : driver.devices)
+    dev::remove(blkdev);
+
+  std::allocator::delete(driver);
+
+  return ok;
+}
+
+pub fn initialise(usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var driver = std::allocator::new<driver>(device);
+
+  var interface = cast<usb::interface_descriptor*>(descriptors.data);
+
+  switch (interface.interface_protocol)
+  {
+    case 0x50:
+      bot::initialise(driver, device, descriptors);
+
+    case 0x62:
+      uas::initialise(driver, device, descriptors);
+
+    else:
+      std::print("usb-storage: unsupported interface protocol ", interface.interface_protocol);
+  }
+
+  return ok;
+}

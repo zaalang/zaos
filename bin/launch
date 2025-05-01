@@ -11,24 +11,25 @@ if [ -d "$OVMF/x64" ]; then
   OVMF=$OVMF/x64
 fi
 
-if [ ! -f "OVMF_VARS.4m.fd" ]; then
-  cp $OVMF/OVMF_VARS.4m.fd .
+if [ ! -f "OVMF_VARS.fd" ]; then
+  cp $OVMF/OVMF_VARS.fd .
 fi
 
-#OPTS="-machine q35 -cpu host,invtsc -enable-kvm -m 2G -smp 2"
-OPTS="-machine q35,i8042=off -cpu host,invtsc -enable-kvm -m 2G -smp 2"
+OPTS="-machine q35,i8042=off -cpu host,invtsc -enable-kvm -m 2G -smp 4"
 
-OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.4m.fd,format=raw"
-OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.4m.fd,format=raw"
+OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.fd,format=raw"
+OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.fd,format=raw"
 
 OPTS="$OPTS -drive id=disk0,if=none,file=disk.img,format=raw"
 OPTS="$OPTS -device ide-hd,bus=ide.0,drive=disk0,bootindex=0"
+#OPTS="$OPTS -device nvme,serial=deadbeaf,drive=disk0,bootindex=0"
 #OPTS="$OPTS -device virtio-blk-pci,drive=disk0,bootindex=0"
  
-#OPTS="$OPTS -drive id=disk1,if=none,file=user.img,format=raw"
-#OPTS="$OPTS -device ide-hd,bus=ide.1,drive=disk1,bootindex=1"
-#OPTS="$OPTS -device nvme,serial=deadbeaf,drive=disk1,bootindex=1"
-#OPTS="$OPTS -device qemu-xhci -device usb-storage,drive=disk1,bootindex=1"
+OPTS="$OPTS -drive id=disk1,if=none,file=user.img,format=raw"
+#OPTS="$OPTS -device ide-hd,bus=ide.1,drive=disk1"
+#OPTS="$OPTS -device nvme,serial=deadbeaf,drive=disk1"
+#OPTS="$OPTS -device qemu-xhci -device usb-bot,id=bot -device scsi-hd,bus=bot.0,scsi-id=0,lun=0,drive=disk1"
+#OPTS="$OPTS -device qemu-xhci -device usb-uas,id=uas -device scsi-hd,bus=uas.0,scsi-id=0,lun=0,drive=disk1"
 
 #OPTS="$OPTS -drive id=cd0,if=none,readonly=on,file=Fedora-Live-Xfce-x86_64-20-1.iso,format=raw"
 #OPTS="$OPTS -device ide-cd,bus=ide.1,drive=cd0,bootindex=1"

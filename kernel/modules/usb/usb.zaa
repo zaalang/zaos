@@ -41,17 +41,17 @@ pub enum request
     other = 0x03,
   }
 
-  get_status = 0,
-  clear_feature = 1,
-  set_feature = 3,
-  set_address = 5,
-  get_descriptor = 6,
-  set_descriptor = 7,
-  get_configuration = 8,
-  set_configuration = 9,
-  get_interface = 10,
-  set_interface = 11,
-  synch_frame = 12,
+  pub const get_status = 0;
+  pub const clear_feature = 1;
+  pub const set_feature = 3;
+  pub const set_address = 5;
+  pub const get_descriptor = 6;
+  pub const set_descriptor = 7;
+  pub const get_configuration = 8;
+  pub const set_configuration = 9;
+  pub const get_interface = 10;
+  pub const set_interface = 11;
+  pub const synch_frame = 12;
 }
 
 pub enum endpoint
@@ -209,12 +209,13 @@ pub struct endpoint_ss_companion_descriptor
   pub u16 bytes_per_interval;
 }
 
-pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, usb::request request, u16 value, u16 index, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, u8 request, u16 value, u16 index, vm::iovec &buffer, usize offset, usize length) -> void
 {
   var tx = transfer::create();
   tx.type = transfer::type::control;
   tx.address = cast<u8>(direction) | cast<u8>(type) | cast<u8>(recipient);
-  tx.request = cast<u8>(request);
+  tx.stream = 0;
+  tx.request = request;
   tx.value = value;
   tx.index = index;
   tx.length = length;
@@ -229,7 +230,7 @@ pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction 
     complete(tx, result);
 }
 
-pub fn submit(usbdev mut *device, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, usb::request request, u16 value, u16 index, void mut *buffer, usize length) -> usb::result
+pub fn submit(usbdev mut *device, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, u8 request, u16 value, u16 index, void mut *buffer, usize length) -> usb::result
 {
   var iovec = vm::iovec();
 
@@ -248,11 +249,12 @@ pub fn submit(usbdev mut *device, usb::request::direction direction, usb::reques
   return cast(response.result);
 }
 
-pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, usize stream, vm::iovec &buffer, usize offset, usize length) -> void
 {
   var tx = transfer::create();
   tx.type = cast(type);
   tx.address = address;
+  tx.stream = stream;
   tx.length = length;
   tx.cb = cb;
   tx.ref();
@@ -263,6 +265,30 @@ pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::ty
 
   if (var result = device.submit(tx); !result)
     complete(tx, result);
+}
+
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, vm::iovec &buffer, usize offset, usize length) -> void
+{
+  submit(device, &mut cb, address, type, 0, buffer, offset, length);
+}
+
+pub fn submit(usbdev mut *device, u8 address, endpoint::type type, void mut *buffer, usize length) -> usb::result
+{
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(buffer, length), vm::protection::readwrite, &mut iovec); !result)
+    return cast(result);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  submit(device, &mut response.cb, address, type, 0, iovec, 0, length);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(response.result);
 }
 
 pub fn complete(transfer mut *tx, result result) -> void

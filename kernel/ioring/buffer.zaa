@@ -23,8 +23,8 @@ pub fn sys_buffer_create(process mut *process, ioring_ctx mut &ctx, virtaddr fds
 
   var fds = [0, 0];
 
-  fds[0] = process.new_fd(vfs::file_descriptor::create(buffer.open_read_node));
-  fds[1] = process.new_fd(vfs::file_descriptor::create(buffer.open_write_node));
+  fds[0] = process.new_fd(vfs::file_descriptor::create(buffer.read_node));
+  fds[1] = process.new_fd(vfs::file_descriptor::create(buffer.write_node));
 
   if (var result = vm::write_process_memory(process, fdsbuf, fds.data, fds.len * sizeof<i32>); !result)
     return result;

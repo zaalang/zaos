@@ -157,12 +157,10 @@ pub struct node
   {
   }
 
-  pub fn new(node mut *this, type type, node_operations &ops) -> Rc<node>
+  pub fn new(node mut *this, type type, node_operations &ops) -> void
   {
     this.type = type;
     this.ops = &ops;
-
-    return Rc(this);
   }
 
   pub node() = default;

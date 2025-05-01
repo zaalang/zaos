@@ -12,17 +12,18 @@ import platform;
 import thread as _ : thread;
 import process as _ : process;
 import semaphore as _ : semaphore;
+import mutex as _ : mutex;
 
 struct ring_queue
 {
-  std::spin_lock lock;
+  mutex lock;
 
   io_ring mut *head;
   io_ring mut * mut *last;
 
   fn take(this mut &) -> (io_ring mut *, io_ring mut * mut *)
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+    var guard = std::lock_guard(&mut this.lock);
 
     var result = (this.head, this.last);
 
@@ -34,7 +35,7 @@ struct ring_queue
 
   fn append(this mut &, io_ring mut *ring) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+    var guard = std::lock_guard(&mut this.lock);
 
     *this.last = ring;
     this.last = &ring.next;
@@ -42,7 +43,7 @@ struct ring_queue
 
   fn append(this mut &, (io_ring mut *, io_ring mut * mut *) mut &entries) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+    var guard = std::lock_guard(&mut this.lock);
 
     *this.last = entries.0;
     this.last = entries.1;

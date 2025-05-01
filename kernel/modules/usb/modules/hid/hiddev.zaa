@@ -170,16 +170,16 @@ fn decode(hiddev mut &this) -> usb::result
         if (report.type != hid::report::type::input)
           continue;
 
-        if (report.report_id != report_id)
+        if (report.id != report_id)
         {
           if (report_id == 0)
             report_id = cast(this.buffer[byte++]);
 
-          if (report.report_id != report_id)
+          if (report.id != report_id)
             continue;
         }
 
-        for (var index = 0; index < report.report_count; ++index)
+        for (var index = 0; index < report.field_count; ++index)
         {
           var value = i64(void);
           var usage = u32(void);
@@ -208,7 +208,7 @@ fn decode(hiddev mut &this) -> usb::result
 
                   case 0x38:
                     if (report.flags & hid::report::flags::relative != 0)
-                      this.pointer_state_rel[2] = cast(-value);
+                      this.pointer_state_rel[2] = cast(-value) * 120;
                 }
 
               case 7:
@@ -225,7 +225,7 @@ fn decode(hiddev mut &this) -> usb::result
             }
           }
 
-          bits += cast<usize>(report.report_size);
+          bits += cast<usize>(report.field_size);
         }
       }
     }
@@ -369,7 +369,7 @@ pub fn initialise(hiddev mut *hiddev, u8 endpoint_address, std::vector<hid::coll
 
   for (var &collection : collections)
   {
-    max_report_size += hid::report_size(collection, hid::report::type::input);
+    max_report_size += collection.byte_len(hid::report::type::input);
   }
 
   if (max_report_size == 0)
@@ -391,7 +391,7 @@ pub fn initialise(hiddev mut *hiddev, u8 endpoint_address, std::vector<hid::coll
   return ok;
 }
 
-pub fn unplugged(hiddev mut *hiddev) -> usb::result
+fn unplugged(hiddev mut *hiddev) -> usb::result
 {
   dev::remove(hiddev);
 

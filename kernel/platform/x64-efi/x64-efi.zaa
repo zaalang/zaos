@@ -175,18 +175,22 @@ extern fn efi_main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> void
 
 extern fn finalise_boot(BootInfo &bootinfo, int cpu) -> void
 {
-  static rendezvous = i32(0);
+  static rendezvous1 = i32(0);
+  static rendezvous2 = i32(0);
 
-  std::atomic_add(&rendezvous, 1);
+  std::atomic_add(&rendezvous1, 1);
+  std::atomic_add(&rendezvous2, 1);
 
-  while (std::volatile_load(&rendezvous) < cast(bootinfo.cpu_count))
+  while (std::volatile_load(&rendezvous1) < cast(bootinfo.cpu_count))
     __relax();
 
   sys::setup(bootinfo, cpu);
 
-  std::atomic_sub(&rendezvous, 1);
+  std::atomic_thread_fence();
 
-  while (std::volatile_load(&rendezvous) != 0)
+  std::atomic_sub(&rendezvous2, 1);
+
+  while (std::volatile_load(&rendezvous2) != 0)
     __relax();
 
   memory::cement(bootinfo, cpu);

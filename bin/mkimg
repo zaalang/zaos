@@ -12,8 +12,8 @@ cat > $2/grub.cfg <<-GRUBCFG
   # grub-mkimage -O x86_64-efi -p /efi/boot normal search echo fat ext2 part_gpt chain efi_gop gfxterm > grubx64.efi
   #
 	
-  set root=(hd0,gpt2)
-  #search --no-floppy --fs-uuid --set=root c8d7a3b6-7a52-4eb0-b251-7f3ba6567cbd
+  #set root=(hd0,gpt2)
+  search --no-floppy --fs-uuid --set=root c8d7a3b6-7a52-4eb0-b251-7f3ba6567cbd
 	
   set gfxmode=1280x720
   terminal_output gfxterm

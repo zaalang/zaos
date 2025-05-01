@@ -23,10 +23,10 @@ extern fn sys_ioring_setup(virtaddr buffer, usize buflen, u64 flags) -> result
 
   var ring = create_ioring();
 
-  if (var result = setup_ioring(ring, process::current, virtrange(buffer, buflen)); !result)
+  if (var result = setup_ioring(&mut ring, process::current, virtrange(buffer, buflen)); !result)
     return result;
 
-  return process::current.new_fd(vfs::file_descriptor::create(ring));
+  return process::current.new_fd(vfs::file_descriptor::create(ring.node));
 }
 
 extern fn sys_ioring_enter(i32 fd, u32 to_submit, u32 min_complete, u64 flags) -> result

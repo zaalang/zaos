@@ -20,9 +20,9 @@ extern fn exit(u32) -> void
     var ret = *(rbp + 1);
 
     if (ret >= extern(_BASE))
-      std::print(cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
+      std::fprint(std::stderr, cast<void*>(ret), "  ", cast<void*>(ret - extern(_BASE)));
     else
-      std::print(cast<void*>(ret));
+      std::fprint(std::stderr, cast<void*>(ret));
 
     rbp = cast<uintptr*>(*rbp);
   }

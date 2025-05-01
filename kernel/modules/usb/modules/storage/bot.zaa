@@ -1,0 +1,72 @@
+//
+// mass storage device
+//
+
+import std.stdio;
+import std.atomic;
+import std.box;
+import dev;
+import blk;
+import usb;
+import usb.usbdev;
+import usb.modules.storage as storage;
+import usb.modules.storage.botdev as storage.botdev;
+import support.rc : Rc;
+
+pub enum request
+{
+  pub const get_request = 0xfc;
+  pub const put_request = 0xfd;
+  pub const get_maxlun = 0xfe;
+}
+
+pub fn initialise(storage::driver mut *driver, usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var interface = cast<usb::interface_descriptor*>(descriptors.data);
+
+  if (interface.interface_protocol != 0x50)
+    return not_supported;
+
+  if (interface.interface_subclass != 0x06)
+    return not_supported;
+
+  var bulk_in = 0;
+  var bulk_out = 0;
+
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    switch (descriptors[offset + 1])
+    {
+      case usb::descriptor::type::endpoint:
+        var endpoint = cast<usb::endpoint_descriptor*>(descriptors.data + offset);
+
+        if (endpoint.type == usb::endpoint::type::bulk && endpoint.direction == usb::endpoint::direction::in)
+          bulk_in = endpoint.endpoint_address;
+
+        if (endpoint.type == usb::endpoint::type::bulk && endpoint.direction == usb::endpoint::direction::out)
+          bulk_out = endpoint.endpoint_address;
+    }
+
+    offset += cast(descriptors[offset]);
+  }
+
+  if (bulk_in == 0 || bulk_out == 0)
+    return invalid_argument;
+
+  var maxlun = std::box<u8>(0);
+
+  if (var result = usb::submit(device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::interface, request::get_maxlun, 0, cast<u16>(interface.interface_number), &*maxlun, 1); !result)
+    return result;
+
+  for (var lun = 0; lun <= *maxlun; ++lun)
+  {
+    var botdev = blk::blkdev::create<storage::botdev>(device);
+
+    if (var result = storage::initialise(&mut botdev, lun, bulk_in, bulk_out); !result)
+      return result;
+
+    driver.register(botdev);
+  }
+
+  return ok;
+}

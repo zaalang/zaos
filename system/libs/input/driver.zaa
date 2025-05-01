@@ -248,29 +248,29 @@ pub fn dispatch(driver mut &driver) -> i32
 
               if (input.code == input::syn::report)
               {
-                if (driver.type[0] == input::type::rel && driver.type[1] == input::type::rel)
+                if (driver.type[0] == input::type::rel || driver.type[1] == input::type::rel)
                 {
                   driver.post_event(event::pointer_motion_rel(input.time, driver.motion[0], driver.motion[1]));
 
-                  driver.type[0] = driver.type[1] = input::type::syn;
+                  driver.motion[0] = driver.motion[1] = 0.0;
                 }
 
-                if (driver.type[0] == input::type::abs && driver.type[1] == input::type::abs)
+                if (driver.type[0] == input::type::abs || driver.type[1] == input::type::abs)
                 {
                   var x = driver.motion[0] * config.calibration[0] + driver.motion[1] * config.calibration[1] + config.calibration[2];
                   var y = driver.motion[0] * config.calibration[3] + driver.motion[1] * config.calibration[4] + config.calibration[5];
 
                   driver.post_event(event::pointer_motion_abs(input.time, x, y));
-
-                  driver.type[0] = driver.type[1] = input::type::syn;
                 }
 
-                if (driver.motion[8] != 0.0)
+                if (driver.type[8] == input::type::rel)
                 {
                   driver.post_event(event::pointer_wheel(input.time, 0.0, driver.motion[8]));
 
                   driver.motion[8] = 0.0;
                 }
+
+                std::memset(&driver.type, 0, sizeof(driver.type));
               }
           }
 

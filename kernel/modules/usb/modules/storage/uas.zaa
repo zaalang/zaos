@@ -1,0 +1,174 @@
+//
+// mass storage device
+//
+
+import std.stdio;
+import std.atomic;
+import std.byteconv;
+import std.box;
+import vm;
+import io;
+import dev;
+import blk;
+import usb;
+import usb.usbdev;
+import usb.modules.storage.scsi as scsi;
+import usb.modules.storage.uasdev as storage.uasdev;
+import support.rc : Rc;
+
+#[packed]
+pub struct descriptor
+{
+  pub enum type
+  {
+    pub const uas_pipe_usage = 0x24;
+  }
+
+  pub u8 length;
+  pub u8 descriptor_type;
+}
+
+#[packed]
+pub struct uas_pipe_usage_descriptor : pub descriptor
+{
+  pub enum usage
+  {
+    pub const command_pipe = 0x01;
+    pub const status_pipe = 0x02;
+    pub const data_in_pipe = 0x03;
+    pub const data_out_pipe = 0x04;
+  }
+
+  pub u8 pipe_id;
+  pub u8 reserved;
+}
+
+pub enum iuid
+{
+  pub const command = 1;
+  pub const sense = 3;
+  pub const response = 4;
+  pub const taskmanagement = 5;
+  pub const readready = 6;
+  pub const writeready = 7;
+}
+
+fn report_luns(usb::usbdev mut *device, usize stream, u8 ep_cmd, u8 ep_sts, u8 ep_data_in, u8 ep_data_out, std::vector<u8> mut &response) -> usb::result
+{
+  response.resize(32 + 512);
+
+  var cmd = [u8(0); 12];
+  cmd[0] = scsi::op::report_luns;
+  cmd[6] = cast((response.len - 32) >> 24 & 0xff);
+  cmd[7] = cast((response.len - 32) >> 16 & 0xff);
+  cmd[8] = cast((response.len - 32) >> 8 & 0xff);
+  cmd[9] = cast((response.len - 32) >> 8 & 0xff);
+
+  if (var result = scsi_command(device, stream, ep_cmd, ep_sts, ep_data_in, ep_data_out, 0, std::span(cmd), std::mutable_span(&mut response)); !result)
+    return result;
+
+  if (response[0] != 3 || response[6] != 0)
+    return io_error;
+
+  return ok;
+}
+
+fn scsi_command(usb::usbdev mut *device, usize stream, u8 ep_cmd, u8 ep_sts, u8 ep_data_in, u8 ep_data_out, u64 lun, std::span<u8> cmd, std::mutable_span<u8> response) -> usb::result
+{
+  var ciu = std::vector<u8>::with_size(16 + cmd.len);
+
+  ciu[0] = iuid::command;
+  ciu[2] = cast(stream >> 8 & 0xff);
+  ciu[3] = cast(stream >> 0 & 0xff);
+  ciu[6] = cast(std::max(cmd.len, 16) - 16);
+  ciu[8] = cast(lun >> 56 & 0xff);
+  ciu[9] = cast(lun >> 48 & 0xff);
+  ciu[10] = cast(lun >> 40 & 0xff);
+  ciu[11] = cast(lun >> 32 & 0xff);
+  ciu[12] = cast(lun >> 24 & 0xff);
+  ciu[13] = cast(lun >> 16 & 0xff);
+  ciu[14] = cast(lun >> 8 & 0xff);
+  ciu[15] = cast(lun >> 0 & 0xff);
+
+  std::memcpy(&ciu[16], cmd.data, cmd.len);
+
+  var cmdvec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(ciu.data, ciu.len), vm::protection::readonly, &mut cmdvec); !result)
+    return cast(result);
+
+  var iovec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(response.data, response.len), vm::protection::readwrite, &mut iovec); !result)
+    return cast(result);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 3);
+
+  usb::submit(device, &mut response.cb, ep_sts, usb::endpoint::type::bulk, stream, iovec, 0, 32);
+  usb::submit(device, &mut response.cb, ep_data_in, usb::endpoint::type::bulk, stream, iovec, 32, iovec.length - 32);
+  usb::submit(device, &mut response.cb, ep_cmd, usb::endpoint::type::bulk, cmdvec, 0, cmdvec.length);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(response.result);
+}
+
+pub fn initialise(storage::driver mut *driver, usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var interface = cast<usb::interface_descriptor*>(descriptors.data);
+
+  if (interface.interface_protocol != 0x62)
+    return not_supported;
+
+  if (interface.interface_subclass != 0x06)
+    return not_supported;
+
+  if (device.speed < usb::speed::super_speed)
+    return not_supported;
+
+  var eps = std::vector<usb::endpoint_descriptor*, N:4>();
+  var usage = std::vector<uas_pipe_usage_descriptor*, N:4>();
+
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    switch (descriptors[offset + 1])
+    {
+      case usb::descriptor::type::endpoint:
+        eps.push_back(cast<usb::endpoint_descriptor*>(descriptors.data + offset));
+
+      case descriptor::type::uas_pipe_usage:
+        usage.push_back(cast<uas_pipe_usage_descriptor*>(descriptors.data + offset));
+    }
+
+    offset += cast(descriptors[offset]);
+  }
+
+  std::sort(std::zip(&mut eps, &mut usage), |x, y| x.1.pipe_id < y.1.pipe_id);
+
+  if (var result = device.allocate_streams(eps[1 .. 4].span); !result)
+    return result;
+
+  var buffer = std::vector<u8>();
+
+  if (var result = report_luns(device, 1, eps[0].endpoint_address, eps[1].endpoint_address, eps[2].endpoint_address, eps[3].endpoint_address, &mut buffer); !result)
+    return result;
+
+  var length = std::load_be_u32(&buffer[32]);
+
+  for (var offset = 0; offset < cast(length); offset += 8)
+  {
+    var lun = std::load_be_u64(&buffer[offset + 40]);
+
+    var uasdev = blk::blkdev::create<storage::uasdev>(device);
+
+    if (var result = storage::initialise(&mut uasdev, lun, eps[0].endpoint_address, eps[1].endpoint_address, eps[2].endpoint_address, eps[3].endpoint_address); !result)
+      return result;
+
+    driver.register(uasdev);
+  }
+
+  return ok;
+}

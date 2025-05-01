@@ -87,9 +87,10 @@ pub struct report
 
   pub u8 type;
   pub u32 flags;
-  pub u32 report_id;
-  pub u32 report_size;
-  pub u32 report_count;
+
+  pub u32 id;
+  pub u32 field_size;
+  pub u32 field_count;
 
   pub i32 logical_minimum;
   pub u32 logical_maximum;
@@ -115,9 +116,14 @@ pub struct report
     return None;
   }
 
-  pub fn size(this &) -> usize
+  pub fn bit_len(this &) -> usize
   {
-    return (cast<usize>(this.report_size) * cast<usize>(this.report_count) + 7) / 8;
+    return cast<usize>(this.field_size) * cast<usize>(this.field_count);
+  }
+
+  pub fn byte_len(this &) -> usize
+  {
+    return (cast<usize>(this.field_size) * cast<usize>(this.field_count) + 7) / 8;
   }
 
   pub report() = default;
@@ -133,15 +139,15 @@ pub fn extract(report &report, u32 index, std::vector<u8> &buffer, usize byte, u
   if (report.usages.empty)
     return false;
 
-  if (buffer.len <= byte + (bits >> 3) + 4)
+  if (buffer.len < byte + (bits >> 3) + 4)
     return false;
 
   std::memcpy(&data, buffer.data + byte + (bits >> 3), 4);
 
-  value = cast<i64>(data >> (bits & 0x7)) & (1 << report.report_size - 1);
+  value = cast<i64>(data >> (bits & 0x7)) & (1 << report.field_size - 1);
 
   if (report.logical_minimum < 0)
-    value = std::signextend<i64>(value, 1 << (report.report_size - 1));
+    value = std::signextend<i64>(value, 1 << (report.field_size - 1));
 
   if (value < cast(report.logical_minimum) || value > cast(report.logical_maximum))
     return false;
@@ -276,17 +282,17 @@ pub struct report_view
   pub ~report_view() = default;
 }
 
-pub fn report_size(collection &collection, u8 type) -> usize
+pub fn byte_len(collection &collection, u8 type) -> usize
 {
-  var size = 0;
+  var bits = 0;
 
   for (var &report : report_view(collection))
   {
     if (type == 0 || report.type == type)
-      size += report.size;
+      bits += report.bit_len;
   }
 
-  return size;
+  return (bits + 7) / 8;
 }
 
 struct global_item_state
@@ -382,9 +388,9 @@ fn parse_report_descriptor(report_descriptor_result mut &ctx, std::span<u8> desc
             }
 
             report.flags = item_data;
-            report.report_id = global_state.report_id;
-            report.report_size = global_state.report_size;
-            report.report_count = global_state.report_count;
+            report.id = global_state.report_id;
+            report.field_size = global_state.report_size;
+            report.field_count = global_state.report_count;
             report.logical_minimum = global_state.logical_minimum;
             report.logical_maximum = global_state.logical_maximum;
             report.physical_minimum = global_state.physical_minimum;

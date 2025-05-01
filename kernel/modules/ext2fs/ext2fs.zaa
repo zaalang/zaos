@@ -108,17 +108,19 @@ fn get_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_ino_t ino) -> vfs::res
   switch (rawinode.ptr.type)
   {
     case regular:
-      node = vfs::node::new(inode, vfs::node::type::file, vfs::node_file_operations());
+      vfs::node::new(inode, vfs::node::type::file, vfs::node_file_operations());
 
     case directory:
-      node = vfs::node::new(inode, vfs::node::type::directory, vfs::node_directory_operations());
+      vfs::node::new(inode, vfs::node::type::directory, vfs::node_directory_operations());
 
     case symlink:
-      node = vfs::node::new(inode, vfs::node::type::symlink, vfs::node_symlink_operations());
+      vfs::node::new(inode, vfs::node::type::symlink, vfs::node_symlink_operations());
 
     else:
       return not_supported;
   }
+
+  node = inode;
 
   fs.node_cache.insert(ino, node);
 

@@ -13,12 +13,14 @@ import support.rc : Rc;
 
 const PIPE_BUF = 512;
 
-struct endpoint : pub vfs::node
+struct endpoint
 {
   buffer mut *buffer;
 
   io::response readable;
   io::response writeable;
+
+  vfs::node node;
 
   endpoint() = default;
   ~endpoint() = default;
@@ -53,12 +55,12 @@ pub struct buffer
     return this.inlet.buffer;
   }
 
-  pub fn open_read_node(this mut &) -> Rc<vfs::node>
+  pub fn read_node(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
     if (this.has_reader)
-      return &this.outlet;
+      return &this.outlet.node;
 
     this.ref();
     this.outlet.buffer = &this;
@@ -73,15 +75,17 @@ pub struct buffer
 
     io::initiate(&mut this.outlet.writeable.cb, 1);
 
-    return vfs::node::new(&this.outlet, vfs::node::type::buffer, vfs::node_stream_operations());
+    vfs::node::new(&this.outlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
+
+    return &this.outlet.node;
   }
 
-  pub fn open_write_node(this mut &) -> Rc<vfs::node>
+  pub fn write_node(this mut &) -> Rc<vfs::node>
   {
     var guard = std::lock_guard(&mut this.lock);
 
     if (this.has_writer)
-      return &this.inlet;
+      return &this.inlet.node;
 
     this.ref();
     this.inlet.buffer = &this;
@@ -93,7 +97,9 @@ pub struct buffer
 
     io::initiate(&mut this.inlet.readable.cb, 1);
 
-    return vfs::node::new(&this.inlet, vfs::node::type::buffer, vfs::node_stream_operations());
+    vfs::node::new(&this.inlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
+
+    return &this.inlet.node;
   }
 
   pub fn ref(this mut &) -> void
@@ -166,7 +172,8 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::r
 
 pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
-  var buffer = cast<endpoint mut &>(*node).buffer;
+  var buffer = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
 
   stat.size = cast(buffer.capacity);
 
@@ -180,8 +187,7 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 
 pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
-  var buffer = cast<endpoint mut &>(*node).buffer;
-  var mut &endpoint = cast<endpoint mut &>(*node);
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
 
   readable = endpoint.readable.cb;
   writeable = endpoint.writeable.cb;
@@ -191,7 +197,7 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
 
 pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
-  var pipe = cast<endpoint mut &>(*node).buffer;
+  var pipe = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
 
   var guard = std::lock_guard(&mut pipe.lock);
 
@@ -229,7 +235,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
 
 pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
 {
-  var pipe = cast<endpoint mut &>(*node).buffer;
+  var pipe = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
 
   var guard = std::lock_guard(&mut pipe.lock);
 
@@ -270,8 +276,7 @@ pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length)
 
 pub fn mmap(vfs::node mut *node, vm::virtaddr mut &addr, usize length, u64 offset, vm::protection prot, vm::usage use) -> vfs::result
 {
-  var buffer = cast<endpoint mut &>(*node).buffer;
-  var mut &endpoint = cast<endpoint mut &>(*node);
+  var buffer = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
 
   if (offset != 0)
     return invalid_argument;
@@ -292,8 +297,8 @@ pub fn mmap(vfs::node mut *node, vm::virtaddr mut &addr, usize length, u64 offse
 
 fn destroy(vfs::node mut *node) -> void
 {
-  var buffer = cast<endpoint mut &>(*node).buffer;
-  var endpoint = cast<endpoint mut *>(node);
+  var buffer = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
+  var endpoint = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
 
   buffer.lock.lock();
 

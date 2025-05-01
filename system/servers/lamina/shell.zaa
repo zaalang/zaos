@@ -50,7 +50,7 @@ pub fn connect(shell mut &shell) throws -> void
 
 pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) -> void
 {
-  std::print("newton shell: accept connection");
+  std::print("lamina shell: accept connection");
 
   var mut &client = shell.clients.push_back();
 
@@ -67,7 +67,7 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   var client = cast<client mut *>(cast<uintptr>(wait) - offsetof(client::handler));
 
   var result = zidl::errc::bad_dispatch;
-//  var result = zidl::recv<newton::shell>(shell.channel, |msg, completer| {
+//  var result = zidl::recv<lamina::shell>(shell.channel, |msg, completer| {
 //
 //    switch (msg)
 //    {
@@ -79,7 +79,7 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
 
   if (!result)
   {
-    std::print("newton shell: client error - ", cast<zidl::errc>(-cast<i32>(result)));
+    std::print("lamina shell: client error - ", cast<zidl::errc>(-cast<i32>(result)));
 
     disconnect_client(client.shell, client);
   }
@@ -108,7 +108,7 @@ fn message_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
 
   if (!result)
   {
-    std::print("newton error - ", cast<zidl::errc>(-cast<i32>(result)));
+    std::print("lamina error - ", cast<zidl::errc>(-cast<i32>(result)));
 
     loop.cancel_wait(wait);
     shell.endpoint.close();

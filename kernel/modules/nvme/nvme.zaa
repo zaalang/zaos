@@ -395,6 +395,19 @@ fn nvme_controller_handler(controller mut *controller) -> void
     nvme_queue_handler(controller.queues[i]);
 }
 
+fn initialise(queue mut &queue) -> result
+{
+  var mut &controller = queue.controller;
+
+  if (var result = controller.create_completion_queue(queue.index, queue.entries, queue.cq, queue.irq); !result)
+    return result;
+
+  if (var result = controller.create_submission_queue(queue.index, queue.entries, queue.sq, nvme_qprio::urgent); !result)
+    return result;
+
+  return ok;
+}
+
 fn initialise(controller mut &controller) -> result
 {
   var &device = controller.device;
@@ -482,19 +495,6 @@ fn initialise(controller mut &controller) -> result
   controller.queue_count = queue_count;
 
   detect(&mut controller);
-
-  return ok;
-}
-
-fn initialise(queue mut &queue) -> result
-{
-  var mut &controller = queue.controller;
-
-  if (var result = controller.create_completion_queue(queue.index, queue.entries, queue.cq, queue.irq); !result)
-    return result;
-
-  if (var result = controller.create_submission_queue(queue.index, queue.entries, queue.sq, nvme_qprio::urgent); !result)
-    return result;
 
   return ok;
 }

@@ -417,10 +417,10 @@ pub fn process_push_ioring(process mut *process, usize size) -> i32
 
   var ring = create_ioring();
 
-  if (var result = setup_ioring(ring, process, process.ioring); !result)
+  if (var result = setup_ioring(&mut ring, process, process.ioring); !result)
     return cast(result);
 
-  process.new_fd(6, vfs::file_descriptor::create(ring));
+  process.new_fd(6, vfs::file_descriptor::create(ring.node));
 
   return 0;
 }

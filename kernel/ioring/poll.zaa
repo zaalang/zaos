@@ -43,9 +43,11 @@ struct pollevt
   ~pollevt() = default;
 }
 
-pub struct pollset : pub vfs::node
+pub struct pollset
 {
-  pub io::response readable;
+  io::response readable;
+
+  vfs::node node;
 
   struct event
   {
@@ -70,6 +72,11 @@ pub struct pollset : pub vfs::node
     return std::allocator::new<pollset>();
   }
 
+  pub fn node(this mut &) -> Rc<vfs::node>
+  {
+    return &this.node;
+  }
+
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
   {
     return not_supported;
@@ -77,7 +84,7 @@ pub struct pollset : pub vfs::node
 
   pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
   {
-    var mut &this = cast<pollset mut &>(*node);
+    var mut &this = *cast<pollset mut *>(cast<uintptr>(node) - offsetof(pollset::node));
 
     readable = this.readable.cb;
 
@@ -104,21 +111,27 @@ pub struct pollset : pub vfs::node
     return not_supported;
   }
 
-  fn destroy(vfs::node mut *node) -> void
+  pub pollset()
   {
-    destroy(cast<pollset mut *>(node));
+    vfs::node::new(&node, vfs::node::type::pollset, vfs::node_stream_operations());
+
+    io::initiate(&mut readable.cb, 1);
   }
 
-  pub pollset()
-    : super(vfs::node::type::pollset, vfs::node_stream_operations())
+  pub fn ref(this mut &) -> void
   {
-    io::initiate(&mut readable.cb, 1);
+    this.node.ref();
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    this.node.unref();
   }
 
   pub ~pollset() = default;
 }
 
-pub fn create_pollset(process mut *process) -> Rc<vfs::node>
+pub fn create_pollset(process mut *process) -> Rc<pollset>
 {
   return pollset::create();
 }
@@ -132,7 +145,7 @@ pub fn sys_poll_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> 
 {
   var pollset = create_pollset(process);
 
-  return process.new_fd(vfs::file_descriptor::create(pollset));
+  return process.new_fd(vfs::file_descriptor::create(Rc(&pollset.node)));
 }
 
 pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u16 type, u16 mask, uintptr user_data, u64 flags) -> result
@@ -145,7 +158,7 @@ pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u
   if (file.node.type != vfs::node::type::pollset)
     return vfs::result::bad_descriptor;
 
-  var mut &pollset = cast<pollset mut &>(*file.node);
+  var mut &pollset = *cast<pollset mut *>(cast<uintptr>(file.node) - offsetof(pollset::node));
 
   var guard = std::lock_guard(&mut pollset.lock);
 
@@ -219,7 +232,7 @@ pub fn sys_poll_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id
   if (file.node.type != vfs::node::type::pollset)
     return vfs::result::bad_descriptor;
 
-  var mut &pollset = cast<pollset mut &>(*file.node);
+  var mut &pollset = *cast<pollset mut *>(cast<uintptr>(file.node) - offsetof(pollset::node));
 
   var guard = std::lock_guard(&mut pollset.lock);
 
@@ -251,11 +264,11 @@ pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr
   if (file.node.type != vfs::node::type::pollset)
     return vfs::result::bad_descriptor;
 
-  var evts = std::vector<pollevt>();
-
-  var mut &pollset = cast<pollset mut &>(*file.node);
+  var mut &pollset = *cast<pollset mut *>(cast<uintptr>(file.node) - offsetof(pollset::node));
 
   var guard = std::lock_guard(&mut pollset.lock);
+
+  var evts = std::vector<pollevt>();
 
   io::reset(&mut pollset.readable.cb);
   io::initiate(&mut pollset.readable.cb, 1);
@@ -300,8 +313,10 @@ pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr
   return cast(evts.len);
 }
 
-fn destroy(pollset mut *pollset) -> void
+fn destroy(vfs::node mut *node) -> void
 {
+  var pollset = cast<pollset mut *>(cast<uintptr>(node) - offsetof(pollset::node));
+
   for (var mut &event : pollset.events)
   {
     if (event.mask & events::pollin == events::pollin)

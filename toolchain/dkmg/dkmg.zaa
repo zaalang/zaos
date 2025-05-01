@@ -4,6 +4,7 @@
 
 import std.stdio;
 import std.string;
+import std.byteconv;
 import std.sys.fd;
 import std.env;
 import yaml;
@@ -189,6 +190,33 @@ fn mkfs(std::fd &fd, gpt::entry *partition) throws -> void
       ext2::consume_free_blocks(superblock, rootdesc, 1);
       ext2::consume_used_directories(superblock, rootdesc, 1);
     }
+  }
+}
+
+fn label(fs mut &fs, std::string_view name, std::string_view fsid) throws -> void
+{
+  switch (fs.image)
+  {
+    case ext[fs]:
+      var superblock = cast<ext2::ext2_super_block mut *>(cast<uintptr>(fs.mutdata) + ext2::EXT2_SUPER_BLOCK_OFFSET);
+
+      var data1 = u32();
+      var data2 = u16();
+      var data3 = u16();
+      var data4 = [u8(0); 8];
+
+      std::sscanf(fsid, "{:8x}-{:4x}-{:4x}-{:2x}{:2x}-{:2x}{:2x}{:2x}{:2x}{:2x}{:2x}", &mut data1, &mut data2, &mut data3, &mut data4[0], &mut data4[1], &mut data4[2], &mut data4[3], &mut data4[4], &mut data4[5], &mut data4[6], &mut data4[7]);
+
+      data1 = std::native_to_be(data1);
+      data2 = std::native_to_be(data2);
+      data3 = std::native_to_be(data3);
+
+      std::memcpy(superblock.s_uuid.data, &data1, 4);
+      std::memcpy(superblock.s_uuid.data + 4, &data2, 2);
+      std::memcpy(superblock.s_uuid.data + 6, &data3, 2);
+      std::memcpy(superblock.s_uuid.data + 8, &data4, 8);
+
+      std::memcpy(superblock.s_name.data, name.data, std::min(superblock.s_name.len, name.len));
   }
 }
 
@@ -610,6 +638,7 @@ fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
   var type = std::string_view("");
   var size = 32*1024*1024;
   var uuid = gpt::guid();
+  var fsid = std::string_view();
 
   for (var &entry : cfg.as_map)
   {
@@ -644,6 +673,14 @@ fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
 
       if (std::sscan(entry.value.as<std::string_view>(), &mut uuid).error)
         std::panic("invalid uuid string - ", entry.value.as<std::string_view>());
+    }
+
+    else if (entry.key == "fsid")
+    {
+      if (!entry.value.is_string)
+        std::panic("expected uuid string");
+
+      fsid = entry.value.as<std::string_view>();
     }
 
     else if (entry.key == "actions")
@@ -728,6 +765,8 @@ fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
     std::panic(name, ": existing partition too small");
 
   var fs = fs(&mut mmap::mutable_file::map(fd), entry);
+
+  label(&mut fs, name, fsid);
 
   for (var &entry : cfg.as_map)
   {

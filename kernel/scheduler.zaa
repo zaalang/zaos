@@ -316,6 +316,7 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
   current_thread.tick_start_time = cpu::tsc;
 }
 
+#[noinline]
 fn rebalance(run_queue mut &runqueue) -> void
 {
   var busiest = &runqueue;
