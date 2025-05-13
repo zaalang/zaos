@@ -224,7 +224,7 @@ fn kworkd(worker mut *worker) -> void
       workman.rings.append(&mut entries);
     }
 
-    if (workman.activity != activity)
+    if (std::atomic_load(&workman.activity) != activity)
       continue;
 
     worker.doorbell.wait_until(waketime);

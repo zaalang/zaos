@@ -225,7 +225,12 @@ pub fn dispatch(driver mut &driver) -> i32
   }
 
   var evts = [ os::pollevt(); 32 ];
-  var count = os::poll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, 0);
+
+  var tp = os::timespec(void);
+  if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+    return rc;
+
+  var count = os::poll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, tp);
 
   if (count < 0)
     return count;

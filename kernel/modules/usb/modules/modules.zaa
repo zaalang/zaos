@@ -8,27 +8,30 @@ import usb.usbdev;
 
 import usb.modules.hid as hid;
 import usb.modules.storage as storage;
+import usb.modules.hub as hub;
 
 pub fn probe(usb::usbdev mut *device) -> usb::result
 {
   var devbuf = std::vector<u8>::with_size(512);
 
-  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, devbuf.data, sizeof<usb::device_descriptor>))
-    return io_error;
+  if (var result = usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::device << 8, 0, devbuf.data, sizeof<usb::device_descriptor>); !result)
+    return result;
 
   var device_descriptor = cast<usb::device_descriptor*>(devbuf.data);
 
-  for (var config = 0; config < device_descriptor.number_configurations; ++config)
+  for (var config = 0; config < device_descriptor.configuration_count; ++config)
   {
-    var buffer = std::vector<u8>::with_size(512);
+    var buffer = std::vector<u8>::with_size(2048);
 
-    if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, sizeof<usb::configuration_descriptor>))
-      return io_error;
+    if (var result = usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, sizeof<usb::configuration_descriptor>); !result)
+      return result;
 
     var configuration = cast<usb::configuration_descriptor*>(buffer.data);
 
-    if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, cast(configuration.total_length)))
-      return io_error;
+    std::assert(cast(configuration.total_length) < buffer.len);
+
+    if (var result = usb::submit(device, usb::request::direction::device_to_host, usb::request::type::standard, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::configuration << 8 | cast<u16>(config), 0, buffer.data, cast(configuration.total_length)); !result)
+      return result;
 
     if (var result = device.configure(std::span(buffer.data, cast(configuration.total_length))); !result)
       return result;
@@ -61,6 +64,10 @@ pub fn probe(usb::usbdev mut *device) -> usb::result
 
         case 8:
           if (storage::initialise(device, std::span(buffer.data + start, buffer.data + offset)))
+            return ok;
+
+        case 9:
+          if (hub::initialise(device, std::span(buffer.data + start, buffer.data + offset)))
             return ok;
 
         else:

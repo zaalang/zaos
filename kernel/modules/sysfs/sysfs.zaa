@@ -23,7 +23,7 @@ pub vtable sysfs_node_operations
 
 pub vtable sysfs_file_operations : sysfs_node_operations
 {
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
 }
 
 pub vtable sysfs_directory_operations : sysfs_node_operations
@@ -82,7 +82,7 @@ struct sysfs_root_node : pub vfs::node
     return null;
   }
 
-  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     var fs = cast<sysfs_root_node mut &>(*node).fs;
 
@@ -90,7 +90,7 @@ struct sysfs_root_node : pub vfs::node
 
     if (cursor == 0)
     {
-      fn emit[buffer, offset, count](vfs::filetype file_type, u8 *name, usize name_len) -> vm::result
+      fn emit[iovec, offset, count](vfs::filetype file_type, u8 *name, usize name_len) -> vm::result
       {
         var head = [u8(); sizeof<vfs::dirent>];
 
@@ -99,10 +99,10 @@ struct sysfs_root_node : pub vfs::node
         dirent.type = file_type;
         dirent.name_len = cast(name_len);
 
-        if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
+        if (var result = vm::memcpy(iovec, offset, head.data, head.len); !result)
           return result;
 
-        if (var result = vm::memcpy(buffer, offset + head.len, name, name_len); !result)
+        if (var result = vm::memcpy(iovec, offset + head.len, name, name_len); !result)
           return result;
 
         count += cast(dirent.rec_len);
@@ -197,7 +197,7 @@ pub struct sysfs_directory_node : pub vfs::node
     return null;
   }
 
-  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     var mut &this = cast<sysfs_directory_node mut &>(*node);
 
@@ -205,7 +205,7 @@ pub struct sysfs_directory_node : pub vfs::node
 
     if (cursor == 0)
     {
-      fn emit[buffer, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
+      fn emit[iovec, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
       {
         var head = [u8(); sizeof<vfs::dirent>];
 
@@ -214,10 +214,10 @@ pub struct sysfs_directory_node : pub vfs::node
         dirent.type = file_type;
         dirent.name_len = cast(name.len);
 
-        if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
+        if (var result = vm::memcpy(iovec, offset, head.data, head.len); !result)
           return result;
 
-        if (var result = vm::memcpy(buffer, offset + head.len, name.data, name.len); !result)
+        if (var result = vm::memcpy(iovec, offset + head.len, name.data, name.len); !result)
           return result;
 
         count += cast(dirent.rec_len);
@@ -292,7 +292,7 @@ pub struct sysfs_file_node : pub vfs::node
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
@@ -301,17 +301,17 @@ pub struct sysfs_file_node : pub vfs::node
 
     var bytes = std::min(this.contents.len - cast(position), length);
 
-    if (var result = vm::memcpy(buffer, offset, this.contents.data + cast(position), bytes); !result)
+    if (var result = vm::memcpy(iovec, offset, this.contents.data + cast(position), bytes); !result)
       return cast(result);
 
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
-    if (var result = this.ops.write(node, position, buffer, offset, length); !result)
+    if (var result = this.ops.write(node, position, iovec, offset, length); !result)
       return result;
 
     return ok;

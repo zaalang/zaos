@@ -102,6 +102,8 @@ pub fn coldplug(seat mut &seat) -> i32
 
       seat.nodes.insert(dir[i].stat.inode, dir[i].path);
     }
+
+    seat.nodes.insert(sys::stat("/dev/input").inode, "/dev/input");
   }
   catch (std::error e)
   {

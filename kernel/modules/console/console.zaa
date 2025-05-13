@@ -34,7 +34,7 @@ pub struct console : pub chr::chrdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
   {
     return not_supported;
   }
@@ -44,16 +44,16 @@ pub struct console : pub chr::chrdev
     return not_supported;
   }
 
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
 
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     var fout = std::stdout.lock();
 
-    buffer.foreach_region_in(offset, length, |region| {
+    iovec.foreach_region_in(offset, length, |region| {
       fout.puts(std::string_view(cast(region.addr.ptr), region.size));
     });
 

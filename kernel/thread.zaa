@@ -228,9 +228,9 @@ fn put(thread_manager mut &threadman, thread mut *thread)
 
 fn allocate(thread_manager mut &threadman) -> thread mut *
 {
-  var guard = std::lock_guard(&mut threadman.lock);
-
   var thread = thread::create();
+
+  var guard = std::lock_guard(&mut threadman.lock);
 
   for (;;)
   {

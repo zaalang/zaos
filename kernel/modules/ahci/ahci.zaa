@@ -480,6 +480,7 @@ fn initialise(port mut &port) -> result
       var dev = blk::blkdev::create<satadev>(&mut port);
 
       dev::register(dev::dev_t(), dev);
+
       blk::scan_for_partitions(dev);
 
     case 0xEB140101: // ATAPI drive

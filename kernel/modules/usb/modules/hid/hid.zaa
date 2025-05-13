@@ -11,36 +11,36 @@ import usb.usbdev;
 import usb.modules.hid.hiddev as hid.hiddev;
 import usb.modules.hid.report as hid.report;
 
-pub enum request
+enum request
 {
-  pub const get_report = 1;
-  pub const get_idle = 2;
-  pub const get_protocol = 3;
-  pub const set_report = 9;
-  pub const set_idle = 10;
-  pub const set_protocol = 11;
+  const get_report = 1;
+  const get_idle = 2;
+  const get_protocol = 3;
+  const set_report = 9;
+  const set_idle = 10;
+  const set_protocol = 11;
 }
 
 #[packed]
-pub struct descriptor
+struct descriptor
 {
-  pub enum type
+  enum type
   {
-    pub const hid = 0x21;
-    pub const report = 0x22;
-    pub const physical = 0x23;
+    const hid = 0x21;
+    const report = 0x22;
+    const physical = 0x23;
   }
 
-  pub u8 length;
-  pub u8 descriptor_type;
+  u8 length;
+  u8 descriptor_type;
 }
 
 #[packed]
-pub struct hid_descriptor : pub descriptor
+struct hid_descriptor : pub descriptor
 {
-  pub u16 hid_bcd;
-  pub u8 country_code;
-  pub u8 number_descriptors;
+  u16 hid_bcd;
+  u8 country_code;
+  u8 number_descriptors;
 }
 
 fn find_descriptor(std::span<u8> descriptors, u8 type) -> std::span<u8>

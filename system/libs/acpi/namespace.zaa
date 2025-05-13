@@ -706,6 +706,14 @@ pub fn to_buffer(namespace mut &ns, value mut &value) -> bool
 
       value = value::buffer(8, std::span(buf.data, 8));
 
+    case opregion[opregion]:
+      var buffer = std::vector<u8>::with_size(cast(opregion.length));
+
+      if (!ns.read(opregion, 0, opregion.length * 8, 0, buffer.mutable_span))
+        return false;
+
+      value = value::buffer(buffer.len, &move buffer);
+
     case string[string]:
       value = value::buffer(string.len + 1, std::span(string.data, string.len + 1));
 
@@ -814,7 +822,7 @@ fn read(namespace mut &ns, std::span<u8> buffer, u64 offset, u64 length, u8 flag
   return ok;
 }
 
-fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, u64 mut &value) -> acpi::result
 {
   var width = 0;
 
@@ -845,7 +853,7 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
   if (length > 64)
     return bad_access;
 
-  value = value(0);
+  value = 0;
 
   var byte = std::align_down(offset / 8, width);
   var size = std::align_up(std::ceil_div(offset + length, 8), width);
@@ -860,13 +868,48 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
     if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
       return rc;
 
-    value.integer |= data << (64 - bit - len) >> (64 - len) << (length - len);
+    value |= data << (64 - bit - len) >> (64 - len) << (length - len);
 
     offset += len;
     length -= len;
   }
 
   return ok;
+}
+
+fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, std::mutable_span<u8> buffer) -> acpi::result
+{
+  var width = 1;
+
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
+  {
+    var data = u64();
+    if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
+      return rc;
+
+    buffer[cast<usize>(i - byte)] = cast(data);
+  }
+
+  return ok;
+}
+
+fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+{
+  switch (var bytes = cast<usize>(length + 7) / 8)
+  {
+    case 0 ..= 4:
+      value = value(0);
+
+      return ns.read(opregion, offset, length, flags, &mut value.integer);
+
+    else:
+      value = value::buffer(bytes, std::vector<u8>::with_size(bytes));
+
+      return ns.read(opregion, offset, length, flags, &mut value.buffer.bytes.mutable_span);
+  }
 }
 
 fn read(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
@@ -883,15 +926,19 @@ fn read(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, valu
       return ns.read(opregion, offset, length, flags, &mut value);
 
     case indexedregion[indexedregion]:
-      value = value(0);
-      return ok;
+      if (var rc = ns.store(indexedregion.index, value(offset)); !rc)
+        return rc;
+
+      return ns.read(indexedregion.data.field, &mut value);
 
     case bankedregion[bankedregion]:
-      value = value(0);
-      return ok;
+      if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
+        return rc;
+
+      return ns.read(bankedregion.region, offset, length, flags, &mut value);
   }
 
-  std::panic("unhandled field source");
+  std::panic("unhandled field read");
 }
 
 fn read(namespace mut &ns, field &field, value mut &value) -> acpi::result
@@ -932,20 +979,29 @@ fn write(namespace mut &ns, std::mutable_span<u8> buffer, u64 offset, u64 length
   if (offset + length > cast<u64>(buffer.len) * 8)
     return bad_access;
 
-  if (!value.is_integer)
-    return bad_value;
-
   for (var i = 0; i < length; ++i)
     buffer[cast<usize>(offset + i) >> 3] &= ~(1 << ((offset + i) & 7));
 
-  for (var i = 0; i < length; ++i)
-    if (value.integer & (1 << i) != 0)
-      buffer[cast<usize>(offset + i) >> 3] |= (1 << ((offset + i) & 7));
+  switch (value)
+  {
+    case integer[integer]:
+      for (var i = 0; i < length; ++i)
+        if (integer & (1 << i) != 0)
+          buffer[cast<usize>(offset + i) >> 3] |= (1 << ((offset + i) & 7));
+
+    case buffer[var &bytes = value.buffer.bytes]:
+      for (var i = 0; i < length; ++i)
+        if (bytes[cast<usize>(i) >> 3] & (1 << (i & 7)) != 0)
+          buffer[cast<usize>(offset + i) >> 3] |= (1 << ((offset + i) & 7));
+
+    else:
+      return bad_value;
+  }
 
   return ok;
 }
 
-fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
+fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 flags, u64 value) -> acpi::result
 {
   var width = 0;
 
@@ -975,11 +1031,6 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 
   if (length > 64)
     return bad_access;
-
-  if (!value.is_integer)
-    return bad_value;
-
-  var value = value.integer;
 
   var byte = std::align_down(offset / 8, width);
   var size = std::align_up(std::ceil_div(offset + length, 8), width);
@@ -1020,6 +1071,44 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
   return ok;
 }
 
+fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 flags, std::span<u8> buffer) -> acpi::result
+{
+  var width = 1;
+
+  var byte = std::align_down(offset / 8, width);
+  var size = std::align_up(std::ceil_div(offset + length, 8), width);
+
+  for (var i = byte; i < size; i += cast(width))
+  {
+    var data = u64(0);
+
+    if (var j = cast<usize>(i - byte); j < buffer.len)
+      data = cast<u64>(buffer[j]);
+
+    if (var rc = ns.interface.region_write(&mut ns, &opregion, i, width, data); !rc)
+      return rc;
+  }
+
+  return ok;
+}
+
+fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
+{
+  switch (value)
+  {
+    case integer:
+      return ns.write(&mut opregion, offset, length, flags, value.integer);
+
+    case string:
+      return ns.write(&mut opregion, offset, length, flags, value.string.span);
+
+    case buffer:
+      return ns.write(&mut opregion, offset, length, flags, value.buffer.bytes.span);
+  }
+
+  std::panic("unhandled region write");
+}
+
 fn write(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
 {
   switch (cast<value mut &>(*source))
@@ -1032,9 +1121,21 @@ fn write(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, val
 
     case opregion[opregion]:
       return ns.write(&mut opregion, offset, length, flags, value);
+
+    case indexedregion[indexedregion]:
+      if (var rc = ns.store(indexedregion.index, value(offset)); !rc)
+        return rc;
+
+      return ns.write(&mut cast<value mut &>(*indexedregion.data).field, value);
+
+    case bankedregion[bankedregion]:
+      if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
+        return rc;
+
+      return ns.write(bankedregion.region, offset, length, flags, value);
   }
 
-  std::panic("unhandled field source");
+  std::panic("unhandled field write");
 }
 
 fn write(namespace mut &ns, field mut &field, value &value) -> acpi::result
@@ -1097,32 +1198,37 @@ pub fn load(namespace mut &ns, value *obj, value mut &value) -> acpi::result
 
 pub fn load(namespace mut &ns, value *obj, std::vector<usize> &index, value mut &value) -> acpi::result
 {
+  for (var idx : index.drop_back(1))
+  {
+    switch (*obj)
+    {
+      case package[package]:
+        if (idx >= package.elements.len)
+          return bad_access;
+
+        obj = &package.elements[idx];
+
+      else:
+        return bad_access;
+    }
+  }
+
   switch (*obj)
   {
     case string[string]:
-      if (index.len != 1 || index.back >= string.len)
+      if (index.back >= string.len)
         return bad_access;
 
       value = value(string[index.back]);
 
     case package[package]:
-      var package = &package;
-
-      for (var idx : index.drop_back(1))
-      {
-        if (idx >= package.elements.len)
-          return bad_access;
-
-        if (!package.elements[idx].is_package)
-          return bad_access;
-
-        package = &package.elements[idx].package;
-      }
+      if (index.back >= package.elements.len)
+        return bad_access;
 
       value = value(package.elements[index.back]);
 
     case buffer[buffer]:
-      if (index.len != 1 || index.back >= buffer.bytes.len)
+      if (index.back >= buffer.bytes.len)
         return bad_access;
 
       value = value(buffer.bytes[index.back]);
@@ -1181,9 +1287,6 @@ pub fn store(namespace mut &ns, value *obj, value mut &value) -> acpi::result
 
     case field[field]:
 
-      if (!to_integer(&mut ns, &mut value))
-        return bad_value;
-
       if (var rc = ns.write(&mut field, value); !rc)
         return rc;
 
@@ -1196,10 +1299,25 @@ pub fn store(namespace mut &ns, value *obj, value mut &value) -> acpi::result
 
 pub fn store(namespace mut &ns, value *obj, std::vector<usize> &index, value mut &value) -> acpi::result
 {
+  for (var idx : index.drop_back(1))
+  {
+    switch (*obj)
+    {
+      case package[package]:
+        if (idx >= package.elements.len)
+          return bad_access;
+
+        obj = &package.elements[idx];
+
+      else:
+        return bad_access;
+    }
+  }
+
   switch (cast<value mut &>(*obj))
   {
     case string[string]:
-      if (index.len != 1 || index.back >= string.len)
+      if (index.back >= string.len)
         return bad_access;
 
       if (value.is_string && value.string.len == 1)
@@ -1214,23 +1332,13 @@ pub fn store(namespace mut &ns, value *obj, std::vector<usize> &index, value mut
       string[index.back] = cast<u8>(value.integer);
 
     case package[package]:
-      var package = &package;
-
-      for (var idx : index.drop_back(1))
-      {
-        if (idx >= package.elements.len)
-          return bad_access;
-
-        if (!package.elements[idx].is_package)
-          return bad_access;
-
-        package = &package.elements[idx].package;
-      }
+      if (index.back >= package.elements.len)
+        return bad_access;
 
       package.elements[index.back] = value;
 
     case buffer[buffer]:
-      if (index.len != 1 || index.back >= buffer.bytes.len)
+      if (index.back >= buffer.bytes.len)
         return bad_access;
 
       if (value.is_string && value.string.len == 1)

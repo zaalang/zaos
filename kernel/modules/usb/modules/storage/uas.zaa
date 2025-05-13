@@ -1,5 +1,5 @@
 //
-// mass storage device
+// usb attached scsi
 //
 
 import std.stdio;
@@ -10,6 +10,8 @@ import vm;
 import io;
 import dev;
 import blk;
+import cpu;
+import scheduler;
 import usb;
 import usb.usbdev;
 import usb.modules.storage.scsi as scsi;
@@ -17,106 +19,274 @@ import usb.modules.storage.uasdev as storage.uasdev;
 import support.rc : Rc;
 
 #[packed]
-pub struct descriptor
+struct descriptor
 {
-  pub enum type
+  enum type
   {
-    pub const uas_pipe_usage = 0x24;
+    const uas_pipe_usage = 0x24;
   }
 
-  pub u8 length;
-  pub u8 descriptor_type;
+  u8 length;
+  u8 descriptor_type;
 }
 
 #[packed]
-pub struct uas_pipe_usage_descriptor : pub descriptor
+struct uas_pipe_usage_descriptor : pub descriptor
 {
-  pub enum usage
+  enum usage
   {
-    pub const command_pipe = 0x01;
-    pub const status_pipe = 0x02;
-    pub const data_in_pipe = 0x03;
-    pub const data_out_pipe = 0x04;
+    const cmd_pipe = 0x01;
+    const sts_pipe = 0x02;
+    const data_in_pipe = 0x03;
+    const data_out_pipe = 0x04;
   }
 
-  pub u8 pipe_id;
-  pub u8 reserved;
+  u8 pipe_id;
+  u8 reserved;
 }
 
-pub enum iuid
+enum iuid
 {
-  pub const command = 1;
-  pub const sense = 3;
-  pub const response = 4;
-  pub const taskmanagement = 5;
-  pub const readready = 6;
-  pub const writeready = 7;
+  const command = 1;
+  const sense = 3;
+  const response = 4;
+  const taskmanagement = 5;
+  const readready = 6;
+  const writeready = 7;
 }
 
-fn report_luns(usb::usbdev mut *device, usize stream, u8 ep_cmd, u8 ep_sts, u8 ep_data_in, u8 ep_data_out, std::vector<u8> mut &response) -> usb::result
+struct uas_command
 {
-  response.resize(32 + 512);
+  u8[32] cmd;
+  u8[96] sts;
 
-  var cmd = [u8(0); 12];
-  cmd[0] = scsi::op::report_luns;
-  cmd[6] = cast((response.len - 32) >> 24 & 0xff);
-  cmd[7] = cast((response.len - 32) >> 16 & 0xff);
-  cmd[8] = cast((response.len - 32) >> 8 & 0xff);
-  cmd[9] = cast((response.len - 32) >> 8 & 0xff);
+  uas_command() = default;
+  ~uas_command() = default;
+}
 
-  if (var result = scsi_command(device, stream, ep_cmd, ep_sts, ep_data_in, ep_data_out, 0, std::span(cmd), std::mutable_span(&mut response)); !result)
-    return result;
+pub struct uas_unit
+{
+  const CLSZ = 8;
 
-  if (response[0] != 3 || response[6] != 0)
-    return io_error;
+  pub uas_unit(usb::usbdev mut *device, u8[4] &endpoints, u64 lun)
+    : device(device), endpoints(endpoints), lun(lun)
+  {
+    if (var result = vm::lock(vm::virtrange(cl.data, sizeof(cl)), vm::protection::readwrite, &mut clvec); !result)
+      std::panic("uas_clvec_lock");
+  }
+
+  fn find_slot(this mut &) -> usize
+  {
+    for (;;)
+    {
+      var mask = std::volatile_load(&this.slots);
+
+      if (mask == 1 << CLSZ - 1)
+        return CLSZ;
+
+      var slot = std::ctz(~mask);
+
+      if (std::atomic_cmpxchg_weak(&this.slots, mask, mask | (1 << slot)))
+        return cast(slot);
+    }
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}/{}", this.device.query(usb::query::device_name), this.lun >> 48 & 0xff);
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub ~uas_unit() = default;
+
+  u64 lun;
+  u8[4] endpoints;
+
+  u32 slots;
+  uas_command[CLSZ] cl;
+  vm::iovec clvec;
+
+  bool removable;
+
+  Rc<blk::blkdev> media;
+  Rc<usb::usbdev> device;
+}
+
+pub struct uas
+{
+  pub uas(usb::usbdev mut *device)
+    : device(device)
+  {
+    device.unplugged = || unplugged(&this);
+  }
+
+  pub ~uas() = default;
+
+  std::vector<Rc<uas_unit>> units;
+
+  Rc<usb::usbdev> device;
+}
+
+fn unplugged(uas mut *uas) -> usb::result
+{
+  for (var unit : uas.units)
+  {
+    if (unit.media)
+      detach(uas, unit);
+  }
+
+  std::allocator::delete(uas);
 
   return ok;
 }
 
-fn scsi_command(usb::usbdev mut *device, usize stream, u8 ep_cmd, u8 ep_sts, u8 ep_data_in, u8 ep_data_out, u64 lun, std::span<u8> cmd, std::mutable_span<u8> response) -> usb::result
+fn attach(uas mut *uas, uas_unit mut *unit) -> usb::result
 {
-  var ciu = std::vector<u8>::with_size(16 + cmd.len);
+  var buffer = std::vector<u8>::with_size(512);
 
-  ciu[0] = iuid::command;
-  ciu[2] = cast(stream >> 8 & 0xff);
-  ciu[3] = cast(stream >> 0 & 0xff);
-  ciu[6] = cast(std::max(cmd.len, 16) - 16);
-  ciu[8] = cast(lun >> 56 & 0xff);
-  ciu[9] = cast(lun >> 48 & 0xff);
-  ciu[10] = cast(lun >> 40 & 0xff);
-  ciu[11] = cast(lun >> 32 & 0xff);
-  ciu[12] = cast(lun >> 24 & 0xff);
-  ciu[13] = cast(lun >> 16 & 0xff);
-  ciu[14] = cast(lun >> 8 & 0xff);
-  ciu[15] = cast(lun >> 0 & 0xff);
+  if (var result = read_capacity(unit.device, unit.endpoints, 1, unit.lun, &mut buffer); !result)
+    return result;
 
-  std::memcpy(&ciu[16], cmd.data, cmd.len);
+  var block_size = cast<scsi::read_capacity_16_response*>(buffer.data).block_size;
+  var block_count = cast<scsi::read_capacity_16_response*>(buffer.data).block_count;
 
-  var cmdvec = vm::iovec();
+  std::print("usb-storage (uas) device on ", unit.name);
 
-  if (var result = vm::lock(vm::virtrange(ciu.data, ciu.len), vm::protection::readonly, &mut cmdvec); !result)
+  var dev = blk::blkdev::create<storage::uasdev>(unit, block_size, block_count);
+
+  dev::register(dev::dev_t(), dev);
+
+  blk::scan_for_partitions(dev);
+
+  unit.media = dev;
+
+  return ok;
+}
+
+fn detach(uas mut *uas, uas_unit mut *unit) -> usb::result
+{
+  dev::remove(unit.media);
+
+  unit.media = null;
+
+  return ok;
+}
+
+fn destroy(uas_unit mut *unit) -> void
+{
+  std::allocator::delete(unit);
+}
+
+fn report_luns(usb::usbdev mut *device, u8[4] &endpoints, usize stream, std::vector<u8> mut &buffer) -> usb::result
+{
+  var cmd = [u8(0); 12];
+  cmd[0] = scsi::op::report_luns;
+  cmd[6] = cast(buffer.len >> 24 & 0xff);
+  cmd[7] = cast(buffer.len >> 16 & 0xff);
+  cmd[8] = cast(buffer.len >> 8 & 0xff);
+  cmd[9] = cast(buffer.len >> 0 & 0xff);
+
+  if (var result = execute(device, endpoints, stream, 0, std::span(cmd), buffer.data, buffer.len); !result)
+    return result;
+
+  return ok;
+}
+
+fn inquiry(usb::usbdev mut *device, u8[4] &endpoints, usize stream, u64 lun, std::vector<u8> mut &buffer) -> usb::result
+{
+  var cmd = [u8(0); 6];
+  cmd[0] = scsi::op::inquiry_6;
+  cmd[4] = sizeof<scsi::inquiry_6_response>;
+
+  if (var result = execute(device, endpoints, stream, lun, std::span(cmd), buffer.data, sizeof<scsi::inquiry_6_response>); !result)
+    return result;
+
+  return ok;
+}
+
+fn test_unit_ready(usb::usbdev mut *device, u8[4] &endpoints, usize stream, u64 lun, std::vector<u8> mut &buffer) -> usb::result
+{
+  var cmd = [u8(0); 6];
+  cmd[0] = scsi::op::test_unit_ready_6;
+
+  if (var result = execute(device, endpoints, stream, lun, std::span(cmd), buffer.data, buffer.len); !result)
+    return result;
+
+  return ok;
+}
+
+fn read_capacity(usb::usbdev mut *device, u8[4] &endpoints, usize stream, u64 lun, std::vector<u8> mut &buffer) -> usb::result
+{
+  var cmd = [u8(0); 16];
+  cmd[0] = scsi::op::read_capacity_16;
+  cmd[1] = 0x10;
+  cmd[13] = sizeof<scsi::read_capacity_16_response>;
+
+  if (var result = execute(device, endpoints, stream, lun, std::span(cmd), buffer.data, sizeof<scsi::read_capacity_16_response>); !result)
+    return result;
+
+  return ok;
+}
+
+fn execute(usb::usbdev mut *device, u8[4] &endpoints, usize stream, u64 lun, std::span<u8> cmd, void mut *buffer, usize length) -> usb::result
+{
+  var cl = std::box<uas_command>();
+
+  cl.cmd[0] = iuid::command;
+  cl.cmd[2] = cast(stream >> 8 & 0xff);
+  cl.cmd[3] = cast(stream >> 0 & 0xff);
+  cl.cmd[6] = cast(std::max(cmd.len, 16) - 16);
+  cl.cmd[8] = cast(lun >> 56 & 0xff);
+  cl.cmd[9] = cast(lun >> 48 & 0xff);
+  cl.cmd[10] = cast(lun >> 40 & 0xff);
+  cl.cmd[11] = cast(lun >> 32 & 0xff);
+  cl.cmd[12] = cast(lun >> 24 & 0xff);
+  cl.cmd[13] = cast(lun >> 16 & 0xff);
+  cl.cmd[14] = cast(lun >> 8 & 0xff);
+  cl.cmd[15] = cast(lun >> 0 & 0xff);
+
+  std::memcpy(&cl.cmd[16], cmd.data, cmd.len);
+
+  var clvec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(&*cl, sizeof<uas_command>), vm::protection::readwrite, &mut clvec); !result)
     return cast(result);
 
   var iovec = vm::iovec();
 
-  if (var result = vm::lock(vm::virtrange(response.data, response.len), vm::protection::readwrite, &mut iovec); !result)
+  if (var result = vm::lock(vm::virtrange(buffer, length), vm::protection::readwrite, &mut iovec); !result)
     return cast(result);
 
   var response = io::response();
 
   io::initiate(&mut response.cb, 3);
 
-  usb::submit(device, &mut response.cb, ep_sts, usb::endpoint::type::bulk, stream, iovec, 0, 32);
-  usb::submit(device, &mut response.cb, ep_data_in, usb::endpoint::type::bulk, stream, iovec, 32, iovec.length - 32);
-  usb::submit(device, &mut response.cb, ep_cmd, usb::endpoint::type::bulk, cmdvec, 0, cmdvec.length);
+  usb::submit(device, &mut response.cb, usb::endpoint::type::bulk, endpoints[1], stream, clvec, cl.cmd.len, cl.sts.len);
+  usb::submit(device, &mut response.cb, usb::endpoint::type::bulk, endpoints[2], stream, iovec, 0, iovec.length);
+  usb::submit(device, &mut response.cb, usb::endpoint::type::bulk, endpoints[0], clvec, 0, cl.cmd.len);
 
   if (response.wait(); !response)
     return cast(response.result);
 
-  return cast(response.result);
+  if (cl.sts[0] != 3 || cl.sts[6] != 0)
+    return io_error;
+
+  return ok;
 }
 
-pub fn initialise(storage::driver mut *driver, usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+pub fn initialise(usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
 {
   var interface = cast<usb::interface_descriptor*>(descriptors.data);
 
@@ -128,6 +298,8 @@ pub fn initialise(storage::driver mut *driver, usb::usbdev mut *device, std::spa
 
   if (device.speed < usb::speed::super_speed)
     return not_supported;
+
+  var uas = std::allocator::new<uas>(device);
 
   var eps = std::vector<usb::endpoint_descriptor*, N:4>();
   var usage = std::vector<uas_pipe_usage_descriptor*, N:4>();
@@ -148,27 +320,134 @@ pub fn initialise(storage::driver mut *driver, usb::usbdev mut *device, std::spa
 
   std::sort(std::zip(&mut eps, &mut usage), |x, y| x.1.pipe_id < y.1.pipe_id);
 
+  var endpoints = [ eps[0].endpoint_address, eps[1].endpoint_address, eps[2].endpoint_address, eps[3].endpoint_address ];
+
   if (var result = device.allocate_streams(eps[1 .. 4].span); !result)
     return result;
 
-  var buffer = std::vector<u8>();
+  var buffer = std::vector<u8>::with_size(512);
 
-  if (var result = report_luns(device, 1, eps[0].endpoint_address, eps[1].endpoint_address, eps[2].endpoint_address, eps[3].endpoint_address, &mut buffer); !result)
+  if (var result = report_luns(device, endpoints, 1, &mut buffer); !result)
     return result;
 
-  var length = std::load_be_u32(&buffer[32]);
+  var length = std::load_be_u32(&buffer[0]);
 
-  for (var offset = 0; offset < cast(length); offset += 8)
+  for (var offset = 8; offset < 8 + cast(length); offset += 8)
   {
-    var lun = std::load_be_u64(&buffer[offset + 40]);
+    var lun = std::load_be_u64(&buffer[offset]);
 
-    var uasdev = blk::blkdev::create<storage::uasdev>(device);
+    uas.units.push_back() = std::allocator::new<uas_unit>(device, endpoints, lun);
+  }
 
-    if (var result = storage::initialise(&mut uasdev, lun, eps[0].endpoint_address, eps[1].endpoint_address, eps[2].endpoint_address, eps[3].endpoint_address); !result)
+  for (var unit : uas.units)
+  {
+    if (var result = inquiry(device, endpoints, 1, unit.lun, &mut buffer); !result)
       return result;
 
-    driver.register(uasdev);
+    unit.removable = cast<scsi::inquiry_6_response*>(buffer.data).removable != 0;
+
+    for (var k = 0;; ++k)
+    {
+      scheduler::sleep_until(cpu::system_time + k * 1_000_000);
+
+      if (var result = test_unit_ready(device, endpoints, 1, unit.lun, &mut buffer); !result)
+      {
+        if (k < 8)
+          continue;
+
+        break;
+      }
+
+      attach(uas, unit);
+
+      break;
+    }
   }
+
+  return ok;
+}
+
+pub fn enqueue(uas_unit mut &unit, blk::request mut *request) -> usb::result
+{
+  var slot = unit.find_slot();
+
+  if (slot == uas_unit::CLSZ)
+    return device_busy;
+
+  var lun = unit.lun;
+  var stream = slot + 1;
+  var position = request.position >> request.device.block_shift;
+  var length = request.length >> request.device.block_shift;
+
+  var mut &cl = unit.cl[slot];
+
+  cl.cmd[0] = iuid::command;
+  cl.cmd[2] = cast(stream >> 8 & 0xff);
+  cl.cmd[3] = cast(stream >> 0 & 0xff);
+  cl.cmd[8] = cast(lun >> 56 & 0xff);
+  cl.cmd[9] = cast(lun >> 48 & 0xff);
+  cl.cmd[10] = cast(lun >> 40 & 0xff);
+  cl.cmd[11] = cast(lun >> 32 & 0xff);
+  cl.cmd[12] = cast(lun >> 24 & 0xff);
+  cl.cmd[13] = cast(lun >> 16 & 0xff);
+  cl.cmd[14] = cast(lun >> 8 & 0xff);
+  cl.cmd[15] = cast(lun >> 0 & 0xff);
+
+  switch (request.type)
+  {
+    case read:
+      cl.cmd[16] = scsi::op::read_16;
+
+    case write:
+      cl.cmd[16] = scsi::op::write_16;
+  }
+
+  cl.cmd[18] = cast<u8>((position >> 56) & 0xff);
+  cl.cmd[19] = cast<u8>((position >> 48) & 0xff);
+  cl.cmd[20] = cast<u8>((position >> 40) & 0xff);
+  cl.cmd[21] = cast<u8>((position >> 32) & 0xff);
+  cl.cmd[22] = cast<u8>((position >> 24) & 0xff);
+  cl.cmd[23] = cast<u8>((position >> 16) & 0xff);
+  cl.cmd[24] = cast<u8>((position >> 8) & 0xff);
+  cl.cmd[25] = cast<u8>((position >> 0) & 0xff);
+  cl.cmd[26] = cast<u8>((length >> 24) & 0xff);
+  cl.cmd[27] = cast<u8>((length >> 16) & 0xff);
+  cl.cmd[28] = cast<u8>((length >> 8) & 0xff);
+  cl.cmd[29] = cast<u8>((length >> 0) & 0xff);
+
+  var clvec = vm::iovec();
+
+  if (var result = vm::lock(vm::virtrange(&cl, sizeof<uas_command>), vm::protection::readwrite, &mut clvec); !result)
+    return cast(result);
+
+  io::initiate(&mut request.cb, 3);
+
+  request.status = blk::request::status::running;
+
+  var completer = |result| [var request = request, var unit = &unit, var slot = slot] {
+
+    if (unit.cl[slot].sts[6] != 0)
+      result = usb::result::io_error;
+
+    blk::complete(request, result ? blk::request::status::success : blk::request::status::errored);
+
+    if (std::atomic_and(&unit.slots, ~(1 << slot)) == 1 << uas_unit::CLSZ - 1)
+      blk::wake_from_stall();
+  };
+
+  var dat = (request.type == blk::request::type::read) ? 2 : 3;
+
+  usb::submit(unit.device, &mut request.cb, usb::endpoint::type::bulk, unit.endpoints[dat], stream, request.host, request.length);
+  usb::submit(unit.device, &mut request.cb, usb::endpoint::type::bulk, unit.endpoints[1], stream, unit.clvec, slot * sizeof<uas_command> + cl.cmd.len, cl.sts.len, std::delegate<(usb::result) -> void>(completer));
+  usb::submit(unit.device, &mut request.cb, usb::endpoint::type::bulk, unit.endpoints[0], unit.clvec, slot * sizeof<uas_command> + 0, cl.cmd.len);
+
+  return ok;
+}
+
+pub fn cancel(uas_unit mut &unit, blk::request mut *request) -> usb::result
+{
+  while (std::volatile_load(&request.status) == blk::request::status::running)
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
 
   return ok;
 }

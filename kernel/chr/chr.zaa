@@ -15,9 +15,9 @@ pub fn open(chrdev mut *device, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::re
   return device.open(&mut fd, flags, mode);
 }
 
-pub fn ioctl(chrdev mut *device, u32 op, vm::iovec &buffer) -> chr::result
+pub fn ioctl(chrdev mut *device, u32 op, vm::iovec &iovec) -> chr::result
 {
-  return device.ioctl(op, buffer);
+  return device.ioctl(op, iovec);
 }
 
 pub fn poll(chrdev mut *device, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> chr::result
@@ -25,14 +25,14 @@ pub fn poll(chrdev mut *device, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &wr
   return device.poll(&mut readable, &mut writeable);
 }
 
-pub fn read(chrdev mut *device, vm::iovec &buffer, usize offset, usize length) -> chr::result
+pub fn read(chrdev mut *device, vm::iovec &iovec, usize offset, usize length) -> chr::result
 {
-  return device.read(buffer, offset, length);
+  return device.read(iovec, offset, length);
 }
 
-pub fn write(chrdev mut *device, vm::iovec &buffer, usize offset, usize length) -> chr::result
+pub fn write(chrdev mut *device, vm::iovec &iovec, usize offset, usize length) -> chr::result
 {
-  return device.write(buffer, offset, length);
+  return device.write(iovec, offset, length);
 }
 
 pub fn mmap(chrdev mut *device, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result

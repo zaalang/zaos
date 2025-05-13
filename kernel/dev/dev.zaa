@@ -167,6 +167,78 @@ fn devman() -> device_manager mut &
   return &device_manager::instance;
 }
 
+pub fn get(dev_t id) -> device
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  if (id.index < devman.nodes.len)
+  {
+    var mut &node = devman.nodes[id.index];
+
+    if (node.id == id)
+      return node.device;
+  }
+
+  return device();
+}
+
+pub fn parent(dev_t id) -> dev_t
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  if (id.index < devman.nodes.len)
+  {
+    var mut &node = devman.nodes[id.index];
+
+    if (node.id == id)
+      return node.parent;
+  }
+
+  return dev_t();
+}
+
+pub fn lookup(blk::blkdev mut *dev) -> dev_t
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  var node = devman.nodes.find_if(|node| [dev] {
+    switch (node.device)
+    {
+      case blkdev[device]:
+        return device == dev;
+
+      else:
+        return false;
+    }
+  });
+
+  if (node != devman.nodes.end)
+    return node.id;
+
+  return dev_t();
+}
+
+pub fn lookup(chr::chrdev mut *dev) -> dev_t
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  var node = devman.nodes.find_if(|node| [dev] {
+    switch (node.device)
+    {
+      case chrdev[device]:
+        return device == dev;
+
+      else:
+        return false;
+    }
+  });
+
+  if (node != devman.nodes.end)
+    return node.id;
+
+  return dev_t();
+}
+
 fn register(device_manager mut &devman, dev_t parent, device device) -> dev_t
 {
   var guard = std::lock_guard(&mut devman.lock);
@@ -198,78 +270,64 @@ fn register(device_manager mut &devman, dev_t parent, device device) -> dev_t
 
 pub fn register(dev_t parent, blk::blkdev mut *dev) -> dev_t
 {
-  return devman.register(parent, device::blkdev(dev));
+  return register(&mut devman, parent, device::blkdev(dev));
 }
 
 pub fn register(dev_t parent, chr::chrdev mut *dev) -> dev_t
 {
-  return devman.register(parent, device::chrdev(dev));
+  return register(&mut devman, parent, device::chrdev(dev));
 }
 
 pub fn register(dev_t parent, std::vector<attr_t> &&attributes) -> dev_t
 {
-  return devman.register(parent, device::bus(&&attributes));
+  return register(&mut devman, parent, device::bus(&&attributes));
+}
+
+fn remove(device_manager mut &devman, dev_t id) -> void
+{
+  var guard = std::lock_guard(&mut devman.lock);
+
+  var stack = std::vector<dev_t, N:8>();
+  var slots = std::vector<usize, N:8>();
+
+  stack.push_back(id);
+
+  while (!stack.empty)
+  {
+    var id = stack.take_back();
+
+    for (var &node : devman.nodes)
+    {
+      if (node.parent == id)
+        stack.push_back(node.id);
+    }
+
+    if (id.index < devman.nodes.len)
+    {
+      if (devman.nodes[id.index].id == id)
+        slots.push_back(id.index);
+    }
+  }
+
+  for (var slot : slots)
+  {
+    var mut &node = devman.nodes[slot];
+
+    devfs::remove(node.id, node.device);
+
+    node.device = device();
+    node.parent = dev_t();
+  }
 }
 
 pub fn remove(blk::blkdev mut *dev) -> void
 {
-  var guard = std::lock_guard(&mut devman.lock);
-
-  var node = devman.nodes.find_if(|node| [dev] {
-    switch (node.device)
-    {
-      case blkdev[device]:
-        return device == dev;
-
-      else:
-        return false;
-    }
-  });
-
-  if (node != devman.nodes.end)
-  {
-    devfs::remove(node.id, node.device);
-
-    node.device = device();
-  }
+  remove(&mut devman, lookup(dev));
 }
 
 pub fn remove(chr::chrdev mut *dev) -> void
 {
-  var guard = std::lock_guard(&mut devman.lock);
-
-  var node = devman.nodes.find_if(|node| [dev] {
-    switch (node.device)
-    {
-      case chrdev[device]:
-        return device == dev;
-
-      else:
-        return false;
-    }
-  });
-
-  if (node != devman.nodes.end)
-  {
-    devfs::remove(node.id, node.device);
-
-    node.device = device();
-  }
-}
-
-pub fn get(dev_t id) -> device
-{
-  var guard = std::lock_shared_guard(&mut devman.lock);
-
-  if (id.index < devman.nodes.len)
-  {
-    var mut &node = devman.nodes[id.index];
-
-    if (node.id == id)
-      return node.device;
-  }
-
-  return device();
+  remove(&mut devman, lookup(dev));
 }
 
 pub fn enumerate(var &&callback) -> void
@@ -278,6 +336,18 @@ pub fn enumerate(var &&callback) -> void
 
   for (var &node : devman.nodes)
   {
-    callback(node.id, node.device);
+    if (node.device)
+      callback(node.id, node.device);
+  }
+}
+
+pub fn enumerate(dev_t parent, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut devman.lock);
+
+  for (var &node : devman.nodes)
+  {
+    if (node.parent && node.parent == parent)
+      callback(node.id, node.device);
   }
 }

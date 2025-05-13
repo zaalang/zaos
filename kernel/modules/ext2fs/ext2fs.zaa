@@ -532,7 +532,7 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
   return ok;
 }
 
-pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -559,7 +559,7 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
 
       if (entry.ino != 0)
       {
-        fn emit[buffer, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
+        fn emit[iovec, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
         {
           var head = [u8(); sizeof<vfs::dirent>];
 
@@ -568,10 +568,10 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
           dirent.type = file_type;
           dirent.name_len = cast(name.len);
 
-          if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
+          if (var result = vm::memcpy(iovec, offset, head.data, head.len); !result)
             return result;
 
-          if (var result = vm::memcpy(buffer, offset + head.len, name.data, name.len); !result)
+          if (var result = vm::memcpy(iovec, offset + head.len, name.data, name.len); !result)
             return result;
 
           count += cast(dirent.rec_len);
@@ -638,7 +638,7 @@ pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result
   return cast(buffer.len);
 }
 
-pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -666,7 +666,7 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
 
     var bytes = std::min(block.length, remaining);
 
-    if (var result = fs.dev.file_operations.read(fs.dev, &mut cb, block.offset, buffer, offset, bytes); !result)
+    if (var result = fs.dev.file_operations.read(fs.dev, &mut cb, block.offset, iovec, offset, bytes); !result)
       return result;
 
     remaining -= bytes;
@@ -677,7 +677,7 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   return cast(length);
 }
 
-pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -702,7 +702,7 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
 
     var bytes = std::min(block.length - cast(position & cast(fs.volume.blocksize - 1)), remaining);
 
-    if (var result = fs.dev.file_operations.write(fs.dev, &mut cb, block.offset + (position & cast(fs.volume.blocksize - 1)), buffer, offset, bytes); !result)
+    if (var result = fs.dev.file_operations.write(fs.dev, &mut cb, block.offset + (position & cast(fs.volume.blocksize - 1)), iovec, offset, bytes); !result)
       return result;
 
     remaining -= bytes;

@@ -42,7 +42,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
   {
     var sta = acpi::value(0xf);
     if (var rc = ns.invoke(*node, "_STA", &mut sta); !rc && rc != acpi::result::value_not_found)
-      std::panic("_STA: ", rc);
+      std::print("_STA: ", rc);
 
     if (node.get("_INI"))
     {
@@ -50,7 +50,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
       {
         var ini = acpi::value();
         if (var rc = ns.invoke(*node, "_INI", &mut ini); !rc)
-          std::panic("_INI: ", rc);
+          std::print("_INI: ", rc);
 
         std::print(ns.pathname(*node), " {", " _STA: ", sta, ", _INI: ", ini, " }");
       }

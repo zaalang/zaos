@@ -2,8 +2,84 @@
 // scsi
 //
 
+import std.byteconv;
+
 pub enum op
 {
-  pub const inquiry = 0x12;
+  pub const test_unit_ready_6 = 0x00;
+  pub const inquiry_6 = 0x12;
+  pub const sense_6 = 0x1a;
+  pub const read_capacity_10 = 0x25;
+  pub const read_capacity_16 = 0x9e;
+  pub const read_10 = 0x28;
+  pub const write_10 = 0x2a;
+  pub const read_12 = 0xa8;
+  pub const write_12 = 0xaa;
+  pub const read_16 = 0x88;
+  pub const write_16 = 0x8a;
   pub const report_luns = 0xa0;
+}
+
+#[packed]
+pub struct sense_6_response
+{
+  pub u8 response_code;
+  pub u8 segment_number;
+  pub u8 sense_key;
+  pub u32 information;
+  pub u8 additional_sense_length;
+  pub u32 command_specific_information;
+  pub u8 additional_sense_code;
+  pub u8 additional_sense_code_qualifier;
+  pub u8 field_replacable_unit_code;
+  pub u8[3] sense_key_specific;
+}
+
+#[packed]
+pub struct inquiry_6_response
+{
+  pub u8 peripherial_info;
+  pub u8 removable;
+  pub u8 version;
+  pub u8 response_data;
+  pub u8 additional_length;
+  pub u8[3] capabilities;
+  pub u8[8] vendor_id;
+  pub u8[16] product_id;
+  pub u8[4] product_revision_level;
+}
+
+#[packed]
+pub struct read_capacity_10_response
+{
+  u32 block_count;
+  u32 block_size;
+
+  pub fn block_count(this &) -> u32
+  {
+    return std::be_to_native(this.block_count);
+  }
+
+  pub fn block_size(this &) -> u32
+  {
+    return std::be_to_native(this.block_size);
+  }
+}
+
+#[packed]
+pub struct read_capacity_16_response
+{
+  u64 block_count;
+  u32 block_size;
+  u8[20] reserved;
+
+  pub fn block_count(this &) -> u64
+  {
+    return std::be_to_native(this.block_count);
+  }
+
+  pub fn block_size(this &) -> u32
+  {
+    return std::be_to_native(this.block_size);
+  }
 }

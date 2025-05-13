@@ -1788,6 +1788,7 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
       }
 
       cx += 8;
+
       if (cx >= fb.width)
       {
         cx = 0;
@@ -1796,6 +1797,18 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
 
       if (buffer[k] == 10)
       {
+        cx -= 8;
+
+        for (var j = 0; j < 16; ++j)
+        {
+          var dst = cast<u32 mut *>(PHYSICAL_BASE + fb.address + (cy + j) * fb.pitch + cx*4);
+
+          for (var i = cx; i < fb.width; ++i)
+          {
+            *dst++ = 0x00000000;
+          }
+        }
+
         cx = 0;
         cy += 16;
       }

@@ -1,0 +1,333 @@
+//
+// hub device
+//
+
+import std.stdio;
+import std.atomic;
+import dev;
+import chr;
+import io;
+import vm;
+import cpu;
+import scheduler;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import semaphore as _ : semaphore;
+import support.rc : Rc;
+import usb;
+import usb.usbdev;
+import usb.modules as modules;
+
+enum request
+{
+  const get_status = 0;
+  const clear_feature = 1;
+  const set_feature = 3;
+  const get_descriptor = 6;
+}
+
+enum feature
+{
+  const connect = 0;
+  const enable = 1;
+  const suspend = 2;
+  const over_current = 3;
+  const reset = 4;
+  const power = 8;
+  const c_connect = 16;
+  const c_enable = 17;
+  const c_suspend = 18;
+  const c_over_current = 19;
+  const c_reset = 20;
+}
+
+enum status
+{
+  const connect = 0x0001;
+  const enable = 0x0002;
+  const suspend = 0x0004;
+  const over_current = 0x0008;
+  const reset = 0x0010;
+  const l1 = 0x0020;
+  const power = 0x0100;
+  const speed = 0x0700;
+  const test = 0x0800;
+  const indicator = 0x1000;
+  const ss_link_state = 0x01e0;
+  const ss_power = 0x0200;
+  const ss_speed = 0x1c00;
+}
+
+struct portsc
+{
+  u16 status;
+  u16 change;
+}
+
+pub struct hub
+{
+  pub hub(usb::usbdev mut *device)
+    : device(device)
+  {
+    device.unplugged = || unplugged(&this);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return this.device.query(usb::query::device_name);
+  }
+
+  pub ~hub() = default;
+
+  u8 endpoint;
+
+  usize port_count;
+
+  u32 activity;
+  vm::iovec activity_region;
+  io::response activity_readable;
+
+  Rc<usb::usbdev>[32] devices;
+
+  thread mut *plug_handler;
+
+  Rc<usb::usbdev> device;
+}
+
+fn schedule_read(hub mut &this) -> void
+{
+  io::initiate(&mut this.activity_readable.cb, 1);
+
+  usb::submit(this.device, &mut this.activity_readable.cb, usb::endpoint::type::interrupt, this.endpoint, this.activity_region, 0, this.activity_region.length);
+}
+
+fn reset(hub mut *hub, u8 port, u64 timeout) -> usb::result
+{
+  var buffer = std::vector<u8>::with_size(sizeof<portsc>);
+
+  if (!usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::set_feature, feature::reset, cast(port), null, 0))
+    return io_error;
+
+  var portsc = cast<portsc *>(buffer.data);
+
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (!usb::submit(hub.device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::other, request::get_status, 0, cast(port), buffer.data, sizeof<portsc>))
+      return io_error;
+
+    if (portsc.change & status::reset != 0 || portsc.status & status::reset == 0)
+      break;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_reset, cast(port), null, 0);
+
+  if (portsc.status & status::reset != 0)
+    return timed_out;
+
+  scheduler::sleep_until(cpu::system_time + 10_000_000);
+
+  return ok;
+}
+
+fn connect(hub mut *hub, u8 port, usb::speed speed, Rc<usb::usbdev> mut &device) -> usb::result
+{
+  if (var result = hub.device.connect(port, speed, &mut device); !result)
+    return result;
+
+  return ok;
+}
+
+fn release(hub mut &hub, usb::usbdev mut *device) -> usb::result
+{
+  if (var result = device.release(); !result)
+    return result;
+
+  return ok;
+}
+
+fn hub_plug_handler(hub mut *hub) -> void
+{
+  for (;; )
+  {
+    if (!hub.activity_readable)
+      break;
+
+    for (var index = 0; index < hub.port_count; ++index)
+    {
+      var port = cast<u8>(index + 1);
+
+      if (hub.activity & (1 << port) == 0)
+        continue;
+
+      var buffer = std::vector<u8>::with_size(sizeof<portsc>);
+
+      if (!usb::submit(hub.device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::other, request::get_status, 0, cast(port), buffer.data, sizeof<portsc>))
+        continue;
+
+      var portsc = cast<portsc *>(buffer.data);
+
+      if (portsc.change & status::connect != 0)
+      {
+        usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_connect, cast(port), null, 0);
+
+        if (portsc.status & status::connect != 0)
+        {
+          std::print("usb-hub ", hub.name, "/", port, " device attached");
+
+          for (var k = 0; k < 2; ++k)
+          {
+            if (!reset(hub, port, 100))
+              std::print("usb-hib ", hub.name, "/", port, " reset timeout");
+
+            usb::submit(hub.device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::other, request::get_status, 0, cast(port), buffer.data, sizeof<portsc>);
+
+            if (portsc.status & status::connect == 0)
+              break;
+
+            var speed = hub.device.speed;
+
+            switch (cast<u32>(portsc.status & status::speed))
+            {
+              case 0x0300:
+                speed = usb::speed::low_speed;
+
+              case 0x0500:
+                speed = usb::speed::high_speed;
+
+              case 0x0100:
+                speed = usb::speed::full_speed;
+            }
+
+            var device = Rc<usb::usbdev>();
+
+            if (!connect(hub, port, speed, &mut device))
+              continue;
+
+            if (!modules::probe(device))
+              continue;
+
+            hub.devices[index] = device;
+
+            break;
+          }
+
+        }
+        else
+        {
+          if (hub.devices[index])
+          {
+            std::print("usb-hub ", hub.name, "/", port, " device detached");
+
+            hub.release(hub.devices[index]);
+
+            hub.devices[index] = null;
+          }
+        }
+      }
+
+      if (portsc.change & status::enable != 0)
+        usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_enable, cast(port), null, 0);
+
+      if (portsc.change & status::suspend != 0)
+        usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_suspend, cast(port), null, 0);
+
+      if (portsc.change & status::over_current != 0)
+        usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_over_current, cast(port), null, 0);
+
+      if (portsc.change & status::reset != 0)
+        usb::submit(hub.device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::clear_feature, feature::c_reset, cast(port), null, 0);
+    }
+
+    hub.schedule_read();
+
+    hub.activity_readable.wait();
+  }
+}
+
+fn unplugged(hub mut *hub) -> usb::result
+{
+  if (hub.plug_handler)
+  {
+    hub.plug_handler.rval.wait();
+  }
+
+  for (var index = 0; index < hub.port_count; ++index)
+  {
+    if (hub.devices[index])
+    {
+      std::print("usb-hub ", hub.name, "/", index + 1, " device detached");
+
+      hub.release(hub.devices[index]);
+
+      hub.devices[index] = null;
+    }
+  }
+
+  std::allocator::delete(hub);
+
+  return ok;
+}
+
+fn find_endpoint(std::span<u8> descriptors) -> usb::endpoint_descriptor *
+{
+  for (var offset = 0; offset < descriptors.len; )
+  {
+    switch (descriptors[offset + 1])
+    {
+      case usb::descriptor::type::endpoint:
+        var endpoint = cast<usb::endpoint_descriptor*>(descriptors.data + offset);
+
+        if (endpoint.type == usb::endpoint::type::interrupt && endpoint.direction == usb::endpoint::direction::in)
+          return endpoint;
+    }
+
+    offset += cast(descriptors[offset]);
+  }
+
+  return null;
+}
+
+pub fn initialise(usb::usbdev mut *device, std::span<u8> descriptors) -> usb::result
+{
+  var buffer = std::vector<u8>::with_size(512);
+
+  if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::hub << 8, 0, buffer.data, sizeof<usb::hub_descriptor>))
+    return io_error;
+
+  var hub_descriptor = cast<usb::hub_descriptor*>(buffer.data);
+
+  var endpoint = find_endpoint(descriptors);
+
+  if (!endpoint)
+    return not_found;
+
+  var hub = std::allocator::new<hub>(device);
+
+  std::print("usb-hub device on ", device.query(usb::query::device_name));
+
+  hub.endpoint = endpoint.endpoint_address;
+  hub.port_count = std::min(cast(hub_descriptor.port_count), 31);
+  hub.activity = (1 << hub.port_count) - 1;
+
+  std::assert(endpoint.max_packet_size < sizeof<u32>);
+
+  if (var result = vm::lock(vm::virtrange(&hub.activity, cast(endpoint.max_packet_size)), vm::protection::readwrite, &mut hub.activity_region); !result)
+    return cast(result);
+
+  for (var index = 0; index < hub.port_count; ++index)
+  {
+    if (!usb::submit(device, usb::request::direction::host_to_device, usb::request::type::klass, usb::request::recipient::other, request::set_feature, feature::power, cast(index + 1), null, 0))
+      return io_error;
+  }
+
+  scheduler::sleep_until(cpu::system_time + cast(hub_descriptor.power_on_to_power_good) * 2_000_000);
+
+  hub.plug_handler = create_thread(process::current, &cast<(hub mut *) -> void>(hub_plug_handler), hub);
+
+  scheduler::enqueue(hub.plug_handler);
+
+  return ok;
+}

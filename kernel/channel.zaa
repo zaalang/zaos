@@ -60,7 +60,7 @@ pub struct channel
   i32 nextid;
   std::flat_hash_map<i32, transaction> transactions;
 
-  fn create() -> channel mut *
+  fn create() -> Rc<channel>
   {
     return std::allocator::new<channel>();
   }
@@ -243,7 +243,7 @@ pub fn read(vfs::node mut *node, i32 mut &sid, std::vector<u8> mut &bytes, std::
   return cast(1);
 }
 
-pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var sid = i32();
   var bytes = std::vector<u8>();
@@ -252,7 +252,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   if (var result = read(node, &mut sid, &mut bytes, &mut fds); !result)
     return result;
 
-  if (var result = vm::memcpy(buffer, offset, bytes.data, bytes.len); !result)
+  if (var result = vm::memcpy(iovec, offset, bytes.data, bytes.len); !result)
     return cast(result);
 
   return cast(bytes.len);
@@ -292,13 +292,13 @@ pub fn write(vfs::node mut *node, i32 sid, std::vector<u8> &&bytes, std::vector<
   return cast(1);
 }
 
-pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var sid = i32();
   var bytes = std::vector<u8>::with_uninitialised_size(length);
   var fds = std::vector<vfs::fd>();
 
-  if (var result = vm::memcpy(bytes.data, buffer, offset, length); !result)
+  if (var result = vm::memcpy(bytes.data, iovec, offset, length); !result)
     return cast(result);
 
   if (var result = write(node, sid, &move bytes, &move fds); !result)

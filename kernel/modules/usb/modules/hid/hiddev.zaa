@@ -41,7 +41,7 @@ pub struct hiddev : pub chr::chrdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
   {
     return not_supported;
   }
@@ -53,7 +53,7 @@ pub struct hiddev : pub chr::chrdev
     return ok;
   }
 
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     var count = 0;
 
@@ -68,7 +68,7 @@ pub struct hiddev : pub chr::chrdev
 
         var event = this.events.take_front();
 
-        if (var result = vm::memcpy(buffer, offset, &event, sizeof(event)); !result)
+        if (var result = vm::memcpy(iovec, offset, &event, sizeof(event)); !result)
           return cast(result);
 
         count += sizeof(event);
@@ -85,7 +85,7 @@ pub struct hiddev : pub chr::chrdev
     return cast(count);
   }
 
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }
@@ -101,7 +101,7 @@ pub struct hiddev : pub chr::chrdev
   io::response readable;
   std::vector<u8> buffer;
 
-  u8 endpoint_address;
+  u8 endpoint;
   std::string device_path;
   std::vector<hid::collection> collections;
 
@@ -137,13 +137,11 @@ fn add_event(hiddev mut &this, input::event &evt) -> void
   this.events.push_back(evt);
 }
 
-fn schedule_read(hiddev mut &this) -> usb::result
+fn schedule_read(hiddev mut &this) -> void
 {
   io::initiate(&mut this.readable.cb, 1);
 
-  usb::submit(this.device, &mut this.readable.cb, this.endpoint_address, usb::endpoint::type::interrupt, this.region, 0, this.region.length);
-
-  return ok;
+  usb::submit(this.device, &mut this.readable.cb, usb::endpoint::type::interrupt, this.endpoint, this.region, 0, this.region.length);
 }
 
 fn decode(hiddev mut &this) -> usb::result
@@ -363,7 +361,7 @@ fn device_path(std::vector<hid::collection> &collections) -> std::string
   }
 }
 
-pub fn initialise(hiddev mut *hiddev, u8 endpoint_address, std::vector<hid::collection> &&collections) -> usb::result
+pub fn initialise(hiddev mut *hiddev, u8 endpoint, std::vector<hid::collection> &&collections) -> usb::result
 {
   var max_report_size = 0;
 
@@ -383,7 +381,7 @@ pub fn initialise(hiddev mut *hiddev, u8 endpoint_address, std::vector<hid::coll
   std::print("usb-hid device on ", hiddev.device.query(usb::query::device_name));
 
   hiddev.device_path = device_path(collections);
-  hiddev.endpoint_address = endpoint_address;
+  hiddev.endpoint = endpoint;
   hiddev.collections = &&collections;
 
   hiddev.schedule_read();

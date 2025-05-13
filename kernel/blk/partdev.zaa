@@ -85,7 +85,7 @@ pub struct partdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> blk::result
   {
     return not_supported;
   }
@@ -114,8 +114,9 @@ pub struct partdev : pub blk::blkdev
 
   pub ~partdev() = default;
 
-  Rc<blk::blkdev> device;
   partition partition;
+
+  Rc<blk::blkdev> device;
 }
 
 pub fn scan_for_partitions(blk::blkdev mut *device) -> void
@@ -128,7 +129,7 @@ pub fn scan_for_partitions(blk::blkdev mut *device) -> void
 
     var dev = blk::blkdev::create<partdev>(device, part);
 
-    dev::register(dev::dev_t(), dev);
+    dev::register(dev::lookup(device), dev);
   }
 
   if (partitions.empty)

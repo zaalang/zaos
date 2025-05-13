@@ -22,7 +22,7 @@ pub struct event
 
   vfs::node node;
 
-  fn create() -> event mut *
+  fn create() -> Rc<event>
   {
     return std::allocator::new<event>();
   }
@@ -94,7 +94,7 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
@@ -103,7 +103,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   if (event.value == 0)
     return would_block;
 
-  if (var result = vm::memcpy(buffer, offset, &event.value, 8); !result)
+  if (var result = vm::memcpy(iovec, offset, &event.value, 8); !result)
     return cast(result);
 
   event.value -= 1;
@@ -117,7 +117,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   return cast(8);
 }
 
-pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
 
@@ -125,7 +125,7 @@ pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length)
 
   var addend = 0;
 
-  if (var result = vm::memcpy(&addend, buffer, offset, 8); !result)
+  if (var result = vm::memcpy(&addend, iovec, offset, 8); !result)
     return cast(result);
 
   if (addend > event.maxvalue)

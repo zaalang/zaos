@@ -37,6 +37,7 @@ pub enum op
   event_op = 0x5b02,
   condrefof_op = 0x5b12;
   createfield_op = 0x5b13,
+  load_op = 0x5b20,
   stall_op = 0x5b21,
   sleep_op = 0x5b22,
   acquire_op = 0x5b23,

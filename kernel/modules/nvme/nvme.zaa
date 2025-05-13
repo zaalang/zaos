@@ -637,6 +637,9 @@ fn create_completion_queue(controller mut &controller, usize id, u32 size, vm::p
   if (var result = controller.admin.submit(cmd, std::delegate<(nvme_cqe *, result) -> void>(completer)); !result)
     return result;
 
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
   return ok;
 }
 
@@ -657,6 +660,9 @@ fn create_submission_queue(controller mut &controller, usize id, u32 size, vm::p
   if (var result = controller.admin.submit(cmd, std::delegate<(nvme_cqe *, result) -> void>(completer)); !result)
     return result;
 
+  if (controller.status.wait(); !controller.status)
+    return cast(controller.status.result);
+
   return ok;
 }
 
@@ -676,6 +682,7 @@ fn detect(controller mut &controller) -> result
       var dev = blk::blkdev::create<namespace>(&mut controller, nsid);
 
       dev::register(dev::dev_t(), dev);
+
       blk::scan_for_partitions(dev);
     }
   }

@@ -37,7 +37,7 @@ pub struct keyboard : pub chr::chrdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> chr::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
   {
     return not_supported;
   }
@@ -49,7 +49,7 @@ pub struct keyboard : pub chr::chrdev
     return ok;
   }
 
-  pub fn read(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     var count = 0;
 
@@ -60,7 +60,7 @@ pub struct keyboard : pub chr::chrdev
       if (!this.port.pop(&mut event))
         break;
 
-      if (var result = vm::memcpy(buffer, offset, &event, sizeof(event)); !result)
+      if (var result = vm::memcpy(iovec, offset, &event, sizeof(event)); !result)
         return cast(result);
 
       count += sizeof(event);
@@ -73,7 +73,7 @@ pub struct keyboard : pub chr::chrdev
     return cast(count);
   }
 
-  pub fn write(this mut &, vm::iovec &buffer, usize offset, usize length) override -> chr::result
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
   {
     return not_supported;
   }

@@ -161,7 +161,7 @@ pub fn write(blkdev mut *device, u64 position, void *buffer, usize length) -> bl
   return cast(length);
 }
 
-pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> void
 {
   var rq = request::create();
   rq.device = device;
@@ -171,7 +171,7 @@ pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &b
   rq.cb = cb;
   rq.ref();
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 
@@ -192,7 +192,7 @@ pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &b
   }
 }
 
-pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> void
 {
   var rq = request::create();
   rq.device = device;
@@ -202,7 +202,7 @@ pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   rq.cb = cb;
   rq.ref();
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     rq.host.push_back(region);
   });
 
@@ -212,9 +212,9 @@ pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
     blkman.doorbell.release();
 }
 
-pub fn ioctl(blkdev mut *dev, u32 op, vm::iovec &buffer) -> result
+pub fn ioctl(blkdev mut *dev, u32 op, vm::iovec &iovec) -> result
 {
-  return dev.ioctl(op, buffer);
+  return dev.ioctl(op, iovec);
 }
 
 pub fn complete(request mut *rq, request::status status) -> void
@@ -304,15 +304,26 @@ pub fn initialise() -> void
 
   blkman.kblockd = create_thread(process::current, &cast<(void mut *) -> void>(kblockd), null);
 
-  scheduler::enqueue(blkman.kblockd);
+  scheduler::enqueue(blkman.kblockd, thread::priority::normal + 2);
 
   spawn_plumber();
 }
 
 pub fn enumerate(var &&callback) -> void
 {
-  dev::enumerate(|id, dev| [callback] {
-    switch (dev)
+  dev::enumerate(|id, device| [callback] {
+    switch (device)
+    {
+      case blkdev[dev]:
+        callback(id, dev);
+    }
+  });
+}
+
+pub fn enumerate(dev::dev_t parent, var &&callback) -> void
+{
+  dev::enumerate(parent, |id, device| [callback] {
+    switch (device)
     {
       case blkdev[dev]:
         callback(id, dev);

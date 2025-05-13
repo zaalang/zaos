@@ -145,7 +145,7 @@ pub struct iocb
     return &allocator;
   }
 
-  fn create() -> iocb mut *
+  fn create() -> Rc<iocb>
   {
     return allocator.allocate();
   }
@@ -210,7 +210,7 @@ pub struct response
     : cb(iocb::create())
   {
     cb.result = cast(result);
-    cb.outstanding = 0;
+    std::atomic_store(&cb.outstanding, 0);
   }
 
   pub response(response &&other) = default;
@@ -235,7 +235,7 @@ pub fn wait_until(response mut &rq, u64 abstime) -> bool
   if (std::atomic_load(&rq.cb.outstanding) <= 0)
     return true;
 
-  return rq.cb.waiters.wait_until(rq.cb.lock, abstime);
+  return rq.cb.waiters.wait_until(&mut rq.cb.lock, abstime);
 }
 
 pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void

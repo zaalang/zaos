@@ -155,10 +155,10 @@ pub fn extract(report &report, u32 index, std::vector<u8> &buffer, usize byte, u
   switch (report.flags & report::flags::variable)
   {
     case report::flags::variable:
-      usage = report.usage(index)?!;
+      usage = report.usage(index).unwrap_or(report.usages.back.1);
 
     case 0:
-      usage = report.usage(cast<u32>(value))?!;
+      usage = report.usage(cast<u32>(value)).unwrap_or(report.usages.back.1);
       value = 1;
   }
 

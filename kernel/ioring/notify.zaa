@@ -113,7 +113,7 @@ pub struct watchset
   std::list<watch> watches;
   std::circular_buffer<event, N:64> events;
 
-  fn create() -> watchset mut *
+  fn create() -> Rc<watchset>
   {
     return std::allocator::new<watchset>();
   }
@@ -137,7 +137,7 @@ pub struct watchset
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
 
@@ -196,7 +196,7 @@ pub struct watchset
       if (count + bytes > length)
         break;
 
-      if (var result = vm::memcpy(buffer, offset, event.data, bytes); !result)
+      if (var result = vm::memcpy(iovec, offset, event.data, bytes); !result)
         return cast(result);
 
       this.events.pop_front();
@@ -214,7 +214,7 @@ pub struct watchset
     return cast(count);
   }
 
-  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     return not_supported;
   }

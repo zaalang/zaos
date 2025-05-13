@@ -53,7 +53,7 @@ pub struct watchlist
   vfs::node mut *node;
   watcher mut *watchers;
 
-  fn create() -> watchlist mut *
+  fn create() -> Rc<watchlist>
   {
     return std::allocator::new<watchlist>();
   }
@@ -139,11 +139,13 @@ fn grab_watchlist_shared(vfs::node mut *node) -> watchlist mut *
 
 fn attach_watchlist(vfs::node mut *node) -> bool
 {
+  var newlist = watchlist::create();
+
   var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
 
   if (!node.watchlist)
   {
-    node.watchlist = watchlist::create();
+    node.watchlist = &move newlist;
 
     node.watchlist.node = node;
 

@@ -399,7 +399,7 @@ pub struct namespace
 
   fn clock_gettime(acpi::namespace mut &namespace, u64 mut &clock) -> acpi::result
   {
-    clock = __rdtsc();
+    clock = cpu::system_time;
 
     return ok;
   }

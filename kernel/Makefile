@@ -116,6 +116,7 @@ modules/usb/modules/storage/bot.zaa\
 modules/usb/modules/storage/botdev.zaa\
 modules/usb/modules/storage/uas.zaa\
 modules/usb/modules/storage/uasdev.zaa\
+modules/usb/modules/hub/hub.zaa\
 modules/usb/modules/modules.zaa\
 syscalls/syscalls.zaa\
 syscalls/thread.zaa\

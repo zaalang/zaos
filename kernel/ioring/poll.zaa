@@ -67,7 +67,7 @@ pub struct pollset
   mutex lock;
   std::vector<event> events;
 
-  fn create() -> pollset mut *
+  fn create() -> Rc<pollset>
   {
     return std::allocator::new<pollset>();
   }
@@ -91,12 +91,12 @@ pub struct pollset
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     return not_supported;
   }
@@ -216,6 +216,9 @@ pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u
 
   if (event.mask & events::pollout == events::pollout)
     io::add_notify(&mut event.writeable.cb, &pollset);
+
+  if (event.readable.ready || event.writeable.ready)
+    io::complete(&mut pollset.readable.cb, 0);
 
   pollset.events.push_back(event);
 

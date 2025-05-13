@@ -55,7 +55,7 @@ pub struct namespace : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> blk::result
   {
     return not_supported;
   }

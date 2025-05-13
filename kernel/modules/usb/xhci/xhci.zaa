@@ -182,15 +182,15 @@ enum portsc : u32
   prc = 0x200000,    // Port Reset Change
   plc = 0x400000,    // Port Link Status Change
   cec = 0x800000,    // Port Config Error Change
-  cas = 0x100000,    // Cold Attach Status
-  wce = 0x200000,    // Wake on Connect Enable
-  wde = 0x400000,    // Wake on Disconnect Enable
-  woe = 0x800000,    // Wake on Over-current Enable
+  cas = 0x1000000,   // Cold Attach Status
+  wce = 0x2000000,   // Wake on Connect Enable
+  wde = 0x4000000,   // Wake on Disconnect Enable
+  woe = 0x8000000,   // Wake on Over-current Enable
   dr  = 0x40000000,  // Device Removable
   wpr = 0x80000000,  // Warm Port Reset
 
   none = 0x0,
-  status = 0x80ff00f7;
+  readonly_bits = 0x80ff00f7;
 
   pub const fn ~(portsc lhs) -> portsc { return cast<portsc>(~cast<u32>(lhs)); }
   pub const fn &(portsc lhs, portsc rhs) -> portsc { return cast<portsc>(cast<u32>(lhs) & cast<u32>(rhs)); }
@@ -595,6 +595,43 @@ struct xhci_context
   }
 }
 
+struct xhci_path
+{
+  u8 port;
+  u8 slot;
+  u32 route;
+  usb::speed speed;
+
+  fn depth(this &) -> int
+  {
+    return (32 - std::clz(this.route) + 3) / 4;
+  }
+
+  fn hubport(this &) -> u8
+  {
+    return cast<u8>(this.route >> (4 * this.depth) & 0xff);
+  }
+
+  xhci_path(u8 port, usb::speed speed)
+    : port(port), speed(speed)
+  {
+  }
+
+  xhci_path(u8 port, u8 slot, u32 route, usb::speed speed)
+    : port(port), slot(slot), route(route), speed(speed)
+  {
+  }
+
+  xhci_path(xhci_path &path, u8 port)
+    : port(path.port), slot(path.slot), route(path.route), speed(path.speed)
+  {
+    route |= cast<u32>(port) << (4 * this.depth);
+  }
+
+  xhci_path(xhci_path &) = default;
+  ~xhci_path() = default;
+}
+
 fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
 {
   for (var k = 0; k < timeout; ++k)
@@ -658,6 +695,24 @@ pub struct controller
     return ok;
   }
 
+  fn reset(this mut &, u8 port) -> usb::result
+  {
+    //std::print("xhci ", this.name, "/", port, " port reset");
+
+    var mut &portreg = this.opregs.ports[cast<usize>(port - 1)];
+
+    std::volatile_store(&portreg.portsc, portreg.portsc & ~portsc::readonly_bits | portsc::pr);
+
+    if (!wait_until_set(&portreg.portsc, portsc::prc, 500))
+      return timed_out;
+
+    std::volatile_store(&portreg.portsc, portreg.portsc & ~portsc::readonly_bits | portsc::prc);
+
+    scheduler::sleep_until(cpu::system_time + 20_000_000);
+
+    return ok;
+  }
+
   pub fn name(this &) -> std::string
   {
     return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
@@ -671,15 +726,17 @@ pub struct controller
   usize slot_count;
   int context_shift;
 
-  usb::speed[255] port_speeds;
-
   u32 cmd_ccs;
   usize cmd_idx;
   xhci_trb cmd_trb;
   semaphore cmd_sts;
 
   xhci_erst mut *erstp;
-  xhci_dcbaa mut * dcbap;
+  xhci_dcbaa mut *dcbap;
+
+  usb::speed[255] speeds;
+
+  xhcidev mut *[256] slots;
 
   thread mut *event_handler;
   semaphore event_handler_doorbell;
@@ -687,7 +744,6 @@ pub struct controller
   thread mut *plug_handler;
   semaphore plug_handler_doorbell;
 
-  u8[256] slots;
   Rc<xhcidev>[256] devices;
 
   u8 irq;
@@ -704,6 +760,7 @@ struct xhcidev : pub usb::usbdev
 
   u8 port;
   u8 slot;
+  u32 route;
   u8 address;
   vm::page_allocation input_context;
   vm::page_allocation output_context;
@@ -727,12 +784,20 @@ struct xhcidev : pub usb::usbdev
 
   endpoint[31] endpoints;
 
+  fn path(this &) -> xhci_path
+  {
+    return xhci_path(this.port, this.slot, this.route, this.speed);
+  }
+
   pub fn query(this &, usb::query query, std::string mut &result) override -> usb::result
   {
     switch (query)
     {
       case device_name:
         result = std::format("{}/{}", this.controller.name, this.port);
+
+        for (var route = this.route; route != 0; route >>= 4)
+          result.appendf("/{}", route & 0xf);
     }
 
     return ok;
@@ -750,6 +815,18 @@ struct xhcidev : pub usb::usbdev
     return this.controller.allocate_streams(&this, descriptors);
   }
 
+  pub fn connect(this mut &, u8 port, usb::speed speed, Rc<usb::usbdev> mut &device) override -> usb::result
+  {
+    var xhcidev = Rc<xhcidev>();
+
+    if (var result = connect(this.controller, xhci_path(this.path, port), speed, &mut xhcidev); !result)
+      return result;
+
+    device = xhcidev;
+
+    return ok;
+  }
+
   pub fn submit(this mut &, usb::transfer mut *transfer) override -> usb::result
   {
     return this.controller.submit(&this, transfer);
@@ -760,9 +837,14 @@ struct xhcidev : pub usb::usbdev
     return this.controller.cancel(&this, transfer);
   }
 
-  xhcidev(controller mut *controller, u8 port, usb::speed speed)
+  pub fn release(this mut &) override -> usb::result
+  {
+    return this.controller.release(&this);
+  }
+
+  xhcidev(controller mut *controller, u8 port, u32 route, usb::speed speed)
     : super(&impl this),
-      controller(controller), port(port)
+      controller(controller), port(port), route(route)
   {
     this.speed = speed;
   }
@@ -918,6 +1000,22 @@ fn stop_endpoint(controller mut &controller, u8 slot, u8 ep, bool suspend = fals
   return ok;
 }
 
+fn set_tr_dequeue(controller mut &controller, u8 slot, u8 stream, u8 ep, u64 dequeue) -> usb::result
+{
+  var trb = xhci_trb();
+  trb.cqw0 = dequeue;
+  trb.cdw2 = casst<u32>(stream) << 16;
+  trb.flags = cast<u32>(trb::flags::type(trb::type::set_tr_dequeue) | trb::flags::slot(slot) | trb::flags::endpoint(ep));
+
+  if (var result = controller.execute(&mut trb); !result)
+    return result;
+
+  if (cast<trb::status>(trb.cdw2).code != trb::status::code::success)
+    return io_error;
+
+  return ok;
+}
+
 fn execute(controller mut &controller, xhci_trb mut &trb) -> usb::result
 {
   var guard = std::lock_guard(&mut controller.lock);
@@ -957,9 +1055,9 @@ fn execute(controller mut &controller, xhci_trb mut &trb) -> usb::result
   return ok;
 }
 
-fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
+fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhcidev> mut &device) -> usb::result
 {
-  var device = usb::usbdev::create<xhcidev>(controller, port, speed);
+  device = usb::usbdev::create<xhcidev>(controller, path.port, path.route, speed);
 
   // Slot
 
@@ -1009,7 +1107,7 @@ fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
   var islotctx = input_slot_context(input_context.addr, controller.context_shift);
 
   islotctx.cdw0 |= 1 << context::slot_entries_shift;
-  islotctx.cdw0 |= 0 << context::slot_route_shift;
+  islotctx.cdw0 |= path.route << context::slot_route_shift;
 
   switch (speed)
   {
@@ -1029,10 +1127,14 @@ fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
       islotctx.cdw0 |= 5 << context::slot_speed_shift;
   }
 
-  islotctx.cdw1 |= cast<u32>(port + 1) << context::slot_root_port_shift;
+  islotctx.cdw1 |= cast<u32>(path.port) << context::slot_root_port_shift;
 
-  islotctx.cdw2 |= 0 << context::slot_parent_hub_shift;
-  islotctx.cdw2 |= 0 << context::slot_parent_port_shift;
+  if (path.route != 0 && path.speed == usb::speed::high_speed && (speed == usb::speed::low_speed || speed == usb::speed::full_speed))
+  {
+    islotctx.cdw2 |= cast<u32>(path.slot) << context::slot_parent_hub_shift;
+    islotctx.cdw2 |= cast<u32>(path.hubport) << context::slot_parent_port_shift;
+  }
+
   islotctx.cdw2 |= 0 << context::slot_interrupter_target_shift;
 
   islotctx.cdw3 |= 0 << context::slot_address_shift;
@@ -1074,7 +1176,7 @@ fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
 
   device.output_context = output_context;
 
-  // Device Address
+  // Address Device
 
   var oslotctx = output_slot_context(output_context.addr, controller.context_shift);
 
@@ -1083,20 +1185,13 @@ fn connect(controller mut *controller, u8 port, usb::speed speed) -> usb::result
 
   device.address = cast<u8>(oslotctx.cdw3 >> context::slot_address_shift & context::slot_address_mask);
 
-  scheduler::sleep_until(cpu::system_time + 10_000_000);
+  scheduler::sleep_until(cpu::system_time + 20_000_000);
 
   // Connected
 
-  controller.slots[cast<usize>(port)] = slot;
-  controller.devices[cast<usize>(slot)] = &move device;
+  controller.slots[cast<usize>(slot)] = device;
 
-  return ok;
-}
-
-fn probe(controller mut *controller, u8 port) -> usb::result
-{
-  var slot = controller.slots[cast<usize>(port)];
-  var device = &*controller.devices[cast<usize>(slot)];
+  // Setup
 
   var buffer = std::vector<u8>::with_size(512);
 
@@ -1107,23 +1202,34 @@ fn probe(controller mut *controller, u8 port) -> usb::result
 
   if (var max_packet_size = (device.speed >= usb::speed::super_speed) ? (1 << device_descriptor.max_packet_size_0) : cast<u16>(device_descriptor.max_packet_size_0); max_packet_size != device.max_packet_size)
   {
-    var ictlctx = input_control_context(device.input_context.addr, controller.context_shift);
-
     ictlctx.cdw0 = 0x0;
     ictlctx.cdw1 = 0x2;
-
-    var iepctx = input_endpoint_context(device.input_context.addr, controller.context_shift, 0);
 
     iepctx.cdw1 &= ~(context::endpoint_max_packet_size_mask << context::endpoint_max_packet_size_shift);
     iepctx.cdw1 |= cast<u32>(max_packet_size) << context::endpoint_max_packet_size_shift;
 
-    if (var result = controller.evaluate_context(slot, device.input_context.addr); !result)
+    if (var result = controller.evaluate_context(device.slot, device.input_context.addr); !result)
       return result;
 
     device.max_packet_size = max_packet_size;
   }
 
-  modules::probe(device);
+  if (device_descriptor.device_class == 9)
+  {
+    if (!usb::submit(device, usb::request::direction::device_to_host, usb::request::type::klass, usb::request::recipient::device, usb::request::get_descriptor, usb::descriptor::type::hub << 8, 0, buffer.data, sizeof<usb::hub_descriptor>))
+      return io_error;
+
+    var hub_descriptor = cast<usb::hub_descriptor*>(buffer.data);
+
+    islotctx.cdw0 |= context::slot_hub;
+    islotctx.cdw1 |= cast<u32>(hub_descriptor.port_count) << context::slot_port_count_shift;
+
+    if (device.speed == usb::speed::high_speed)
+      islotctx.cdw2 |= cast<u32>(hub_descriptor.characteristics >> 5 & 0x3) << context::slot_tt_think_time_shift;
+
+    if (var result = controller.evaluate_context(device.slot, device.input_context.addr); !result)
+      return result;
+  }
 
   return ok;
 }
@@ -1206,10 +1312,13 @@ fn submit(controller mut &controller, xhcidev mut *device, usb::transfer mut *tr
       setup.cdw2 = cast<u32>(trb::status::bytes(8));
       setup.flags = cast<u32>(trb::flags::type(trb::type::setup_stage) | trb::flags::idt);
 
-      if (transfer.address & 0x80 != 0)
-        setup.flags |= cast<u32>(trb::flags::trt_in);
-      else
-        setup.flags |= cast<u32>(trb::flags::trt_out);
+      if (transfer.length != 0)
+      {
+        if (transfer.address & 0x80 != 0)
+          setup.flags |= cast<u32>(trb::flags::trt_in);
+        else
+          setup.flags |= cast<u32>(trb::flags::trt_out);
+      }
 
       for (var host : transfer.host)
       {
@@ -1227,7 +1336,7 @@ fn submit(controller mut &controller, xhcidev mut *device, usb::transfer mut *tr
 
       status.flags = cast<u32>(trb::flags::type(trb::type::status_stage) | trb::flags::ioc);
 
-      if (transfer.address & 0x80 == 0)
+      if (transfer.length == 0 || transfer.address & 0x80 == 0)
         status.flags |= cast<u32>(trb::flags::dir_in);
 
       if (var result = controller.enqueue(device, 0, transfer, trbs.data, trbs.len); !result)
@@ -1272,12 +1381,31 @@ fn submit(controller mut &controller, xhcidev mut *device, usb::transfer mut *tr
 
 fn cancel(controller mut &controller, xhcidev mut *device, usb::transfer mut *transfer) -> usb::result
 {
-  return not_supported;
+  var ep = 0;
+
+  if (transfer.type != usb::transfer::type::control)
+    ep = cast<usize>((transfer.address << 1 & 0x1e) + (transfer.address >> 7 & 1)) - 1;
+
+  device.endpoints[ep].lock.lock();
+
+  device.endpoints[ep].ring.run = 0;
+
+  device.endpoints[ep].lock.unlock();
+
+  for (var index = device.endpoints[ep].ring.base; index != device.endpoints[ep].ring.base + device.endpoints[ep].ring.mask; ++index)
+  {
+    if (var transfer = std::atomic_xchg(&device.transfers[index], null))
+      usb::complete(transfer, usb::result::cancelled);
+  }
+
+  controller.stop_endpoint(device.slot, cast<u8>(ep + 1));
+
+  return ok;
 }
 
 fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> descriptors) -> usb::result
 {
-  var number_entries = 1;
+  var entry_count = 1;
 
   var ictlctx = input_control_context(device.input_context.addr, controller.context_shift);
 
@@ -1285,7 +1413,7 @@ fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> desc
   ictlctx.cdw1 = 0x1;
 
   var ring_base = 16;
-  var ring_size = 64;
+  var ring_size = 128;
 
   var epcnt = 0;
   for (var offset = 0; offset < descriptors.len; )
@@ -1447,7 +1575,7 @@ fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> desc
 
         ictlctx.cdw1 |= 1 << (ep + 1);
 
-        number_entries = std::max(number_entries, ep + 1);
+        entry_count = std::max(entry_count, ep + 1);
     }
 
     offset += cast(descriptors[offset]);
@@ -1456,7 +1584,7 @@ fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> desc
   var islotctx = input_slot_context(device.input_context.addr, controller.context_shift);
 
   islotctx.cdw0 &= ~(context::slot_entries_mask << context::slot_entries_shift);
-  islotctx.cdw0 |= cast<u32>(number_entries) << context::slot_entries_shift;
+  islotctx.cdw0 |= cast<u32>(entry_count) << context::slot_entries_shift;
 
   if (var result = controller.configure_endpoint(device.slot, device.input_context.addr); !result)
     return result;
@@ -1466,7 +1594,7 @@ fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> desc
 
 fn allocate_streams(controller mut &controller, xhcidev mut *device, std::span<usb::endpoint_descriptor*> descriptors) -> usb::result
 {
-  var number_entries = 1;
+  var entry_count = 1;
 
   var ictlctx = input_control_context(device.input_context.addr, controller.context_shift);
 
@@ -1530,13 +1658,13 @@ fn allocate_streams(controller mut &controller, xhcidev mut *device, std::span<u
     ictlctx.cdw0 |= 1 << (ep + 1);
     ictlctx.cdw1 |= 1 << (ep + 1);
 
-    number_entries = std::max(number_entries, ep + 1);
+    entry_count = std::max(entry_count, ep + 1);
   }
 
   var islotctx = input_slot_context(device.input_context.addr, controller.context_shift);
 
   islotctx.cdw0 &= ~(context::slot_entries_mask << context::slot_entries_shift);
-  islotctx.cdw0 |= cast<u32>(number_entries) << context::slot_entries_shift;
+  islotctx.cdw0 |= cast<u32>(entry_count) << context::slot_entries_shift;
 
   if (var result = controller.configure_endpoint(device.slot, device.input_context.addr); !result)
     return result;
@@ -1553,19 +1681,15 @@ fn unconfigure(controller mut &controller, xhcidev mut *device) -> usb::result
 
     device.endpoints[ep].lock.lock();
 
-    for (var index = device.endpoints[ep].ring.base; index != device.endpoints[ep].ring.base + device.endpoints[ep].ring.mask; ++index)
-    {
-      if (device.transfers[index])
-        usb::complete(device.transfers[index], usb::result::cancelled);
-
-      device.transfers[index] = null;
-    }
-
-    device.endpoints[ep].streams = null;
-
     device.endpoints[ep].ring.run = 0;
 
     device.endpoints[ep].lock.unlock();
+
+    for (var index = device.endpoints[ep].ring.base; index != device.endpoints[ep].ring.base + device.endpoints[ep].ring.mask; ++index)
+    {
+      if (var transfer = std::atomic_xchg(&device.transfers[index], null))
+        usb::complete(transfer, usb::result::cancelled);
+    }
 
     var oepctx = output_endpoint_context(device.output_context.addr, controller.context_shift, ep);
 
@@ -1579,31 +1703,29 @@ fn unconfigure(controller mut &controller, xhcidev mut *device) -> usb::result
     }
   }
 
-  vm::release_physical_pages(device.stream_array);
-
-  device.stream_array = vm::page_allocation();
-
   return ok;
 }
 
 fn release(controller mut &controller, xhcidev mut *device) -> usb::result
 {
+  unconfigure(&mut controller, device);
+
   if (device.unplugged)
     device.unplugged();
 
-  unconfigure(&mut controller, device);
-
-  controller.devices[cast<usize>(device.slot)] = null;
+  device.unplugged = null;
 
   return ok;
 }
 
 fn destroy(controller mut &controller, xhcidev mut *device) -> usb::result
 {
-  if (var result = controller.disable_slot(device.slot); !result)
-    return result;
+  controller.slots[cast<usize>(device.slot)] = null;
 
   controller.dcbap.addresses[cast<usize>(device.slot)] = physaddr();
+
+  if (var result = controller.disable_slot(device.slot); !result)
+    return result;
 
   vm::release_physical_pages(device.input_context);
   vm::release_physical_pages(device.output_context);
@@ -1617,6 +1739,7 @@ fn xhci_io_handler(controller mut *controller) -> void
 {
   var sts = controller.opregs.sts;
   std::volatile_store(&controller.opregs.sts, sts);
+  std::volatile_store(&controller.rtsregs.interrupts[0].iman, controller.rtsregs.interrupts[0].iman | iman::pending);
 
   if (sts & sts::hch == sts::hch)
     return;
@@ -1629,14 +1752,12 @@ fn xhci_io_handler(controller mut *controller) -> void
 
   if (sts & sts::eint == sts::eint)
     controller.event_handler_doorbell.release();
-
-  std::volatile_store(&controller.rtsregs.interrupts[0].iman, controller.rtsregs.interrupts[0].iman | iman::pending);
 }
 
-fn xhci_transfer_handler(controller mut &controller, xhci_trb *trb) -> usb::result
+fn xhci_transfer_handler(controller mut *controller, xhci_trb *trb) -> usb::result
 {
   var slot = cast<trb::flags>(trb.flags).slot;
-  var device = &*controller.devices[cast<usize>(slot)];
+  var device = controller.slots[cast<usize>(slot)];
   var ep = cast<trb::flags>(trb.flags).endpoint;
   var code = cast<trb::status>(trb.cdw2).code;
   var remainder = cast<trb::status>(trb.cdw2).remainder;
@@ -1676,11 +1797,9 @@ fn xhci_transfer_handler(controller mut &controller, xhci_trb *trb) -> usb::resu
   if (index >= device.transfers.len)
     return invalid_argument;
 
-  var guard = std::lock_guard(&mut device.endpoints[cast<usize>(ep - 1)].lock);
-
   var mut &endpoint = device.endpoints[cast<usize>(ep - 1)];
 
-  if (var transfer = device.transfers[index])
+  if (var transfer = std::atomic_xchg(&device.transfers[index], null))
   {
     var mut &ring = endpoint.ring;
 
@@ -1692,9 +1811,7 @@ fn xhci_transfer_handler(controller mut &controller, xhci_trb *trb) -> usb::resu
 
     usb::complete(transfer, result);
 
-    device.transfers[index] = null;
-
-    std::volatile_store(&ring.tail, index);
+    std::atomic_store(&ring.tail, index + 1);
   }
 
   return ok;
@@ -1725,7 +1842,7 @@ fn xhci_event_handler(controller mut *controller) -> void
           controller.plug_handler_doorbell.release();
 
         case transfer:
-          xhci_transfer_handler(&mut *controller, cqe);
+          xhci_transfer_handler(controller, cqe);
 
         else:
           std::print("xhci unhandled event - ", type);
@@ -1748,35 +1865,32 @@ fn xhci_event_handler(controller mut *controller) -> void
 
 fn xhci_plug_handler(controller mut *controller) -> void
 {
+  scheduler::sleep_until(cpu::system_time + 20_000_000);
+
   for (;;)
   {
     var mut &ports = controller.opregs.ports;
 
     for (var index = 0; index < controller.port_count; ++index)
     {
+      var port = cast<u8>(index + 1);
       var portsc = ports[index].portsc;
 
       if (portsc & portsc::csc == portsc::csc)
       {
-        std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::csc);
+        std::volatile_store(&ports[index].portsc, portsc & ~portsc::readonly_bits | portsc::csc);
 
         if (portsc & portsc::ccs == portsc::ccs)
         {
-          std::print("xhci ", controller.name, "/", index, " device attached");
+          std::print("xhci ", controller.name, "/", port, " device attached");
 
           for (var k = 0; k < 2; ++k)
           {
             if (wait_until_set(&ports[index].portsc, portsc::csc, 100))
               break;
 
-            std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::pr);
-
-            if (!wait_until_set(&ports[index].portsc, portsc::prc, 100))
-              std::print("xhci ", controller.name, "/", index, " reset timeout");
-
-            std::volatile_store(&ports[index].portsc, portsc & ~portsc::status | portsc::prc);
-
-            scheduler::sleep_until(cpu::system_time + 10_000_000);
+            if (!controller.reset(port))
+              std::print("xhci ", controller.name, "/", port, " reset timeout");
 
             portsc = std::volatile_load(&ports[index].portsc);
 
@@ -1785,7 +1899,7 @@ fn xhci_plug_handler(controller mut *controller) -> void
 
             var speed = usb::speed::full_speed;
 
-            if (controller.port_speeds[index] >= usb::speed::super_speed)
+            if (controller.speeds[index] >= usb::speed::super_speed)
               speed = usb::speed::super_speed;
 
             switch (cast<u32>(portsc & portsc::spd))
@@ -1803,10 +1917,15 @@ fn xhci_plug_handler(controller mut *controller) -> void
                 speed = usb::speed::super_speed_plus;
             }
 
-            if (!connect(controller, cast<u8>(index), speed))
+            var device = Rc<xhcidev>();
+
+            if (!connect(controller, xhci_path(port,controller.speeds[index]), speed, &mut device))
               continue;
 
-            probe(controller, cast<u8>(index));
+            if (!modules::probe(device))
+              continue;
+
+            controller.devices[index] = device;
 
             break;
           }
@@ -1814,10 +1933,14 @@ fn xhci_plug_handler(controller mut *controller) -> void
         }
         else
         {
-          std::print("xhci ", controller.name, "/", index, " device detached");
+          if (controller.devices[index])
+          {
+            std::print("xhci ", controller.name, "/", port, " device detached");
 
-          if (var slot = controller.slots[index]; slot != 0)
-            controller.release(controller.devices[cast<usize>(slot)]);
+            controller.release(controller.devices[index]);
+
+            controller.devices[index] = null;
+          }
         }
       }
     }
@@ -1903,10 +2026,10 @@ fn initialise(controller mut &controller) -> usb::result
           switch (revision & 0xff00)
           {
             case 0x0200:
-              controller.port_speeds[i] = usb::speed::high_speed;
+              controller.speeds[i] = usb::speed::high_speed;
 
             case 0x0300:
-              controller.port_speeds[i] = usb::speed::super_speed;
+              controller.speeds[i] = usb::speed::super_speed;
           }
         }
 
@@ -2005,17 +2128,14 @@ fn initialise(controller mut &controller) -> usb::result
 
   for (var index = 0; index < controller.port_count; ++index)
   {
-    var portsc = controller.opregs.ports[index].portsc;
+    var portsc = std::volatile_load(&controller.opregs.ports[index].portsc);
 
-    if (portsc & portsc::ccs != portsc::ccs)
-      std::volatile_store(&controller.opregs.ports[index].portsc, portsc & ~portsc::status | portsc::csc);
-
-    std::volatile_store(&controller.opregs.ports[index].portsc, portsc & ~portsc::status | portsc::pp);
+    std::volatile_store(&controller.opregs.ports[index].portsc, portsc & ~portsc::readonly_bits | portsc::pp);
   }
 
   controller.event_handler = create_thread(process::current, &cast<(controller mut *) -> void>(xhci_event_handler), &controller);
 
-  scheduler::enqueue(controller.event_handler);
+  scheduler::enqueue(controller.event_handler, thread::priority::normal + 2);
 
   controller.plug_handler = create_thread(process::current, &cast<(controller mut *) -> void>(xhci_plug_handler), &controller);
 

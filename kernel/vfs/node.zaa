@@ -182,8 +182,8 @@ pub vtable node_operations
 
 pub vtable node_file_operations : node_operations
 {
-  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
-  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
+  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
 }
 
 pub vtable node_directory_operations : node_operations
@@ -194,7 +194,7 @@ pub vtable node_directory_operations : node_operations
   pub fn mkdir(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result;
   pub fn rename(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result;
   pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *newpath, std::string_view newname) -> vfs::result;
-  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
   pub fn unlink(vfs::node mut *path, std::string_view name) -> vfs::result;
   pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_view name) -> vfs::result;
 }
@@ -206,19 +206,19 @@ pub vtable node_symlink_operations : node_operations
 
 pub vtable node_volume_operations : node_file_operations
 {
-  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result;
+  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result;
 }
 
 pub vtable node_stream_operations : node_operations
 {
   pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result;
-  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
-  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result;
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
 }
 
 pub vtable node_device_operations : node_stream_operations
 {
-  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result;
+  pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result;
   pub fn mmap(vfs::node mut *node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result;
 }
 

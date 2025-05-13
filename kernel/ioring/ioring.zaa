@@ -201,7 +201,7 @@ pub struct io_ring
     return &allocator;
   }
 
-  fn create() -> io_ring mut *
+  fn create() -> Rc<io_ring>
   {
     return allocator.allocate();
   }
@@ -225,12 +225,12 @@ pub struct io_ring
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
   {
     return not_supported;
   }

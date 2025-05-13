@@ -40,7 +40,7 @@ pub struct buffer
 
   vm::virtrange allocation;
 
-  fn create() -> buffer mut *
+  fn create() -> Rc<buffer>
   {
     return std::allocator::new<buffer>();
   }
@@ -195,7 +195,7 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var pipe = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
 
@@ -208,7 +208,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   {
     var bytes = std::min(remaining, span.len);
 
-    if (var result = vm::memcpy(buffer, offset, span.data, bytes); !result)
+    if (var result = vm::memcpy(iovec, offset, span.data, bytes); !result)
       return cast(result);
 
     count += bytes;
@@ -233,7 +233,7 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   return cast(count);
 }
 
-pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var pipe = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).buffer;
 
@@ -248,7 +248,7 @@ pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length)
   if (length < PIPE_BUF && pipe.capacity - pipe.len < length)
     result = vfs::result::would_block;
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 

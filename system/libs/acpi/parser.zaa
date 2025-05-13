@@ -101,6 +101,8 @@ enum state
   sleep_op,
   timer_op,
   fatal_op,
+  load_op,
+  loaded,
   return_op,
   breakpoint_op,
   method_invocation,
@@ -137,7 +139,7 @@ union operand
   span(std::span<u8>),
   value(acpi::value),
   callee(acpi::value),
-  ref(acpi::reference),
+  reference(acpi::reference),
 
   pub fn is_value(this &) -> bool
   {
@@ -151,7 +153,7 @@ union operand
 
   pub fn is_reference(this &) -> bool
   {
-    return this.kind == typeof(this.kind)::ref;
+    return this.kind == typeof(this.kind)::reference;
   }
 
   operand() = default;
@@ -218,15 +220,15 @@ struct context
     return this.text.take_back();
   }
 
-  fn push_ref(this mut &, operand &operand) -> void
+  fn push_reference(this mut &, operand &operand) -> void
   {
     switch (operand)
     {
       case value[value]:
-        this.push_operand(operand::ref(&value));
+        this.push_operand(operand::reference(&value));
 
-      case ref[reference]:
-        this.push_operand(operand::ref(reference));
+      case reference[reference]:
+        this.push_operand(operand::reference(reference));
 
       else:
         std::panic("invalid ref");
@@ -289,12 +291,12 @@ struct context
 
   fn alloc(context mut &ctx, value &&value) -> value *
   {
-    switch (ctx.frames.len)
+    switch (ctx.scope.type)
     {
-      case 0:
+      else:
         return ctx.namespace.alloc(&&value);
 
-      else:
+      case method:
         return &ctx.values.push_back(&&value);
     }
   }
@@ -536,18 +538,18 @@ fn load(context mut &ctx, operand mut &operand) -> result
 {
   while (operand.is_reference)
   {
-    switch (operand.ref)
+    switch (operand.reference)
     {
       case local[idx]:
         operand = ctx.stack[idx];
 
-      case value[var dst = operand.ref.value]:
+      case value[var dst = operand.reference.value]:
         operand = operand::value();
 
         if (var rc = ctx.namespace.load(dst, &mut operand.value); !rc)
           return rc;
 
-      case index[var index = operand.ref.index]:
+      case index[var index = operand.reference.index]:
         operand = operand::value();
 
         if (var rc = ctx.namespace.load(index.0, index.1, &mut operand.value); !rc)
@@ -626,7 +628,7 @@ fn arg_obj(context mut &ctx, std::span<u8> mut &is) -> result
     case arg5_op:
     case arg6_op:
       is.drop_front!(1);
-      ctx.push_ref(ctx.arg(cast<usize>(op) - 0x68));
+      ctx.push_reference(ctx.arg(cast<usize>(op) - 0x68));
 
     else:
       return invalid_opcode;
@@ -648,7 +650,7 @@ fn local_obj(context mut &ctx, std::span<u8> mut &is) -> result
     case local6_op:
     case local7_op:
       is.drop_front!(1);
-      ctx.push_ref(ctx.local(cast<usize>(op) - 0x60));
+      ctx.push_reference(ctx.local(cast<usize>(op) - 0x60));
 
     else:
       return invalid_opcode;
@@ -912,7 +914,7 @@ fn target_refof(context mut &ctx, std::span<u8> mut &is) -> result
 
 fn target_derefof(context mut &ctx, std::span<u8> mut &is) -> result
 {
-  ctx.targets.push_back(target::reference(ctx.stack.take_back().ref));
+  ctx.targets.push_back(target::reference(ctx.stack.take_back().reference));
 
   return ok;
 }
@@ -1203,6 +1205,12 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
       is.drop_front!(2);
       ctx.push_state(state::acquire_op);
       ctx.push_state(state::word_data);
+      ctx.push_state(state::term_arg);
+
+    case load_op:
+      is.drop_front!(2);
+      ctx.push_state(state::load_op);
+      ctx.push_state(state::target);
       ctx.push_state(state::term_arg);
 
     case store_op:
@@ -1520,6 +1528,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case tohexstring_op:
     case tointeger_op:
     case acquire_op:
+    case load_op:
     case store_op:
     case copyobject_op:
       ctx.push_state(state::term_list);
@@ -1533,6 +1542,10 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_state(state::return_op);
       ctx.push_state(state::term_arg);
 
+    case noop_op:
+      is.drop_front!(1);
+      ctx.push_state(state::term_list);
+
     else:
       return invalid_opcode;
   }
@@ -1540,22 +1553,22 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
   return ok;
 }
 
-fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value *value) -> result
+fn define(context mut &ctx, acpi::node *scope, std::span<u8> name, value *value) -> result
 {
-  if (ctx.frames.len != 0 && node != ctx.frame.scope)
+  if (ctx.scope.type == acpi::node::type::method && scope != ctx.frame.scope)
     return invalid_path;
 
-  ctx.namespace.define(node, name, value);
+  ctx.namespace.define(scope, name, value);
 
   return ok;
 }
 
-fn define(context mut &ctx, acpi::node *node, std::span<u8> name, value &&value) -> result
+fn define(context mut &ctx, acpi::node *scope, std::span<u8> name, value &&value) -> result
 {
-  if (ctx.frames.len != 0 && node != ctx.frame.scope)
+  if (ctx.scope.type == acpi::node::type::method && scope != ctx.frame.scope)
     return invalid_path;
 
-  ctx.namespace.define(node, name, ctx.alloc(&move value));
+  ctx.namespace.define(scope, name, ctx.alloc(&move value));
 
   return ok;
 }
@@ -1608,7 +1621,7 @@ fn define_scope(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   if (!is_root(ctx, name))
@@ -1641,7 +1654,7 @@ fn define_device(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -1666,7 +1679,7 @@ fn define_processor(context mut &ctx, std::span<u8> mut &is) -> result
   var procid = ctx.stack.take_back().byte;
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -1690,7 +1703,7 @@ fn define_powerres(context mut &ctx, std::span<u8> mut &is) -> result
   var system_level = ctx.stack.take_back().byte;
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -1712,7 +1725,7 @@ fn define_thermalzone(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -1848,7 +1861,7 @@ fn define_field(context mut &ctx, std::span<u8> mut &is) -> result
 
   var source = lookup(ctx, name);
 
-  if (!source || !source?!.is_opregion)
+  if (!source || !source.value.is_opregion)
     return name_not_found;
 
   while (!is.empty)
@@ -1905,12 +1918,12 @@ fn define_bankfield(context mut &ctx, std::span<u8> mut &is) -> result
 
   var region = lookup(ctx, region_name);
 
-  if (!region || !region?!.is_opregion)
+  if (!region || !region.value.is_opregion)
     return name_not_found;
 
   var bank = lookup(ctx, bank_name);
 
-  if (!bank || !bank?!.is_field)
+  if (!bank || !bank.value.is_field)
     return name_not_found;
 
   if (var rc = load(&mut ctx, &mut bank_value); !rc)
@@ -1962,12 +1975,12 @@ fn define_indexfield(context mut &ctx, std::span<u8> mut &is) -> result
 
   var data = lookup(ctx, data_name);
 
-  if (!data || !data?!.is_field)
+  if (!data || !data.value.is_field)
     return name_not_found;
 
   var index = lookup(ctx, index_name);
 
-  if (!index || !index?!.is_field)
+  if (!index || !index.value.is_field)
     return name_not_found;
 
   var source = ctx.alloc(value::indexedregion(data?!, index?!));
@@ -2062,7 +2075,7 @@ fn define_mutex(context mut &ctx, std::span<u8> mut &is) -> result
   var flags = ctx.stack.take_back().byte;
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -2087,7 +2100,7 @@ fn define_event(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var name = ctx.stack.take_back();
 
-  if (ctx.frames.len != 0)
+  if (ctx.scope.type == acpi::node::type::method)
     return invalid_target;
 
   switch (resolve(ctx, &mut name))
@@ -2180,13 +2193,13 @@ fn create_field(context mut &ctx, std::span<u8> mut &is) -> result
   var sourcebuff = ctx.stack.take_back();
 
   if (!sourcebuff.is_reference)
-    return bad_value;
+    return invalid_target;
 
   switch (resolve(ctx, &mut name))
   {
     case Some[node]:
 
-      if (var rc = define(&mut ctx, node, name.span, value::field(sourcebuff.ref, 0, offset, length)); !rc)
+      if (var rc = define(&mut ctx, node, name.span, value::field(sourcebuff.reference, 0, offset, length)); !rc)
         return rc;
 
     else:
@@ -2476,11 +2489,23 @@ fn condrefof_op(context mut &ctx, std::span<u8> mut &is) -> result
     case name[name]:
       var obj = lookup(ctx, name);
 
-      ctx.push_value(value::boolean(!!obj));
-
       if (!obj)
-        return ok;
+      {
+        var path = operand::name(name);
 
+        switch (resolve(ctx, &mut path))
+        {
+          case Some[node]:
+            ctx.push_value(value::boolean(!!node.find(path.span)));
+
+          else:
+            return invalid_path;
+        }
+
+        return ok;
+      }
+
+      ctx.push_value(value::boolean(true));
       ctx.push_value(value::reference(obj?!));
 
     else:
@@ -2510,9 +2535,9 @@ fn index_op(context mut &ctx, std::span<u8> mut &is) -> result
     return bad_value;
 
   if (!source.is_reference)
-    return bad_value;
+    return invalid_target;
 
-  switch (source.ref)
+  switch (source.reference)
   {
     case value[value]:
       var indicies = std::vector<usize, N:3>();
@@ -2550,10 +2575,10 @@ fn derefof_op(context mut &ctx, std::span<u8> mut &is) -> result
       if (!obj)
         return name_not_found;
 
-      ctx.push_operand(operand::ref(obj?!));
+      ctx.push_operand(operand::reference(obj?!));
 
     case reference[reference]:
-      ctx.push_operand(operand::ref(reference));
+      ctx.push_operand(operand::reference(reference));
 
     else:
       return invalid_target;
@@ -2838,12 +2863,12 @@ fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
   var source = ctx.stack.take_back();
 
   if (source.is_value && source.value.is_reference)
-    source = operand::ref(source.value.reference);
+    source = operand::reference(source.value.reference);
 
   if (!source.is_reference)
-    return bad_value;
+    return invalid_target;
 
-  switch (source.ref)
+  switch (source.reference)
   {
     case value[value]:
       switch (*value)
@@ -2911,9 +2936,9 @@ fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
   var source = ctx.stack.take_back();
 
   if (!source.is_reference)
-    return bad_value;
+    return invalid_target;
 
-  switch (source.ref)
+  switch (source.reference)
   {
     case value[value]:
       if (!value.is_mutex)
@@ -2934,9 +2959,9 @@ fn release_op(context mut &ctx, std::span<u8> mut &is) -> result
   var source = ctx.stack.take_back();
 
   if (!source.is_reference)
-    return bad_value;
+    return invalid_target;
 
-  switch (source.ref)
+  switch (source.reference)
   {
     case value[value]:
       if (!value.is_mutex)
@@ -2962,7 +2987,18 @@ fn stall_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut period.value))
     return bad_value;
 
-  ctx.namespace.sleep(1_000 * period.value.integer);
+  var now = u64();
+
+  if (var rc = ctx.namespace.timer(&mut now); !rc)
+    return rc;
+
+  var til = now + 1_000 * period.value.integer;
+
+  while (now < til)
+  {
+    if (var rc = ctx.namespace.timer(&mut now); !rc)
+      return rc;
+  }
 
   return ok;
 }
@@ -3010,6 +3046,52 @@ fn fatal_op(context mut &ctx, std::span<u8> mut &is) -> result
 }
 
 #[noinline]
+fn load_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var src = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut src); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_buffer(&mut src.value))
+    return bad_value;
+
+  var table = ctx.namespace.alloc(&move src.value);
+
+  if (table.buffer.size < sizeof<acpi::sdt> || cast<acpi::sdt*>(table.buffer.bytes.data).length == 0)
+    return invalid_signature;
+
+  var checksum = u8(0);
+  for (var ch : table.buffer.bytes)
+    checksum = __add_with_carry(checksum, ch).0;
+
+  if (checksum != 0)
+    return invalid_checksum;
+
+  ctx.push_frame(0, ctx.scope, is);
+  ctx.push_state(state::loaded);
+  ctx.push_state(state::pop_frame);
+  ctx.push_state(state::end_scope);
+  ctx.push_state(state::term_list);
+  ctx.push_scope(ctx.namespace.root);
+
+  is = cast<acpi::sdt*>(table.buffer.bytes.data).payload;
+
+  return ok;
+}
+
+#[noinline]
+fn loaded(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  ctx.push_value(value::boolean(true));
+
+  if (var rc = store(&mut ctx, &mut is); !rc)
+    return rc;
+
+  return ok;
+}
+
+#[noinline]
 fn return_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   if (var rc = load(&mut ctx, &mut ctx.stack.back); !rc)
@@ -3053,7 +3135,7 @@ fn method_invocation(context mut &ctx, std::span<u8> mut &is) -> result
 
     else:
 
-      ctx.push_operand(operand::ref(obj?!));
+      ctx.push_operand(operand::reference(obj?!));
   }
 
   return ok;
@@ -3602,6 +3684,16 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
       case fatal_op:
 
         if (var rc = fatal_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case load_op:
+
+        if (var rc = load_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case loaded:
+
+        if (var rc = loaded(&mut ctx, &mut is); !rc)
           return rc;
 
       case return_op:

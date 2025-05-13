@@ -82,14 +82,14 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return ok;
 }
 
-pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
   var count = 0;
   var result = chr::result::ok;
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 
@@ -108,14 +108,14 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   return cast(count);
 }
 
-pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
   var count = 0;
   var result = chr::result::ok;
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     if (!result)
       return;
 
@@ -134,22 +134,22 @@ pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length)
   return cast(count);
 }
 
-pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result
+pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
 {
   var mut &this = cast<ptm mut &>(*node);
 
   switch (op)
   {
     case tio::getptn:
-      return chr::ioctl(this.ptty, op, buffer);
+      return chr::ioctl(this.ptty, op, iovec);
 
     case tio::grantpt:
-      if (buffer.length != sizeof<grantpt>)
+      if (iovec.length != sizeof<grantpt>)
         return invalid_argument;
 
       var grantpt = grantpt();
 
-      if (var result = vm::memcpy(&grantpt, buffer, 0, sizeof<grantpt>); !result)
+      if (var result = vm::memcpy(&grantpt, iovec, 0, sizeof<grantpt>); !result)
         return cast(result);
 
       var devname = std::format("/dev/pts/{}", this.ptty.getptn());
@@ -160,12 +160,12 @@ pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result
       return ok;
 
     case tio::setwinsize:
-      if (buffer.length != sizeof<winsize>)
+      if (iovec.length != sizeof<winsize>)
         return invalid_argument;
 
       var winsize = winsize();
 
-      if (var result = vm::memcpy(&winsize, buffer, 0, sizeof<winsize>); !result)
+      if (var result = vm::memcpy(&winsize, iovec, 0, sizeof<winsize>); !result)
         return cast(result);
 
       this.ptty.setwinsize(winsize.ws_row, winsize.ws_col, winsize.ws_xpixel, winsize.ws_ypixel);

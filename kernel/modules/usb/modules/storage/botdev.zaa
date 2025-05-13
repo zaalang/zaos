@@ -9,18 +9,23 @@ import blk;
 import usb;
 import io;
 import vm;
-import cpu;
-import vfs;
+import usb.modules.storage.bot as bot;
 import support.rc : Rc;
 
 pub struct botdev : pub blk::blkdev
 {
-  pub botdev(usb::usbdev mut *device)
+  pub botdev(bot::bot_unit mut *unit, u32 block_size, u64 block_count)
     : super(&impl this),
-      device(device)
+      unit(unit)
   {
-    this.block_size = 512;
+    this.block_size = cast(block_size);
+    this.block_count = cast(block_count);
     this.block_shift = std::ctz(this.block_size);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return this.unit.name;
   }
 
   pub fn query(this &, blk::query query, std::string mut &result) override -> blk::result
@@ -28,7 +33,7 @@ pub struct botdev : pub blk::blkdev
     switch (query)
     {
       case device_path:
-        result = std::format("disk/{}/{}", this.device.query(usb::query::device_name), this.lun);
+        result = std::format("disk/{}", this.name);
 
       case device_part:
         result = "0";
@@ -40,43 +45,28 @@ pub struct botdev : pub blk::blkdev
     return ok;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) override -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> blk::result
   {
     return not_supported;
   }
 
   pub fn enqueue(this mut &, blk::request mut *request) override -> blk::result
   {
-//    if (var result = this.port.enqueue(request); !result)
-//      return cast<blk::result>(result);
+    if (var result = this.unit.enqueue(request); !result)
+      return cast<blk::result>(result);
 
     return ok;
   }
 
   pub fn cancel(this mut &, blk::request mut *request) override -> blk::result
   {
-//    if (var result = this.port.cancel(request); !result)
-//      return cast<blk::result>(result);
+    if (var result = this.unit.cancel(request); !result)
+      return cast<blk::result>(result);
 
     return ok;
   }
 
   pub ~botdev() = default;
 
-  u8 lun;
-  u8 ep_bulk_in;
-  u8 ep_bulk_out;
-
-  Rc<usb::usbdev> device;
-}
-
-pub fn initialise(botdev mut *botdev, u8 lun, u8 bulk_in, u8 bulk_out) -> usb::result
-{
-  std::print("usb-storage device on ", botdev.device.query(usb::query::device_name), "/", lun);
-
-  botdev.lun = lun;
-  botdev.ep_bulk_in = bulk_in;
-  botdev.ep_bulk_out = bulk_out;
-
-  return ok;
+  Rc<bot::bot_unit> unit;
 }

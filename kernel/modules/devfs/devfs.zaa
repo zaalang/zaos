@@ -387,7 +387,7 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::r
 
     case volume:
     case device:
-      var &node = cast<device&>(*node);
+      var &node = cast<device &>(*node);
 
       switch (dev::get(node.id))
       {
@@ -425,11 +425,11 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
       stat.size = 0;
 
     case symlink:
-      stat.size = cast(cast<symlink mut &>(this).target.len);
+      stat.size = cast(cast<symlink mut &>(*node).target.len);
 
     case volume:
     case device:
-      var &node = cast<device&>(*node);
+      var &node = cast<device &>(*node);
 
       switch (dev::get(node.id))
       {
@@ -452,7 +452,7 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
   return ok;
 }
 
-pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<directory mut &>(*node);
@@ -463,7 +463,7 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
 
   if (cursor == 0)
   {
-    fn emit[buffer, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
+    fn emit[iovec, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
     {
       var head = [u8(); sizeof<vfs::dirent>];
 
@@ -472,10 +472,10 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
       dirent.type = file_type;
       dirent.name_len = cast(name.len);
 
-      if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
+      if (var result = vm::memcpy(iovec, offset, head.data, head.len); !result)
         return result;
 
-      if (var result = vm::memcpy(buffer, offset + head.len, name.data, name.len); !result)
+      if (var result = vm::memcpy(iovec, offset + head.len, name.data, name.len); !result)
         return result;
 
       count += cast(dirent.rec_len);
@@ -531,7 +531,7 @@ pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result
   return ok;
 }
 
-pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<device mut &>(*node);
 
@@ -542,12 +542,12 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
 
   io::initiate(&mut cb, 1);
 
-  blk::read(device.blkdev, &mut cb, position, buffer, offset, length);
+  blk::read(device.blkdev, &mut cb, position, iovec, offset, length);
 
   return ok;
 }
 
-pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<device mut &>(*node);
 
@@ -558,7 +558,7 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
 
   io::initiate(&mut cb, 1);
 
-  blk::write(device.blkdev, &mut cb, position, buffer, offset, length);
+  blk::write(device.blkdev, &mut cb, position, iovec, offset, length);
 
   return ok;
 }
@@ -579,14 +579,14 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
   return not_supported;
 }
 
-pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<device mut &>(*node);
 
   switch (dev::get(this.id))
   {
     case chrdev[device]:
-      return chr::read(device, buffer, offset, length);
+      return chr::read(device, iovec, offset, length);
 
     else:
       return no_such_device;
@@ -595,14 +595,14 @@ pub fn read(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) 
   return not_supported;
 }
 
-pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &this = cast<device mut &>(*node);
 
   switch (dev::get(this.id))
   {
     case chrdev[device]:
-      return chr::write(device, buffer, offset, length);
+      return chr::write(device, iovec, offset, length);
 
     else:
       return no_such_device;
@@ -611,17 +611,17 @@ pub fn write(vfs::node mut *node, vm::iovec &buffer, usize offset, usize length)
   return not_supported;
 }
 
-pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &buffer) -> vfs::result
+pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
 {
   var mut &this = cast<device mut &>(*node);
 
   switch (dev::get(this.id))
   {
     case blkdev[device]:
-      return blk::ioctl(device, op, buffer);
+      return blk::ioctl(device, op, iovec);
 
     case chrdev[device]:
-      return chr::ioctl(device, op, buffer);
+      return chr::ioctl(device, op, iovec);
 
     else:
       return no_such_device;
@@ -657,7 +657,7 @@ pub fn unlink(vfs::node mut *path, std::string_view name) -> vfs::result
   switch (var &node = this.contents[j].value; node.type)
   {
     case directory:
-      var &node = cast<directory&>(*node);
+      var &node = cast<directory &>(*node);
 
       if (!node.contents.empty)
         return directory_not_empty;

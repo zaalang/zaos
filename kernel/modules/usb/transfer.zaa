@@ -4,6 +4,7 @@
 
 import std.atomic;
 import std.vector;
+import std.function;
 import vm;
 import io;
 import usb.result;
@@ -33,7 +34,9 @@ pub struct transfer
 
   pub Rc<io::iocb> cb;
 
-  u8[48] reserved;
+  pub std::delegate<(usb::result) -> void> callback;
+
+  u8[16] reserved;
 
   fn allocator()
   {
@@ -42,7 +45,7 @@ pub struct transfer
     return &allocator;
   }
 
-  pub fn create() -> transfer mut *
+  pub fn create() -> Rc<transfer>
   {
     return allocator.allocate();
   }
@@ -66,6 +69,9 @@ pub struct transfer
 
 fn destroy(transfer mut *tx) -> void
 {
+  std::assert(!tx.cb);
+  std::assert(!tx.callback);
+
   tx.host.clear();
 
   transfer::allocator.free(tx);

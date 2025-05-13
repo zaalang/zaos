@@ -250,7 +250,7 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
   return ok;
 }
 
-pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize offset, usize length) -> vfs::result
+pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
   var mut &fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<directory mut &>(*node);
@@ -261,7 +261,7 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
 
   if (cursor == 0)
   {
-    fn emit[buffer, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
+    fn emit[iovec, offset, count](vfs::filetype file_type, std::string_view name) -> vm::result
     {
       var head = [u8(); sizeof<vfs::dirent>];
 
@@ -270,10 +270,10 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &buffer, usize of
       dirent.type = file_type;
       dirent.name_len = cast(name.len);
 
-      if (var result = vm::memcpy(buffer, offset, head.data, head.len); !result)
+      if (var result = vm::memcpy(iovec, offset, head.data, head.len); !result)
         return result;
 
-      if (var result = vm::memcpy(buffer, offset + head.len, name.data, name.len); !result)
+      if (var result = vm::memcpy(iovec, offset + head.len, name.data, name.len); !result)
         return result;
 
       count += cast(dirent.rec_len);

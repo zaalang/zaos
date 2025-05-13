@@ -40,9 +40,9 @@ pub struct blkdev
     return result;
   }
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) -> blk::result
   {
-    return this.ops.ioctl(&mut this, op, buffer);
+    return this.ops.ioctl(&mut this, op, iovec);
   }
 
   pub fn enqueue(this mut &, blk::request mut *request) -> blk::result
@@ -82,7 +82,7 @@ pub vtable device_operations
 {
   pub fn query(this &, blk::query query, std::string mut &result) -> blk::result;
 
-  pub fn ioctl(this mut &, u32 op, vm::iovec &buffer) -> blk::result;
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) -> blk::result;
 
   pub fn enqueue(this mut &, blk::request mut *request) -> blk::result;
   pub fn cancel(this mut &, blk::request mut *request) -> blk::result;

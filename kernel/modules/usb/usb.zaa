@@ -7,9 +7,10 @@ import usb.usbdev;
 import usb.transfer;
 import vm;
 import io;
+import cpu;
 import support.rc : Rc;
 
-pub enum speed
+pub enum speed : u8
 {
   low_speed = 0,
   full_speed,
@@ -104,14 +105,14 @@ pub struct device_descriptor : pub descriptor
   pub u8 manufacturer;
   pub u8 product;
   pub u8 serial_number;
-  pub u8 number_configurations;
+  pub u8 configuration_count;
 }
 
 #[packed]
 pub struct configuration_descriptor : pub descriptor
 {
   pub u16 total_length;
-  pub u8 number_interfaces;
+  pub u8 interface_count;
   pub u8 configuration_value;
   pub u8 configuration;
   pub u8 attributes;
@@ -134,7 +135,7 @@ pub struct interface_descriptor : pub descriptor
 {
   pub u8 interface_number;
   pub u8 alternate_setting;
-  pub u8 number_endpoints;
+  pub u8 endpoint_count;
   pub u8 interface_class;
   pub u8 interface_subclass;
   pub u8 interface_protocol;
@@ -193,36 +194,36 @@ pub struct endpoint_descriptor : pub descriptor
 }
 
 #[packed]
-pub struct hub_descriptor
+pub struct hub_descriptor : pub descriptor
 {
-  pub u8 number_ports;
+  pub u8 port_count;
   pub u16 characteristics;
   pub u8 power_on_to_power_good;
   pub u8 max_power;
 }
 
 #[packed]
-pub struct endpoint_ss_companion_descriptor
+pub struct endpoint_ss_companion_descriptor : pub descriptor
 {
   pub u8 max_burst;
   pub u8 attributes;
   pub u16 bytes_per_interval;
 }
 
-pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, u8 request, u16 value, u16 index, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, usb::request::direction direction, usb::request::type type, usb::request::recipient recipient, u8 request, u16 value, u16 index, vm::iovec &iovec, usize offset, usize length, std::delegate<(usb::result) -> void> callback = std::delegate<(usb::result) -> void>()) -> void
 {
   var tx = transfer::create();
   tx.type = transfer::type::control;
   tx.address = cast<u8>(direction) | cast<u8>(type) | cast<u8>(recipient);
-  tx.stream = 0;
   tx.request = request;
   tx.value = value;
   tx.index = index;
   tx.length = length;
+  tx.callback = &move callback;
   tx.cb = cb;
   tx.ref();
 
-  buffer.foreach_region_in(offset, length, |region| {
+  iovec.foreach_region_in(offset, length, |region| {
     tx.host.push_back(region);
   });
 
@@ -241,7 +242,25 @@ pub fn submit(usbdev mut *device, usb::request::direction direction, usb::reques
 
   io::initiate(&mut response.cb, 1);
 
-  submit(device, &mut response.cb, direction, type, recipient, request, value, index, iovec, 0, length);
+  var tx = transfer::create();
+  tx.type = transfer::type::control;
+  tx.address = cast<u8>(direction) | cast<u8>(type) | cast<u8>(recipient);
+  tx.request = request;
+  tx.value = value;
+  tx.index = index;
+  tx.length = length;
+  tx.cb = response.cb;
+  tx.ref();
+
+  iovec.foreach_region_in(0, length, |region| {
+    tx.host.push_back(region);
+  });
+
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
+
+  if (response.wait_until(cpu::system_time + 50_000_000); !response.ready)
+    device.cancel(tx);
 
   if (response.wait(); !response)
     return cast(response.result);
@@ -249,17 +268,34 @@ pub fn submit(usbdev mut *device, usb::request::direction direction, usb::reques
   return cast(response.result);
 }
 
-pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, usize stream, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, endpoint::type type, u8 address, usize stream, std::vector<vm::physrange, N:8> &host, usize length, std::delegate<(usb::result) -> void> callback = std::delegate<(usb::result) -> void>()) -> void
 {
   var tx = transfer::create();
   tx.type = cast(type);
   tx.address = address;
   tx.stream = stream;
   tx.length = length;
+  tx.callback = &move callback;
+  tx.host = host;
   tx.cb = cb;
   tx.ref();
 
-  buffer.foreach_region_in(offset, length, |region| {
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
+}
+
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, endpoint::type type, u8 address, usize stream, vm::iovec &iovec, usize offset, usize length, std::delegate<(usb::result) -> void> callback = std::delegate<(usb::result) -> void>()) -> void
+{
+  var tx = transfer::create();
+  tx.type = cast(type);
+  tx.address = address;
+  tx.stream = stream;
+  tx.length = length;
+  tx.callback = &move callback;
+  tx.cb = cb;
+  tx.ref();
+
+  iovec.foreach_region_in(offset, length, |region| {
     tx.host.push_back(region);
   });
 
@@ -267,12 +303,25 @@ pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::ty
     complete(tx, result);
 }
 
-pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, u8 address, endpoint::type type, vm::iovec &buffer, usize offset, usize length) -> void
+pub fn submit(usbdev mut *device, Rc<io::iocb> mut &cb, endpoint::type type, u8 address, vm::iovec &iovec, usize offset, usize length, std::delegate<(usb::result) -> void> callback = std::delegate<(usb::result) -> void>()) -> void
 {
-  submit(device, &mut cb, address, type, 0, buffer, offset, length);
+  var tx = transfer::create();
+  tx.type = cast(type);
+  tx.address = address;
+  tx.length = length;
+  tx.callback = &move callback;
+  tx.cb = cb;
+  tx.ref();
+
+  iovec.foreach_region_in(offset, length, |region| {
+    tx.host.push_back(region);
+  });
+
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
 }
 
-pub fn submit(usbdev mut *device, u8 address, endpoint::type type, void mut *buffer, usize length) -> usb::result
+pub fn submit(usbdev mut *device, endpoint::type type, u8 address, void mut *buffer, usize length) -> usb::result
 {
   var iovec = vm::iovec();
 
@@ -283,7 +332,22 @@ pub fn submit(usbdev mut *device, u8 address, endpoint::type type, void mut *buf
 
   io::initiate(&mut response.cb, 1);
 
-  submit(device, &mut response.cb, address, type, 0, iovec, 0, length);
+  var tx = transfer::create();
+  tx.type = cast(type);
+  tx.address = address;
+  tx.length = length;
+  tx.cb = response.cb;
+  tx.ref();
+
+  iovec.foreach_region_in(0, length, |region| {
+    tx.host.push_back(region);
+  });
+
+  if (var result = device.submit(tx); !result)
+    complete(tx, result);
+
+  if (response.wait_until(cpu::system_time + 50_000_000); !response.ready)
+    device.cancel(tx);
 
   if (response.wait(); !response)
     return cast(response.result);
@@ -295,7 +359,12 @@ pub fn complete(transfer mut *tx, result result) -> void
 {
   io::complete(&mut tx.cb, result);
 
+  if (tx.callback)
+    tx.callback(result);
+
   tx.cb = null;
+  tx.callback = null;
+  tx.stream = 0;
 
   tx.unref();
 }

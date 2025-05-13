@@ -153,7 +153,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) override -> vfs::result
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
@@ -215,7 +215,7 @@ pub struct proc_auxv_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) override -> vfs::result
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
@@ -286,7 +286,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) override -> vfs::result
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
@@ -357,7 +357,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) override -> vfs::result
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
@@ -485,7 +485,7 @@ pub struct proc_list_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn write(vfs::node mut *node, u64 position, vm::iovec &buffer, usize offset, usize length) override -> vfs::result
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }

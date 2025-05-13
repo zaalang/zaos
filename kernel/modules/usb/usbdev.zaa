@@ -46,6 +46,11 @@ pub struct usbdev
     return this.ops.allocate_streams(&mut this, descriptors);
   }
 
+  pub fn connect(this mut &, u8 port, usb::speed speed, Rc<usb::usbdev> mut &device) -> usb::result
+  {
+    return this.ops.connect(&mut this, port, speed, &mut device);
+  }
+
   pub fn submit(this mut &, usb::transfer mut *transfer) -> usb::result
   {
     return this.ops.submit(&mut this, transfer);
@@ -54,6 +59,11 @@ pub struct usbdev
   pub fn cancel(this mut &, usb::transfer mut *transfer) -> usb::result
   {
     return this.ops.cancel(&mut this, transfer);
+  }
+
+  pub fn release(this mut &) -> usb::result
+  {
+    return this.ops.release(&mut this);
   }
 
   pub std::delegate<() -> usb::result> unplugged;
@@ -88,8 +98,12 @@ pub vtable device_operations
   pub fn configure(this mut &, std::span<u8> descriptors) -> usb::result;
   pub fn allocate_streams(this mut &, std::span<usb::endpoint_descriptor*> descriptors) -> usb::result;
 
+  pub fn connect(this mut &, u8 port, usb::speed speed, Rc<usb::usbdev> mut &device) -> usb::result;
+
   pub fn submit(this mut &, usb::transfer mut *transfer) -> usb::result;
   pub fn cancel(this mut &, usb::transfer mut *transfer) -> usb::result;
+
+  pub fn release(this mut &) -> usb::result;
 }
 
 fn destroy(usbdev mut *device) -> void

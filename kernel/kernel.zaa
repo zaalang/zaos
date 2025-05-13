@@ -29,6 +29,8 @@ fn bootstrap_filesystem() -> void
 {
   import ext2fs;
 
+scheduler::sleep_until(cpu::system_time + 2_000_000_000);
+
   var rootdev = Rc<blk::blkdev>();
   var rootuuid = sys::cmdline("root");
 
