@@ -87,29 +87,17 @@ extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u64 rights, u32 fdfl
 
   var flags = 0;
 
-//  if (oflags & fd::oflags::create)
-//    flags |= O_CREAT;
-//
-//  if (oflags & fd::oflags::exclusive)
-//    flags |= O_EXCL;
-//
-//  if (oflags & fd::oflags::trunc)
-//    flags |= O_TRUNC;
-//
-//  if (fdflags & fd::fdflags::append)
-//    flags |= O_APPEND;
-//
-//  if (fdflags & fd::fdflags::dsync)
-//    flags |= O_DSYNC;
-//
-//  if (fdflags & fd::fdflags::nonblock)
-//    flags |= O_NONBLOCK;
-//
-//  if (fdflags & fd::fdflags::rsync)
-//    flags |= O_SYNC;
-//
-//  if (fdflags & fd::fdflags::sync)
-//    flags |= O_SYNC;
+  if (oflags & fd::oflags::create == fd::oflags::create)
+    flags |= O_CREAT;
+
+  if (oflags & fd::oflags::exclusive == fd::oflags::exclusive)
+    flags |= O_EXCL;
+
+  if (oflags & fd::oflags::trunc == fd::oflags::trunc)
+    flags |= O_TRUNC;
+
+  if (fdflags & fd::fdflags::append == fd::fdflags::append)
+    flags |= O_APPEND;
 
   if (rights & (fd::rights::read | fd::rights::write) == fd::rights::read)
     flags |= O_RDONLY;

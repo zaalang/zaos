@@ -9,6 +9,7 @@ import io;
 import vm;
 import vfs;
 import pty.ptty;
+import process as _ : process;
 import support.rc : Rc;
 
 enum tio
@@ -57,7 +58,7 @@ pub struct ptm : pub vfs::node
   pub ~ptm() = default;
 }
 
-pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
 }

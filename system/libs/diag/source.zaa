@@ -20,7 +20,7 @@ pub struct source_view
   {
   }
 
-  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string
   {
     return read_span(this.text, label, before, after, &mut lineno, &mut position);
   }
@@ -38,7 +38,7 @@ pub struct source_file
   {
   }
 
-  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+  pub fn read_span(this &, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string
   {
     return read_span(std::readfile(this.path).view, label, before, after, &mut lineno, &mut position);
   }
@@ -47,7 +47,7 @@ pub struct source_file
   pub ~source_file() = default;
 }
 
-pub fn read_span(std::string_view text, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+pub fn read_span(std::string_view text, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string
 {
   var pos = 0;
   var line_starts = std::circular_buffer<usize, N:8>::with_capacity(before);

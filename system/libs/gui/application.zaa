@@ -19,7 +19,7 @@ pub struct application
     return &instance;
   }
 
-  pub fn create() throws -> application
+  pub fn create() throws(std::error) -> application
   {
     var app = application();
 

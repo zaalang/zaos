@@ -57,7 +57,7 @@ struct fs
   ~fs() = default;
 }
 
-fn mkfs(std::fd &fd, gpt::entry *partition) throws -> void
+fn mkfs(std::fd &fd, gpt::entry *partition) throws(std::error) -> void
 {
   var mm = mmap::mutable_file::map(fd);
 
@@ -193,7 +193,7 @@ fn mkfs(std::fd &fd, gpt::entry *partition) throws -> void
   }
 }
 
-fn label(fs mut &fs, std::string_view name, std::string_view fsid) throws -> void
+fn label(fs mut &fs, std::string_view name, std::string_view fsid) throws(std::error) -> void
 {
   switch (fs.image)
   {
@@ -236,7 +236,7 @@ struct filestat
   ~filestat() = default;
 }
 
-fn stat(fs mut &fs, std::string &path) throws -> filestat
+fn stat(fs mut &fs, std::string &path) throws(std::error) -> filestat
 {
   var result = filestat();
 
@@ -278,7 +278,7 @@ fn stat(fs mut &fs, std::string &path) throws -> filestat
   return result;
 }
 
-fn mkdir(fs mut &fs, std::string &dest) throws -> void
+fn mkdir(fs mut &fs, std::string &dest) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
   var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
@@ -311,7 +311,7 @@ fn mkdir(fs mut &fs, std::string &dest) throws -> void
   }
 }
 
-fn copy(fs mut &fs, std::file mut &src, std::string &dest) throws -> void
+fn copy(fs mut &fs, std::file mut &src, std::string &dest) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
   var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
@@ -391,7 +391,7 @@ fn copy(fs mut &fs, std::file mut &src, std::string &dest) throws -> void
   }
 }
 
-fn chown(fs mut &fs, std::string &dest, u32 owner) throws -> void
+fn chown(fs mut &fs, std::string &dest, u32 owner) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
   var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
@@ -418,7 +418,7 @@ fn chown(fs mut &fs, std::string &dest, u32 owner) throws -> void
   }
 }
 
-fn chgrp(fs mut &fs, std::string &dest, u32 group) throws -> void
+fn chgrp(fs mut &fs, std::string &dest, u32 group) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
   var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
@@ -445,7 +445,7 @@ fn chgrp(fs mut &fs, std::string &dest, u32 group) throws -> void
   }
 }
 
-fn chmod(fs mut &fs, std::string &dest, u16 mode) throws -> void
+fn chmod(fs mut &fs, std::string &dest, u16 mode) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
   var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
@@ -490,7 +490,7 @@ fn parse_size(std::string_view str) -> u64
   return size;
 }
 
-fn md(yaml::node &cfg, fs mut &fs) throws -> void
+fn md(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
 {
   try
   {
@@ -549,7 +549,7 @@ fn md(yaml::node &cfg, fs mut &fs) throws -> void
   }
 }
 
-fn cp(yaml::node &cfg, fs mut &fs) throws -> void
+fn cp(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
 {
   try
   {
@@ -614,7 +614,7 @@ fn cp(yaml::node &cfg, fs mut &fs) throws -> void
   }
 }
 
-fn actions(yaml::node &cfg, fs mut &fs) throws -> void
+fn actions(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
 {
   for (var &entry : cfg.as_vec)
   {
@@ -632,7 +632,7 @@ fn actions(yaml::node &cfg, fs mut &fs) throws -> void
   }
 }
 
-fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
+fn partition(usize index, yaml::node &cfg, std::fd &fd) throws(std::error) -> void
 {
   var name = std::string_view("");
   var type = std::string_view("");
@@ -777,7 +777,7 @@ fn partition(usize index, yaml::node &cfg, std::fd &fd) throws -> void
   }
 }
 
-fn partitions(std::string_view name, gpt::guid &uuid, yaml::node &cfg, std::string_view dst) throws -> void
+fn partitions(std::string_view name, gpt::guid &uuid, yaml::node &cfg, std::string_view dst) throws(std::error) -> void
 {
   var fd = std::fd::open(dst, std::fd::oflags::create, std::fd::rights::read | std::fd::rights::write);
 
@@ -816,7 +816,7 @@ fn partitions(std::string_view name, gpt::guid &uuid, yaml::node &cfg, std::stri
   }
 }
 
-fn image(yaml::node &cfg, std::string_view dst) throws -> void
+fn image(yaml::node &cfg, std::string_view dst) throws(std::error) -> void
 {
   var name = std::string_view("image");
   var uuid = gpt::guid();
@@ -861,7 +861,7 @@ fn image(yaml::node &cfg, std::string_view dst) throws -> void
   }
 }
 
-fn build(yaml::node &cfg, std::string_view dst) throws -> void
+fn build(yaml::node &cfg, std::string_view dst) throws(std::error) -> void
 {
   if (!cfg.is_map)
     std::panic("expected image document");

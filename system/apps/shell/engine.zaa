@@ -205,7 +205,7 @@ pub fn source_location(Engine &engine, std::string_view span) -> usize
   std::panic("invalid source location");
 }
 
-pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws -> std::string
+pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string
 {
   var offset = 0;
 
@@ -250,7 +250,7 @@ pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after
 }
 
 #[noreturn]
-pub fn raise(Context mut &ctx, diag::diagnostic &&error) throws -> void
+pub fn raise(Context mut &ctx, diag::diagnostic &&error) throws(std::error) -> void
 {
   var result = std::error(void);
 
@@ -262,7 +262,7 @@ pub fn raise(Context mut &ctx, diag::diagnostic &&error) throws -> void
   throw result;
 }
 
-fn neg(Context mut &ctx, UnaryOp &expr) throws -> Value
+fn neg(Context mut &ctx, UnaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.subexpr);
 
@@ -304,7 +304,7 @@ fn neg(Context mut &ctx, UnaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
 }
 
-fn not(Context mut &ctx, UnaryOp &expr) throws -> Value
+fn not(Context mut &ctx, UnaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.subexpr);
 
@@ -316,7 +316,7 @@ fn not(Context mut &ctx, UnaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.span, std::meta::enumerator_name(lhs.kind)));
 }
 
-fn add(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn add(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -364,7 +364,7 @@ fn add(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn sub(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn sub(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -407,7 +407,7 @@ fn sub(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn div(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn div(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -455,7 +455,7 @@ fn div(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn idiv(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn idiv(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -512,7 +512,7 @@ fn idiv(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn mul(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn mul(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -540,7 +540,7 @@ fn mul(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn rem(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn rem(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -580,7 +580,7 @@ fn rem(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn pow(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn pow(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -601,7 +601,7 @@ fn pow(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn and(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn and(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
 
@@ -618,7 +618,7 @@ fn and(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn or(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn or(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
 
@@ -635,7 +635,7 @@ fn or(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn lt(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn lt(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -653,7 +653,7 @@ fn lt(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn gt(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn gt(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -671,7 +671,7 @@ fn gt(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn le(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn le(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -689,7 +689,7 @@ fn le(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn ge(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn ge(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -707,7 +707,7 @@ fn ge(Context mut &ctx, BinaryOp &expr) throws -> Value
   ctx.raise(EvalError::OperatorMismatch(ctx.engine, expr.lhs.span, std::meta::enumerator_name(lhs.kind), expr.rhs.span, std::meta::enumerator_name(rhs.kind)));
 }
 
-fn eq(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn eq(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -720,7 +720,7 @@ fn eq(Context mut &ctx, BinaryOp &expr) throws -> Value
   return Value::Boolean(lhs == rhs);
 }
 
-fn ne(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn ne(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   var lhs = evaluate(&mut ctx, *expr.lhs);
   var rhs = evaluate(&mut ctx, *expr.rhs);
@@ -733,7 +733,7 @@ fn ne(Context mut &ctx, BinaryOp &expr) throws -> Value
   return Value::Boolean(lhs != rhs);
 }
 
-fn rescue(Context mut &ctx, BinaryOp &expr) throws -> Value
+fn rescue(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
 {
   try
   {
@@ -745,7 +745,7 @@ fn rescue(Context mut &ctx, BinaryOp &expr) throws -> Value
   }
 }
 
-fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws -> void
+fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws(std::error) -> void
 {
   var args = std::vector<Arg>();
 
@@ -777,7 +777,7 @@ fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws -> void
   }
 }
 
-fn pipe(Context mut &ctx, Expression &expr, bool capture) throws -> Value
+fn pipe(Context mut &ctx, Expression &expr, bool capture) throws(std::error) -> Value
 {
   var value = Value();
   var pipeline = Pipeline();
@@ -867,7 +867,7 @@ fn pipe(Context mut &ctx, Expression &expr, bool capture) throws -> Value
   }
 }
 
-fn evaluate(Context mut &ctx, Expression &expr) throws -> Value
+fn evaluate(Context mut &ctx, Expression &expr) throws(std::error) -> Value
 {
   switch (expr)
   {

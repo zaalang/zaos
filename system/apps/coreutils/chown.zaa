@@ -1,0 +1,93 @@
+//
+// chown
+//
+
+import std.stdio;
+import std.env;
+import std.scan;
+import sys.fs;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, required, help="owner")]
+  std::string_view owner;
+
+  #[arg(free, required, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn parse(std::optional<u32> mut &uid, std::optional<u32> mut &gid, std::string_view owner) -> bool
+{
+  var [owner, group] = owner.cut(':');
+
+  if (std::sscan(owner, &mut uid).error)
+    return false;
+
+  if (group != "" && std::sscan(group, &mut gid).error)
+    return false;
+
+  return true;
+}
+
+fn chown(std::string &file, std::optional<u32> uid, std::optional<u32> gid, opts &opts) throws(std::error) -> i32
+{
+  sys::chown(file, uid, gid);
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.paths.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var uid = std::optional<u32>();
+  var gid = std::optional<u32>();
+
+  if (!parse(&mut uid, &mut gid, opts.owner))
+  {
+    std::fprint(std::stderr, "chown: invalid owner:group");
+
+    return 0;
+  }
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      var cnt = 0;
+
+      for (var &file : glob::glob(path).files)
+      {
+        chown(file, uid, gid, opts);
+
+        cnt += 1;
+      }
+
+      if (cnt == 0)
+      {
+        std::fprint(std::stderr, "chown: ", path, ": no such file or directory");
+      }
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "chown: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

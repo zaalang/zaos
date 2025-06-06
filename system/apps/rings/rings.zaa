@@ -38,7 +38,7 @@ struct application
   zidl::channel endpoint;
   app::loop::wait_t handler;
 
-  fn connect(this mut &) throws -> void
+  fn connect(this mut &) throws(std::error) -> void
   {
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
     this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
@@ -52,7 +52,7 @@ struct application
     zidl::send<zidl::zaos_winton::compositor::create_window_request>(this.endpoint, id);
   }
 
-  fn create_buffer(this mut &, u32 id, i32 width, i32 height, zidl::zaos_winton::format format) throws -> buffer
+  fn create_buffer(this mut &, u32 id, i32 width, i32 height, zidl::zaos_winton::format format) throws(std::error) -> buffer
   {
     var [client_end, server_end] = zidl::buffer::create(cast<usize>(width * height * 4));
 

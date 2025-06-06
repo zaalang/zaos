@@ -340,7 +340,7 @@ fn max_response_size(context mut &ctx, std::vector<zidl::decl> &methods) -> usiz
   return size;
 }
 
-fn codegen_fields(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_fields(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
 {
   for (var &variable : variables)
   {
@@ -359,7 +359,7 @@ fn codegen_fields(context mut &ctx, std::vector<zidl::decl> &variables) throws -
   std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "      pub this(");
 
@@ -447,7 +447,7 @@ fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) thr
   std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_encode(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_encode(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
   std::fprintf(&mut ctx.fout, "      {{\n");
@@ -478,7 +478,7 @@ fn codegen_encode(context mut &ctx, std::vector<zidl::decl> &variables) throws -
   std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_decode(context mut &ctx, std::vector<zidl::decl> &variables) throws -> void
+fn codegen_decode(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
   std::fprintf(&mut ctx.fout, "      {{\n");
@@ -509,7 +509,7 @@ fn codegen_decode(context mut &ctx, std::vector<zidl::decl> &variables) throws -
   std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_method(context mut &ctx, zidl::method &method) throws -> void
+fn codegen_method(context mut &ctx, zidl::method &method) throws(std::error) -> void
 {
   if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
   {
@@ -548,7 +548,7 @@ fn codegen_method(context mut &ctx, zidl::method &method) throws -> void
   }
 }
 
-fn codegen_dispatch(context mut &ctx, zidl::protocol &protocol) throws -> void
+fn codegen_dispatch(context mut &ctx, zidl::protocol &protocol) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "    pub union dispatch_t\n");
   std::fprintf(&mut ctx.fout, "    {{\n");
@@ -576,7 +576,7 @@ fn codegen_dispatch(context mut &ctx, zidl::protocol &protocol) throws -> void
   std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_messages(context mut &ctx, zidl::protocol &protocol) throws -> void
+fn codegen_messages(context mut &ctx, zidl::protocol &protocol) throws(std::error) -> void
 {
   for (var &method : protocol.methods)
   {
@@ -593,7 +593,7 @@ fn codegen_messages(context mut &ctx, zidl::protocol &protocol) throws -> void
   std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_protocol(context mut &ctx, zidl::protocol &protocol) throws -> void
+fn codegen_protocol(context mut &ctx, zidl::protocol &protocol) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "  pub struct {}\n", protocol.name);
   std::fprintf(&mut ctx.fout, "  {{\n");
@@ -608,12 +608,12 @@ fn codegen_protocol(context mut &ctx, zidl::protocol &protocol) throws -> void
   std::fprintf(&mut ctx.fout, "\n");
 }
 
-fn codegen_constant(context mut &ctx, zidl::constant &constant) throws -> void
+fn codegen_constant(context mut &ctx, zidl::constant &constant) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "  pub const {} = {};\n\n", constant.name, constant.value);
 }
 
-fn codegen_bits(context mut &ctx, zidl::bits &bits) throws -> void
+fn codegen_bits(context mut &ctx, zidl::bits &bits) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "  pub enum {} : u32\n", bits.name);
   std::fprintf(&mut ctx.fout, "  {{\n");
@@ -644,7 +644,7 @@ fn codegen_bits(context mut &ctx, zidl::bits &bits) throws -> void
   ctx.typetable.push_back(type::tag(bits.name, std::vector::from([ctx.i32type])));
 }
 
-fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws -> void
+fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "  pub enum {} : i32\n", enumerator.name);
   std::fprintf(&mut ctx.fout, "  {{\n");
@@ -667,7 +667,7 @@ fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws -> 
   ctx.typetable.push_back(type::tag(enumerator.name, std::vector::from([ctx.i32type])));
 }
 
-fn codegen_structure(context mut &ctx, zidl::structure &structure) throws -> void
+fn codegen_structure(context mut &ctx, zidl::structure &structure) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "  pub struct {}\n", structure.name);
   std::fprintf(&mut ctx.fout, "  {{\n");
@@ -711,7 +711,7 @@ fn codegen_structure(context mut &ctx, zidl::structure &structure) throws -> voi
   ctx.add_type(type::tag(structure.name, fields));
 }
 
-fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throws -> void
+fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throws(std::error) -> void
 {
   var ctx = context();
   ctx.initialise(&diag);

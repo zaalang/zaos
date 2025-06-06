@@ -93,7 +93,7 @@ pub struct stat
   pub dev_t device,
 
   pub stat() = default;
-  pub stat(stat&) = default;
+  pub stat(stat &) = default;
   pub fn =(stat mut &, stat &) -> stat mut & = default;
   pub ~stat() = default;
 }

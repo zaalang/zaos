@@ -147,7 +147,7 @@ pub fn <=>(Value &lhs, Value &rhs) -> int
   return lhs.kind <=> rhs.kind;
 }
 
-fn fmt_duration(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 count) throws -> void
+fn fmt_duration(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 count) throws(std::error) -> void
 {
   var len = 0;
   var buf = [0; 256];
@@ -181,7 +181,7 @@ fn fmt_duration(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 count)
   std::fmt_to(&mut os, &mut ctx, std::string_view(buf.data, len));
 }
 
-fn fmt_filesize(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 bytes) throws -> void
+fn fmt_filesize(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 bytes) throws(std::error) -> void
 {
   var len = 0;
   var buf = [0; 256];
@@ -212,7 +212,7 @@ fn fmt_filesize(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 bytes)
   std::fmt_to(&mut os, &mut ctx, std::string_view(buf.data, len));
 }
 
-pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, Value &value) throws -> void
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, Value &value) throws(std::error) -> void
 {
   switch (value)
   {

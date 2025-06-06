@@ -118,7 +118,7 @@ fn blkman() -> blkdev_manager mut &
   return &blkdev_manager::instance;
 }
 
-pub fn open(blkdev mut *device, vfs::fd mut &fd, u64 flags, u32 mode) -> blk::result
+pub fn open(blkdev mut *device, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> blk::result
 {
   return ok;
 }

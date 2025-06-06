@@ -1,0 +1,238 @@
+//
+// cat
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='e', help="display $ at end of each line")]
+  bool show_ends = false;
+
+  #[arg(flag, short='t', help="display TAB characters as ^I")]
+  bool show_tabs = false;
+
+  #[arg(flag, short='v', help="use ^ and M- notation, except for LFD and TAB")]
+  bool show_nonprinting = false;
+
+  #[arg(flag, short='n', help="number all output lines")]
+  bool number = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  std::string_view end_of_line = "\n";
+
+  opts() = default;
+  ~opts() = default;
+}
+
+struct state
+{
+  u8[32] line;
+  usize linelen;
+  bool start_of_line = true;
+
+  state()
+  {
+    linelen = 7;
+
+    std::sprintf(&mut line, "{:>*}\t", line.len - 1, 1);
+  }
+
+  fn advance(this mut &) -> void
+  {
+    for (var i = this.line.len - 2; i != 0; --i)
+    {
+      switch (this.line[i])
+      {
+        case '9':
+          this.line[i] = cast('0');
+
+        case '0' ..= '8':
+          this.line[i] += 1;
+          break;
+
+        case ' ':
+          this.line[i] = cast('1');
+          this.linelen = std::max(this.linelen, this.line.len - i);
+          break;
+      }
+    }
+  }
+
+  ~state() = default;
+}
+
+fn write_lines(std::file mut &fin, state mut &state, opts &opts) throws(std::error) -> i32
+{
+  var buffer = [u8(0); 32768];
+
+  var fout = std::stdout.lock();
+
+  for (;;)
+  {
+    var bytes = fin.read(buffer.data, buffer.len);
+
+    if (bytes <= 0)
+      break;
+
+    for (var i = 0; i < bytes; )
+    {
+      var j = i + std::memchr(buffer.data + i, cast('\n'), bytes - i);
+
+      if (opts.show_nonprinting)
+        j = std::find_if(buffer[i .. j], |ch| ch < 0x20) - buffer.data;
+
+      if (opts.show_tabs)
+        j = i + std::memchr(buffer.data + i, cast('\t'), j - i);
+
+      if (opts.show_ends)
+        j = i + std::memchr(buffer.data + i, cast('\r'), j - i);
+
+      if (state.start_of_line)
+      {
+        if (opts.number)
+        {
+          fout.write(state.line.end - state.linelen, state.linelen);
+
+          state.advance();
+        }
+
+        state.start_of_line = false;
+      }
+
+      fout.write(buffer.data + i, j - i);
+
+      if (j == bytes)
+        break;
+
+      switch (buffer[j])
+      {
+        case '\r':
+          fout.puts("^M");
+
+        case '\t':
+          fout.puts("^I");
+
+        case '\n':
+          fout.puts(opts.end_of_line);
+
+        else:
+          fout.puts("^?");
+      }
+
+      if (buffer[j] == cast('\n'))
+        state.start_of_line = true;
+
+      i = j + 1;
+    }
+  }
+
+  fout.flush();
+
+  return 0;
+}
+
+fn write_data(std::file mut &fin, state mut &state, opts &opts) throws(std::error) -> i32
+{
+  var buffer = [u8(0); 32768];
+
+  var fout = std::stdout.lock();
+
+  for (;;)
+  {
+    var bytes = fin.read(buffer.data, buffer.len);
+
+    if (bytes <= 0)
+      break;
+
+    fout.puts(std::string_view(buffer.data, bytes));
+  }
+
+  fout.flush();
+
+  return 0;
+}
+
+fn cat(std::string &path, state mut &state, opts &opts) throws(std::error) -> i32
+{
+  var fin = || throws {
+    if (path == "-")
+      return std::stdin_raw;
+    return std::file::open(path);
+  }();
+
+  var linebyline = opts.show_ends | opts.show_tabs | opts.show_nonprinting | opts.number;
+
+  switch (linebyline)
+  {
+    case true:
+      write_lines(&mut fin, &mut state, opts);
+
+    else:
+      write_data(&mut fin, &mut state, opts);
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var state = state();
+
+  if (opts.paths.empty)
+    opts.paths.push_back("-");
+
+  if (opts.show_ends)
+    opts.end_of_line = "$\n";
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      var cnt = 0;
+
+      if (path == "-")
+      {
+        cat(path, &mut state, opts);
+
+        cnt += 1;
+      }
+
+      for (var &file : glob::glob(path).files)
+      {
+        cat(file, &mut state, opts);
+
+        cnt += 1;
+      }
+
+      if (cnt == 0)
+      {
+        std::fprint(std::stderr, "cat: ", path, ": no such file or directory");
+      }
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "cat: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

@@ -778,7 +778,7 @@ struct stream
   {
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_integral<T>
   {
     var bytes = sizeof<T>;
@@ -795,19 +795,19 @@ struct stream
     return std::byteswap(value);
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, glyphid>
   {
     return this.read<u16>();
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, f2dot14>
   {
     return this.read<i16>();
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, magic>
   {
     switch (this.read<u32>())
@@ -823,13 +823,13 @@ struct stream
     throw errc::unknown_magic;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, tag>
   {
     return cast(this.read<u32>());
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, table_record>
   {
     var record = table_record();
@@ -842,13 +842,13 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, platform>
   {
     return cast(this.read<u16>());
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, name_record>
   {
     var record = name_record();
@@ -863,7 +863,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, encoding_record>
   {
     var record = encoding_record();
@@ -875,7 +875,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, long_hor_metric>
   {
     var record = long_hor_metric();
@@ -886,7 +886,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, range_record>
   {
     var record = range_record();
@@ -898,7 +898,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &, u16 mask) throws -> T
+  fn read<T>(this mut &, u16 mask) throws(errc) -> T
     where __is_same<T, value_record>
   {
     var record = value_record();
@@ -923,7 +923,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &, u16 mask1, u16 mask2) throws -> T
+  fn read<T>(this mut &, u16 mask1, u16 mask2) throws(errc) -> T
     where __is_same<T, pairvalue_record>
   {
     var record = pairvalue_record();
@@ -935,7 +935,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, entryexit_record>
   {
     var record = entryexit_record();
@@ -946,7 +946,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, mark_record>
   {
     var record = mark_record();
@@ -957,7 +957,7 @@ struct stream
     return record;
   }
 
-  fn read<T>(this mut &) throws -> T
+  fn read<T>(this mut &) throws(errc) -> T
     where __is_same<T, kerning_pair>
   {
     var record = kerning_pair();
@@ -968,7 +968,7 @@ struct stream
     return record;
   }
 
-  fn read(this mut &, usize len) throws -> std::span<u8>
+  fn read(this mut &, usize len) throws(errc) -> std::span<u8>
   {
     if (this.data.len < len)
       throw errc::insufficient_data;
@@ -980,7 +980,7 @@ struct stream
     return data;
   }
 
-  fn discard(this mut &, usize len) throws -> void
+  fn discard(this mut &, usize len) throws(errc) -> void
   {
     if (this.data.len < len)
       throw errc::insufficient_data;
@@ -1007,7 +1007,7 @@ struct view<T>
     return this.data.len / sizeof<T>;
   }
 
-  fn [](this &, usize index) throws -> T
+  fn [](this &, usize index) throws(errc) -> T
   {
     if (this.data.len < index * sizeof<T> + sizeof<T>)
       throw errc::insufficient_data;
@@ -1015,7 +1015,7 @@ struct view<T>
     return stream(this.data.subspan(index * sizeof<T>, sizeof<T>)).read<T>();
   }
 
-  fn ==(this &lhs, Span<T> &rhs) throws -> bool
+  fn ==(this &lhs, Span<T> &rhs) throws(errc) -> bool
   {
     if (lhs.len != rhs.len)
       return false;
@@ -1027,7 +1027,7 @@ struct view<T>
     return true;
   }
 
-  fn lower_bound<Value, Cmp>(this &, Value &value, Cmp &cmp = std::less) throws -> usize
+  fn lower_bound<Value, Cmp>(this &, Value &value, Cmp &cmp = std::less) throws(errc) -> usize
     match (T u, Value v, Cmp cmp) { cmp(u, v); }
   {
     var lo = 0;
@@ -1051,7 +1051,7 @@ struct view<T>
   ~view() = default;
 }
 
-fn get(std::span<u8> &data, u32 offset, u32 length) throws -> std::span<u8>
+fn get(std::span<u8> &data, u32 offset, u32 length) throws(errc) -> std::span<u8>
 {
   if (data.len < cast<usize>(offset) + cast<usize>(length))
     throw errc::insufficient_data;
@@ -1059,7 +1059,7 @@ fn get(std::span<u8> &data, u32 offset, u32 length) throws -> std::span<u8>
   return data[cast<usize>(offset) .. cast<usize>(offset) + cast<usize>(length)];
 }
 
-fn get(std::span<u8> &data, u16 offset, u16 length) throws -> std::span<u8>
+fn get(std::span<u8> &data, u16 offset, u16 length) throws(errc) -> std::span<u8>
 {
   if (data.len < cast<usize>(offset) + cast<usize>(length))
     throw errc::insufficient_data;
@@ -1067,7 +1067,7 @@ fn get(std::span<u8> &data, u16 offset, u16 length) throws -> std::span<u8>
   return data[cast<usize>(offset) .. cast<usize>(offset) + cast<usize>(length)];
 }
 
-fn table(face &face, tag tag) throws -> std::optional<table_record>
+fn table(face &face, tag tag) throws(errc) -> std::optional<table_record>
 {
   var stream = stream(face.tables);
 
@@ -1154,7 +1154,7 @@ pub fn metric(face &face, glyphid id) -> metric
   return metric;
 }
 
-fn cmap_format_4(stream table, char codepoint) throws -> std::optional<glyphid>
+fn cmap_format_4(stream table, char codepoint) throws(errc) -> std::optional<glyphid>
 {
   var length = table.read<u16>();
   var language = table.read<u16>();
@@ -1202,7 +1202,7 @@ fn cmap_format_4(stream table, char codepoint) throws -> std::optional<glyphid>
   return None;
 }
 
-fn find(cmap &cmap, encoding_record &record, char codepoint) throws -> std::optional<glyphid>
+fn find(cmap &cmap, encoding_record &record, char codepoint) throws(errc) -> std::optional<glyphid>
 {
   var table = stream(cmap.data.drop_front(cast<usize>(record.offset)));
 
@@ -1240,7 +1240,7 @@ pub fn find(face &face, char codepoint) -> std::optional<glyphid>
   return None;
 }
 
-fn get(loca &loca, glyphid id) throws -> usize
+fn get(loca &loca, glyphid id) throws(errc) -> usize
 {
   switch (loca.format)
   {
@@ -1290,7 +1290,7 @@ pub fn glyph(face &face, glyphid id) -> glyph
   return glyph;
 }
 
-fn kern_format_0(std::span<u8> subtable, glyphid left, glyphid right) throws -> std::optional<i16>
+fn kern_format_0(std::span<u8> subtable, glyphid left, glyphid right) throws(errc) -> std::optional<i16>
 {
   var stream = stream(subtable);
 
@@ -1391,7 +1391,7 @@ pub struct layout
   pub ~layout() = default;
 }
 
-fn coverage_lookup(stream coverage, glyphid id) throws -> std::optional<usize>
+fn coverage_lookup(stream coverage, glyphid id) throws(errc) -> std::optional<usize>
 {
   switch (coverage.read<u16>())
   {
@@ -1420,7 +1420,7 @@ fn coverage_lookup(stream coverage, glyphid id) throws -> std::optional<usize>
   return None;
 }
 
-fn classdef_lookup(stream classdef, glyphid id) throws -> std::optional<u16>
+fn classdef_lookup(stream classdef, glyphid id) throws(errc) -> std::optional<u16>
 {
   switch (classdef.read<u16>())
   {
@@ -1448,7 +1448,7 @@ fn classdef_lookup(stream classdef, glyphid id) throws -> std::optional<u16>
   return None;
 }
 
-fn anchor_lookup(stream anchortable) throws -> anchor
+fn anchor_lookup(stream anchortable) throws(errc) -> anchor
 {
   var anchor = anchor();
 
@@ -1473,7 +1473,7 @@ fn anchor_lookup(stream anchortable) throws -> anchor
   return anchor;
 }
 
-fn gpos_single_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+fn gpos_single_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1492,7 +1492,7 @@ fn gpos_single_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtab
   }
 }
 
-fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1572,7 +1572,7 @@ fn gpos_pair_adjustment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable
   }
 }
 
-fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1610,7 +1610,7 @@ fn gpos_cursive_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subta
   }
 }
 
-fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws -> void
+fn gpos_anchor_attachment_lookup(gpos &gpos, u16 lookup_offset, view<u16> subtable_offsets, glyphid left, glyphid right, layout mut &layout) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1746,7 +1746,7 @@ pub struct substitution
   pub ~substitution() = default;
 }
 
-fn gsub_single_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+fn gsub_single_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1787,7 +1787,7 @@ fn gsub_single_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets,
   }
 }
 
-fn gsub_multiple_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+fn gsub_multiple_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1818,7 +1818,7 @@ fn gsub_multiple_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offset
   }
 }
 
-fn gsub_alternate_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+fn gsub_alternate_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -1849,7 +1849,7 @@ fn gsub_alternate_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offse
   }
 }
 
-fn gsub_ligature_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws -> void
+fn gsub_ligature_lookup(gsub &gsub, u16 lookup_offset, view<u16> subtable_offsets, std::span<glyphid> &input, substitution mut &substitution) throws(errc) -> void
 {
   for (var i = 0; i < subtable_offsets.len; ++i)
   {
@@ -2078,7 +2078,7 @@ fn parse_face(std::span<u8> &data) -> face
   return face;
 }
 
-fn parse_head(std::span<u8> &data) throws -> head
+fn parse_head(std::span<u8> &data) throws(errc) -> head
 {
   var head = head();
 
@@ -2106,7 +2106,7 @@ fn parse_head(std::span<u8> &data) throws -> head
   return head;
 }
 
-fn parse_hhea(std::span<u8> &data) throws -> hhea
+fn parse_hhea(std::span<u8> &data) throws(errc) -> hhea
 {
   var hhea = hhea();
 
@@ -2134,7 +2134,7 @@ fn parse_hhea(std::span<u8> &data) throws -> hhea
   return hhea;
 }
 
-fn parse_maxp(std::span<u8> &data) throws -> maxp
+fn parse_maxp(std::span<u8> &data) throws(errc) -> maxp
 {
   var maxp = maxp();
 
@@ -2146,7 +2146,7 @@ fn parse_maxp(std::span<u8> &data) throws -> maxp
   return maxp;
 }
 
-fn parse_name(std::span<u8> &data) throws -> name
+fn parse_name(std::span<u8> &data) throws(errc) -> name
 {
   var name = name();
 
@@ -2162,7 +2162,7 @@ fn parse_name(std::span<u8> &data) throws -> name
   return name;
 }
 
-fn parse_os_2(std::span<u8> &data) throws -> os_2
+fn parse_os_2(std::span<u8> &data) throws(errc) -> os_2
 {
   var os_2 = os_2();
 
@@ -2211,7 +2211,7 @@ fn parse_os_2(std::span<u8> &data) throws -> os_2
   return os_2;
 }
 
-fn parse_hmtx(face &face, std::span<u8> &data) throws -> hmtx
+fn parse_hmtx(face &face, std::span<u8> &data) throws(errc) -> hmtx
 {
   var hmtx = hmtx();
 
@@ -2223,7 +2223,7 @@ fn parse_hmtx(face &face, std::span<u8> &data) throws -> hmtx
   return hmtx;
 }
 
-fn parse_cmap(std::span<u8> &data) throws -> cmap
+fn parse_cmap(std::span<u8> &data) throws(errc) -> cmap
 {
   var cmap = cmap();
 
@@ -2239,7 +2239,7 @@ fn parse_cmap(std::span<u8> &data) throws -> cmap
   return cmap;
 }
 
-fn parse_loca(face &face, std::span<u8> &data) throws -> loca
+fn parse_loca(face &face, std::span<u8> &data) throws(errc) -> loca
 {
   var loca = loca();
 
@@ -2264,7 +2264,7 @@ fn parse_loca(face &face, std::span<u8> &data) throws -> loca
   return loca;
 }
 
-fn parse_glyf(face &face, std::span<u8> &data) throws -> glyf
+fn parse_glyf(face &face, std::span<u8> &data) throws(errc) -> glyf
 {
   var glyf = glyf();
 
@@ -2273,7 +2273,7 @@ fn parse_glyf(face &face, std::span<u8> &data) throws -> glyf
   return glyf;
 }
 
-fn parse_kern(face &face, std::span<u8> &data) throws -> kern
+fn parse_kern(face &face, std::span<u8> &data) throws(errc) -> kern
 {
   var kern = kern();
 
@@ -2287,7 +2287,7 @@ fn parse_kern(face &face, std::span<u8> &data) throws -> kern
   return kern;
 }
 
-fn parse_gpos(face &face, std::span<u8> &data) throws -> gpos
+fn parse_gpos(face &face, std::span<u8> &data) throws(errc) -> gpos
 {
   var gpos = gpos();
 
@@ -2304,7 +2304,7 @@ fn parse_gpos(face &face, std::span<u8> &data) throws -> gpos
   return gpos;
 }
 
-fn parse_gsub(face &face, std::span<u8> &data) throws -> gsub
+fn parse_gsub(face &face, std::span<u8> &data) throws(errc) -> gsub
 {
   var gsub = gsub();
 

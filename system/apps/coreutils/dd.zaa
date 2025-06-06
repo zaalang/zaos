@@ -1,0 +1,169 @@
+//
+// dd
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import chrono;
+
+fn parse_bytes(std::string_view str, usize mut &bytes) -> bool
+{
+  if (var result = std::sscan(str, &mut bytes); result)
+  {
+    switch (str[result.len .. str.len])
+    {
+      case "":
+      case "b":
+      case "B":
+        ;
+
+      case "kb":
+      case "kB":
+      case "KB":
+        bytes *= 1_000;
+
+      case "mb":
+      case "MB":
+        bytes *= 1_000_000;
+
+      case "gb":
+      case "GB":
+        bytes *= 1_000_000_000;
+
+      case "tb":
+      case "TB":
+        bytes *= 1_000_000_000_000;
+
+      case "pb":
+      case "PB":
+        bytes *= 1_000_000_000_000_000;
+
+      case "eb":
+      case "EB":
+        bytes *= 1_000_000_000_000_000_000;
+
+      case "kib":
+      case "KiB":
+        bytes *= 1_024;
+
+      case "mib":
+      case "MiB":
+        bytes *= 1_048_576;
+
+      case "gib":
+      case "GiB":
+        bytes *= 1_073_741_824;
+
+      case "tib":
+      case "TiB":
+        bytes *= 1_099_511_627_776;
+
+      case "pib":
+      case "PiB":
+        bytes *= 1_125_899_906_842_624;
+
+      case "eib":
+      case "EiB":
+        bytes *= 1_152_921_504_606_846_976;
+
+      else:
+        return false;
+    }
+  }
+
+  return true;
+}
+
+pub fn main() -> i32
+{
+  var fin = std::stdin_raw;
+  var fout = std::stdout_raw;
+
+  var bs = 512;
+  var count = 0;
+  var iseek = 0;
+  var oseek = 0;
+
+  try
+  {
+    for (var &arg : std::env::args.drop_n(1))
+    {
+      var [name, value] = arg.cut("=");
+
+      switch (name)
+      {
+        case "if":
+          fin = std::file::open(value);
+
+        case "of":
+          fout = std::file::create(value);
+
+        case "bs":
+          if (!parse_bytes(value, &mut bs))
+            std::fprint(std::stderr, "dd: invalid byte format: ", arg);
+
+        case "count":
+          if (!parse_bytes(value, &mut count))
+            std::fprint(std::stderr, "dd: invalid byte format: ", arg);
+
+        case "seek":
+        case "oseek":
+          if (!parse_bytes(value, &mut oseek))
+            std::fprint(std::stderr, "dd: invalid byte format: ", arg);
+
+        case "skip":
+        case "iseek":
+          if (!parse_bytes(value, &mut iseek))
+            std::fprint(std::stderr, "dd: invalid byte format: ", arg);
+
+        else:
+          std::fprint(std::stderr, "dd: unknown argument: ", arg);
+      }
+    }
+
+    var blocks_in = 0;
+    var partial_in = 0;
+    var blocks_out = 0;
+    var partial_out = 0;
+
+    var st = chrono::steady_clock::now();
+
+    var buffer = std::vector<u8>::with_size(bs);
+
+    for (;;)
+    {
+      var in = fin.read(buffer.data, buffer.len);
+
+      if (in <= 0)
+        break;
+
+      blocks_in += in / bs;
+      partial_in += in % bs;
+
+      if (blocks_in < iseek)
+        continue;
+
+      var out = fout.write(buffer.data, in);
+
+      blocks_out += out / bs;
+      partial_out += out % bs;
+
+      if (count != 0 && blocks_out >= count)
+        break;
+    }
+
+    var elapsed = chrono::seconds<f64>(chrono::steady_clock::now() - st);
+
+    std::printf("{}+{} blocks in\n", blocks_in, std::ceil_div(partial_in, bs));
+    std::printf("{}+{} blocks out\n", blocks_out, std::ceil_div(partial_out, bs));
+
+    std::print(blocks_out * bs + partial_out, " bytes copied, ", elapsed, ", (", cast<f64>(blocks_out * bs + partial_out) / (1_000_000.0 * elapsed.count), " MB/s)");
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "dd: ", rc);
+  }
+
+  return 0;
+}

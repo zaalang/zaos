@@ -10,6 +10,7 @@ import vfs.fs;
 import vm;
 import io;
 import mutex as _ : shared_mutex;
+import process as _ : process;
 import support.rc : Rc;
 import chrono;
 
@@ -99,11 +100,27 @@ pub fn create(vfs::file_system_context &ctx = vfs::file_system_context()) -> roo
   return new<rootfs>(std::allocator().allocate(sizeof<rootfs>, alignof<rootfs>))();
 }
 
+pub fn query(rootfs *fs, vfs::query query, std::string mut &result) -> vfs::result
+{
+  switch (query)
+  {
+    case fs_type:
+      result = "rootfs";
+  }
+
+  return ok;
+}
+
 pub fn mount(rootfs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
 {
   dentry = fs.root;
 
   return ok;
+}
+
+pub fn statfs(rootfs mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result
+{
+  return not_supported;
 }
 
 pub fn lookup(vfs::node mut *path, std::string_view name) -> Rc<vfs::node>
@@ -205,7 +222,7 @@ pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *new
   return not_supported;
 }
 
-pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
 {
   switch (node.type)
   {
@@ -247,6 +264,18 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
 
 pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
+  var fs = cast<inode mut &>(*node).fs;
+  var mut &this = cast<inode mut &>(*node);
+
+  if (mask & vfs::stats::mode == vfs::stats::mode)
+    this.mode = (this.mode & ~0xfff) | (stat.mode & 0xfff);
+
+  if (mask & vfs::stats::uid == vfs::stats::uid)
+    this.uid = stat.uid;
+
+  if (mask & vfs::stats::gid == vfs::stats::gid)
+    this.gid = stat.gid;
+
   return ok;
 }
 

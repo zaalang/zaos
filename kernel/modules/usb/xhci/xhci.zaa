@@ -1231,6 +1231,8 @@ fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhc
       return result;
   }
 
+  scheduler::sleep_until(cpu::system_time + 5_000_000);
+
   return ok;
 }
 

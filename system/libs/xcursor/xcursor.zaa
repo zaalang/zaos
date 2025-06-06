@@ -55,7 +55,7 @@ struct XcursorImage
 
 pub struct cursor
 {
-  pub fn load(String &path) throws -> cursor
+  pub fn load(String &path) throws(std::error) -> cursor
   {
     var bytes = std::readfile_to_vector(path);
 

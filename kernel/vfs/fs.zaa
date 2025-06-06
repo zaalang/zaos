@@ -7,9 +7,41 @@ import std.string;
 import vfs.node;
 import support.rc : Rc;
 
+pub enum query
+{
+  fs_type,
+  fs_source,
+}
+
+pub struct statfs
+{
+  pub u64 bsize;
+  pub u64 blocks;
+  pub u64 free_blocks;
+
+  pub statfs() = default;
+  pub statfs(statfs &) = default;
+  pub fn =(statfs mut &, statfs &) -> statfs mut & = default;
+  pub ~statfs() = default;
+}
+
 pub struct file_system
 {
   pub file_system_operations &ops;
+
+  pub fn query(this &, vfs::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(&this, query, &mut result);
+
+    return result;
+  }
+
+  pub fn statfs(this mut &, vfs::statfs mut &statfs, u64 mask) -> vfs::result
+  {
+    return this.ops.statfs(&this, &mut statfs, mask);
+  }
 
   pub file_system(file_system_operations &ops)
     : ops(&ops)
@@ -21,7 +53,7 @@ pub struct file_system
 
 pub struct file_system_context
 {
-  pub Rc<vfs::node> source;
+  pub std::string source;
 
   pub file_system_context() = default;
   pub ~file_system_context() = default;
@@ -35,5 +67,8 @@ pub vtable file_system_type
 
 pub vtable file_system_operations
 {
+  pub fn query(this *fs, vfs::query query, std::string mut &result) -> vfs::result;
+
   pub fn mount(this mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result;
+  pub fn statfs(this mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result;
 }

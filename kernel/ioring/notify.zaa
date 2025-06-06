@@ -123,12 +123,12 @@ pub struct watchset
     return &this.node;
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> vfs::result
   {
     var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
 
@@ -137,7 +137,7 @@ pub struct watchset
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node));
 
@@ -214,17 +214,17 @@ pub struct watchset
     return cast(count);
   }
 
-  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
@@ -298,14 +298,14 @@ pub fn sys_notify_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 dir
     return vfs::result::not_a_directory;
 
   var base = dir.node;
-  var node = vfs::lookup(&mut base, path);
+  var node = vfs::lookup(process, &mut base, path);
 
   if (!node)
     return vfs::result::not_found;
 
   if (flags & flags::nofollow != flags::nofollow)
   {
-    if (var result = vfs::resolve(&mut base, &mut node); !result)
+    if (var result = vfs::resolve(process, &mut base, &mut node); !result)
       return result;
   }
 
@@ -366,7 +366,7 @@ pub fn sys_notify_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 
     return vfs::result::not_a_directory;
 
   var base = dir.node;
-  var node = vfs::lookup(&mut base, path);
+  var node = vfs::lookup(process, &mut base, path);
 
   if (!node)
     return vfs::result::not_found;

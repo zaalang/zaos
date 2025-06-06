@@ -31,7 +31,7 @@ pub fn sys_unlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize pa
     return vfs::result::not_a_directory;
 
   var base = dir.node;
-  var node = vfs::lookup(&mut base, path);
+  var node = vfs::lookup(process, &mut base, path);
 
   if (!node)
     return vfs::result::not_found;

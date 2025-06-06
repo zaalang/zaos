@@ -26,7 +26,7 @@ pub struct default_history : pub history
 {
   std::vector<history::item> items;
 
-  fn load(this mut &, int id, history::item mut &item) throws -> bool
+  fn load(this mut &, int id, history::item mut &item) throws(std::error) -> bool
   {
     if (id < 1 || cast(id) > this.items.len)
       return false;
@@ -36,7 +36,7 @@ pub struct default_history : pub history
     return true;
   }
 
-  fn save(this mut &, history::item mut &item) throws -> void
+  fn save(this mut &, history::item mut &item) throws(std::error) -> void
   {
     if (item.id == 0)
     {
@@ -48,7 +48,7 @@ pub struct default_history : pub history
     this.items[cast<usize>(item.id) - 1] = item;
   }
 
-  fn accept(this mut &, history::item mut &item) throws -> void
+  fn accept(this mut &, history::item mut &item) throws(std::error) -> void
   {
     if (item.id != 0)
       item.id = cast(this.items.len);

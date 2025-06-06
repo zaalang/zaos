@@ -300,7 +300,7 @@ pub fn unescape(std::string_view span) -> std::string
   {
     if (*ch == cast('\\'))
     {
-      if (++ch == span.end)
+      if (++ch == end)
         break;
 
       switch (*ch)
@@ -340,7 +340,17 @@ pub fn unescape(std::string_view span) -> std::string
 
         case 'x':
           var cc = u8(0);
-          ch += std::sscan(std::string_view(ch + 1, std::min(ch+3, end)), &mut cc).len + 1;
+          ch += std::atoi(ch+1, std::min(ch+3, end), &mut cc, 16).len;
+          result += cc;
+
+        case 'u':
+          var cc = char();
+          ch += std::atoi(ch+1, std::min(ch+5, end), &mut cc, 16).len;
+          result += cc;
+
+        case 'U':
+          var cc = char();
+          ch += std::atoi(ch+1, std::min(ch+9, end), &mut cc, 16).len;
           result += cc;
 
         else:

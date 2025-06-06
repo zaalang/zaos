@@ -2,6 +2,7 @@
 // gui window
 //
 
+import std.stdlib;
 import gui.application;
 import gui.display as display;
 import gui.bits.frame as frame;
@@ -21,7 +22,7 @@ pub vtable iwindow : display::isurface
 
 pub struct window : pub display::surface
 {
-  pub fn create(i32 width, i32 height) throws -> window
+  pub fn create(i32 width, i32 height) throws(std::error) -> window
   {
     var window = window();
 
@@ -30,7 +31,7 @@ pub struct window : pub display::surface
     return window;
   }
 
-  pub fn create(this mut &, i32 width, i32 height) throws -> void
+  pub fn create(this mut &, i32 width, i32 height) throws(std::error) -> void
   {
     var flags = display::surface::flags::close_button | display::surface::flags::minimise_button | display::surface::flags::maximise_button | display::surface::flags::resizeable;
 

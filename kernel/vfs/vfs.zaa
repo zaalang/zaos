@@ -11,6 +11,7 @@ import vfs.fs;
 import vfs.node;
 import blk.cache;
 import mutex as _ : mutex;
+import process as _ : process;
 import rootfs;
 import devfs;
 import sysfs;
@@ -42,8 +43,10 @@ fn vfs() -> virtual_file_system mut &
 
 pub struct mount
 {
-  Rc<vfs::node> root;
-  file_system mut *fs;
+  pub std::string path;
+
+  pub Rc<vfs::node> root;
+  pub file_system mut *fs;
 
   mount() = default;
   pub mount(mount&&) = default;
@@ -52,15 +55,15 @@ pub struct mount
 
 pub fn initialise() -> void
 {
-  mount(vfs.root, rootfs::create());
+  mount(vfs.root, "/", rootfs::create());
 
   mkdir(vfs.root, "dev", 0, 0, 0o755);
-  mount(lookup(vfs.root, "dev"), devfs::create());
+  mount(vfs.root, "dev", devfs::create());
 
   mkdir(vfs.root, "mnt", 0, 0, 0o755);
 
   mkdir(vfs.root, "sys", 0, 0, 0o755);
-  mount(lookup(vfs.root, "sys"), sysfs::create());
+  mount(vfs.root, "sys", sysfs::create());
 }
 
 pub fn root() -> Rc<vfs::node> &
@@ -126,7 +129,7 @@ pub fn device_id(Rc<vfs::node> &node) -> vfs::dev_t
   return stat.device;
 }
 
-fn lookup(virtual_file_system mut &vfs, Rc<vfs::node> mut &base, std::string_view path) -> Rc<vfs::node>
+fn lookup(virtual_file_system mut &vfs, process mut *process, Rc<vfs::node> mut &base, std::string_view path) -> Rc<vfs::node>
 {
   var ch = path.begin;
   var end = path.end;
@@ -170,7 +173,7 @@ fn lookup(virtual_file_system mut &vfs, Rc<vfs::node> mut &base, std::string_vie
 
     if (ch != end)
     {
-      if (var result = vfs::resolve(&mut dentry, &mut node); !result)
+      if (var result = vfs::resolve(process, &mut dentry, &mut node); !result)
         return null;
     }
 
@@ -184,19 +187,19 @@ fn lookup(virtual_file_system mut &vfs, Rc<vfs::node> mut &base, std::string_vie
   return dentry;
 }
 
-pub fn lookup(Rc<vfs::node> mut &base, String &path) -> Rc<vfs::node>
+pub fn lookup(process mut *process, Rc<vfs::node> mut &base, String &path) -> Rc<vfs::node>
 {
-  return vfs.lookup(&mut base, std::string_view(path.data, path.len));
+  return vfs.lookup(process, &mut base, std::string_view(path.data, path.len));
 }
 
-pub fn lookup(Rc<vfs::node> &base, String &path) -> Rc<vfs::node>
+pub fn lookup(process mut *process, Rc<vfs::node> &base, String &path) -> Rc<vfs::node>
 {
   var dentry = base;
 
-  return vfs.lookup(&mut dentry, std::string_view(path.data, path.len));
+  return vfs.lookup(process, &mut dentry, std::string_view(path.data, path.len));
 }
 
-fn resolve(virtual_file_system mut &vfs, Rc<vfs::node> mut &base, Rc<vfs::node> mut &node) -> vfs::result
+fn resolve(virtual_file_system mut &vfs, process mut *process, Rc<vfs::node> mut &base, Rc<vfs::node> mut &node) -> vfs::result
 {
   var depth = 0;
   var buffer = std::string();
@@ -206,60 +209,76 @@ fn resolve(virtual_file_system mut &vfs, Rc<vfs::node> mut &base, Rc<vfs::node> 
     if (++depth == 8)
       return too_many_links;
 
-    if (var result = node.symlink_operations.readlink(node, &mut buffer); !result)
+    var fd = vfs::file_descriptor::create(base, node);
+
+    if (var result = vfs::open(node, &mut fd, process, 0, 0); !result)
+      return result;
+
+    if (var result = node.symlink_operations.readlink(fd.node, &mut buffer); !result)
       return result;
 
     if (buffer.starts_with("/"))
       base = vfs::root();
 
-    if (node = vfs.lookup(&mut base, std::string_view(buffer.data, buffer.len)); !node)
+    if (node = vfs.lookup(process, &mut base, std::string_view(buffer.data, buffer.len)); !node)
       return not_found;
   }
 
   return ok;
 }
 
-pub fn resolve(Rc<vfs::node> mut &base, Rc<vfs::node> mut &node) -> vfs::result
+pub fn resolve(process mut *process, Rc<vfs::node> mut &base, Rc<vfs::node> mut &node) -> vfs::result
 {
-  return vfs.resolve(&mut base, &mut node);
+  return vfs.resolve(process, &mut base, &mut node);
 }
 
-pub fn mount(Rc<vfs::node> &path, file_system mut *fs) -> vfs::result
+pub fn mount(Rc<vfs::node> &root, String &path, file_system mut *fs) -> vfs::result
 {
   var mount = mount();
+
+  var dentry = vfs::lookup(colonel, root, path);
 
   if (var result = fs.ops.mount(fs, &mut mount.root); !result)
     return result;
 
   mount.fs = fs;
-  mount.root.covers = path;
+  mount.path = path;
+  mount.root.covers = dentry;
 
   var guard = std::lock_guard(&mut vfs.lock);
 
   if (!vfs.root)
   {
-    if (path != vfs.root)
+    if (dentry != vfs.root)
       return invalid_argument;
 
     vfs.root = mount.root;
   }
   else
   {
-    if (!path)
+    if (!dentry)
       return invalid_argument;
 
-    if (!path.is_directory)
+    if (!dentry.is_directory)
       return invalid_argument;
 
-    if (path.covered)
+    if (dentry.covered)
       return device_busy;
 
-    path.covered = mount.root;
+    dentry.covered = mount.root;
   }
 
   vfs.mounts.push_back(mount);
 
   return ok;
+}
+
+pub fn enumerate_mounts(var &&callback) -> void
+{
+  var guard = std::lock_guard(&mut vfs.lock);
+
+  for (var mut &mount : vfs.mounts)
+    callback(&mut mount);
 }
 
 pub fn create(Rc<vfs::node> &path, String &name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result
@@ -300,12 +319,15 @@ pub fn symlink(Rc<vfs::node> &path, String &name, String &target, u32 uid, u32 g
 
 pub fn rename(Rc<vfs::node> &oldpath, String &oldname, Rc<vfs::node> &newpath, String &newname) -> vfs::result
 {
+  if (device_id(oldpath) != device_id(newpath))
+    return cross_device_link;
+
   return oldpath.directory_operations.rename(oldpath, std::string_view(oldname.data, oldname.len), newpath, std::string_view(newname.data, newname.len));
 }
 
-pub fn open(Rc<vfs::node> &node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(Rc<vfs::node> &node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
 {
-  return node.node_operations.open(node, &mut fd, flags, mode);
+  return node.node_operations.open(node, &mut fd, process, flags, mode);
 }
 
 pub fn stat(Rc<vfs::node> &node, vfs::stat mut &stat, u64 mask) -> vfs::result
@@ -377,5 +399,8 @@ pub fn unlink(Rc<vfs::node> &path, String &name) -> vfs::result
 
 pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, String &name = "") -> vfs::result
 {
+  if (path.covered)
+    path = path.covered;
+
   return path.directory_operations.notify(path, node, mask, std::string_view(name));
 }

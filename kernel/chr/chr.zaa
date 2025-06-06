@@ -8,11 +8,12 @@ import chr.result;
 import io;
 import vm;
 import vfs;
+import process as _ : process;
 import support.rc : Rc;
 
-pub fn open(chrdev mut *device, vfs::fd mut &fd, u64 flags, u32 mode) -> chr::result
+pub fn open(chrdev mut *device, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> chr::result
 {
-  return device.open(&mut fd, flags, mode);
+  return device.open(&mut fd, process, flags, mode);
 }
 
 pub fn ioctl(chrdev mut *device, u32 op, vm::iovec &iovec) -> chr::result

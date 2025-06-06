@@ -1,0 +1,207 @@
+//
+// cut
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(value, short='b', help="select only these bytes")]
+  std::string_view bytes;
+
+  #[arg(value, short='c', help="select only these characters")]
+  std::string_view characters;
+
+  #[arg(value, short='d', help="use DELIM instead of TAB for field delimiter")]
+  std::string_view delimiter = "\t";
+
+  #[arg(value, short='f', help="select only these fields")]
+  std::string_view fields;
+
+  #[arg(flag, short='s', help="do not print lines not containing delimiters")]
+  bool only_delimited = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+struct range
+{
+  enum type
+  {
+    bytes,
+    characters,
+    fields,
+  }
+
+  type ty;
+  usize lo;
+  usize hi;
+
+  range(type ty)
+    : ty(ty)
+  {
+  }
+
+  range(range &&) = default;
+  fn =(range mut &, range &&) -> range mut & = default;
+  ~range() = default;
+}
+
+fn parse(std::vector<range> mut &ranges, range::type ty, std::string_view list) -> bool
+{
+  if (list.empty)
+    return true;
+
+  for (var str : list.split(","))
+  {
+    var range = range(ty);
+
+    var [lo, hi] = str.cut("-");
+
+    if (lo.empty)
+      range.lo = 1;
+    else if (std::atoi(lo.begin, lo.end, &mut range.lo).error)
+      return false;
+
+    if (hi.empty)
+      range.hi = str.contains("-") ? ~0 : range.lo;
+    else if (std::atoi(hi.begin, hi.end, &mut range.hi).error)
+      return false;
+
+    if (range.lo == 0 || range.hi < range.lo)
+      return false;
+
+    ranges.push_back(range);
+  }
+
+  return true;
+}
+
+fn cut(std::string &path, std::vector<range> &ranges, opts &opts) throws(std::error) -> i32
+{
+  var fin = || throws {
+    if (path == "-")
+      return std::stdin_raw;
+    return std::file::open(path);
+  }();
+
+  var fout = std::stdout.lock();
+
+  for (var line : std::buffered_reader(&mut fin).lines)
+  {
+    var last = 0;
+
+    for (var &range : ranges)
+    {
+      switch (range.ty)
+      {
+        case bytes:
+          var s = std::min(std::max(range.lo - 1, last), line.len);
+          var e = std::min(std::max(range.hi, last), line.len);
+
+          fout.puts(line.drop_front(s).front_n(e - s));
+
+        case characters:
+          var s = std::max(range.lo - 1, last);
+          var e = std::max(range.hi, last);
+
+          fout.puts(line.substr(s, e - s));
+
+        case fields:
+          var s = std::max(range.lo - 1, last);
+          var e = std::max(range.hi, last);
+
+          if (line.contains(opts.delimiter))
+          {
+            var fields = line.split_after(opts.delimiter);
+
+            for (var field : fields.drop_n(s).take_n(e - s))
+              fout.puts(field);
+          }
+          else
+          {
+            if (!opts.only_delimited)
+              fout.puts(line);
+          }
+      }
+
+      last = std::max(last, range.hi);
+    }
+
+    fout.puts("\n");
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.paths.empty)
+    opts.paths.push_back("-");
+
+  var ranges = std::vector<range>();
+
+  if (!parse(&mut ranges, range::type::bytes, opts.bytes))
+    std::fprint(std::stderr, "cut: invalid byte range");
+
+  if (!parse(&mut ranges, range::type::characters, opts.characters))
+    std::fprint(std::stderr, "cut: invalid character range");
+
+  if (!parse(&mut ranges, range::type::fields, opts.fields))
+    std::fprint(std::stderr, "cut: invalid field range");
+
+  std::sort!(&mut ranges, |x, y| std::tie(x.ty, x.lo, x.hi) < std::tie(y.ty, y.lo, y.hi));
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      var cnt = 0;
+
+      if (path == "-")
+      {
+        cut(path, ranges, opts);
+
+        cnt += 1;
+      }
+
+      for (var &file : glob::glob(path).files)
+      {
+        cut(file, ranges, opts);
+
+        cnt += 1;
+      }
+
+      if (cnt == 0)
+      {
+        std::fprint(std::stderr, "cut: ", path, ": no such file or directory");
+      }
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "cut: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

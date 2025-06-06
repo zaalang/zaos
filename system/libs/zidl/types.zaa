@@ -34,7 +34,7 @@ pub struct string_view
   pub ~string_view() = default;
 }
 
-pub fn fmt<K, V>(std::OutputStream mut &os, std::fmt_context mut &ctx, string_view str) throws -> void
+pub fn fmt<K, V>(std::OutputStream mut &os, std::fmt_context mut &ctx, string_view str) throws(std::error) -> void
 {
   std::fmt_to(&mut os, &mut ctx, std::string_view(str));
 }
@@ -105,7 +105,7 @@ pub struct handle
 
 pub struct channel : pub handle
 {
-  pub fn create() throws -> (channel, channel)
+  pub fn create() throws(std::error) -> (channel, channel)
   {
     var fds = [0, 0];
     if (var rc = os::channel_create(&mut thread_ring, &fds, 0); rc < 0)
@@ -138,7 +138,7 @@ pub struct channel : pub handle
 
 pub struct buffer : pub handle
 {
-  pub fn create(usize size) throws -> (buffer, buffer)
+  pub fn create(usize size) throws(std::error) -> (buffer, buffer)
   {
     var fds = [0, 0];
     if (var rc = os::buffer_create(&mut thread_ring, &fds, size, 0); rc < 0)

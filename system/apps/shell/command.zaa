@@ -25,7 +25,7 @@ pub union Arg
   pub ~Arg() = default;
 }
 
-fn to_arg(Context &&ctx, Value &value) throws -> std::string
+fn to_arg(Context &&ctx, Value &value) throws(std::error) -> std::string
 {
   switch (value)
   {
@@ -39,7 +39,7 @@ fn to_arg(Context &&ctx, Value &value) throws -> std::string
   return std::format("{}", value);
 }
 
-pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws -> void
+pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws(std::error) -> void
 {
   var path = name;
 
@@ -53,7 +53,7 @@ pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector
       {
         for (var &file : sys::read_dir(part))
         {
-          if (file.is_dir)
+          if (file.is_directory)
             continue;
 
           if (file.name == name)

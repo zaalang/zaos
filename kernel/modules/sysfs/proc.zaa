@@ -30,7 +30,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var process = process::find(cast<proc_pid_node mut &>(*node).pid);
 
@@ -57,17 +57,23 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
   {
     var &this = cast<proc_pid_node&>(*path);
 
-    if (name == "stat")
-      return proc_stat_node::create(path, this.pid);
+    switch (name)
+    {
+      case "stat":
+        return proc_stat_node::create(path, this.pid);
 
-    if (name == "auxv")
-      return proc_auxv_node::create(path, this.pid);
+      case "auxv":
+        return proc_auxv_node::create(path, this.pid);
 
-    if (name == "environ")
-      return proc_environ_node::create(path, this.pid);
+      case "environ":
+        return proc_environ_node::create(path, this.pid);
 
-    if (name == "cmdline")
-      return proc_cmdline_node::create(path, this.pid);
+      case "cmdline":
+        return proc_cmdline_node::create(path, this.pid);
+
+      case "mounts":
+        return proc_mounts_node::create(path, this.pid);
+    }
 
     return null;
   }
@@ -78,6 +84,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
     emit(vfs::filetype::regular, std::string_view("auxv"));
     emit(vfs::filetype::regular, std::string_view("environ"));
     emit(vfs::filetype::regular, std::string_view("cmdline"));
+    emit(vfs::filetype::regular, std::string_view("mounts"));
     emit(vfs::filetype::regular, std::string_view("pagemap"));
     emit(vfs::filetype::symlink, std::string_view("exe"));
 
@@ -107,7 +114,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<proc_stat_node mut &>(*node);
 
@@ -181,7 +188,7 @@ pub struct proc_auxv_node : pub sysfs::sysfs_file_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<proc_auxv_node mut &>(*node);
 
@@ -243,7 +250,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<proc_environ_node mut &>(*node);
 
@@ -299,6 +306,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
   pub ~proc_environ_node() = default;
 }
 
+
 pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
 {
   process::id pid;
@@ -314,7 +322,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<proc_cmdline_node mut &>(*node);
 
@@ -370,6 +378,127 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
   pub ~proc_cmdline_node() = default;
 }
 
+pub struct proc_mounts_node : pub sysfs::sysfs_file_node
+{
+  process::id pid;
+
+  pub fn create(vfs::node mut *parent, process::id pid) -> Rc<vfs::node>
+  {
+    return std::allocator::new<proc_mounts_node>(parent, pid);
+  }
+
+  pub proc_mounts_node(vfs::node mut *parent, process::id pid)
+    : super(&impl this, parent),
+      pid(pid)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<proc_mounts_node mut &>(*node);
+
+    var process = process::find(this.pid);
+
+    if (!process)
+      return io_error;
+
+    if (flags & 0x3 != 0)
+    {
+      var json = std::string();
+      var stream = json_stream(&mut json);
+
+      stream.begin('[');
+
+      vfs::enumerate_mounts(|mount| [json, stream] {
+        stream.begin('{');
+        stream.append("path", mount.path);
+        stream.append("type", mount.fs.query(vfs::query::fs_type));
+
+        if (var source = mount.fs.query(vfs::query::fs_source); source != "")
+          stream.append("source", source);
+
+        var statfs = vfs::statfs();
+        if (mount.fs.statfs(&mut statfs, 0))
+        {
+          stream.append("bsize", statfs.bsize);
+          stream.append("blocks", statfs.blocks);
+          stream.append("free_blocks", statfs.free_blocks);
+        }
+
+        stream.end('}');
+      });
+
+      stream.end(']');
+
+      this.contents = &move json;
+    }
+
+    return ok;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<proc_mounts_node mut *>(node));
+  }
+
+  pub ~proc_mounts_node() = default;
+}
+
+pub struct proc_self_node : pub sysfs::sysfs_symlink_node
+{
+  process::id pid;
+
+  pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
+  {
+    return std::allocator::new<proc_self_node>(parent);
+  }
+
+  pub proc_self_node(vfs::node mut *parent)
+    : super(&impl this, parent)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<proc_self_node mut &>(*node);
+
+    this.pid = process.id;
+
+    return ok;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn readlink(vfs::node mut *node, std::string mut &buffer) override -> vfs::result
+  {
+    var mut &this = cast<proc_self_node mut &>(*node);
+
+    std::sprint(&mut buffer, this.pid);
+
+    return ok;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<proc_self_node mut *>(node));
+  }
+
+  pub ~proc_self_node() = default;
+}
+
 pub struct proc_root_node : pub sysfs::sysfs_directory_node
 {
   pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
@@ -382,7 +511,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     return ok;
   }
@@ -398,6 +527,9 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
 
     if (name == "list")
       return proc_list_node::create(path);
+
+    if (name == "self")
+      return proc_self_node::create(path);
 
     var pid = process::id();
     if (std::atoi(name.begin, name.end, &mut pid).error)
@@ -428,6 +560,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
       cursor += 1;
     });
 
+    emit(vfs::filetype::symlink, std::string_view("self"));
     emit(vfs::filetype::regular, std::string_view("list"));
 
     return cast(result);
@@ -453,7 +586,7 @@ pub struct proc_list_node : pub sysfs::sysfs_file_node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) override -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<proc_list_node mut &>(*node);
 

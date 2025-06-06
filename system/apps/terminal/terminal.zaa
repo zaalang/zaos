@@ -77,13 +77,14 @@ pub struct window : pub gui::window
   int font_ascender;
   std::vector<cell> cells;
 
-  pub fn create(i32 width, i32 height) throws -> window
+  pub fn create(i32 width, i32 height) throws(std::error) -> window
   {
     var window = window();
 
     window.create(width, height);
     window.screen.set_palette(palette);
-    window.screen.on_reply = fn[window](u8 *data, usize len) { window.post(data, len); };
+    window.screen.on_report = |data, len| { window.post(data, len); };
+    window.screen.on_control = |data, len| { window.on_control(data, len); };
 
     if (var rc = window.screen.resize(80, 24); !rc)
       std::print("cannot resize vt - ", rc);
@@ -161,6 +162,33 @@ pub struct window : pub gui::window
     if (this.screen.cursor_visible)
     {
       this.schedule_redraw(this.cursor_rect.offset(this.interior.top_left));
+    }
+  }
+
+  fn on_control(this mut &, u8 *data, usize len) -> void
+  {
+    // https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md
+
+    var ch = data;
+    var end = data + len;
+
+    var code = 0;
+
+    for (; ch != end && std::is_digit(*ch); ++ch)
+      code = (code * 10) + (*ch - cast('0'));
+
+    if (ch != end && *ch == cast(';'))
+      ++ch;
+
+    switch (code)
+    {
+      case 133:
+        if (ch != end && *ch == cast('L'))
+        {
+          if (this.screen.cursor.0 != 0)
+            this.screen.move_down(1, scroll: true);
+          this.screen.move_home();
+        }
     }
   }
 
@@ -362,7 +390,7 @@ pub struct window : pub gui::window
   pub ~window() = default;
 }
 
-fn launch(String &path) throws -> pty
+fn launch(String &path) throws(std::error) -> pty
 {
   var pty = pty();
 

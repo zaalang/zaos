@@ -121,7 +121,7 @@ pub struct diag
   pub ~diag() = default;
 }
 
-pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, diag &diag) throws -> void
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, diag &diag) throws(std::error) -> void
 {
   for (var &diagnostic : diag.diagnostics)
   {

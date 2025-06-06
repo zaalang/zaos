@@ -774,7 +774,7 @@ fn parse_toplevel_declaration(parse_context mut &ctx) -> decl
   return decl();
 }
 
-pub fn parse(String &path, diag::diag mut &diag) throws -> ast
+pub fn parse(String &path, diag::diag mut &diag) throws(std::error) -> ast
 {
   var ast = ast();
 

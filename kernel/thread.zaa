@@ -172,7 +172,7 @@ pub struct thread
   pub ~thread() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, thread &thread) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, thread &thread) throws(std::error) -> void
 {
   ctx.written += std::print_to(&mut os, "[process:", thread.process.id, "(", thread.process.name, "),thread:", thread.id, "] ");
 }

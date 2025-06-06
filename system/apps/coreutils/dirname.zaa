@@ -1,0 +1,56 @@
+//
+// dirname
+//
+
+import std.stdio;
+import std.env;
+import sys.path;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="name", required, help="path name")]
+  std::vector<std::string_view> names;
+
+  #[arg(flag, short='z', help="end each output line with NUL, not newline")]
+  bool zero = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn dirname(std::string_view name) -> std::string_view
+{
+  var dirname = sys::path_view(name).parent;
+
+  if (dirname.empty)
+    return ".";
+
+  return dirname;
+}
+
+fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.names.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var line_ending = opts.zero ? '\0' : '\n';
+
+  for (var path : opts.names)
+  {
+    std::printf("{}{}", dirname(path), line_ending);
+  }
+
+  std::stdout.flush();
+
+  return 0;
+}

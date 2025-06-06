@@ -421,11 +421,6 @@ pub struct ext2_inode
   pub fn isdir(this &) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFDIR; }
   pub fn islnk(this &) -> bool { return this.i_mode & EXT2_IFMT == EXT2_IFLNK; }
 
-  pub fn mode(this &) -> u16
-  {
-    return this.i_mode;
-  }
-
   pub fn type(this &) -> ext2_ftype
   {
     switch (this.i_mode & EXT2_IFMT)
@@ -441,6 +436,16 @@ pub struct ext2_inode
     }
 
     return ext2_ftype::unknown;
+  }
+
+  pub fn mode(this &) -> u16
+  {
+    return this.i_mode;
+  }
+
+  pub fn mode=(this mut &, u16 mode) -> void
+  {
+    this.i_mode = mode;
   }
 
   pub fn size(this &) -> u64

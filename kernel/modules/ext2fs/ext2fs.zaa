@@ -14,6 +14,7 @@ import vm;
 import io;
 import slab : slab_allocator;
 import mutex as _ : mutex, shared_mutex;
+import process as _ : process;
 import support.rc : Rc;
 
 struct inode : pub vfs::node
@@ -22,8 +23,9 @@ struct inode : pub vfs::node
   ext2_ino_t ino;
   shared_mutex lock;
 
+  vfs::result status;
+
   u16 mode;
-  u32 flags;
   u32 uid;
   u32 gid;
 
@@ -37,7 +39,7 @@ struct inode : pub vfs::node
 
   bool unlinked;
 
-  u8[12] reserved;
+  u8[16] reserved;
 
   fn allocator()
   {
@@ -46,20 +48,26 @@ struct inode : pub vfs::node
     return &allocator;
   }
 
+  fn create() -> Rc<inode>
+  {
+    return allocator.allocate();
+  }
+
   inode() = default;
   ~inode() = default;
 }
 
 pub struct ext2fs : pub vfs::file_system
 {
-  mutex lock;
+  shared_mutex lock;
   volume volume;
   Rc<vfs::node> dev;
+  std::string source;
   Rc<vfs::node> root;
-  std::flat_hash_map<ext2_ino_t, Rc<vfs::node>> node_cache;
+  std::flat_hash_map<ext2_ino_t, Rc<inode>> node_cache;
 
-  ext2fs(vfs::node mut *dev)
-    : super(&impl this), dev(dev)
+  ext2fs(vfs::node mut *dev, std::string &source)
+    : super(&impl this), dev(dev), source(source)
   {
   }
 
@@ -68,39 +76,73 @@ pub struct ext2fs : pub vfs::file_system
 
 pub fn create(vfs::file_system_context &ctx) -> ext2fs mut *
 {
-  return new<ext2fs>(std::allocator().allocate(sizeof<ext2fs>, alignof<ext2fs>))(ctx.source);
+  var dev = vfs::lookup(colonel, vfs::root, ctx.source);
+
+  return new<ext2fs>(std::allocator().allocate(sizeof<ext2fs>, alignof<ext2fs>))(dev, ctx.source);
 }
 
 fn get_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_ino_t ino) -> vfs::result
 {
-  var guard = std::lock_guard(&mut fs.lock);
+  fs.lock.lock_shared();
 
   if (var j = fs.node_cache.find(ino); j != fs.node_cache.end)
   {
     node = fs.node_cache[j].value;
 
-    return ok;
+    fs.lock.unlock_shared();
+
+    var inode = cast<inode mut *>(node);
+
+    if (inode.status <= cast(0))
+      return inode.status;
+
+    var guard = std::lock_guard(&mut inode.lock);
+
+    return inode.status;
   }
+
+  fs.lock.unlock_shared();
+
+  fs.lock.lock();
+
+  if (var j = fs.node_cache.find(ino); j != fs.node_cache.end)
+  {
+    node = fs.node_cache[j].value;
+
+    fs.lock.unlock();
+
+    var inode = cast<inode mut *>(node);
+    var guard = std::lock_guard(&mut inode.lock);
+
+    return inode.status;
+  }
+
+  var inode = inode::create();
+  var guard = std::lock_guard(&mut inode.lock);
+
+  inode.fs = &fs;
+  inode.ino = ino;
+  inode.status = cast(1);
+
+  fs.node_cache.insert(ino, inode);
+
+  fs.lock.unlock();
 
   var rawinode = fs.volume.fetch_inode(fs.dev, ino);
 
   if (!rawinode.result)
-    return rawinode.result;
+    return (inode.status = rawinode.result);
 
-  var inode = inode::allocator.allocate();
-  inode.fs = &fs;
-  inode.ino = ino;
-  inode.mode = rawinode.ptr.i_mode;
+  inode.mode = rawinode.ptr.mode;
   inode.uid = rawinode.ptr.uid;
   inode.gid = rawinode.ptr.gid;
-  inode.flags = rawinode.ptr.i_flags;
 
   inode.size = rawinode.ptr.size;
 
   inode.ctime = cast(rawinode.ptr.i_ctime) * 1_000_000_000;
   inode.mtime = cast(rawinode.ptr.i_mtime) * 1_000_000_000;
 
-  inode.blocks = std::ceil_div(inode.size, cast(fs.volume.blocksize));
+  inode.blocks = std::ceil_div(inode.size, cast(fs.volume.bsize));
   inode.contents = rawinode.ptr.i_contents;
 
   inode.unlinked = (rawinode.ptr.i_links == 0);
@@ -117,12 +159,12 @@ fn get_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_ino_t ino) -> vfs::res
       vfs::node::new(inode, vfs::node::type::symlink, vfs::node_symlink_operations());
 
     else:
-      return not_supported;
+      return (inode.status = not_supported);
   }
 
-  node = inode;
+  inode.status = vfs::result::ok;
 
-  fs.node_cache.insert(ino, node);
+  node = inode;
 
   return ok;
 }
@@ -147,6 +189,20 @@ fn unlink_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_inode mut *dir, ext
   return result;
 }
 
+pub fn query(ext2fs *fs, vfs::query query, std::string mut &result) -> vfs::result
+{
+  switch (query)
+  {
+    case fs_type:
+      result = "ext2";
+
+    case fs_source:
+      result = fs.source;
+  }
+
+  return ok;
+}
+
 pub fn mount(ext2fs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
 {
   if (!fs.dev)
@@ -161,6 +217,15 @@ pub fn mount(ext2fs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
     return result;
 
   dentry = fs.root;
+
+  return ok;
+}
+
+pub fn statfs(ext2fs mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result
+{
+  statfs.bsize = cast(fs.volume.bsize);
+  statfs.blocks = cast(fs.volume.blocks);
+  statfs.free_blocks = cast(fs.volume.free_blocks);
 
   return ok;
 }
@@ -441,7 +506,7 @@ pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *new
   return not_supported;
 }
 
-pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
 {
   switch (node.type)
   {
@@ -487,46 +552,69 @@ pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 
   var guard = std::lock_guard(&mut this.lock);
 
-  if (mask & vfs::stats::size == vfs::stats::size)
+  if (mask != 0)
   {
     var rawinode = fs.volume.fetch_inode(fs.dev, this.ino);
 
     if (!rawinode.result)
       return rawinode.result;
 
-    if (stat.size < std::align_down(this.size, fs.volume.blocksize))
+    if (mask & vfs::stats::size == vfs::stats::size)
     {
-      var last = std::ceil_div(stat.size, cast(fs.volume.blocksize));
-
-      if (var result = fs.volume.recover(fs.dev, rawinode.ptr, last); !result)
-        return result;
-
-      this.blocks = last;
-      this.contents = rawinode.ptr.i_contents;
-    }
-
-    if (stat.size > std::align_up(this.size, fs.volume.blocksize))
-    {
-      var last = std::ceil_div(stat.size, cast(fs.volume.blocksize));
-
-      if (var result = fs.volume.grow(fs.dev, rawinode.ptr, this.blocks, last); !result)
+      if (stat.size < std::align_down(this.size, fs.volume.bsize))
       {
-        fs.volume.recover(fs.dev, rawinode.ptr, this.blocks);
+        var last = std::ceil_div(stat.size, cast(fs.volume.bsize));
 
-        return result;
+        if (var result = fs.volume.recover(fs.dev, rawinode.ptr, last); !result)
+          return result;
+
+        this.blocks = last;
+        this.contents = rawinode.ptr.i_contents;
       }
 
-      this.blocks = last;
-      this.contents = rawinode.ptr.i_contents;
+      if (stat.size > std::align_up(this.size, fs.volume.bsize))
+      {
+        var last = std::ceil_div(stat.size, cast(fs.volume.bsize));
+
+        if (var result = fs.volume.grow(fs.dev, rawinode.ptr, this.blocks, last); !result)
+        {
+          fs.volume.recover(fs.dev, rawinode.ptr, this.blocks);
+
+          return result;
+        }
+
+        this.blocks = last;
+        this.contents = rawinode.ptr.i_contents;
+      }
+
+      rawinode.ptr.size = stat.size;
     }
 
-    rawinode.ptr.size = stat.size;
+    if (mask & vfs::stats::mode == vfs::stats::mode)
+      rawinode.ptr.mode = (rawinode.ptr.mode & ~0xfff) | cast(stat.mode & 0xfff);
+
+    if (mask & vfs::stats::uid == vfs::stats::uid)
+      rawinode.ptr.uid = stat.uid;
+
+    if (mask & vfs::stats::gid == vfs::stats::gid)
+      rawinode.ptr.gid = stat.gid;
+
+    if (mask & vfs::stats::mtime == vfs::stats::mtime)
+      rawinode.ptr.i_mtime = cast(stat.mtime / 1_000_000_000);
+
+    if (mask & vfs::stats::ctime == vfs::stats::ctime)
+      rawinode.ptr.i_ctime = cast(stat.ctime / 1_000_000_000);
+
+    this.mode = rawinode.ptr.mode;
+    this.uid = rawinode.ptr.uid;
+    this.gid = rawinode.ptr.gid;
+    this.size = rawinode.ptr.size;
+    this.ctime = cast(rawinode.ptr.i_ctime) * 1_000_000_000;
+    this.mtime = cast(rawinode.ptr.i_mtime) * 1_000_000_000;
 
     rawinode.commit(rawinode.ptr, sizeof<ext2_inode>);
 
     fs.volume.flush(fs.dev);
-
-    this.size = stat.size;
   }
 
   return ok;
@@ -541,7 +629,7 @@ pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize off
 
   var count = 0;
 
-  var block_mask = cast<u64>(fs.volume.blocksize - 1);
+  var block_mask = cast<u64>(fs.volume.bsize - 1);
 
   for (var position = cursor & ~block_mask; position < this.size; )
   {
@@ -612,6 +700,8 @@ pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
 
+  var guard = std::lock_shared_guard(&mut this.lock);
+
   if (this.size < EXT2_SHORT_SYMLINK_LENGTH)
   {
     buffer = std::string_view(cast<u8*>(this.contents.data), cast<usize>(this.size));
@@ -643,10 +733,10 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
 
-  if (position % cast(fs.volume.blocksize) != 0)
+  if (position % cast(fs.volume.bsize) != 0)
     return invalid_argument;
 
-  if (length % cast(fs.volume.blocksize) != 0)
+  if (length % cast(fs.volume.bsize) != 0)
     return invalid_argument;
 
   var guard = std::lock_shared_guard(&mut this.lock);
@@ -655,7 +745,7 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
     return invalid_argument;
 
   if (position + cast(length) > this.size)
-    length = std::align_up(cast<usize>(this.size - position), fs.volume.blocksize);
+    length = std::align_up(cast<usize>(this.size - position), fs.volume.bsize);
 
   for (var remaining = length; remaining != 0; )
   {
@@ -685,12 +775,12 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
   if (fs.volume.is_readonly)
     return readonly_file_system;
 
-  var guard = std::lock_guard(&mut this.lock);
+  var guard = std::lock_shared_guard(&mut this.lock);
 
   if (position > this.size)
     length = 0;
 
-  if (position + cast(length) > std::align_up(this.size, fs.volume.blocksize))
+  if (position + cast(length) > std::align_up(this.size, fs.volume.bsize))
     return invalid_argument;
 
   for (var remaining = length; remaining != 0; )
@@ -700,9 +790,9 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
     if (!block.result)
       return block.result;
 
-    var bytes = std::min(block.length - cast(position & cast(fs.volume.blocksize - 1)), remaining);
+    var bytes = std::min(block.length - cast(position & cast(fs.volume.bsize - 1)), remaining);
 
-    if (var result = fs.dev.file_operations.write(fs.dev, &mut cb, block.offset + (position & cast(fs.volume.blocksize - 1)), iovec, offset, bytes); !result)
+    if (var result = fs.dev.file_operations.write(fs.dev, &mut cb, block.offset + (position & cast(fs.volume.bsize - 1)), iovec, offset, bytes); !result)
       return result;
 
     remaining -= bytes;

@@ -266,7 +266,7 @@ pub struct process
   pub ~process() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, process &process) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, process &process) throws(std::error) -> void
 {
   ctx.written += std::print_to(&mut os, "[process:", process.id, "(", process.name, ")] ");
 }
@@ -439,7 +439,7 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
 {
   // loader
 
-  var loader = vfs::lookup(vfs::root, "/zaos/lib/loader");
+  var loader = vfs::lookup(process, vfs::root, "/zaos/lib/loader");
 
   if (!loader)
     return cast(vfs::result::not_found);

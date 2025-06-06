@@ -67,7 +67,7 @@ pub struct physaddr : pub platform::physaddr_t
   pub ~physaddr() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physaddr &addr) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physaddr &addr) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "phys{:#016x}", addr.super);
 }
@@ -125,7 +125,7 @@ pub struct physrange : pub platform::physrange_t
   pub ~physrange() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physrange &range) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physrange &range) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
 }
@@ -183,7 +183,7 @@ pub struct virtaddr : pub platform::virtaddr_t
   pub ~virtaddr() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtaddr &addr) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtaddr &addr) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "{:#016x}", addr.super);
 }
@@ -256,7 +256,7 @@ pub struct virtrange : pub platform::virtrange_t
   pub ~virtrange() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &range) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &range) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
 }

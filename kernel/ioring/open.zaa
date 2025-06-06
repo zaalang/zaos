@@ -18,6 +18,7 @@ enum flags
   const exclusive = 0o200;
   const truncate = 0o1000;
   const append = 0o2000;
+  const symlink = 0o100000;
   const directory = 0o200000;
   const nofollow = 0o400000;
 }
@@ -44,7 +45,7 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize path
     return vfs::result::not_a_directory;
 
   var base = dir.node;
-  var node = vfs::lookup(&mut base, path);
+  var node = vfs::lookup(process, &mut base, path);
 
   if (flags & flags::create == flags::create)
   {
@@ -70,12 +71,15 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize path
 
   if (flags & flags::nofollow != flags::nofollow)
   {
-    if (var result = vfs::resolve(&mut base, &mut node); !result)
+    if (var result = vfs::resolve(process, &mut base, &mut node); !result)
       return result;
   }
 
   if ((flags & flags::create == flags::create) && node.type == vfs::node::type::directory)
     return vfs::result::is_a_directory;
+
+  if ((flags & flags::symlink == flags::symlink) && node.type != vfs::node::type::symlink)
+    return vfs::result::invalid_argument;
 
   if ((flags & flags::directory == flags::directory) && node.type != vfs::node::type::directory)
     return vfs::result::not_a_directory;
@@ -85,7 +89,7 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize path
 
   var fd = vfs::file_descriptor::create(base, node);
 
-  if (var result = vfs::open(node, &mut fd, flags, mode); !result)
+  if (var result = vfs::open(node, &mut fd, process, flags, mode); !result)
     return result;
 
   var stat = vfs::stat();

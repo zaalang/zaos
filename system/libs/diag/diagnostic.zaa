@@ -58,7 +58,7 @@ pub fn add_label(diagnostic mut &diagnostic, usize pos, usize len, String &&text
   diagnostic.add_label(label(pos, len, &&text));
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, diagnostic &diagnostic) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, diagnostic &diagnostic) throws(std::error) -> void
 {
   var opts = diag::term_report_opts();
 

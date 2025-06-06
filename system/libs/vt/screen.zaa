@@ -43,7 +43,8 @@ pub struct screen
   pub fn rows(this &) { return this.rows; }
   pub fn columns(this &) { return this.columns; }
 
-  pub std::delegate<(u8*, usize) -> void> on_reply;
+  pub std::delegate<(u8*, usize) -> void> on_report;
+  pub std::delegate<(u8*, usize) -> void> on_control;
 
   vte state;
 
@@ -601,16 +602,6 @@ pub fn put(screen mut &screen, char ch, attrs &attrs) -> vt::result
   }
 
   move_to(&mut screen, x + width, y);
-
-  return 0;
-}
-
-pub fn post(screen mut &screen, u8 *data, usize len) -> vt::result
-{
-  if (screen.on_reply)
-  {
-    screen.on_reply(data, len);
-  }
 
   return 0;
 }

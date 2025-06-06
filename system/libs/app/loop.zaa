@@ -337,7 +337,7 @@ pub fn run(loop mut &loop) -> i32
   return 0;
 }
 
-pub fn connect_to_service(String &uri) throws -> zidl::channel
+pub fn connect_to_service(String &uri) throws(std::error) -> zidl::channel
 {
   var [server_end, client_end] = zidl::channel::create();
 

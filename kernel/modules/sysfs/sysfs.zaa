@@ -11,12 +11,13 @@ import vfs.stat;
 import vfs.fs;
 import vm;
 import io;
+import process as _ : process;
 import support.rc : Rc;
 import chrono;
 
 pub vtable sysfs_node_operations
 {
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result;
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result;
   pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
   fn destroy(vfs::node mut *node) -> void;
 }
@@ -34,7 +35,7 @@ pub vtable sysfs_directory_operations : sysfs_node_operations
 
 pub vtable sysfs_symlink_operations : sysfs_node_operations
 {
-  //pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result;
+  pub fn readlink(vfs::node mut *node, std::string mut &buffer) -> vfs::result;
 }
 
 struct sysfs_root_node : pub vfs::node
@@ -46,12 +47,12 @@ struct sysfs_root_node : pub vfs::node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var fs = cast<sysfs_root_node mut &>(*node).fs;
 
@@ -68,7 +69,7 @@ struct sysfs_root_node : pub vfs::node
     return ok;
   }
 
-  pub fn lookup(vfs::node mut *path, std::string_view name) -> Rc<vfs::node>
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
   {
     var fs = cast<sysfs_root_node mut &>(*path).fs;
     var mut &this = cast<sysfs_root_node mut &>(*path);
@@ -82,7 +83,7 @@ struct sysfs_root_node : pub vfs::node
     return null;
   }
 
-  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     var fs = cast<sysfs_root_node mut &>(*node).fs;
 
@@ -151,17 +152,17 @@ pub struct sysfs_directory_node : pub vfs::node
     btime = chrono::system_clock::now.time_since_epoch.count;
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<sysfs_directory_node mut &>(*node);
 
-    if (var result = this.ops.open(node, &mut fd, flags, mode); !result)
+    if (var result = this.ops.open(node, &mut fd, process, flags, mode); !result)
       return result;
 
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &this = cast<sysfs_directory_node mut &>(*node);
 
@@ -181,7 +182,7 @@ pub struct sysfs_directory_node : pub vfs::node
     return ok;
   }
 
-  pub fn lookup(vfs::node mut *path, std::string_view name) -> Rc<vfs::node>
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
   {
     var mut &this = cast<sysfs_directory_node mut &>(*path);
 
@@ -197,7 +198,7 @@ pub struct sysfs_directory_node : pub vfs::node
     return null;
   }
 
-  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     var mut &this = cast<sysfs_directory_node mut &>(*node);
 
@@ -251,6 +252,64 @@ pub struct sysfs_directory_node : pub vfs::node
   pub ~sysfs_directory_node() = default;
 }
 
+pub struct sysfs_symlink_node : pub vfs::node
+{
+  Rc<vfs::node> parent;
+  sysfs_symlink_operations *ops;
+
+  pub sysfs_symlink_node(sysfs_symlink_operations &ops, vfs::node mut *parent)
+    : super(vfs::node::type::symlink, vfs::node_symlink_operations()),
+      parent(parent),
+      ops(&ops)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<sysfs_symlink_node mut &>(*node);
+
+    if (var result = this.ops.open(node, &mut fd, process, flags, mode); !result)
+      return result;
+
+    return ok;
+  }
+
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    var mut &this = cast<sysfs_symlink_node mut &>(*node);
+
+    if (var result = vfs::stat(this.parent, &mut stat, mask); !result)
+      return result;
+
+    stat.mode = 0o120700;
+    stat.inode = cast<uintptr>(&this);
+
+    if (var result = this.ops.getattr(node, &mut stat, mask); !result)
+      return result;
+
+    return ok;
+  }
+
+  pub fn readlink(vfs::node mut *node, std::string mut &buffer) override -> vfs::result
+  {
+    var mut &this = cast<sysfs_symlink_node mut &>(*node);
+
+    if (var result = this.ops.readlink(node, &mut buffer); !result)
+      return result;
+
+    return cast(buffer.len);
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    var node = cast<sysfs_symlink_node mut *>(node);
+
+    node.ops.destroy(node);
+  }
+
+  pub ~sysfs_symlink_node() = default;
+}
+
 pub struct sysfs_file_node : pub vfs::node
 {
   Rc<vfs::node> parent;
@@ -265,17 +324,17 @@ pub struct sysfs_file_node : pub vfs::node
   {
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
-    if (var result = this.ops.open(node, &mut fd, flags, mode); !result)
+    if (var result = this.ops.open(node, &mut fd, process, flags, mode); !result)
       return result;
 
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
@@ -292,7 +351,7 @@ pub struct sysfs_file_node : pub vfs::node
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
@@ -304,17 +363,17 @@ pub struct sysfs_file_node : pub vfs::node
     if (var result = vm::memcpy(iovec, offset, this.contents.data + cast(position), bytes); !result)
       return cast(result);
 
-    return ok;
+    return cast(bytes);
   }
 
-  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
     if (var result = this.ops.write(node, position, iovec, offset, length); !result)
       return result;
 
-    return ok;
+    return cast(length);
   }
 
   fn destroy(vfs::node mut *node) -> void
@@ -348,6 +407,17 @@ pub fn create(vfs::file_system_context &ctx = vfs::file_system_context()) -> sys
   return new<sysfs>(std::allocator().allocate(sizeof<sysfs>, alignof<sysfs>))();
 }
 
+pub fn query(sysfs *fs, vfs::query query, std::string mut &result) -> vfs::result
+{
+  switch (query)
+  {
+    case fs_type:
+      result = "sysfs";
+  }
+
+  return ok;
+}
+
 pub fn mount(sysfs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
 {
   fs.root = std::allocator::new<sysfs_root_node>(fs);
@@ -357,6 +427,11 @@ pub fn mount(sysfs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
   dentry = fs.root;
 
   return ok;
+}
+
+pub fn statfs(sysfs mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result
+{
+  return not_supported;
 }
 
 pub fn create(vfs::node mut *path, std::string_view name, Rc<vfs::node> mut &dentry, u32 uid, u32 gid, u32 mode) -> vfs::result

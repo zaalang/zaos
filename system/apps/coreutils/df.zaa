@@ -1,0 +1,89 @@
+//
+// df
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import sys.fs;
+import aargh;
+import json;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='h', help="print sizes in powers of 1024")]
+  bool human_readable = false;
+
+  #[arg(flag, help="print sizes in powers of 1000")]
+  bool si = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn df(std::vector<std::string> &paths, opts &opts) throws(std::error) -> i32
+{
+  var mounts = json::load_from_file("/sys/proc/self/mounts");
+
+  if (mounts.error)
+    std::fprint(std::stderr, "df: error parsing mounts list: ", mounts.error);
+
+  std::printf("{:16} {:8} {:>9} {:>9} {}\n", "Mounted", "Type", "Used", "Available", "Source");
+
+  for (var &mount : mounts.value.as_array)
+  {
+    var type = mount["type"].as_str();
+    var path = mount["path"].as_str();
+
+    if (path != "/")
+      path.insert(path.begin, "/");
+
+    if (mount["source"])
+    {
+      var source = mount["source"].as_str();
+      var bsize = mount["bsize"].as<u64>();
+      var blocks = mount["blocks"].as<u64>();
+      var free_blocks = mount["free_blocks"].as<u64>();
+
+      var used = (blocks - free_blocks) * bsize;
+      var avail = (free_blocks) * bsize;
+
+      std::printf("{:16} {:8} {:>9} {:>9} {}\n", path, type, used, avail, source);
+    }
+    else
+    {
+      std::printf("{:16} {:8}\n", path, type);
+    }
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  try
+  {
+    df(opts.paths, opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "df: ", rc);
+  }
+
+  return 0;
+}

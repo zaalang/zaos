@@ -5,9 +5,9 @@
 import std.stdlib;
 import vm : virtaddr;
 import vfs;
-import result as _ : result;
 import thread as _ : thread;
 import process as _ : process;
+import result as _ : result;
 
 enum flags
 {

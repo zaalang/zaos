@@ -26,6 +26,8 @@ fn test(std::string &input)
 
   var value = engine.evaluate(block, &mut diag);
 
+  std::fputs(std::stderr, "\x1b]133;L\x07");
+
   if (diag.has_errored)
     std::print(diag.first);
 

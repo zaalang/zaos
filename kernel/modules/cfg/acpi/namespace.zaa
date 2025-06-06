@@ -96,7 +96,7 @@ pub struct namespace
 
         var range = heap::mmap(physrange(cast<uintptr>(opregion.base), cast<usize>(opregion.length)));
 
-        if (var result = vm::set_memory_type(range, vm::mtype::uncached); !result)
+        if (var result = vm::set_memory_type(range, vm::mtype::write_through); !result)
           std::panic("acpi_bad_memtype");
 
         return regions.emplace(opregion, region::system_memory(range));

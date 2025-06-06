@@ -40,7 +40,7 @@ pub fn create() -> shell
   return shell();
 }
 
-pub fn connect(shell mut &shell) throws -> void
+pub fn connect(shell mut &shell) throws(std::error) -> void
 {
   shell.endpoint = app::connect_to_service("zaos.winton/shell");
   shell.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);

@@ -77,12 +77,12 @@ pub struct pollset
     return &this.node;
   }
 
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+  pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> vfs::result
   {
     var mut &this = *cast<pollset mut *>(cast<uintptr>(node) - offsetof(pollset::node));
 
@@ -91,22 +91,22 @@ pub struct pollset
     return ok;
   }
 
-  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+  pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }

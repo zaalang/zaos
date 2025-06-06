@@ -11,14 +11,14 @@ if [ -d "$OVMF/x64" ]; then
   OVMF=$OVMF/x64
 fi
 
-if [ ! -f "OVMF_VARS.4m.fd" ]; then
-  cp $OVMF/OVMF_VARS.4m.fd .
+if [ ! -f "OVMF_VARS.fd" ]; then
+  cp $OVMF/OVMF_VARS.fd .
 fi
 
 OPTS="-machine q35,i8042=off -cpu host,invtsc -enable-kvm -m 2G -smp 4"
 
-OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.4m.fd,format=raw"
-OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.4m.fd,format=raw"
+OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.fd,format=raw"
+OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.fd,format=raw"
 
 OPTS="$OPTS -drive id=disk0,if=none,file=disk.img,format=raw"
 OPTS="$OPTS -device ide-hd,bus=ide.0,drive=disk0,bootindex=0"

@@ -27,7 +27,7 @@ pub struct connection
 
   std::flat_hash_map<u32, surface mut *> surfaces;
 
-  pub fn create_surface(this mut &) throws -> u32
+  pub fn create_surface(this mut &) throws(std::error) -> u32
   {
     var id = this.next_id = std::add_with_carry(this.next_id, 1).0;
 
@@ -36,7 +36,7 @@ pub struct connection
     return id;
   }
 
-  pub fn create_buffer(this mut &, zidl::buffer fd, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws -> u32
+  pub fn create_buffer(this mut &, zidl::buffer fd, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws(std::error) -> u32
   {
     var id = this.next_id = std::add_with_carry(this.next_id, 1).0;
 
@@ -65,7 +65,7 @@ pub struct connection
     zidl::send<winton::compositor::surface_destroy_request>(this.endpoint, surface_id);
   }
 
-  pub fn buffer_resize(this mut &, u32 id, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws -> void
+  pub fn buffer_resize(this mut &, u32 id, u32 offset, i32 width, i32 height, i32 stride, winton::format format) throws(std::error) -> void
   {
     zidl::send<winton::compositor::buffer_resize_request>(this.endpoint, id, offset, width, height, stride, format);
   }
@@ -550,7 +550,7 @@ pub struct surface : pub gui::object
 
   gui::cursor cursor;
 
-  pub fn create(this mut &, connection mut *connection, flags flags) throws -> void
+  pub fn create(this mut &, connection mut *connection, flags flags) throws(std::error) -> void
   {
     var id = connection.create_surface();
 
@@ -749,7 +749,7 @@ pub struct surface : pub gui::object
       recursor(&mut *surface);
   }
 
-  fn get(this mut &) throws -> buffer mut &
+  fn get(this mut &) throws(std::error) -> buffer mut &
   {
     for (var mut &buffer : this.buffers)
     {
@@ -760,7 +760,7 @@ pub struct surface : pub gui::object
     throw std::system_error(std::errc::device_busy);
   }
 
-  fn prepare(this mut &, buffer mut &buffer, gui::size &allocation) throws -> void
+  fn prepare(this mut &, buffer mut &buffer, gui::size &allocation) throws(std::error) -> void
   {
     var width = allocation.width;
     var height = allocation.height;
@@ -809,7 +809,7 @@ pub struct surface : pub gui::object
     buffer.id = this.connection.create_buffer(&move server_end, buffer.offset, buffer.width, buffer.height, buffer.stride, winton::format::B8G8R8A8);
   }
 
-  fn swap(this mut &, buffer mut &buffer) throws -> void
+  fn swap(this mut &, buffer mut &buffer) throws(std::error) -> void
   {
     this.connection.surface_attach(this.id, buffer.id);
     this.connection.surface_damage(this.id, this.damage.extents.x, this.damage.extents.y, this.damage.extents.width, this.damage.extents.height);

@@ -41,7 +41,20 @@ pub struct volume
 
   pub fn is_readonly(this &) -> bool { return this.flags & flags::readonly == flags::readonly; }
 
-  pub fn blocksize(this &) -> usize { return 1 << this.block_shift; }
+  pub fn bsize(this &) -> usize
+  {
+    return 1 << this.block_shift;
+  }
+
+  pub fn blocks(volume &this) -> usize
+  {
+    return cast(this.superblock.blocks);
+  }
+
+  pub fn free_blocks(volume &this) -> usize
+  {
+    return cast(this.superblock.free_blocks);
+  }
 
   pub volume() = default;
   pub ~volume() = default;
@@ -227,9 +240,9 @@ pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 
   var info = block_info();
 
   let k0 = EXT2_DIRECT_BLOCKS;
-  let k1 = k0 + this.blocksize / sizeof<u32>;
-  let k2 = k1 + std::pow(this.blocksize / sizeof<u32>, 2);
-  let k3 = k2 + std::pow(this.blocksize / sizeof<u32>, 3);
+  let k1 = k0 + this.bsize / sizeof<u32>;
+  let k2 = k1 + std::pow(this.bsize / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(this.bsize / sizeof<u32>, 3);
 
   var index = cast<usize>(offset >> this.block_shift);
 
@@ -240,7 +253,7 @@ pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 
     info.offset = cast<u64>(table[index]) << this.block_shift;
 
     for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
-      info.length += this.blocksize;
+      info.length += this.bsize;
   }
   else if (index < k1)
   {
@@ -260,7 +273,7 @@ pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 
       info.offset = cast<u64>(table0[index]) << this.block_shift;
 
       for (var current = table0[index]; index < table0.len && table0[index] == current; ++index, ++current)
-        info.length += this.blocksize;
+        info.length += this.bsize;
     }
   }
   else if (index < k2)
@@ -292,7 +305,7 @@ pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 
         info.offset = cast<u64>(table[index]) << this.block_shift;
 
         for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
-          info.length += this.blocksize;
+          info.length += this.bsize;
       }
     }
   }
@@ -336,7 +349,7 @@ pub fn lookup_block(volume &this, Rc<vfs::node> &device, u32[15] &contents, u64 
           info.offset = cast<u64>(table[index]) << this.block_shift;
 
           for (var current = table[index]; index < table.len && table[index] == current; ++index, ++current)
-            info.length += this.blocksize;
+            info.length += this.bsize;
         }
       }
     }
@@ -669,9 +682,9 @@ fn free_triple_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_sp
 pub fn recover(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *inode, u64 last) -> vfs::result
 {
   let k0 = EXT2_DIRECT_BLOCKS;
-  let k1 = k0 + this.blocksize / sizeof<u32>;
-  let k2 = k1 + std::pow(this.blocksize / sizeof<u32>, 2);
-  let k3 = k2 + std::pow(this.blocksize / sizeof<u32>, 3);
+  let k1 = k0 + this.bsize / sizeof<u32>;
+  let k2 = k1 + std::pow(this.bsize / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(this.bsize / sizeof<u32>, 3);
 
   if (inode.islnk && inode.size < EXT2_SHORT_SYMLINK_LENGTH)
     return ok;
@@ -795,9 +808,9 @@ fn alloc_triple_indirect(volume mut &this, Rc<vfs::node> &device, std::mutable_s
 pub fn grow(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *inode, u64 first, u64 last) -> vfs::result
 {
   let k0 = EXT2_DIRECT_BLOCKS;
-  let k1 = k0 + this.blocksize / sizeof<u32>;
-  let k2 = k1 + std::pow(this.blocksize / sizeof<u32>, 2);
-  let k3 = k2 + std::pow(this.blocksize / sizeof<u32>, 3);
+  let k1 = k0 + this.bsize / sizeof<u32>;
+  let k2 = k1 + std::pow(this.bsize / sizeof<u32>, 2);
+  let k3 = k2 + std::pow(this.bsize / sizeof<u32>, 3);
 
   var n = cast<usize>(first);
   var last = cast<usize>(last);
@@ -1069,7 +1082,7 @@ pub fn symlink(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std
   }
   else
   {
-    if (var result = this.grow(device, inode.ptr, 0, cast(std::ceil_div(target.len, this.blocksize))); !result)
+    if (var result = this.grow(device, inode.ptr, 0, cast(std::ceil_div(target.len, this.bsize))); !result)
     {
       this.recover(device, inode.ptr, 0);
       this.deallocate_inode(device, ino, EXT2_IFLNK);

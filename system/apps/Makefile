@@ -9,7 +9,7 @@ default:
 	@cd mandlebrot; $(MAKE)
 	@cd shell; $(MAKE)
 	@cd terminal; $(MAKE)
-	@cd binutils; $(MAKE)
+	@cd coreutils; $(MAKE)
 clean:
 	cd bar; $(MAKE) clean
 	cd baz; $(MAKE) clean
@@ -19,4 +19,4 @@ clean:
 	cd mandlebrot; $(MAKE) clean
 	cd shell; $(MAKE) clean
 	cd terminal; $(MAKE) clean
-	cd binutils; $(MAKE) clean
+	cd coreutils; $(MAKE) clean

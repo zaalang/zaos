@@ -1,0 +1,86 @@
+//
+// chmod
+//
+
+import std.stdio;
+import std.env;
+import sys.fs;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, required, help="mode")]
+  std::string_view mode;
+
+  #[arg(free, required, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn parse(u32 mut &mask, std::string_view mode) -> bool
+{
+  if (std::atoi(mode.begin, mode.end, &mut mask, 8).error)
+    return false;
+
+  return true;
+}
+
+fn chmod(std::string &file, u32 mask, opts &opts) throws(std::error) -> i32
+{
+  sys::chmod(file, mask);
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.paths.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var mask = 0;
+
+  if (!parse(&mut mask, opts.mode))
+  {
+    std::fprint(std::stderr, "chmod: invalid mode");
+
+    return 0;
+  }
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      var cnt = 0;
+
+      for (var &file : glob::glob(path).files)
+      {
+        chmod(file, mask, opts);
+
+        cnt += 1;
+      }
+
+      if (cnt == 0)
+      {
+        std::fprint(std::stderr, "chmod: ", path, ": no such file or directory");
+      }
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "chmod: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

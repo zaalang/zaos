@@ -1,0 +1,161 @@
+//
+// du
+//
+
+import std.stdio;
+import std.span : Span;
+import std.flat_hash_map;
+import std.env;
+import sys.fs;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='h', help="print sizes in powers of 1024")]
+  bool human_readable = false;
+
+  #[arg(flag, help="print sizes in powers of 1000")]
+  bool si = false;
+
+  #[arg(flag, short='x', help="skip directories on different file systems")]
+  bool one_file_system = false;
+
+  #[arg(flag, short='s', help="display only a total for each argument")]
+  bool summarize = false;
+
+  #[arg(value, short='d', help="maximum depth to traverse")]
+  int max_depth = 999999;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+struct usage
+{
+  u64 size;
+  usize files;
+  usize directories;
+  usize symlinks;
+
+  usage() = default;
+  ~usage() = default;
+}
+
+fn report(std::string &path, sys::stat &root, usage mut &stats, int depth, std::flat_hash_map<(uintptr, uintptr), void> mut &visited, opts &opts) throws(std::error) -> i32
+{
+  var usage = usage();
+
+  switch (root.type)
+  {
+    case regular:
+      usage.size += root.filesize;
+      usage.files += 1;
+
+    case symlink:
+      usage.size += root.filesize;
+      usage.symlinks += 1;
+
+    case directory:
+      //usage.size += root.filesize;
+      usage.directories += 1;
+
+      for (var &entry : sys::read_dir(path))
+      {
+        var stat = entry.stat;
+
+        if (visited.contains((stat.device, stat.inode)))
+          continue;
+
+        visited.insert((stat.device, stat.inode));
+
+        switch (entry.type)
+        {
+          case regular:
+            usage.size += stat.filesize;
+            usage.files += 1;
+
+          case symlink:
+            usage.size += stat.filesize;
+            usage.symlinks += 1;
+
+          case directory:
+            if (opts.one_file_system && stat.device != root.device)
+              continue;
+
+            report(entry.path, stat, &mut usage, depth + 1, &mut visited, opts);
+        }
+      }
+  }
+
+  if (depth <= opts.max_depth)
+    std::printf("{:9} {}\n", usage.size, path);
+
+  stats.size += usage.size;
+  stats.files += usage.files;
+  stats.directories += usage.directories;
+  stats.symlinks += usage.symlinks;
+
+  return 0;
+}
+
+fn du(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  var root = sys::lstat(path);
+  var visited = std::flat_hash_map<(uintptr, uintptr), void>();
+
+  var stats = usage();
+  report(path, root, &mut stats, 0, &mut visited, opts);
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.paths.empty)
+    opts.paths.push_back(".");
+
+  if (opts.summarize)
+    opts.max_depth = 0;
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      var cnt = 0;
+
+      for (var &file : glob::glob(path).files)
+      {
+        du(file, opts);
+
+        cnt += 1;
+      }
+
+      if (cnt == 0)
+      {
+        std::fprint(std::stderr, "du: ", path, ": no such file or directory");
+      }
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "du: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

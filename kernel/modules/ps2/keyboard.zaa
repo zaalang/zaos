@@ -11,6 +11,7 @@ import io;
 import vm;
 import vfs;
 import input;
+import process as _ : process;
 import support.rc : Rc;
 
 pub struct keyboard : pub chr::chrdev
@@ -32,7 +33,7 @@ pub struct keyboard : pub chr::chrdev
     return ok;
   }
 
-  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) override -> chr::result
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
   {
     return ok;
   }

@@ -1,0 +1,215 @@
+//
+// cp
+//
+
+import std.stdio;
+import std.env;
+import sys.fs;
+import sys.path;
+import os.zaos.fcntl;
+import aargh;
+import glob;
+
+struct opts
+{
+  #[arg(free, required, long="file", help="source(s) dest")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='f', help="force overwrite files")]
+  bool force = false;
+
+  #[arg(flag, short='r', help="copy directories recursively")]
+  bool recursive = false;
+
+  #[arg(flag, short='p', help="preserve mode,ownership,timestamps")]
+  bool preserve = false;
+
+  #[arg(flag, help="remove any trailing slashes from each SOURCE argument")]
+  bool strip_trailing_slashes = false;
+
+  #[arg(flag, short='v', help="explain what is being done")]
+  bool verbose = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn copy_directory(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  sys::mkpath(dst);
+
+  for (var &entry : sys::read_dir(src))
+  {
+    switch (entry.type)
+    {
+      case directory:
+
+        copy_directory(entry.path, sys::path::join(dst, entry.name), opts);
+
+      case regular:
+
+        copy_file(entry.path, sys::path::join(dst, entry.name), opts);
+
+    }
+  }
+
+  var stats = os::stats::mode;
+
+  if (opts.preserve)
+    stats |= os::stats::uid | os::stats::gid | os::stats::mtime | os::stats::ctime | os::stats::btime;
+
+  if (var rc = sys::chstat(dst, sys::stat(src), stats); rc < 0)
+    std::fprint(std::stderr, "cp: ", dst, ": unable to set file attributes - ", rc);
+
+  return 0;
+}
+
+fn copy_file(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  if (sys::exists(dst))
+  {
+    if (opts.force)
+    {
+      if (var rc = sys::unlink(dst); rc < 0)
+        std::fprint(std::stderr, "cp: ", dst, ": unable to remove file - ", rc);
+    }
+
+    if (sys::exists(dst))
+    {
+      std::fprint(std::stderr, "cp: ", dst, ": file already exists");
+
+      return 0;
+    }
+  }
+
+  if (opts.verbose)
+  {
+    std::print(src, " -> ", dst);
+  }
+
+  var fin = std::file::open(src);
+  var fout = std::file::create(dst);
+
+  var buffer = [u8(0); 38768];
+
+  for (;;)
+  {
+    var bytes = fin.read(buffer.data, buffer.len);
+
+    if (bytes <= 0)
+      break;
+
+    fout.write(buffer.data, bytes);
+  }
+
+  var stats = os::stats::mode;
+
+  if (opts.preserve)
+    stats |= os::stats::uid | os::stats::gid | os::stats::mtime | os::stats::ctime | os::stats::btime;
+
+  if (var rc = sys::chstat(dst, sys::stat(src), stats); rc < 0)
+    std::fprint(std::stderr, "cp: ", dst, ": unable to set file attributes - ", rc);
+
+  return 0;
+}
+
+fn copy(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  if (dst.starts_with(src))
+  {
+    std::print("omitting recursive source: ", src);
+
+    return 0;
+  }
+
+  if (sys::stat(src).is_directory)
+  {
+    if (!opts.recursive)
+    {
+      std::print("omitting directory: ", src);
+
+      return 0;
+    }
+
+    copy_directory(src, dst, opts);
+  }
+  else
+  {
+    copy_file(src, dst, opts);
+  }
+
+  return 0;
+}
+
+fn cp(std::vector<std::string> &paths, std::string &dest, opts &opts) throws(std::error) -> i32
+{
+  var into_dir = (paths.len > 1) || (sys::exists(dest) && sys::stat(dest).is_directory);
+
+  if (!into_dir && sys::exists(dest) && sys::stat(dest).is_directory)
+    throw std::system_error(std::errc::is_a_directory);
+
+  if (into_dir && sys::exists(dest) && !sys::stat(dest).is_directory)
+    throw std::system_error(std::errc::not_a_directory);
+
+  for (var &path : paths)
+  {
+    var cnt = 0;
+
+    for (var &src : glob::glob(path).files)
+    {
+      var dst = || throws {
+        if (into_dir)
+          return dest + "/" + sys::path_view(src).basename;
+        return dest;
+      }();
+
+      copy(src, dst, opts);
+
+      cnt += 1;
+    }
+
+    if (cnt == 0)
+    {
+      std::fprint(std::stderr, "cp: ", path, ": no such file or directory");
+    }
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.paths.len < 2)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var dest = std::string(opts.paths.take_back());
+
+  if (opts.strip_trailing_slashes)
+  {
+    for (var mut &path : opts.paths)
+    {
+      while (path.ends_with("/"))
+        path.strip_suffix!("/");
+    }
+  }
+
+  try
+  {
+    cp(opts.paths, dest, opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "cp: ", rc);
+  }
+
+  return 0;
+}

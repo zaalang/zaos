@@ -37,7 +37,7 @@ pub struct Pipeline
   pub ~Pipeline() = default;
 }
 
-pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws -> void
+pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws(std::error) -> void
 {
   if (!pipeline.tasks.empty)
   {
@@ -78,12 +78,12 @@ pub fn append(Pipeline mut &pipeline, sys::command mut &cmd) throws -> void
   pipeline.tasks.push_back(Pipeline::Task::Child(cmd.spawn));
 }
 
-pub fn append(Pipeline mut &pipeline, Value &&value) throws -> void
+pub fn append(Pipeline mut &pipeline, Value &&value) throws(std::error) -> void
 {
   pipeline.tasks.push_back(Pipeline::Task::Value(&&value));
 }
 
-pub fn read(Pipeline mut &pipeline) throws -> Value
+pub fn read(Pipeline mut &pipeline) throws(std::error) -> Value
 {
   switch (pipeline.tasks.back)
   {

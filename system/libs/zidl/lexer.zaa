@@ -23,14 +23,14 @@ pub struct source_location
   pub ~source_location() = default;
 }
 
-pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, source_location &loc) throws -> void
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, source_location &loc) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "{}:{}", loc.lineno, loc.charpos);
 }
 
 pub struct source_text
 {
-  pub fn open(String &&path) throws -> source_text
+  pub fn open(String &&path) throws(std::error) -> source_text
   {
     var src = source_text();
 

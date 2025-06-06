@@ -10,6 +10,7 @@ import chr.chrdev;
 import sys;
 import vm : physrange;
 import vfs;
+import process as _ : process;
 import support.rc : Rc;
 
 enum fbio
@@ -49,7 +50,7 @@ pub struct bootfb : pub chr::chrdev
     return ok;
   }
 
-  pub fn open(this mut &, vfs::fd mut &fd, u64 flags, u32 mode) override -> chr::result
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
   {
     return ok;
   }

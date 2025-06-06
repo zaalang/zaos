@@ -139,6 +139,7 @@ ioring/mkdir.zaa\
 ioring/rename.zaa\
 ioring/link.zaa\
 ioring/symlink.zaa\
+ioring/chstat.zaa\
 ioring/unlink.zaa\
 ioring/poll.zaa\
 ioring/notify.zaa\

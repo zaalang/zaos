@@ -29,8 +29,6 @@ fn bootstrap_filesystem() -> void
 {
   import ext2fs;
 
-scheduler::sleep_until(cpu::system_time + 2_000_000_000);
-
   var rootdev = Rc<blk::blkdev>();
   var rootuuid = sys::cmdline("root");
 
@@ -51,18 +49,11 @@ scheduler::sleep_until(cpu::system_time + 2_000_000_000);
     std::panic("no system device");
   }
 
-  var devpath = vfs::lookup(vfs::root, "dev");
-
-  for (var part : rootdev.query(blk::query::device_path).split("/"))
-    devpath = vfs::lookup(devpath, part);
-
-  devpath = vfs::lookup(devpath, rootuuid);
-
   var ctx = vfs::file_system_context();
-  ctx.source = devpath;
+  ctx.source = std::string("/dev/") + rootdev.query(blk::query::device_path) + "/" + rootuuid;
 
   vfs::mkdir(vfs::root, "zaos", 0, 0, 0o755);
-  vfs::mount(vfs::lookup(vfs::root, "zaos"), ext2fs::create(ctx));
+  vfs::mount(vfs::root, "zaos", ext2fs::create(ctx));
 }
 
 fn launch_init() -> void
@@ -73,7 +64,7 @@ fn launch_init() -> void
 
   process_push_cmdline(init, [ srv ]);
 
-  init.new_fd(1, vfs::file_descriptor::create(vfs::lookup(vfs::root, "/dev/console")));
+  init.new_fd(1, vfs::file_descriptor::create(vfs::lookup(colonel, vfs::root, "/dev/console")));
   init.new_fd(4, vfs::file_descriptor::create(vfs::root));
 
   process_push_ioring(init, 256);

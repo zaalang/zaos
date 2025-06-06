@@ -11,6 +11,7 @@ import blk;
 import io;
 import vm;
 import mutex as _ : mutex;
+import process as _ : process;
 import slab : slab_allocator;
 import support.rc : Rc;
 
@@ -172,7 +173,7 @@ pub struct node
 
 pub vtable node_operations
 {
-  pub fn open(vfs::node mut *node, vfs::fd mut &fd, u64 flags, u32 mode) -> vfs::result;
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result;
 
   pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
   pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result;
@@ -185,6 +186,7 @@ pub vtable node_file_operations : node_operations
   pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
   pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
 }
+
 
 pub vtable node_directory_operations : node_operations
 {

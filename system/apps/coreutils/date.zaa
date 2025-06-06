@@ -1,0 +1,45 @@
+//
+// date
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import chrono;
+import aargh;
+
+struct opts
+{
+  #[arg(free, help="format")]
+  std::string format = "+%a %d %b %Y %T %Z";
+
+  #[arg(value, short='d', help="date")]
+  std::optional<std::string_view> date;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.format.starts_with("+"))
+    opts.format.strip_prefix!("+");
+
+  var now = chrono::system_clock::now();
+
+  std::print(chrono::format(opts.format, now));
+
+  return 0;
+}

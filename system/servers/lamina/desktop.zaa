@@ -26,7 +26,7 @@ pub struct desktop
   zidl::channel endpoint;
   app::loop::wait_t handler;
 
-  pub fn connect(this mut &) throws -> void
+  pub fn connect(this mut &) throws(std::error) -> void
   {
     this.endpoint = app::connect_to_service("zaos.winton/compositor");
     this.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(message_handler);
@@ -176,7 +176,7 @@ pub struct desktop
   pub ~desktop() = default;
 }
 
-pub fn create(shell::shell mut &shell) throws -> desktop
+pub fn create(shell::shell mut &shell) throws(std::error) -> desktop
 {
   return desktop(&mut shell);
 }

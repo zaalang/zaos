@@ -37,7 +37,7 @@ pub struct image
     pub elf::elf64_shdr *shdr;
   }
 
-  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, section_header &header) throws -> void
+  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, section_header &header) throws(std::error) -> void
   {
     ctx.written += std::print_to(os, *header.shdr);
   }
@@ -128,7 +128,7 @@ pub struct image
     pub elf::elf64_phdr *phdr;
   }
 
-  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, program_header &header) throws -> void
+  pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, program_header &header) throws(std::error) -> void
   {
     ctx.written += std::print_to(os, *header.phdr);
   }

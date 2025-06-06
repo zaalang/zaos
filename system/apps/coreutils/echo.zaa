@@ -1,0 +1,129 @@
+//
+// echo
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="string", help="string(s)")]
+  std::vector<std::string> strings;
+
+  #[arg(flag, short='n', help="do not output the trailing newline")]
+  bool no_newline = false;
+
+  #[arg(flag, short='e', help="enable interpretation of backslash escapes")]
+  bool escaped = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  std::string_view end_of_line = "\n";
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn unescape(std::string &str) -> std::string
+{
+  var result = std::string::with_capacity(str.len);
+
+  for (var ch = str.data, var end = str.data + str.len; ch != end; ++ch)
+  {
+    if (*ch == cast('\\'))
+    {
+      if (++ch == end)
+        break;
+
+      switch (*ch)
+      {
+        case 'a':
+          result += '\a';
+
+        case 'b':
+          result += '\b';
+
+        case 'f':
+          result += '\f';
+
+        case 'n':
+          result += '\n';
+
+        case 'r':
+          result += '\r';
+
+        case 't':
+          result += '\t';
+          continue;
+
+        case 'v':
+          result += '\v';
+
+        case '\'':
+          result += '\'';
+
+        case '\"':
+          result += '\"';
+
+        case '\\':
+          result += '\\';
+
+        case '0':
+          result += char(0);
+
+        case 'x':
+          var cc = u8();
+          ch += std::atoi(ch+1, std::min(ch+3, end), &mut cc, 16).len;
+          result += cc;
+
+        case 'u':
+          var cc = char();
+          ch += std::atoi(ch+1, std::min(ch+5, end), &mut cc, 16).len;
+          result += cc;
+
+        case 'U':
+          var cc = char();
+          ch += std::atoi(ch+1, std::min(ch+9, end), &mut cc, 16).len;
+          result += cc;
+
+        else:
+          result += *ch;
+      }
+    }
+    else
+    {
+      result += *ch;
+    }
+  }
+
+  return result;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.no_newline)
+    opts.end_of_line = "";
+
+  var text = std::join(opts.strings);
+
+  if (opts.escaped)
+    text = unescape(text);
+
+  std::printf("{}{}", text, opts.end_of_line);
+
+  std::stdout.flush();
+
+  return 0;
+}

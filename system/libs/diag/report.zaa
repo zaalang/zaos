@@ -38,7 +38,7 @@ pub struct json_report_opts
   pub ~json_report_opts() = default;
 }
 
-fn render(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws -> void
+fn render(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws(std::error) -> void
 {
   switch (diagnostic.severity)
   {
@@ -210,14 +210,14 @@ fn render(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &
   std::print_to(&mut os, diagnostic.text);
 }
 
-pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws -> void
+pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, term_report_opts &opts) throws(std::error) -> void
 {
   var os = std::output_stream(&mut os);
 
   render(&mut os, diagnostic, opts);
 }
 
-pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, json_report_opts &opts) throws -> void
+pub fn report_to(OutputStream mut &os, diag::diagnostic &diagnostic, json_report_opts &opts) throws(std::error) -> void
 {
   var os = std::output_stream(&mut os);
 

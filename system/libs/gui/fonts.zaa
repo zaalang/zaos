@@ -161,7 +161,7 @@ pub struct fonts
     return instance.families.as_const.get(name);
   }
 
-  pub fn populate(String &fontmap) throws -> void
+  pub fn populate(String &fontmap) throws(std::error) -> void
   {
     instance.populate(std::string_view(fontmap));
   }
@@ -191,7 +191,7 @@ pub struct fonts
   ~fonts() = default;
 }
 
-fn populate(fonts mut &fonts, std::string_view fontmap) throws -> void
+fn populate(fonts mut &fonts, std::string_view fontmap) throws(std::error) -> void
 {
   var toml = toml::load_from_file(fontmap);
 

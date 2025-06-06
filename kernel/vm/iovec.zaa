@@ -23,7 +23,7 @@ pub struct iovec
   }
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, iovec &iovec) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, iovec &iovec) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "iovec{{ length: {} }}", iovec.length);
 }

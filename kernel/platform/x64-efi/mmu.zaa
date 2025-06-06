@@ -77,7 +77,7 @@ pub struct page_table
   pub ~page_table() = default;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, page_table &pagetable) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, page_table &pagetable) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "page_table {{ cr3: {:#08x} }}", pagetable.pml4);
 }

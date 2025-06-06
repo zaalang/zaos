@@ -50,7 +50,7 @@ fn is_user_address(uintptr addr) -> bool
   return addr <= USER_LIMIT;
 }
 
-pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, interrupt_frame &frame) throws -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, interrupt_frame &frame) throws(std::error) -> void
 {
   ctx.written += std::format_to(&mut os, "interrupt_frame {{ rip: {}, cs: {}, rflags: {}, rsp: {}, ss: {} }}", cast<void*>(frame.rip), frame.cs, frame.rflags, cast<void*>(frame.rsp), frame.ss);
 }

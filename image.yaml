@@ -136,25 +136,58 @@ image:
             src: build/system/apps/terminal/terminal
             dest: /bin/terminal
         - cp:
-            src: build/system/apps/binutils/ls
-            dest: /bin/ls
+            src: build/system/apps/coreutils/basename
+            dest: /bin/basename
         - cp:
-            src: build/system/apps/binutils/cat
+            src: build/system/apps/coreutils/cat
             dest: /bin/cat
         - cp:
-            src: build/system/apps/binutils/mkdir
-            dest: /bin/mkdir
+            src: build/system/apps/coreutils/chgrp
+            dest: /bin/chgrp
         - cp:
-            src: build/system/apps/binutils/touch
-            dest: /bin/touch
+            src: build/system/apps/coreutils/chown
+            dest: /bin/chown
         - cp:
-            src: build/system/apps/binutils/rm
-            dest: /bin/rm
+            src: build/system/apps/coreutils/chmod
+            dest: /bin/chmod
         - cp:
-            src: build/system/apps/binutils/cp
+            src: build/system/apps/coreutils/cp
             dest: /bin/cp
         - cp:
-            src: build/system/apps/binutils/mv
+            src: build/system/apps/coreutils/cut
+            dest: /bin/cut
+        - cp:
+            src: build/system/apps/coreutils/date
+            dest: /bin/date
+        - cp:
+            src: build/system/apps/coreutils/dd
+            dest: /bin/dd
+        - cp:
+            src: build/system/apps/coreutils/df
+            dest: /bin/df
+        - cp:
+            src: build/system/apps/coreutils/dirname
+            dest: /bin/dirname
+        - cp:
+            src: build/system/apps/coreutils/du
+            dest: /bin/du
+        - cp:
+            src: build/system/apps/coreutils/echo
+            dest: /bin/echo
+        - cp:
+            src: build/system/apps/coreutils/ls
+            dest: /bin/ls
+        - cp:
+            src: build/system/apps/coreutils/mkdir
+            dest: /bin/mkdir
+        - cp:
+            src: build/system/apps/coreutils/touch
+            dest: /bin/touch
+        - cp:
+            src: build/system/apps/coreutils/rm
+            dest: /bin/rm
+        - cp:
+            src: build/system/apps/coreutils/mv
             dest: /bin/mv
         - cp:
             src: build/system/apps/bar/bar

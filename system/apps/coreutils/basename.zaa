@@ -1,0 +1,71 @@
+//
+// basename
+//
+
+import std.stdio;
+import std.env;
+import sys.path;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="name", required, help="path name")]
+  std::vector<std::string_view> names;
+
+  #[arg(flag, short='a', help="support multiple arguments and treat each as a name")]
+  bool multiple = false;
+
+  #[arg(value, short='s', help="remove a trailing suffix; implies -a")]
+  std::optional<std::string_view> suffix;
+
+  #[arg(flag, short='z', help="end each output line with NUL, not newline")]
+  bool zero = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn basename(std::string_view name, std::optional<std::string_view> suffix) -> std::string_view
+{
+  var basename = sys::path_view(name).basename;
+
+  if (suffix)
+    basename = basename.strip_suffix(suffix?!);
+
+  if (basename.empty)
+    return name;
+
+  return basename;
+}
+
+fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.names.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.suffix)
+    opts.multiple = true;
+
+  if (!opts.multiple && opts.names.len > 1)
+    opts.suffix = opts.names.take_back();
+
+  var line_ending = opts.zero ? '\0' : '\n';
+
+  for (var path : opts.names)
+  {
+    std::printf("{}{}", basename(path, opts.suffix), line_ending);
+  }
+
+  std::stdout.flush();
+
+  return 0;
+}

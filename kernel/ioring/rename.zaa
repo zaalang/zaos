@@ -31,7 +31,7 @@ pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, usize
     return vfs::result::not_a_directory;
 
   var oldbase = olddir.node;
-  var oldnode = vfs::lookup(&mut oldbase, oldpath);
+  var oldnode = vfs::lookup(process, &mut oldbase, oldpath);
 
   if (!oldnode)
     return vfs::result::not_found;
@@ -56,7 +56,7 @@ pub fn sys_rename(process mut *process, ioring_ctx mut &ctx, i32 olddirfd, usize
     return vfs::result::not_a_directory;
 
   var newbase = newdir.node;
-  var newnode = vfs::lookup(&mut newbase, newpath);
+  var newnode = vfs::lookup(process, &mut newbase, newpath);
 
   if (!newbase)
     return vfs::result::invalid_argument;
