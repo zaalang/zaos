@@ -1,0 +1,40 @@
+//
+// kill
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import result as _ : result;
+import thread as _ : thread;
+import process as _ : process;
+
+enum flags
+{
+}
+
+extern fn sys_kill(virtaddr uuidbuf, usize uuidlen, u64 flags) -> result
+{
+  if (uuidlen != 36)
+    return invalid_argument;
+
+  var uuid = std::string::with_size(uuidlen);
+
+  if (var result = vm::read_process_memory(uuidbuf, uuid.data, uuid.len); !result)
+    return result;
+
+  var pid = i32();
+  if (var result = std::atoi(uuid.begin + 28, uuid.end, &mut pid, 16); result.error)
+    return invalid_argument;
+
+  var process = process::find(pid);
+
+  if (!process)
+    return vm::result::no_such_process;
+
+  if (process.uuid != uuid)
+    return vm::result::no_such_process;
+
+  process.terminate();
+
+  return 0;
+}

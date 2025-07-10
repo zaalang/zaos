@@ -1,0 +1,87 @@
+//
+// tail
+//
+
+import std.stdio;
+import std.circular_buffer;
+import std.env;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(value, short='n', help="print the last NUM lines")]
+  usize lines = 10;
+
+  #[arg(flag, short='v', help="print headers giving file names")]
+  bool verbose = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn tail(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  var fin = || throws {
+    if (path == "-")
+      return std::stdin_raw;
+    return std::file::open(path);
+  }();
+
+  if (opts.verbose)
+    std::print("==> ", path, " <==");
+
+  var fout = std::stdout.lock();
+
+  var lines = std::circular_buffer<std::string>::with_capacity(opts.lines + 1);
+
+  for (var line : std::buffered_reader(&mut fin).lines)
+  {
+    lines.push_back(line);
+
+    if (lines.len > opts.lines)
+      lines.pop_front();
+  }
+
+  for (var &line : lines)
+  {
+    fout.puts(line);
+    fout.puts("\n");
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.paths.empty)
+    opts.paths.push_back("-");
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      tail(path, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "tail: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

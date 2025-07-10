@@ -98,7 +98,7 @@ pub struct channel
     if (this.lhs.buffer.len == 0)
       io::initiate(&mut this.lhs.readable.cb, 1);
 
-    vfs::node::new(&this.lhs.node, vfs::node::type::channel, vfs::node_stream_operations());
+    vfs::node::init(&this.lhs.node, vfs::node::type::channel, vfs::node_stream_operations());
 
     return &this.lhs.node;
   }
@@ -126,7 +126,7 @@ pub struct channel
     if (this.rhs.buffer.len == 0)
       io::initiate(&mut this.rhs.readable.cb, 1);
 
-    vfs::node::new(&this.rhs.node, vfs::node::type::channel, vfs::node_stream_operations());
+    vfs::node::init(&this.rhs.node, vfs::node::type::channel, vfs::node_stream_operations());
 
     return &this.rhs.node;
   }

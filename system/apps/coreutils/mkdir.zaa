@@ -4,33 +4,59 @@
 
 import std.stdio;
 import std.env;
-import os.zaos.fcntl;
-import chrono : duration;
-import termios;
+import std.scan;
+import sys.path;
+import sys.fs;
+import aargh;
 
-extern fn thread_ring() -> os::ioring mut &;
+struct opts
+{
+  #[arg(free, required, help="path(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='p', help="make parent directories as needed")]
+  bool parents = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn mkdir(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  if (opts.parents)
+    sys::mkpath(sys::path_view(path).parent);
+
+  if (var rc = sys::mkdir(path, 0o755); rc < 0)
+    throw std::system_error(std::errc(cast(-rc)));
+
+  return 0;
+}
 
 pub fn main() -> i32
 {
-  var path = std::string();
+  var opts = aargh::parse<opts>(std::env::args);
 
-  for (var arg : std::env::args.drop_n(1))
+  if (opts.help || opts.paths.empty)
   {
-    if (arg.starts_with("-"))
-      continue;
+    aargh::usage<opts>();
 
-    path = arg;
+    return 0;
   }
 
-  if (path.empty)
+  for (var &path : opts.paths)
   {
-    std::printf("usage: mkdir <path>\n");
-
-    return -22;
+    try
+    {
+      mkdir(path, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "mkdir: ", path, ": ", rc);
+    }
   }
-
-  if (var rc = os::mkdir(&mut thread_ring, os::string(path.data, path.len), 0, 0o640); rc < 0)
-    std::printf("mkdir: error {} - {}\n", path, std::errc(cast(-rc)));
 
   return 0;
 }

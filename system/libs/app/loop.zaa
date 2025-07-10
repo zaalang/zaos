@@ -230,6 +230,8 @@ pub struct loop
 
   pub loop()
   {
+    timeouts.deadline = ~0;
+
     timeouts.next = timeouts.prev = &timeouts;
   }
 
@@ -297,7 +299,7 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
   return 0;
 }
 
-pub fn dispatch(loop mut &loop, u64 deadline = 0) -> i32
+pub fn dispatch(loop mut &loop, u64 deadline = ~0) -> i32
 {
   if (var rc = loop.pollset.wait(deadline); rc < 0)
     std::panic("pollset wait - ", cast<std::errc>(-rc));

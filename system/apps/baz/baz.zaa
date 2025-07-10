@@ -1,89 +1,26 @@
-//
-// baz
-//
 
 import std.stdio;
-import os.zaos.fcntl;
-import os.zaos.sched;
-import os.zaos.mman;
-import os.zaos.time;
-import input.driver;
+import sys.thread;
 
-extern fn thread_ring() -> os::ioring mut &;
-
-pub enum notify
+fn main
 {
-  access = 0x1,
-  attrib = 0x2,
-  close_write = 0x4,
-  close_nowrite = 0x8,
-  mkdir = 0x10,
-  create = 0x20,
-  unlink = 0x40,
-  modify = 0x100,
-  moved = 0x400,
-  rename = 0x1000,
-  open = 0x2000,
-}
-
-fn main() -> int
-{
-  std::print("baz");
-
-  var notifyfd = os::notify_create(&mut thread_ring, 0);
-
-  if (notifyfd < 0)
-    std::panic("notify_create - ", notifyfd);
-
-  //var wd = os::notify_add(&mut thread_ring, notifyfd, os::STDROOT_FILENO, os::string("/zaos"), 0xffff, 1234, os::O_FILESYSTEM);
-  //var wd = os::notify_add(&mut thread_ring, notifyfd, os::STDROOT_FILENO, os::string("/zaos/root/abc"), 0xffff, 1234, 0);
-  var wd = os::notify_add(&mut thread_ring, notifyfd, os::STDROOT_FILENO, os::string("/dev"), 0xffff, 1234, os::O_FILESYSTEM);
-
-  if (wd < 0)
-    std::panic("notify_add - ", wd);
-
-  var pollset = [
-    os::pollevt(notifyfd, os::POLLFD, os::POLLIN, 0)
-  ];
-
-  var buffer = [<u8>: 0; 4096];
-
-  for (;;)
+  for (var k = 0; k < 100; ++k)
   {
-    os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+    var threads = std::vector<sys::thread>();
 
-    var bytes = os::read(&mut thread_ring, notifyfd, buffer.data, buffer.len);
-
-    if (bytes < 0)
-      std::panic("read - ", bytes);
-
-    for (var offset = 0; offset < cast(bytes); )
+    for (var i = 0; i < 50; ++i)
     {
-      var evt = cast<os::watchevt *>(buffer.data + offset);
-
-      std::print(evt.user_data, ": ", cast<notify>(evt.mask & 0xffff));
-
-      for (var info = cast<os::watchevt::info *>(evt + 1); info < cast<os::watchevt::info *>(cast<uintptr>(evt) + cast(evt.len)); )
-      {
-        switch (info.type)
+      threads.push_back(sys::thread::spawn(|i| {
+        for (;;)
         {
-          case os::watchevt::info::id:
-            std::print("    id: ", cast<os::watchevt::id_info*>(info).id);
-
-          case os::watchevt::info::dir:
-            std::print("   dir: ", cast<os::watchevt::dir_info*>(info).id);
-
-          case os::watchevt::info::name:
-            std::print("  name: ", cast<os::watchevt::name_info*>(info).name);
+          if (__rdtsc() % 100000000 == 0)
+            break;
         }
-
-        info = cast<os::watchevt::info *>(cast<uintptr>(info) + cast(info.len));
-      }
-
-      offset += cast(evt.len);
+        std::print(i);
+      }, i));
     }
 
+    for (var mut &thread : threads)
+      thread.join();
   }
-
-  std::panic("done");
 }

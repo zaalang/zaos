@@ -8,7 +8,6 @@ import std.flat_hash_map;
 import std.env;
 import sys.fs;
 import aargh;
-import glob;
 
 struct opts
 {
@@ -137,19 +136,7 @@ pub fn main() -> i32
   {
     try
     {
-      var cnt = 0;
-
-      for (var &file : glob::glob(path).files)
-      {
-        du(file, opts);
-
-        cnt += 1;
-      }
-
-      if (cnt == 0)
-      {
-        std::fprint(std::stderr, "du: ", path, ": no such file or directory");
-      }
+      du(path, opts);
     }
     catch (std::error rc)
     {

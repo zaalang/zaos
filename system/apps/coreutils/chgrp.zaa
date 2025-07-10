@@ -7,7 +7,6 @@ import std.env;
 import std.scan;
 import sys.fs;
 import aargh;
-import glob;
 
 struct opts
 {
@@ -64,19 +63,7 @@ pub fn main() -> i32
   {
     try
     {
-      var cnt = 0;
-
-      for (var &file : glob::glob(path).files)
-      {
-        chgrp(file, uid, gid, opts);
-
-        cnt += 1;
-      }
-
-      if (cnt == 0)
-      {
-        std::fprint(std::stderr, "chgrp: ", path, ": no such file or directory");
-      }
+      chgrp(path, uid, gid, opts);
     }
     catch (std::error rc)
     {

@@ -9,4 +9,5 @@ import syscalls.mmap;
 import syscalls.ioring;
 import syscalls.time;
 import syscalls.sched;
+import syscalls.kill;
 import syscalls.unknown;

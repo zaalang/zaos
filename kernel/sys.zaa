@@ -6,21 +6,21 @@ import std.atomic;
 import std.function;
 import std.string : String;
 import std.sys.clock;
-import cpu;
 import vdso;
+import cpu : cpu_logical_core;
 import scheduler : run_queue;
 import platform : physaddr_t, MAX_CPU_COUNT;
 
 struct system
 {
+  physaddr_t acpi_root;
+
   usize cpu_count;
   u8[MAX_CPU_COUNT] apic_ids;
-  run_queue[MAX_CPU_COUNT] runqueues;
+  cpu_logical_core mut *[MAX_CPU_COUNT] cpus;
   msg_queue[MAX_CPU_COUNT] ipiqueue;
 
   u64 clock_base;
-
-  physaddr_t acpi_root;
 
   frame_buffer boot_frame_buffer;
 
@@ -38,23 +38,29 @@ fn sys() -> system mut &
   return &state;
 }
 
+pub fn acpi_root() -> physaddr_t
+{
+  return sys.acpi_root;
+}
+
 pub fn cpu_count() -> usize
 {
   return sys.cpu_count;
 }
 
-pub fn runqueue(int cpu) -> run_queue mut &
+pub fn apic_id(int cpu) -> u8
 {
-  std::assert(platform::interrupts_disabled);
-
-  return &sys.runqueues[cast(cpu)];
+  return sys.apic_ids[cast(cpu)];
 }
 
-pub fn runqueues() -> std::mutable_span<run_queue>
+pub fn cpu(int cpu) -> cpu_logical_core mut *
 {
-  std::assert(platform::interrupts_disabled);
+  return sys.cpus[cast(cpu)];
+}
 
-  return std::mutable_span(sys.runqueues.data, sys.cpu_count);
+pub fn cpus() -> std::mutable_span<cpu_logical_core mut *>
+{
+  return std::mutable_span(sys.cpus.data, sys.cpu_count);
 }
 
 pub fn clock_base() -> u64
@@ -62,14 +68,9 @@ pub fn clock_base() -> u64
   return std::atomic_load(&sys.clock_base);
 }
 
-pub fn acpi_root() -> physaddr_t
+pub fn add_cpu(int cpu, cpu_logical_core mut *lp) -> void
 {
-  return sys.acpi_root;
-}
-
-pub fn apic_id(int cpu) -> u8
-{
-  return sys.apic_ids[cast(cpu)];
+  sys.cpus[cast(cpu)] = lp;
 }
 
 pub struct frame_buffer

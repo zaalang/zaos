@@ -113,15 +113,15 @@ pub struct image
     pub ~inode() = default;
   }
 
-  pub struct dentry
+  pub struct dirent
   {
     pub std::string_view name;
     pub u8 file_type;
 
-    pub dentry() = default;
-    pub dentry(dentry&) = default;
-    pub fn =(dentry mut &, dentry &) -> dentry mut & = default;
-    pub ~dentry() = default;
+    pub dirent() = default;
+    pub dirent(dirent&) = default;
+    pub fn =(dirent mut &, dirent &) -> dirent mut & = default;
+    pub ~dirent() = default;
   }
 
   pub fn root(this &) -> inode
@@ -672,11 +672,11 @@ fn set_name(ext2_dir_entry mut &entry, std::string_view name) -> void
 
 fn find(image &this, image::inode &dir, std::string_view name, ext2_dir_entry * mut &entry) -> result
 {
-  var dentry = cast<ext2_inode mut *>(dir.desc);
+  var dnode = cast<ext2_inode mut *>(dir.desc);
 
-  for (var position = 0; position < dentry.size; )
+  for (var position = 0; position < dnode.size; )
   {
-    var block = lookup_block(this, dentry, position);
+    var block = lookup_block(this, dnode, position);
 
     for (entry = cast<ext2_dir_entry*>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
     {
@@ -697,38 +697,38 @@ fn find(image &this, image::inode &dir, std::string_view name, ext2_dir_entry * 
   return file_not_found;
 }
 
-fn allocate_dir_entry(image mut &this, image::inode &dir, u16 required_len, ext2_dir_entry mut * mut &entry) -> result
+fn append_dirent(image mut &this, image::inode &dir, u16 required_len, ext2_dir_entry mut * mut &entry) -> result
 {
-  var dentry = cast<ext2_inode mut *>(dir.desc);
+  var dnode = cast<ext2_inode mut *>(dir.desc);
 
   for (var position = 0;; )
   {
-    if (position >= dentry.size)
+    if (position >= dnode.size)
     {
       var superblock = this.superblock;
       var block_shift = superblock.block_shift;
 
-      if (var result = this.grow(dentry, dentry.size >> block_shift + 1); !result)
+      if (var result = this.grow(dnode, dnode.size >> block_shift + 1); !result)
         return result;
 
-      var block = lookup_block(this, dentry, position);
+      var block = lookup_block(this, dnode, position);
 
       cast<ext2_dir_entry mut *>(block.data).ino = 0;
       cast<ext2_dir_entry mut *>(block.data).rec_len = (1 << block_shift);
 
-      dentry.size = dentry.size + (1 << block_shift);
+      dnode.size = dnode.size + (1 << block_shift);
     }
 
-    var block = lookup_block(this, dentry, position);
+    var block = lookup_block(this, dnode, position);
 
     for (entry = cast<ext2_dir_entry mut *>(block.data); entry < cast<ext2_dir_entry*>(block.data + block.len); )
     {
       if (entry.rec_len == 0)
         break;
 
-      if (entry.ino != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
+      if (entry.ino != 0 && entry.rec_len >= dirent_required_len(entry.name_len) + required_len)
       {
-        var remaining = entry.rec_len - dentry_required_len(entry.name_len);
+        var remaining = entry.rec_len - dirent_required_len(entry.name_len);
 
         entry.rec_len -= remaining;
 
@@ -788,7 +788,7 @@ pub fn read(image &this, image::inode mut &fd, std::span<u8> mut &view) -> resul
   return cast(view.len);
 }
 
-pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) -> result
+pub fn readdir(image &this, image::inode mut &dir, image::dirent mut &dirent) -> result
 {
   if (!dir.desc.isdir)
     return bad_descriptor;
@@ -810,8 +810,8 @@ pub fn readdir(image &this, image::inode mut &dir, image::dentry mut &dentry) ->
 
       if (entry.ino != 0)
       {
-        dentry.name = entry.name;
-        dentry.file_type = entry.file_type;
+        dirent.name = entry.name;
+        dirent.file_type = entry.file_type;
 
         return cast(entry.rec_len);
       }
@@ -841,7 +841,7 @@ pub fn create(image mut &this, image::inode &dir, std::string_view name, u32 uid
 
   var entry = null<ext2_dir_entry mut *>();
 
-  if (var result = this.allocate_dir_entry(dir, dentry_required_len(cast(name.len)), &mut entry); !result)
+  if (var result = this.append_dirent(dir, dirent_required_len(cast(name.len)), &mut entry); !result)
     return result;
 
   entry.set_name(name);
@@ -1022,7 +1022,7 @@ pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid,
 
   var entry = null<ext2_dir_entry mut *>();
 
-  if (var result = this.allocate_dir_entry(dir, dentry_required_len(cast(name.len)), &mut entry); !result)
+  if (var result = this.append_dirent(dir, dirent_required_len(cast(name.len)), &mut entry); !result)
     return result;
 
   entry.set_name(name);
@@ -1111,11 +1111,11 @@ pub fn rename(image mut &this, image::inode &dir, std::string_view oldname, std:
     return result;
 
   var entry = cast<ext2_dir_entry mut *>(dentry);
-  var required_len = dentry_required_len(cast(newname.len));
+  var required_len = dirent_required_len(cast(newname.len));
 
   if (entry.rec_len < required_len)
   {
-    if (var result = this.allocate_dir_entry(dir, required_len, &mut entry); !result)
+    if (var result = this.append_dirent(dir, required_len, &mut entry); !result)
       return result;
 
     entry.ino = dentry.ino;

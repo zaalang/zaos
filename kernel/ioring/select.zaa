@@ -92,6 +92,12 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
         if (!thread)
           return vm::result::no_such_process;
 
+        if (thread == thread::current)
+          return vm::result::deadlock_avoided;
+
+        if (thread.is_detached)
+          return vm::result::deadlock_avoided;
+
         readable = thread.rval;
 
       else:
@@ -128,10 +134,10 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
   {
     ctx.wake_time = abstime;
 
-    if (abstime == 0 && ctx.blockers.len == 0)
+    if (ctx.blockers.len == 0)
       return 0;
 
-    if (abstime != 0 && abstime < cpu::system_time)
+    if (abstime < cpu::system_time)
       return 0;
 
     return ioring::result::should_block;

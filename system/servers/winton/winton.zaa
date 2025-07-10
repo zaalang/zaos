@@ -44,6 +44,14 @@ fn connect_handler(app::loop mut &loop, zidl::string_view uri, zidl::channel cha
 
 fn run(service mut &service) -> void
 {
+  import os.zaos.sched;
+  import os.zaos.unistd;
+
+  var param = os::sched_param();
+  param.sched_priority = 15;
+
+  os::sched_setparam(os::gettid(), &param);
+
   service.loop.run();
 }
 

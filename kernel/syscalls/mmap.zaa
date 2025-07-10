@@ -112,7 +112,7 @@ extern fn sys_mmap(i32 fd, virtaddr mmvsbuf, usize n, virtaddr addrbuf, u64 flag
     }
     else
     {
-      if (var result = vm::create_anonymous_region(vm::virtrange(addr + mm.base, mm.length), protection, vm::usage::private); !result)
+      if (var result = vm::create_anonymous_region(vm::virtrange(addr + mm.base, mm.length), protection, usage); !result)
         return result;
     }
   }

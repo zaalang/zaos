@@ -44,7 +44,9 @@ pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &c
   {
     terminal.pump(chrono::milliseconds(125));
 
-    if (wait(pid, null, WNOHANG | WNOWAIT) != 0)
+    var pollset = [ os::pollevt(pid, POLLTHREAD, POLLIN, 0) ];
+
+    if (select(&mut thread_ring, pollset.data, pollset.len, 0) != 0)
       break;
   }
 

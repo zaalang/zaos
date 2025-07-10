@@ -1,0 +1,86 @@
+//
+// stat
+//
+
+import std.stdio;
+import std.env;
+import std.scan;
+import sys.path;
+import sys.fs;
+import chrono : duration;
+import aargh;
+
+struct opts
+{
+  #[arg(free, required, help="path(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='L', help="follow links")]
+  bool dereference = false;
+
+  #[arg(flag, short='t', help="print the information in terse form")]
+  bool terse = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn stat(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  var stat = || throws {
+    if (opts.dereference)
+      return sys::stat(path);
+    return sys::lstat(path);
+  }();
+
+  std::printf("  File: {}\n", path);
+  std::printf("  Size: {:14}  Type: {}", stat.size, std::meta::enumerator_name(stat.type));
+
+  if (stat.type == sys::filetype::symlink)
+  {
+    var buffer = std::string();
+    if (var rc = sys::readlink(path, &mut buffer); rc < 0)
+      return rc;
+
+    std::printf(" -> {}", buffer);
+  }
+
+  std::printf("\n");
+
+  std::printf("Access: {:#14o}   Uid: {:14}   Gid: {:14}\n", stat.mode & 0xfff, stat.uid, stat.gid);
+
+  std::printf("Modify: {}\n", chrono::system_time(stat.mtime.nanoseconds));
+  std::printf("Change: {}\n", chrono::system_time(stat.ctime.nanoseconds));
+  std::printf(" Birth: {}\n", chrono::system_time(stat.btime.nanoseconds));
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.paths.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      stat(path, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "stat: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

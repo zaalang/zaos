@@ -172,12 +172,15 @@ pub struct block_ptr
 
 pub fn wait(block_ptr mut &block) -> void
 {
-  return block.response.wait();
+  block.response.wait();
 }
 
 pub fn wait_until(block_ptr mut &block, u64 abstime) -> bool
 {
-  return block.response.wait_until(abstime);
+  if (var rc = block.response.wait_until(abstime); rc < 0)
+    return false;
+
+  return true;
 }
 
 struct block_cache

@@ -14,8 +14,8 @@ SECTIONS
   .text :
   {
     _text = .;
-    *(.text)
-    *(.plt)
+    *(.text .text.* .gnu.linkonce.t.*)
+    *(.plt .plt.*)
     . = ALIGN(16);
     text_ = .;
   }
@@ -25,9 +25,9 @@ SECTIONS
   .data :
   {
     _data = .;
-    *(.rodata*)
-    *(.data*)
-    *(.bss)
+    *(.rodata .rodata* .gnu.linkonce.r.*)
+    *(.data .data.* .gnu.linkonce.d.*)
+    *(.bss .bss.* .gnu.linkonce.b.*)
     *(.got.plt)
     *(COMMON)
     data_ = .;
@@ -40,8 +40,8 @@ SECTIONS
   .tls (NOLOAD) : ALIGN(64)
   {
     _tls = .;
-    *(.tdata)
-    *(.tbss)
+    *(.tdata .tdata.*)
+    *(.tbss .tbss.*)
     . = ALIGN(64);
     tls_ = .;
   }
@@ -52,16 +52,12 @@ SECTIONS
   {
     LONG(0)
     LONG(8)
-   *(.reloc)
+    *(.reloc)
   }
 
   .rela :
   {
-    *(.rela.data*)
-    *(.rela.rodata*)
-    *(.rela.bss*)
-    *(.rela.got)
-    *(.rela.plt)
+    *(.rela.*)
   }
 
   .dynamic : { *(.dynamic) }
@@ -70,6 +66,6 @@ SECTIONS
 
   /DISCARD/ :
   {
-    *(.note* .eh_frame)
+    *(.note .eh_frame)
   }
 }

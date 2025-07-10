@@ -20,11 +20,21 @@ $(BUILD)/df\
 $(BUILD)/dirname\
 $(BUILD)/du\
 $(BUILD)/echo\
+$(BUILD)/env\
+$(BUILD)/head\
+$(BUILD)/kill\
+$(BUILD)/ln\
 $(BUILD)/ls\
 $(BUILD)/mkdir\
-$(BUILD)/touch\
-$(BUILD)/rm\
+$(BUILD)/more\
 $(BUILD)/mv\
+$(BUILD)/pwd\
+$(BUILD)/realpath\
+$(BUILD)/rm\
+$(BUILD)/stat\
+$(BUILD)/tail\
+$(BUILD)/touch\
+$(BUILD)/tty\
 
 default: $(BINS)
 

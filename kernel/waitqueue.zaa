@@ -40,45 +40,52 @@ pub struct wait_queue
     }
   }
 
-  pub fn wait<Lock>(this mut &, Lock mut &lock) -> void
+  pub fn wait<Lock>(this mut &, Lock mut &lock, bool interruptible = false) -> i32
   {
     var waiter = waiter();
 
     {
       append_waiter(&mut this, &waiter);
 
-      scheduler::prepare_to_block();
+      scheduler::prepare_to_block(interruptible);
 
       std::launder(this);
 
       lock.unlock();
     }
 
-    scheduler::block();
+    if (var rc = scheduler::block(&mut lock); rc < 0)
+    {
+      remove_waiter(&mut this, &waiter);
 
-    lock.lock();
+      return rc;
+    }
+
+    return 0;
   }
 
-  pub fn wait_until<Lock>(this mut &, Lock mut &lock, u64 abstime) -> bool
+  pub fn wait_until<Lock>(this mut &, Lock mut &lock, u64 abstime, bool interruptible = false) -> i32
   {
     var waiter = waiter();
 
     {
       append_waiter(&mut this, &waiter);
 
-      scheduler::prepare_to_block();
+      scheduler::prepare_to_block(interruptible);
 
       std::launder(this);
+
+      lock.unlock();
     }
 
-    if (scheduler::block_until(&mut lock, abstime) != 0)
+    if (var rc = scheduler::block_until(&mut lock, abstime); rc < 0)
     {
       remove_waiter(&mut this, &waiter);
 
-      return false;
+      return rc;
     }
 
-    return true;
+    return 0;
   }
 
   struct waiter

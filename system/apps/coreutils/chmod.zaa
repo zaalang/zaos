@@ -6,7 +6,6 @@ import std.stdio;
 import std.env;
 import sys.fs;
 import aargh;
-import glob;
 
 struct opts
 {
@@ -62,19 +61,7 @@ pub fn main() -> i32
   {
     try
     {
-      var cnt = 0;
-
-      for (var &file : glob::glob(path).files)
-      {
-        chmod(file, mask, opts);
-
-        cnt += 1;
-      }
-
-      if (cnt == 0)
-      {
-        std::fprint(std::stderr, "chmod: ", path, ": no such file or directory");
-      }
+      chmod(path, mask, opts);
     }
     catch (std::error rc)
     {

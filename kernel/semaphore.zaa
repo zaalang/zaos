@@ -14,7 +14,7 @@ pub struct semaphore
   pub u32 value = 0;
   pub u32 maxvalue = 1;
 
-  pub fn wait(this mut &) -> void
+  pub fn wait(this mut &) -> i32
   {
     for (;;)
     {
@@ -27,7 +27,8 @@ pub struct semaphore
         if (std::volatile_load(&this.value) != 0)
           continue;
 
-        this.waiters.wait(&mut this.spinlock);
+        if (var rc = this.waiters.wait(&mut this.spinlock); rc < 0)
+          return rc;
 
         current = 1;
       }
@@ -35,9 +36,11 @@ pub struct semaphore
       if (std::atomic_cmpxchg_weak(&this.value, current, std::min(current, this.maxvalue) - 1))
         break;
     }
+
+    return 0;
   }
 
-  pub fn wait_until(this mut &, u64 abstime) -> bool
+  pub fn wait_until(this mut &, u64 abstime) -> i32
   {
     for (;;)
     {
@@ -50,8 +53,8 @@ pub struct semaphore
         if (std::volatile_load(&this.value) != 0)
           continue;
 
-        if (!this.waiters.wait_until(&mut this.spinlock, abstime))
-          return false;
+        if (var rc = this.waiters.wait_until(&mut this.spinlock, abstime); rc < 0)
+          return rc;
 
         current = 1;
       }
@@ -60,7 +63,7 @@ pub struct semaphore
         break;
     }
 
-    return true;
+    return 0;
   }
 
   pub fn release(this mut &) -> void

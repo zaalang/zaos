@@ -611,6 +611,7 @@ fn parse_callee(parse_context mut &ctx, std::span<token> mut &tokens) -> Express
   {
     case slash:
     case period:
+    case dotdot:
       cmd = consume_adjacent(&mut tokens);
 
     case string_literal:
@@ -698,6 +699,7 @@ fn parse_expression_left(parse_context mut &ctx, std::span<token> mut &tokens) -
 
     case slash:
     case period:
+    case dotdot:
       return parse_callee(&mut ctx, &mut tokens);
 
     case string_literal:
@@ -710,6 +712,7 @@ fn parse_expression_left(parse_context mut &ctx, std::span<token> mut &tokens) -
         case '$':
           return parse_declref(&mut ctx, &mut tokens);
 
+        case '\\':
         case 'a' ..= 'z':
         case 'A' ..= 'Z':
           return parse_callee(&mut ctx, &mut tokens);
@@ -790,6 +793,7 @@ pub fn parse(std::string_view &src, diag::diag mut &diag) -> Block
       case minus:
       case exclaim:
       case period:
+      case dotdot:
       case slash:
         block.exprs.push_back(parse_expression(&mut ctx, &mut tokens));
 

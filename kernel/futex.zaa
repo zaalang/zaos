@@ -69,8 +69,8 @@ pub fn wait(virtaddr addr, u32 expected, u64 abstime) -> result
   {
     var irqs = std::lock_guard(&mut cpu::irqlock);
 
-    if (!futex.waiters.wait_until(&mut futextable.lock, abstime))
-      result = result::timed_out;
+    if (var rc = futex.waiters.wait_until(&mut futextable.lock, abstime, interruptible: true); rc < 0)
+      result = cast(rc);
   }
 
   if (var j = futextable.entries.find(iovec.host[0].addr); j != futextable.entries.end)

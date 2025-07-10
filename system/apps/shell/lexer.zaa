@@ -362,7 +362,7 @@ fn lex_punctuators(std::string_view src, usize cursor, token mut &tok) -> usize
 fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
 {
   let beg = cursor;
-  var idx = cursor + 1;
+  var idx = cursor;
 
   while (idx < src.len)
   {

@@ -1,0 +1,51 @@
+//
+// kill
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.sched;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="uuid", required, help="process uuid")]
+  std::string uuid;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn kill(std::string &uuid, opts &opts) throws(std::error) -> i32
+{
+  if (var rc = os::kill(uuid.data, uuid.len, 0); rc < 0)
+    throw std::system_error(cast(-rc));
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.uuid.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  try
+  {
+    kill(opts.uuid, opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "kill: ", rc);
+  }
+
+  return 0;
+}

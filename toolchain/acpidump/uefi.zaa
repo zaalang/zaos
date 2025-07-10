@@ -177,7 +177,7 @@ extern fn fd_stat(uintptr fd, std::filestat mut *fs) -> u32
   return 0;
 }
 
-extern fn fd_readv(uintptr fd, std::iovec mut *iovs, usize n) -> std::fd_result
+extern fn fd_read(uintptr fd, u8 mut *buffer, usize length) -> std::fd_result
 {
   var result = std::fd_result();
 
@@ -186,89 +186,71 @@ extern fn fd_readv(uintptr fd, std::iovec mut *iovs, usize n) -> std::fd_result
     var index = UINTN();
     BootServices.WaitForEvent(1, &ConIn.WaitForKey, &index);
 
-    for (var i = 0; i < n; ++i)
+    var bytes = 0;
+
+    for (; bytes < length; ++bytes)
     {
-      var bytes = 0;
-      var buffer = (iovs + i).data;
-
-      for (; bytes < (iovs + i).len; ++bytes)
-      {
-        var key = EFI_INPUT_KEY();
-        if (ConIn.ReadKeyStroke(&key) != 0)
-          break;
-
-        *buffer++ = cast<u8>(key.UnicodeChar & 0xff);
-      }
-
-      result.length += bytes;
-
-      if (bytes != (iovs + i).len)
+      var key = EFI_INPUT_KEY();
+      if (ConIn.ReadKeyStroke(&key) != 0)
         break;
+
+      *buffer++ = cast<u8>(key.UnicodeChar & 0xff);
     }
+
+    result.length = bytes;
   }
 
   if (fd != 0 && fd != 1 && fd != 2)
   {
     var file = cast<EFI_FILE_PROTOCOL*>(fd);
 
-    for (var i = 0; i < n; ++i)
-    {
-      var bytes = (iovs + i).len;
-      var buffer = (iovs + i).data;
+    var bytes = length;
 
-      if (file.Read(&bytes, buffer) != 0)
-        result.errno = 5;
+    if (file.Read(&bytes, buffer) != 0)
+      result.errno = 5;
 
-      if (bytes != (iovs + i).len)
-        result.errno = 5;
+    if (bytes != length)
+      result.errno = 5;
 
-      result.length += bytes;
-    }
+    result.length = bytes;
   }
 
   return result;
 }
 
-extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
+extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> std::fd_result
 {
   var result = std::fd_result();
 
   if (fd == 1)
   {
-    var dat = std::vector<u16, N:64>();
+    var dat = std::vector<u16, N:256>();
 
-    for (var i = 0; i < n; ++i)
+    for (var ch = buffer; ch != buffer + length; ++ch)
     {
-      for (var ch = (iovs + i).data; ch != (iovs + i).data + (iovs + i).len; ++ch)
-      {
-        if (*ch == cast('\n'))
-          dat.push_back(cast<u16>('\r'));
+      if (*ch == cast('\n'))
+        dat.push_back(cast<u16>('\r'));
 
-        dat.push_back(cast<u16>(*ch));
-      }
-
-      result.length += (iovs + i).len;
+      dat.push_back(cast<u16>(*ch));
     }
 
     dat.push_back(0);
 
     ConOut.OutputString(dat.data);
+
+    result.length = length;
   }
 
   if (fd != 0 && fd != 1 && fd != 2)
   {
     var file = cast<EFI_FILE_PROTOCOL*>(fd);
 
-    for (var i = 0; i < n; ++i)
-    {
-      var bytes = (iovs + i).len;
-      var buffer = (iovs + i).data;
+    var bytes = length;
 
-      if (file.Write(&bytes, buffer) != 0)
-        result.errno = 5;
+    if (file.Write(&bytes, buffer) != 0)
+      result.errno = 5;
 
-      result.length += bytes;
-    }
+    result.length = bytes;
   }
 
   return result;

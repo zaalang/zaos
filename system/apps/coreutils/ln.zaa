@@ -1,0 +1,105 @@
+//
+// ln
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import sys.path;
+import os.zaos.fcntl;
+import aargh;
+
+struct opts
+{
+  #[arg(free, required, help="target")]
+  std::string target;
+
+  #[arg(free, help="link name")]
+  std::string link_name;
+
+  #[arg(flag, short='f', help="remove existing destination files")]
+  bool force = false;
+
+  #[arg(flag, short='s', help="make symbolic links instead of hard links")]
+  bool symbolic = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn link(std::string &target, std::string &path) throws(std::error) -> i32
+{
+  using os;
+
+  if (var rc = link(&mut thread_ring, os::string(path.data, path.len), os::string(target.data, target.len), 0); rc < 0)
+    throw std::system_error(cast(-rc));
+
+  return 0;
+}
+
+fn symlink(std::string &target, std::string &path) throws(std::error) -> i32
+{
+  using os;
+
+  if (var rc = symlink(&mut thread_ring, os::string(path.data, path.len), os::string(target.data, target.len), 0); rc < 0)
+    throw std::system_error(cast(-rc));
+
+  return 0;
+}
+
+fn ln(std::string &target, std::string &path, opts &opts) throws(std::error) -> i32
+{
+  if (sys::exists(path))
+  {
+    if (opts.force)
+    {
+      if (var rc = sys::unlink(path); rc < 0)
+        std::fprint(std::stderr, "ln: ", path, ": unable to remove file - ", rc);
+    }
+  }
+
+  if (opts.symbolic)
+  {
+    symlink(target, path);
+  }
+  else
+  {
+    link(target, path);
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.target.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var target = opts.target;
+  var link_name = opts.link_name;
+
+  if (link_name.empty)
+    link_name = sys::path_view(target).basename;
+
+  try
+  {
+    ln(target, link_name, opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ln: ", opts.target, ": ", rc);
+  }
+
+  return 0;
+}

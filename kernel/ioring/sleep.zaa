@@ -1,0 +1,20 @@
+//
+// sleep
+//
+
+import std.stdlib;
+import ioring : io_ring, ioring_ctx;
+import io;
+import cpu;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_sleep(process mut *process, ioring_ctx mut &ctx, u64 abstime) -> result
+{
+  ctx.wake_time = abstime;
+
+  if (abstime < cpu::system_time)
+    return 0;
+
+  return ioring::result::should_block;
+}

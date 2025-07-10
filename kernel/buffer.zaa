@@ -75,7 +75,7 @@ pub struct buffer
 
     io::initiate(&mut this.outlet.writeable.cb, 1);
 
-    vfs::node::new(&this.outlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
+    vfs::node::init(&this.outlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
 
     return &this.outlet.node;
   }
@@ -97,7 +97,7 @@ pub struct buffer
 
     io::initiate(&mut this.inlet.readable.cb, 1);
 
-    vfs::node::new(&this.inlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
+    vfs::node::init(&this.inlet.node, vfs::node::type::buffer, vfs::node_stream_operations());
 
     return &this.inlet.node;
   }

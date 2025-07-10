@@ -126,6 +126,7 @@ syscalls/mmap.zaa\
 syscalls/ioring.zaa\
 syscalls/time.zaa\
 syscalls/sched.zaa\
+syscalls/kill.zaa\
 syscalls/unknown.zaa\
 ioring/ioring.zaa\
 ioring/workman.zaa\
@@ -147,6 +148,7 @@ ioring/event.zaa\
 ioring/buffer.zaa\
 ioring/channel.zaa\
 ioring/close.zaa\
+ioring/sleep.zaa\
 platform/platform.zaa\
 platform/x64-efi/cpu.zaa\
 platform/x64-efi/mmu.zaa\

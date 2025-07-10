@@ -162,7 +162,17 @@ extern fn sys_process_kill(i32 id) -> result
   if (!thread)
     return vm::result::no_such_process;
 
-  thread.process.terminate();
+  var process = thread.process;
+
+  var is_child = false;
+  for (var ancestor = process.parent; ancestor; ancestor = ancestor.parent)
+    if (ancestor == process::current)
+      is_child = true;
+
+  if (!is_child)
+    return vm::result::no_such_process;
+
+  process.terminate();
 
   return 0;
 }

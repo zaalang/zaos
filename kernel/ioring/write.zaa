@@ -10,6 +10,16 @@ import blk;
 import process as _ : process;
 import result as _ : result;
 
+struct iov
+{
+  virtaddr data;
+  usize len;
+
+  iov() = default;
+  iov(iov&) = default;
+  ~iov() = default;
+}
+
 pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buffer, usize length) -> result
 {
   var file = process.fd(fd);
@@ -17,10 +27,10 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
   if (!file)
     return vfs::result::bad_descriptor;
 
+  var iovec = vm::iovec();
+
   if (length > 2_147_483_647)
     return invalid_argument;
-
-  var iovec = vm::iovec();
 
   if (!vm::is_user_address(buffer))
     return vm::result::invalid_argument;
@@ -34,16 +44,14 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
     case vfs::node::type::volume:
       var count = cast<usize>(ctx.state[0]);
       var offset = cast<usize>(ctx.state[0]);
-      var position = file.writecursor;
 
-      length -= offset;
-      position += cast(offset);
+      var position = file.writecursor;
 
       var stat = vfs::stat();
       if (var result = vfs::stat(node, &mut stat, vfs::stats::size); !result)
         return result;
 
-      while (length != 0)
+      for (position += cast(count); count < length; )
       {
         var block = blk::fetch(node, position);
 
@@ -59,7 +67,7 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
           return block.result;
 
         var data = block.ptr(position);
-        var bytes = std::min(block.base + block.size - data, length);
+        var bytes = std::min(block.base + block.size - data, length - count);
 
         if (var result = vm::memcpy(data, iovec, offset, bytes); !result)
           return result;
@@ -73,7 +81,6 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
 
         block.commit(data, bytes);
 
-        length -= bytes;
         position += cast(bytes);
         offset += bytes;
         count += bytes;
@@ -86,7 +93,7 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
 
       vfs::notify(file.parent, file.node, vfs::notify::modify);
 
-      return cast<i32>(count);
+      return cast(count);
 
     case vfs::node::type::event:
     case vfs::node::type::buffer:
@@ -96,6 +103,195 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
     case vfs::node::type::ioring:
     case vfs::node::type::device:
       return node.stream_operations.write(node, iovec, 0, length);
+
+    else:
+      return vfs::result::bad_descriptor;
+  }
+
+  return 0;
+}
+
+pub fn sys_writev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr iovbuf, usize iovlen) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  var iovs = std::vector<iov, N:8>::with_size(iovlen);
+
+  if (var result = vm::read_process_memory(process, iovbuf, iovs.data, iovs.len * sizeof<iov>); !result)
+    return result;
+
+  var iovec = vm::iovec();
+
+  for (var &iov : iovs)
+  {
+    if (!vm::is_user_address(iov.data))
+      return vm::result::invalid_argument;
+
+    if (var result = vm::lock(process, vm::virtrange(iov.data, iov.len), vm::protection::readonly, &mut iovec); !result)
+      return result;
+  }
+
+  var length = iovec.length;
+
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  switch (var &node = file.node; node.type)
+  {
+    case vfs::node::type::file:
+    case vfs::node::type::volume:
+      var count = cast<usize>(ctx.state[0]);
+      var offset = cast<usize>(ctx.state[0]);
+
+      var position = file.writecursor;
+
+      var stat = vfs::stat();
+      if (var result = vfs::stat(node, &mut stat, vfs::stats::size); !result)
+        return result;
+
+      for (position += cast(count); count < length; )
+      {
+        var block = blk::fetch(node, position);
+
+        if (!block.ready)
+        {
+          ctx.state[0] = count;
+          ctx.blockers.push_back(block.response);
+
+          return ioring::result::should_block;
+        }
+
+        if (block.wait(); !block)
+          return block.result;
+
+        var data = block.ptr(position);
+        var bytes = std::min(block.base + block.size - data, length - count);
+
+        if (var result = vm::memcpy(data, iovec, offset, bytes); !result)
+          return result;
+
+        if (position + cast(bytes) > stat.size)
+        {
+          stat.size = position + cast(bytes);
+          if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+            return result;
+        }
+
+        block.commit(data, bytes);
+
+        position += cast(bytes);
+        offset += bytes;
+        count += bytes;
+      }
+
+      file.writecursor = position;
+
+      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+        return result;
+
+      vfs::notify(file.parent, file.node, vfs::notify::modify);
+
+      return cast(count);
+
+    case vfs::node::type::event:
+    case vfs::node::type::buffer:
+    case vfs::node::type::channel:
+    case vfs::node::type::watchset:
+    case vfs::node::type::pollset:
+    case vfs::node::type::ioring:
+    case vfs::node::type::device:
+      return node.stream_operations.write(node, iovec, 0, length);
+
+    else:
+      return vfs::result::bad_descriptor;
+  }
+
+  return 0;
+}
+
+pub fn sys_pwritev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr iovbuf, usize iovlen, u64 position) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  var iovs = std::vector<iov, N:8>::with_size(iovlen);
+
+  if (var result = vm::read_process_memory(process, iovbuf, iovs.data, iovs.len * sizeof<iov>); !result)
+    return result;
+
+  var iovec = vm::iovec();
+
+  for (var &iov : iovs)
+  {
+    if (!vm::is_user_address(iov.data))
+      return vm::result::invalid_argument;
+
+    if (var result = vm::lock(process, vm::virtrange(iov.data, iov.len), vm::protection::readonly, &mut iovec); !result)
+      return result;
+  }
+
+  var length = iovec.length;
+
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  switch (var &node = file.node; node.type)
+  {
+    case vfs::node::type::file:
+    case vfs::node::type::volume:
+      var count = cast<usize>(ctx.state[0]);
+      var offset = cast<usize>(ctx.state[0]);
+
+      var stat = vfs::stat();
+      if (var result = vfs::stat(node, &mut stat, vfs::stats::size); !result)
+        return result;
+
+      for (position += cast(count); count < length; )
+      {
+        var block = blk::fetch(node, position);
+
+        if (!block.ready)
+        {
+          ctx.state[0] = count;
+          ctx.blockers.push_back(block.response);
+
+          return ioring::result::should_block;
+        }
+
+        if (block.wait(); !block)
+          return block.result;
+
+        var data = block.ptr(position);
+        var bytes = std::min(block.base + block.size - data, length - count);
+
+        if (var result = vm::memcpy(data, iovec, offset, bytes); !result)
+          return result;
+
+        if (position + cast(bytes) > stat.size)
+        {
+          stat.size = position + cast(bytes);
+          if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+            return result;
+        }
+
+        block.commit(data, bytes);
+
+        position += cast(bytes);
+        offset += bytes;
+        count += bytes;
+      }
+
+      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+        return result;
+
+      vfs::notify(file.parent, file.node, vfs::notify::modify);
+
+      return cast(count);
 
     else:
       return vfs::result::bad_descriptor;

@@ -793,7 +793,7 @@ pub struct surface : pub gui::object
     var mmvec = os::mmvec();
     mmvec.offset = 0;
     mmvec.length = size;
-    mmvec.flags = 0;
+    mmvec.flags = os::mmap::shared;
     mmvec.prot = os::prot::readwrite;
 
     var addr = null<u8 mut *>();

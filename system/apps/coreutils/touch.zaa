@@ -4,40 +4,75 @@
 
 import std.stdio;
 import std.env;
-import os.zaos.fcntl : O_RDONLY, O_DIRECTORY, O_NOFOLLOW;
-import chrono : duration;
-import termios;
+import sys.fs;
+import sys.path;
+import os.zaos.fcntl;
+import chrono;
+import aargh;
 
-extern fn thread_ring() -> os::ioring mut &;
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='c', help="do not create any files")]
+  bool no_create = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn touch(std::string &path, var &time, opts &opts) throws(std::error) -> i32
+{
+  var stat = sys::stat();
+
+  if (var rc = sys::stat(path, &mut stat); rc < 0)
+  {
+    if (cast(-rc) != std::errc::not_found)
+      throw std::system_error(cast(-rc));
+
+    if (opts.no_create)
+      return 0;
+
+    std::file::create(path);
+  }
+
+  stat.mtime = time.time_since_epoch.count;
+
+  if (var rc = sys::chstat(path, stat, os::stats::mtime); rc < 0)
+    throw std::system_error(cast(-rc));
+
+  return 0;
+}
 
 pub fn main() -> i32
 {
-  var path = std::string();
+  var opts = aargh::parse<opts>(std::env::args);
 
-  for (var arg : std::env::args.drop_n(1))
+  if (opts.help || opts.paths.empty)
   {
-    if (arg.starts_with("-"))
-      continue;
+    aargh::usage<opts>();
 
-    path = arg;
+    return 0;
   }
 
-  if (path.empty)
-  {
-    std::printf("usage: touch <filepath>\n");
+  var time = chrono::system_clock::now;
 
-    return -22;
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      touch(path, time, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "touch: ", path, ": ", rc);
+    }
   }
 
-  var fd = os::open(&mut thread_ring, os::string(path.data, path.len), os::O_CREAT | os::O_WRONLY | os::O_APPEND, 0o640);
-
-  if (fd < 0)
-    std::printf("touch: error opening file {} - {}\n", path, std::errc(cast(-fd)));
-
-  var buffer = [<u8>: 65 ];
-  os::write(&mut thread_ring, fd, buffer.data, buffer.len);
-
-  os::close(&mut thread_ring, fd);
 
   return 0;
 }

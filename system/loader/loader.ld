@@ -21,16 +21,16 @@ SECTIONS
 
   .text :
   {
-    *(.text*)
+    *(.text .text.* .gnu.linkonce.t.*)
   }
 
   . = ALIGN(4096);
 
   .data :
   {
-    *(.rodata*)
-    *(.data*)
-    *(.bss)
+    *(.rodata .rodata* .gnu.linkonce.r.*)
+    *(.data .data.* .gnu.linkonce.d.*)
+    *(.bss .bss.* .gnu.linkonce.b.*)
     *(COMMON)
   }
 

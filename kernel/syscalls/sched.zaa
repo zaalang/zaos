@@ -4,16 +4,25 @@
 
 import std.stdlib;
 import vm : virtaddr;
+import io;
 import cpu;
 import result as _ : result;
 import thread as _ : thread;
 import process as _ : process;
+import scheduler;
 import futex;
 
 enum flags
 {
   const nohang = 0x1;
-  const nowait = 0x2;
+}
+
+struct sched_param
+{
+  int sched_priority;
+
+  sched_param() = default;
+  ~sched_param() = default;
 }
 
 extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
@@ -37,7 +46,8 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
 
   if (flags & flags::nohang == 0)
   {
-    thread.rval.wait();
+    if (var rc = thread.rval.wait(interruptible: true); rc < 0)
+      return rc;
   }
 
   if (thread.rval.ready)
@@ -50,18 +60,21 @@ extern fn sys_wait(i32 id, virtaddr rvalbuf, u64 flags) -> result
         return result;
     }
 
-    if (flags & flags::nowait == 0)
-    {
-      thread.detach();
-    }
+    thread.detach();
 
     return id;
   }
 
-  if (flags & flags::nowait == 0)
-  {
-    thread.detach();
-  }
+  thread.detach();
+
+  return 0;
+}
+
+extern fn sys_sleep(u64 abstime) -> result
+{
+  var thread = thread::current;
+
+  thread.rval.wait_until(abstime, interruptible: true);
 
   return 0;
 }
@@ -84,6 +97,49 @@ extern fn sys_futex_wake(virtaddr addr, u32 count) -> result
 
   if (var result = futex::wake(addr, count); !result)
     return result;
+
+  return 0;
+}
+
+extern fn sys_sched_get_param(i32 id, virtaddr parambuf) -> result
+{
+  var thread = thread::find(id);
+
+  if (!thread)
+    return vm::result::no_such_process;
+
+  if (thread.process != process::current)
+    return vm::result::no_such_process;
+
+  var params = sched_param();
+
+  params.sched_priority = cast<int>(thread.priority);
+
+  if (var result = vm::write_process_memory(parambuf, &params, sizeof(params)); !result)
+    return result;
+
+  return 0;
+}
+
+extern fn sys_sched_set_param(i32 id, virtaddr parambuf) -> result
+{
+  var thread = thread::find(id);
+
+  if (!thread)
+    return vm::result::no_such_process;
+
+  if (thread.process != process::current)
+    return vm::result::no_such_process;
+
+  var params = sched_param();
+
+  if (var result = vm::read_process_memory(parambuf, &params, sizeof(params)); !result)
+    return result;
+
+  if (params.sched_priority <= 0 || params.sched_priority > 50)
+    return invalid_argument;
+
+  scheduler::set_priority(thread, cast(params.sched_priority));
 
   return 0;
 }

@@ -102,7 +102,7 @@ struct winsize
 
 pub struct ptty : pub chr::chrdev
 {
-  int id;
+  i32 id;
 
   termios termios;
   winsize winsize;
@@ -119,7 +119,7 @@ pub struct ptty : pub chr::chrdev
   usize lines;
   usize column;
 
-  pub ptty(int id)
+  pub ptty(i32 id)
     : super(&impl this)
   {
     this.id = id;

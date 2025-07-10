@@ -555,7 +555,7 @@ pub struct ext2_dir_entry
   pub ~ext2_dir_entry() = default;
 }
 
-pub fn dentry_required_len(u8 name_len) -> u16
+pub fn dirent_required_len(u8 name_len) -> u16
 {
   return (sizeof<ext2_dir_entry> - EXT2_NAME_LENGTH + cast<u16>(name_len) + 3) & 0xfffc;
 }

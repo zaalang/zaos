@@ -316,7 +316,7 @@ pub fn mmap(vm::physrange range) -> virtrange
 
   var allocation = heap.allocate(inset + range.size);
 
-  if (var result = vm::create_physical_region(allocation, pages, vm::protection::readwrite, vm::usage::private | vm::usage::foreign); !result)
+  if (var result = vm::create_physical_region(allocation, pages, vm::protection::readwrite, vm::usage::foreign); !result)
     std::panic("heap_bad_memmap");
 
   return virtrange(allocation.addr + inset, range.size);

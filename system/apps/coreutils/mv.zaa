@@ -4,38 +4,245 @@
 
 import std.stdio;
 import std.env;
-import os.zaos.fcntl : O_RDWR, O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_CREAT, O_TRUNC;
-import chrono : duration;
-import termios;
+import sys.fs;
+import sys.path;
+import os.zaos.fcntl;
+import aargh;
 
-extern fn thread_ring() -> os::ioring mut &;
+struct opts
+{
+  #[arg(free, required, long="file", help="source(s) dest")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='f', help="force overwrite files")]
+  bool force = false;
+
+  #[arg(flag, help="remove any trailing slashes from each SOURCE argument")]
+  bool strip_trailing_slashes = false;
+
+  #[arg(flag, short='v', help="explain what is being done")]
+  bool verbose = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn move_directory(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  if (opts.verbose)
+  {
+    std::print("mv ", src, " -> ", dst);
+  }
+
+  if (sys::exists(dst))
+  {
+    if (opts.force)
+    {
+      if (var rc = sys::rm_rf(dst); rc < 0)
+        std::fprint(std::stderr, "mv: ", dst, ": unable to remove file - ", rc);
+    }
+
+    if (sys::exists(dst))
+    {
+      std::fprint(std::stderr, "mv: ", dst, ": file already exists");
+
+      return 0;
+    }
+  }
+
+  sys::mkpath(dst);
+
+  for (var &entry : sys::read_dir(src))
+  {
+    switch (entry.type)
+    {
+      case directory:
+        move_directory(entry.path, sys::path::join(dst, entry.name), opts);
+
+      case regular:
+        move_file(entry.path, sys::path::join(dst, entry.name), opts);
+
+      else:
+        std::fprint(std::stderr, "not implemented - ", entry.type);
+    }
+  }
+
+  var stats = os::stats::mode | os::stats::uid | os::stats::gid | os::stats::mtime | os::stats::ctime | os::stats::btime;
+
+  if (var rc = sys::chstat(dst, sys::stat(src), stats); rc < 0)
+    std::fprint(std::stderr, "mv: ", dst, ": unable to set file attributes - ", rc);
+
+  if (var rc = sys::unlink(src); rc < 0)
+    std::fprint(std::stderr, "mv: ", src, ": unable to remove file - ", rc);
+
+  return 0;
+}
+
+fn move_file(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  if (opts.verbose)
+  {
+    std::print("mv ", src, " -> ", dst);
+  }
+
+  if (sys::exists(dst))
+  {
+    if (opts.force)
+    {
+      if (var rc = sys::rm_rf(dst); rc < 0)
+        std::fprint(std::stderr, "mv: ", dst, ": unable to remove file - ", rc);
+    }
+
+    if (sys::exists(dst))
+    {
+      std::fprint(std::stderr, "mv: ", dst, ": file already exists");
+
+      return 0;
+    }
+  }
+
+  var fin = std::file::open(src);
+  var fout = std::file::create(dst);
+
+  var buffer = [u8(0); 38768];
+
+  for (;;)
+  {
+    var bytes = fin.read(buffer.data, buffer.len);
+
+    if (bytes <= 0)
+      break;
+
+    fout.write(buffer.data, bytes);
+  }
+
+  var stats = os::stats::mode | os::stats::uid | os::stats::gid | os::stats::mtime | os::stats::ctime | os::stats::btime;
+
+  if (var rc = sys::chstat(dst, sys::stat(src), stats); rc < 0)
+    std::fprint(std::stderr, "mv: ", dst, ": unable to set file attributes - ", rc);
+
+  if (var rc = sys::unlink(src); rc < 0)
+    std::fprint(std::stderr, "mv: ", src, ": unable to remove file - ", rc);
+
+  return 0;
+}
+
+fn move(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
+{
+  if (dst.starts_with(src))
+  {
+    std::print("omitting recursive source: ", src);
+
+    return 0;
+  }
+
+  if (opts.verbose)
+  {
+    std::print("mv ", src, " -> ", dst);
+  }
+
+  if (sys::exists(dst))
+  {
+    if (opts.force)
+    {
+      if (var rc = sys::rm_rf(dst); rc < 0)
+        std::fprint(std::stderr, "mv: ", dst, ": unable to remove file - ", rc);
+    }
+
+    if (sys::exists(dst))
+    {
+      std::fprint(std::stderr, "mv: ", dst, ": file already exists");
+
+      return 0;
+    }
+  }
+
+  if (var rc = sys::rename(src, dst); rc < 0)
+  {
+    if (rc == os::EXDEV)
+    {
+      switch (sys::stat(src).type)
+      {
+        case directory:
+          move_directory(src, dst, opts);
+
+        case regular:
+          move_file(src, dst, opts);
+      }
+
+      return 0;
+    }
+
+    throw std::system_error(cast<std::errc>(-rc));
+  }
+
+  return 0;
+}
+
+fn mv(std::vector<std::string> &paths, std::string &dest, opts &opts) throws(std::error) -> i32
+{
+  var into_dir = (paths.len > 1) || (sys::exists(dest) && sys::stat(dest).is_directory);
+
+  if (!into_dir && sys::exists(dest) && sys::stat(dest).is_directory)
+    throw std::system_error(std::errc::is_a_directory);
+
+  if (into_dir && sys::exists(dest) && !sys::stat(dest).is_directory)
+    throw std::system_error(std::errc::not_a_directory);
+
+  for (var &src : paths)
+  {
+    var dst = || throws {
+      if (into_dir)
+        return sys::path::join(dest, sys::path::basename(src));
+      return dest;
+    }();
+
+    try
+    {
+      move(src, dst, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "mv: ", src, ": ", rc);
+    }
+  }
+
+  return 0;
+}
 
 pub fn main() -> i32
 {
-  var src = std::string();
-  var dst = std::string();
+  var opts = aargh::parse<opts>(std::env::args);
 
-  for (var arg : std::env::args.drop_n(1))
+  if (opts.help || opts.paths.len < 2)
   {
-    if (arg.starts_with("-"))
-      continue;
+    aargh::usage<opts>();
 
-    if (src == "")
-      src = arg;
-
-    else if (dst == "")
-      dst = arg;
+    return 0;
   }
 
-  if (src.empty || dst.empty)
-  {
-    std::printf("usage: mv <src> <dst>\n");
+  var dest = std::string(opts.paths.take_back());
 
-    return -22;
+  if (opts.strip_trailing_slashes)
+  {
+    for (var mut &path : opts.paths)
+    {
+      while (path.ends_with("/"))
+        path.strip_suffix!("/");
+    }
   }
 
-  if (var rc = os::rename(&mut thread_ring, os::string(src.data, src.len), os::string(dst.data, dst.len), 0); rc < 0)
-    return rc;
+  try
+  {
+    mv(opts.paths, dest, opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "mv: ", rc);
+  }
 
   return 0;
 }

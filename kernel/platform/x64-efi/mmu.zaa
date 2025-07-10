@@ -353,13 +353,13 @@ pub fn unmap(page_table mut &this, virtrange_t range, void mut *data, fn (&callb
           }
         }
         else
-          addr += PAGE_SIZE << 9;
+          addr = (addr & ~0x1fffff) + (PAGE_SIZE << 9);
       }
       else
-        addr += PAGE_SIZE << 18;
+        addr = (addr & ~0x3fffffff) + (PAGE_SIZE << 18);
     }
     else
-      addr += PAGE_SIZE << 27;
+      addr = (addr & ~0x7fffffffff) + (PAGE_SIZE << 27);
   }
 
   //if (USER_LIMIT < range.begin)

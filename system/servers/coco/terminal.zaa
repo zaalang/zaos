@@ -140,7 +140,13 @@ pub fn render(terminal mut &this) -> void
     var x = this.left + cast<int>(i) * 8;
     var y = this.top + cast<int>(j) * 16;
 
-    this.display.blit(x, y, this.font.lookup(ch), attrs.foreground_color, attrs.background_color);
+    var foreground = attrs.foreground_color;
+    var background = attrs.background_color;
+
+    if (attrs.flags & vt::attrs::inverse != 0)
+      std::swap(&mut foreground, &mut background);
+
+    this.display.blit(x, y, this.font.lookup(ch), foreground, background);
   });
 
   if (this.screen.cursor_visible)

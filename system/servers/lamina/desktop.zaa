@@ -106,7 +106,7 @@ pub struct desktop
       var mmvec = os::mmvec();
       mmvec.offset = 0;
       mmvec.length = cast<usize>(height * stride);
-      mmvec.flags = 0;
+      mmvec.flags = os::mmap::shared;
       mmvec.prot = os::prot::readwrite;
 
       var addr = null<u32 mut *>();

@@ -10,7 +10,7 @@ import vm : PAGE_SIZE, PAGE_MASK;
 import vm.space;
 import vfs.stat;
 import vfs.fd;
-import blk;
+import cpu;
 import heap;
 import scheduler;
 import ioring : io_ring;
@@ -41,6 +41,7 @@ pub struct process
   pub state state;
 
   pub mutex lock;
+  pub std::string uuid;
   pub std::string name;
   pub Rc<process> parent;
   pub process mut *children;
@@ -64,7 +65,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[24] reserved;
+  u8[40] reserved;
 
   pub fn current() -> process mut *
   {
@@ -315,6 +316,18 @@ pub fn colonel()
   return &process_manager::instance.colonel;
 }
 
+fn make_uuid(u64 time, i32 pid) -> std::string
+{
+  var data1 = cast<u32>(time >> 16 & 0xffffffff);
+  var data2 = cast<u16>(time & 0xffff);
+  var data3 = u16(0x700e);
+  var data4 = u16(0xb0f4);
+  var data5 = u16(0x7620);
+  var data6 = cast<u32>(pid);
+
+  return std::format("{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:08x}", data1, data2, data3, data4, data5, data6);
+}
+
 pub fn create_kernel_process(fn (*start_routine)(void mut *) -> void, void mut *start_argument) -> process mut *
 {
   std::print("create kernel process");
@@ -324,6 +337,7 @@ pub fn create_kernel_process(fn (*start_routine)(void mut *) -> void, void mut *
 
   process.name = "kernel";
   process.id = kernelmain.id;
+  process.uuid = make_uuid(cpu::system_time / 1_000_000, kernelmain.id);
   process.threads = kernelmain;
   process.state = process::state::running;
   process.pagetable = platform::pagetable;
@@ -348,6 +362,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
 
   process.name = &&name;
   process.id = mainthread.id;
+  process.uuid = make_uuid(cpu::system_time / 1_000_000, mainthread.id);
 
   process.pagetable.new(fn() -> platform::physaddr_t {
     var allocation = vm::allocate_physical_pages(PAGE_SIZE);
@@ -469,6 +484,7 @@ fn execute(process mut *process, thread mut *thread, void *args) -> i32
   process.auxv.push_back(elf::auxval::type::PHDR, base + cast<uintptr>(image.ehdr.e_phoff));
   process.auxv.push_back(elf::auxval::type::PHENT, cast<uintptr>(image.ehdr.e_phentsize));
   process.auxv.push_back(elf::auxval::type::PHNUM, cast<uintptr>(image.ehdr.e_phnum));
+  process.auxv.push_back(elf::auxval::type::PID, cast<uintptr>(process.id));
   process.auxv.push_back(elf::auxval::type::RINGHDR, process.ioring.addr);
   process.auxv.push_back(elf::auxval::type::RINGFD, 6);
   process.auxv.push_back(elf::auxval::type::ROOTFD, 4);
@@ -570,6 +586,8 @@ fn destroy(process mut *process) -> void
   process.auxv.clear();
 
   procman.unregister(process);
+
+  process.state = process::state::dead;
 
   process::allocator.free(process);
 }

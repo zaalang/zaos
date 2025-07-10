@@ -4,33 +4,94 @@
 
 import std.stdio;
 import std.env;
-import os.zaos.fcntl;
-import chrono : duration;
-import termios;
+import sys.fs;
+import sys.path;
+import aargh;
 
-extern fn thread_ring() -> os::ioring mut &;
+struct opts
+{
+  #[arg(free, required, long="file", help="source(s) dest")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='r', help="remove directories recursively")]
+  bool recursive = false;
+
+  #[arg(flag, short='f', help="force overwrite files")]
+  bool force = false;
+
+  #[arg(flag, short='v', help="explain what is being done")]
+  bool verbose = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn rmdir(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  for (var &entry : sys::read_dir(path))
+  {
+    if (opts.verbose)
+    {
+      std::print("remove ", entry.path);
+    }
+
+    switch (entry.type)
+    {
+      case directory:
+        rmdir(entry.path, opts);
+    }
+
+    if (var rc = sys::unlink(entry.path); rc < 0)
+      return rc;
+  }
+
+  return 0;
+}
+
+fn rm(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  if (opts.verbose)
+  {
+    std::print("remove ", path);
+  }
+
+  if (opts.recursive)
+  {
+    if (sys::stat(path).is_directory)
+      rmdir(path, opts);
+  }
+
+  if (var rc = sys::unlink(path); rc < 0)
+    throw std::system_error(cast<std::errc>(-rc));
+
+  return 0;
+}
 
 pub fn main() -> i32
 {
-  var path = std::string();
+  var opts = aargh::parse<opts>(std::env::args);
 
-  for (var arg : std::env::args.drop_n(1))
+  if (opts.help || opts.paths.empty)
   {
-    if (arg.starts_with("-"))
-      continue;
+    aargh::usage<opts>();
 
-    path = arg;
+    return 0;
   }
 
-  if (path.empty)
+  for (var &path : opts.paths)
   {
-    std::printf("usage: rm <filepath>\n");
-
-    return -22;
+    try
+    {
+      rm(path, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "mkdir: ", path, ": ", rc);
+    }
   }
-
-  if (var rc = os::unlink(&mut thread_ring, os::string(path.data, path.len), 0); rc < 0)
-    std::printf("rm: error {} - {}\n", path, std::errc(cast(-rc)));
 
   return 0;
 }

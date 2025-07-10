@@ -11,6 +11,8 @@ import vfs;
 import process as _ : process;
 import support.rc : Rc;
 
+using std::fd_result;
+
 pub struct console : pub chr::chrdev
 {
   pub console()
@@ -69,14 +71,20 @@ pub struct console : pub chr::chrdev
   pub ~console() = default;
 }
 
-extern fn fd_writev(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result
+extern fn dbgln(uintptr fd, u8 *buffer, usize length) -> void;
+
+extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> fd_result
 {
-  extern fn dbgln(uintptr fd, std::ciovec *iovs, usize n) -> std::fd_result;
+  var result = fd_result();
 
   //import kprint;
-  //kprint::kprintf("{}", std::string_view(iovs.data, iovs.len));
+  //kprint::kprintf("{}", std::string_view(buffer, length));
 
-  return dbgln(1, iovs, n);
+  dbgln(1, buffer, length);
+
+  result.length = length;
+
+  return result;
 }
 
 pub fn initialise() -> void

@@ -109,6 +109,7 @@ pub fn resize(screen mut &screen, usize columns, usize rows) -> vt::result
       {
         line.cells[i].ch = ' ';
         line.cells[i].width = 1;
+        line.cells[i].attrs.flags = 0;
         line.cells[i].attrs.foreground_color = screen.foreground_color;
         line.cells[i].attrs.background_color = screen.background_color;
       }
@@ -508,6 +509,7 @@ pub fn erase(screen mut &screen, usize x0, usize y0, usize x1, usize y1) -> vt::
     {
       line.cells[x].ch = ' ';
       line.cells[x].width = 1;
+      line.cells[x].attrs.flags = 0;
       line.cells[x].attrs.foreground_color = screen.foreground_color;
       line.cells[x].attrs.background_color = screen.background_color;
     }

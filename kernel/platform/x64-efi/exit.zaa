@@ -5,7 +5,7 @@
 import std.stdio;
 import cpu;
 
-extern fn exit(u32) -> void
+extern fn exit(i32) -> void
 {
   cpu::disable_interrupts();
   cpu::disable_memory_protect();

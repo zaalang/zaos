@@ -86,7 +86,7 @@ enum state
   refof_op,
   condrefof_op,
   index_op,
-  derefof_op,  
+  derefof_op,
   match_op,
   mid_op,
   concat_op,
@@ -277,7 +277,7 @@ struct context
 
     this.scopes.pop_back();
 
-    if (this.stack.len - this.frame.rsp - NLOCALS == 0)
+    if (this.stack.len - this.frame.rsp == NLOCALS)
       this.push_value(value());
 
     this.stack.erase(this.frame.rsp - NARGS - 1, this.stack.len - (this.frame.rsp - NARGS));
@@ -2332,16 +2332,24 @@ fn binary_op(context mut &ctx, std::span<u8> mut &is) -> result
         return rc;
 
     case divide_op:
-      ctx.push_value(value(rhs.value.integer != 0 ? lhs.value.integer % rhs.value.integer : 0));
       ctx.push_value(value(rhs.value.integer != 0 ? lhs.value.integer / rhs.value.integer : 0));
 
       if (var rc = store(&mut ctx, &mut is); !rc)
         return rc;
 
-      ctx.stack.pop_back();
+      switch (ctx.targets.back)
+      {
+        case nul:
+          ctx.targets.pop_back();
 
-      if (var rc = store(&mut ctx, &mut is); !rc)
-        return rc;
+        else:
+          ctx.push_value(value(rhs.value.integer != 0 ? lhs.value.integer % rhs.value.integer : 0));
+
+          if (var rc = store(&mut ctx, &mut is); !rc)
+            return rc;
+
+          ctx.stack.pop_back();
+      }
 
     case mod_op:
       ctx.push_value(value(rhs.value.integer != 0 ? lhs.value.integer % rhs.value.integer : 0));
@@ -3027,7 +3035,7 @@ fn timer_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (var rc = ctx.namespace.timer(&mut now); !rc)
     return rc;
 
-  ctx.push_value(value::integer(now));
+  ctx.push_value(value::integer(now / 100));
 
   return ok;
 }

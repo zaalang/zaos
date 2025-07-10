@@ -12,6 +12,12 @@ pub struct auxval
     PHENT = 4,     // size of program header
     PHNUM = 5,     // number of program headers
     BASE = 7,      // image base address
+    PID = 10,	   // pid
+    UID = 11,	   // real uid
+    EUID = 12,	   // effective uid
+    GID = 13,	   // real gid
+    EGID = 14,	   // effective gid
+
     SYSINFO = 32,  // vdso base address
     RINGHDR = 36,  // ioring base address
     RINGFD = 37,   // ioring file descriptor

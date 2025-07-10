@@ -676,7 +676,7 @@ pub fn configure(namespace mut &cfg) -> acpi::result
     if (name.starts_with("_E") || name.starts_with("_L"))
     {
       var idx = usize(~0);
-      std::atoi(name.data + 2, name.end, &mut idx, 16);
+      std::atoi(name.begin + 2, name.end, &mut idx, 16);
 
       cfg.gpe_enable(idx, value.method);
     }

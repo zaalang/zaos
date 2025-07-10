@@ -534,7 +534,7 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
       }
 
       if (!surface.node)
-        return winton::errc::not_configured;
+        return 0;
 
       switch (*surface.node)
       {

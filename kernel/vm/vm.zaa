@@ -279,10 +279,17 @@ pub fn create_physical_region(address_space mut &space, virtrange range, std::ve
   {
     var pages = physrange(phys.begin & ~PAGE_MASK, (phys.end + PAGE_MASK) & ~PAGE_MASK);
 
+    if (region.is_foreign)
+    {
+      map_physical_pages(addr, pages, prot);
+    }
+
     if (!region.is_foreign)
+    {
       ref_physical_pages(pages);
 
-    map_physical_pages(addr, pages, prot);
+      map_physical_pages(addr, pages, protection::readonly);
+    }
 
     addr += pages.size;
   }
@@ -389,8 +396,6 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   if (!region)
     return bad_address;
 
-  var guard = std::lock_guard(&mut cpu::irqlock);
-
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
 
@@ -419,6 +424,8 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
 
     if (pagetable.cnt > 1)
     {
+      var irqs = platform::disable_interrupts();
+
       var rendezvous = cast<i32>(sys::cpu_count);
 
       sys::broadcast_ipi_message(fn[pagetable, rendezvous]() -> void {
@@ -429,12 +436,10 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
         std::atomic_sub(&rendezvous, 1);
       });
 
-      platform::enable_interrupts();
+      platform::restore_interrupts(irqs);
 
       while (std::volatile_load(&rendezvous) != 1)
         __relax();
-
-      platform::disable_interrupts();
     }
 
     for (var page = pages; page; )
@@ -451,6 +456,8 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
   region.backing = null;
 
   region.unlock();
+
+  var guard = std::lock_guard(&mut cpu::irqlock);
 
   mm.regioncache.put(region);
 
@@ -716,7 +723,7 @@ fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bo
   {
     var page = mm.pageallocator.page_from_address(mapping.address);
 
-    if (region.is_private && page.refcnt > 1)
+    if (region.is_private || page == mm.zeropage)
       fault_region(&mut pagetable, region, addr, allocate_physical_page(), protection::readwrite, mflags::copy);
     else
       fault_region(&mut pagetable, region, addr, page, protection::readwrite, mflags::keep);

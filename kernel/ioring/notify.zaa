@@ -231,7 +231,7 @@ pub struct watchset
 
   pub watchset()
   {
-    vfs::node::new(&node, vfs::node::type::watchset, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::watchset, vfs::node_stream_operations());
 
     io::initiate(&mut readable.cb, 1);
   }

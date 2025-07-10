@@ -330,8 +330,14 @@ pub struct window : pub gui::window
         var w = cast<int>(cell.width) * this.cell_width;
         var h = this.cell_height;
 
-        painter.fill_rect(x, y, w, h, gfx::rgba(cell.attrs.background_color));
-        painter.draw_glyph(this.font, x, y + this.font_ascender, cell.ch, gfx::rgba(cell.attrs.foreground_color));
+        var foreground = gfx::rgba(cell.attrs.foreground_color);
+        var background = gfx::rgba(cell.attrs.background_color);
+
+        if (cell.attrs.flags & vt::attrs::inverse != 0)
+          std::swap(&mut foreground, &mut background);
+
+        painter.fill_rect(x, y, w, h, background);
+        painter.draw_glyph(this.font, x, y + this.font_ascender, cell.ch, foreground);
       }
     }
 

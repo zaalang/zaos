@@ -8,23 +8,24 @@ import scheduler : run_queue;
 import thread as _ : thread;
 import platform;
 
-struct cpu
+pub struct cpu_logical_core
 {
-  int id;
-  run_queue mut *runqueue;
-  thread mut *current_thread;
+  pub int id;
+  pub thread mut *current_thread;
 
-  u64 cyc2ns;
-  u64 clockspeed;
+  pub u64 cyc2ns;
+  pub u64 clockspeed;
 
-  cpu() = default;
-  cpu(#cpu&) = default;
-  ~cpu() = default;
+  pub run_queue runqueue;
+
+  cpu_logical_core() = default;
+  cpu_logical_core(#cpu_logical_core&) = default;
+  ~cpu_logical_core() = default;
 }
 
-fn self() -> cpu mut &
+fn self() -> cpu_logical_core mut &
 {
-  static thread_local self = #cpu();
+  static thread_local self = #cpu_logical_core();
 
   return &self;
 }
@@ -68,14 +69,14 @@ pub fn runqueue() -> run_queue mut &
 {
   std::assert(platform::interrupts_disabled);
 
-  return &*self.runqueue;
+  return &self.runqueue;
 }
 
 pub fn runqueue_inline() -> run_queue mut &
 {
   std::assert(platform::interrupts_disabled);
 
-  return &*self.runqueue;
+  return &self.runqueue;
 }
 
 #[noinline]
@@ -123,7 +124,8 @@ pub fn system_time() -> u64
 pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void
 {
   self.id = cpu;
-  self.runqueue = &sys::runqueue(cpu);
   self.clockspeed = bootinfo.early_tsc_frequency;
   self.cyc2ns = ((1_000_000_000 << 32) / self.clockspeed) << 32;
+
+  sys::add_cpu(cpu, &self);
 }

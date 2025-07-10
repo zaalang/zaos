@@ -1,0 +1,55 @@
+//
+// tty
+//
+
+import std.stdio;
+import std.env;
+import sys.fs;
+import termios : isatty, ttyname;
+import aargh;
+
+using std::STDIN;
+
+struct opts
+{
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (!isatty(STDIN))
+  {
+    std::print("not a tty");
+
+    return 1;
+  }
+
+  try
+  {
+    var name = std::string();
+
+    if (var rc = ttyname(&mut name, STDIN); rc < 0)
+      throw std::system_error(cast(-rc));
+
+    std::print(name);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "pwd: ", rc);
+  }
+
+  return 0;
+}

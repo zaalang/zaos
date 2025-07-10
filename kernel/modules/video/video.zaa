@@ -107,7 +107,7 @@ pub struct bootfb : pub chr::chrdev
 
     var framebuffer = std::vector<physrange, N:1>::from([ physrange(this.fb.address, range.size) ]);
 
-    if (var result = vm::create_physical_region(range, framebuffer, prot, vm::usage::shared | vm::usage::foreign); !result)
+    if (var result = vm::create_physical_region(range, framebuffer, prot, vm::usage::foreign); !result)
       return cast(result);
 
     if (var result = vm::set_memory_type(range, vm::mtype::write_combine); !result)

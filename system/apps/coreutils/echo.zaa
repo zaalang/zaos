@@ -116,7 +116,7 @@ pub fn main() -> i32
   if (opts.no_newline)
     opts.end_of_line = "";
 
-  var text = std::join(opts.strings);
+  var text = std::join(opts.strings, " ");
 
   if (opts.escaped)
     text = unescape(text);

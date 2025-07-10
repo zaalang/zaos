@@ -11,6 +11,7 @@ import ioring;
 pub enum result : i32
 {
   ok = 0,
+  interrupted = -4,
   invalid_argument = -22,
   not_implemented = -38,
   not_supported = -95,

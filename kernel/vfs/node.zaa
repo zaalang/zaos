@@ -158,7 +158,7 @@ pub struct node
   {
   }
 
-  pub fn new(node mut *this, type type, node_operations &ops) -> void
+  pub fn init(node mut *this, type type, node_operations &ops) -> void
   {
     this.type = type;
     this.ops = &ops;
@@ -186,7 +186,6 @@ pub vtable node_file_operations : node_operations
   pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
   pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &iovec, usize offset, usize length) -> vfs::result;
 }
-
 
 pub vtable node_directory_operations : node_operations
 {

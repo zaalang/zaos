@@ -1,0 +1,84 @@
+//
+// head
+//
+
+import std.stdio;
+import std.span : Span;
+import std.env;
+import aargh;
+
+struct opts
+{
+  #[arg(free, long="file", help="file(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(value, short='n', help="print the first NUM lines")]
+  usize lines = 10;
+
+  #[arg(flag, short='v', help="print headers giving file names")]
+  bool verbose = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn head(std::string &path, opts &opts) throws(std::error) -> i32
+{
+  var fin = || throws {
+    if (path == "-")
+      return std::stdin_raw;
+    return std::file::open(path);
+  }();
+
+  if (opts.verbose)
+    std::print("==> ", path, " <==");
+
+  var fout = std::stdout.lock();
+
+  var cnt = 0;
+
+  for (var line : std::buffered_reader(&mut fin).lines)
+  {
+    if (cnt < opts.lines)
+    {
+      fout.puts(line);
+      fout.puts("\n");
+    }
+
+    cnt += 1;
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (opts.paths.empty)
+    opts.paths.push_back("-");
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      head(path, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "head: ", path, ": ", rc);
+    }
+  }
+
+  return 0;
+}

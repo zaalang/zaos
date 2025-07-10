@@ -45,7 +45,7 @@ pub fn sys_symlink(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize p
   var node = vfs::lookup(process, &mut base, path);
 
   if (!base)
-    return vfs::result::invalid_argument;
+    return vfs::result::not_found;
 
   var name = vfs::basename(path);
 

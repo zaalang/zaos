@@ -113,7 +113,7 @@ pub struct pollset
 
   pub pollset()
   {
-    vfs::node::new(&node, vfs::node::type::pollset, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::pollset, vfs::node_stream_operations());
 
     io::initiate(&mut readable.cb, 1);
   }
@@ -199,6 +199,12 @@ pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u
 
       if (!thread)
         return vm::result::no_such_process;
+
+      if (thread == thread::current)
+        return vm::result::deadlock_avoided;
+
+      if (thread.is_detached)
+        return vm::result::deadlock_avoided;
 
       event.readable = thread.rval;
 
@@ -304,7 +310,7 @@ pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr
     ctx.wake_time = abstime;
     ctx.blockers.push_back(pollset.readable);
 
-    if (abstime != 0 && abstime < cpu::system_time)
+    if (abstime < cpu::system_time)
       return 0;
 
     return ioring::result::should_block;

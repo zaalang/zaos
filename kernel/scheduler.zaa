@@ -11,6 +11,15 @@ import process as _ : process;
 import semaphore as _ : semaphore;
 import platform;
 
+enum status
+{
+  const ok = 0;
+  const ready = 1;
+  const waiting = 2;
+  const interrupted = -4;
+  const timed_out = -110;
+}
+
 pub struct run_queue
 {
   pub std::spin_lock lock;
@@ -317,23 +326,40 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
 }
 
 #[noinline]
+fn runqueue_for_thread(thread mut *thread) -> run_queue mut &
+{
+  for (;;)
+  {
+    var cpu = thread.cpu;
+    var mut &runqueue = sys::cpu(cpu).runqueue;
+
+    runqueue.lock.lock();
+
+    if (cpu == std::atomic_load(&thread.cpu))
+      return &runqueue;
+
+    runqueue.lock.unlock();
+  }
+}
+
+#[noinline]
 fn rebalance(run_queue mut &runqueue) -> void
 {
   var busiest = &runqueue;
-  for (var mut &queue : sys::runqueues)
+  for (var mut &cpu: sys::cpus)
   {
-    if (busiest.len < queue.len)
-      busiest = &queue;
+    if (busiest.len < cpu.runqueue.len)
+      busiest = &cpu.runqueue;
   }
 
   if (1 < busiest.len && runqueue.len < 3*busiest.len/4)
   {
     std::assert(busiest != &runqueue);
 
-    for (var mut &queue : sys::runqueues)
+    for (var mut &cpu: sys::cpus)
     {
-      if (&queue == &runqueue || &queue == busiest)
-        queue.lock.lock();
+      if (&cpu.runqueue == &runqueue || &cpu.runqueue == busiest)
+        cpu.runqueue.lock.lock();
     }
 
     for (var thread : busiest.ready)
@@ -372,6 +398,34 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
   platform::task_fork(&mut thread.task, extern(thread_main), thread);
 }
 
+pub fn set_priority(thread mut *thread, thread::priority priority) -> void
+{
+  if (thread.priority == priority)
+    return;
+
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = runqueue_for_thread(thread);
+
+  var guard = std::lock_guard(&mut runqueue.lock, adopt: true);
+
+  var waketime = thread.wait_abstime;
+
+  switch (thread.state)
+  {
+    case ready:
+      runqueue.remove(thread);
+      runqueue.push_back(thread, priority);
+
+    case waiting:
+      runqueue.unblock(thread);
+      runqueue.insert(thread, priority, waketime);
+
+    else:
+      thread.priority = priority;
+  }
+}
+
 pub fn sleep_yield() -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -393,30 +447,38 @@ pub fn sleep_until(u64 abstime) -> void
 
   runqueue.lock.lock();
 
-  current_thread.wait_status = 1;
   runqueue.insert(current_thread, current_thread.priority, abstime);
 
   reschedule(thread::state::waiting, adopt_lock: true);
 }
 
 #[noinline]
-pub fn prepare_to_block() -> void
+pub fn prepare_to_block(bool interruptible = false) -> void
 {
   var mut &runqueue = cpu::runqueue_inline;
   var current_thread = cpu::current_thread_inline;
 
-  std::atomic_store(&current_thread.wait_status, 1);
+  var status = status::ready;
+
+  if (interruptible && current_thread.task.get(platform::task::flags::killed))
+    status = status::interrupted;
+
+  std::assert(current_thread.wait_status == 0);
+
+  current_thread.interruptible = interruptible;
+
+  std::atomic_store(&current_thread.wait_status, status);
 }
 
 #[noinline]
-pub fn block() -> i32
+pub fn block<Lock>(Lock mut &lock) -> i32
 {
   var mut &runqueue = cpu::runqueue_inline;
   var current_thread = cpu::current_thread_inline;
 
   runqueue.lock.lock();
 
-  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, 1, 2))
+  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, status::ready, status::waiting))
   {
     reschedule(thread::state::waiting, adopt_lock: true);
   }
@@ -428,20 +490,24 @@ pub fn block() -> i32
   std::assert(&runqueue == &cpu::runqueue);
   std::assert(current_thread == cpu::current_thread);
 
-  return std::volatile_load(&current_thread.wait_status);
+  var status = current_thread.wait_status;
+
+  lock.lock();
+
+  std::atomic_store(&current_thread.wait_status, 0);
+
+  return status;
 }
 
 #[noinline]
 pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
 {
-  lock.unlock();
-
   var mut &runqueue = cpu::runqueue_inline;
   var current_thread = cpu::current_thread_inline;
 
   runqueue.lock.lock();
 
-  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, 1, 2))
+  if (std::atomic_cmpxchg_strong(&current_thread.wait_status, status::ready, status::waiting))
   {
     runqueue.insert(current_thread, current_thread.priority, abstime);
 
@@ -456,9 +522,14 @@ pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
   std::assert(current_thread == cpu::current_thread);
   std::assert(current_thread.wait_abstime == 0);
 
-  var status = std::volatile_load(&current_thread.wait_status);
+  var status = current_thread.wait_status;
+
+  if (status == status::waiting)
+    status = status::timed_out;
 
   lock.lock();
+
+  std::atomic_store(&current_thread.wait_status, 0);
 
   runqueue.purge(current_thread);
 
@@ -470,20 +541,42 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
 {
   std::assert(status <= 0);
 
-  if (std::atomic_xchg(&thread.wait_status, status) == 2)
+  if (std::atomic_xchg(&thread.wait_status, status) == status::waiting)
   {
-    var irqs = platform::disable_interrupts();
+    sys::cpu(thread.cpu).runqueue.wake(thread);
 
-    sys::runqueue(thread.cpu).wake(thread);
-
-    if (thread.cpu != cpu::current || cpu::current_thread.priority < thread.priority)
+    if (sys::cpu(thread.cpu).current_thread.priority < thread.priority)
     {
+      var irqs = platform::disable_interrupts();
+
       sys::unicast_ipi_message(thread.cpu, fn[var thread = thread]() -> void {
         reschedule(thread::state::ready);
       });
-    }
 
-    platform::restore_interrupts(irqs);
+      platform::restore_interrupts(irqs);
+    }
+  }
+}
+
+#[noinline]
+pub fn interrupt(thread mut *thread, i32 status = 0) -> void
+{
+  std::assert(status < 0);
+
+  if (std::atomic_xchg(&thread.wait_status, status) == status::waiting)
+  {
+    var irqs = std::lock_guard(&mut cpu::irqlock);
+
+    var mut &runqueue = runqueue_for_thread(thread);
+
+    var guard = std::lock_guard(&mut runqueue.lock, adopt: true);
+
+    switch (thread.state)
+    {
+      case waiting:
+        runqueue.unblock(thread);
+        runqueue.push_back(thread, thread.priority);
+    }
   }
 }
 
@@ -519,9 +612,9 @@ pub fn start() -> void
 
   var mut &runqueue = cpu::runqueue;
 
-  idle_thread.pinned = &runqueue;
-  idle_thread.priority = thread::priority::idle;
   idle_thread.cpu = cpu::current;
+  idle_thread.pinned = true;
+  idle_thread.priority = thread::priority::idle;
   idle_thread.state = thread::state::ready;
 
   while (!idle_thread.process)

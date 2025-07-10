@@ -154,7 +154,6 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
   var mmvec = os::mmvec();
   mmvec.offset = 0;
   mmvec.length = cast(stat.size);
-  mmvec.flags = 0;
   mmvec.prot = os::prot::readonly;
 
   var addr = null<void mut *>();
@@ -176,10 +175,10 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
     switch (header.phdr.p_type)
     {
       case elf::elf64_ptype::LOAD:
-        mmvec.flags = 0;
         mmvec.base = cast<uintptr>(header.phdr.p_vaddr) & ~page_mask;
         mmvec.length = cast<usize>(header.phdr.p_vaddr) & page_mask + cast<usize>(header.phdr.p_filesz);
         mmvec.offset = cast<u64>(header.phdr.p_offset) & ~cast<u64>(page_mask);
+        mmvec.flags = os::mmap::private;
 
         var memsz = cast<usize>(header.phdr.p_vaddr) & page_mask + cast<usize>(header.phdr.p_memsz);
 

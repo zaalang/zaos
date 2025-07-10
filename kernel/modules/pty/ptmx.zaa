@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import std.atomic;
 import dev;
 import chr.chrdev;
 import io;
@@ -35,9 +36,11 @@ pub struct ptmx : pub chr::chrdev
   {
     if (flags & 0x3 != 0)
     {
-      static n = 1;
+      static n = i32(0);
 
-      var ptty = chr::chrdev::create<pty::ptty>(n++);
+      var id = std::atomic_add(&n, 1);
+
+      var ptty = chr::chrdev::create<pty::ptty>(id);
       var ptm = pty::ptm::create(ptty);
 
       fd = vfs::file_descriptor::create(ptm);

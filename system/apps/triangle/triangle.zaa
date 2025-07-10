@@ -61,7 +61,7 @@ struct application
     var mmvec = os::mmvec();
     mmvec.offset = 0;
     mmvec.length = cast<usize>(width * height * 4);
-    mmvec.flags = 0;
+    mmvec.flags = os::mmap::shared;
     mmvec.prot = os::prot::readwrite;
 
     var addr = null<u8 mut *>();

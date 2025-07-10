@@ -1,0 +1,147 @@
+//
+// more
+//
+
+import std.stdio;
+import std.env;
+import sys.path;
+import termios;
+import aargh;
+
+struct opts
+{
+  #[arg(free, required, help="path(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+struct state
+{
+  int rows = 24;
+  int cols = 80;
+
+  termios::termios termios;
+
+  state() = default;
+  ~state() = default;
+}
+
+fn draw(std::buffered_reader mut &fin, state mut &state) throws(std::error) -> i32
+{
+  var fout = std::stdout.lock();
+
+  fout.puts("\x1b[2K");
+
+  var cnt = 0;
+  for (var &line : fin.lines)
+  {
+    fout.puts("\r");
+    fout.puts(line);
+    fout.puts("\n");
+
+    cnt += 1;
+
+    if (cnt == state.rows)
+      break;
+  }
+
+  while (cnt < state.rows)
+  {
+    fout.puts("\r~\n");
+
+    cnt += 1;
+  }
+
+  fout.puts("\r");
+  fout.puts(fin.fetch.empty ? "\x1b[7m(END) \x1b[27m" : ":\x1b[7m \x1b[27m");
+
+  fout.flush();
+
+  return 0;
+}
+
+fn more(std::string &path, state mut &state, opts &opts) throws(std::error) -> i32
+{
+  var fin = || throws {
+    if (path == "-")
+      return std::stdin_raw;
+    return std::file::open(path);
+  }();
+
+  var reader = std::buffered_reader(&mut fin);
+
+  draw(&mut reader, &mut state);
+
+  for (;;)
+  {
+    var in = [u8(0); 8];
+
+    termios::poll(std::STDOUT);
+
+    if (var rc = termios::read(std::STDOUT, in.data, in.len); rc < 0)
+      throw std::system_error(cast(-rc));
+
+    switch (in[0])
+    {
+      case 0x3:
+        break;
+
+      case 'q':
+      case 'Q':
+        break;
+
+      case ' ':
+        if (!reader.fetch.empty)
+          draw(&mut reader, &mut state);
+    }
+  }
+
+  std::puts("\x1b[2K\r");
+
+  std::stdout.flush();
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var state = state();
+
+  if (opts.paths.empty)
+    opts.paths.push_back("-");
+
+  if (var rc = termios::get_winsize(&mut state.cols, &mut state.rows); rc < 0)
+    std::fprint(std::stderr, "more: unable to get winsize: ", std::errc(cast(-rc)));
+
+  termios::enable_raw_mode(&mut state.termios);
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      more(path, &mut state, opts);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "more: ", path, ": ", rc);
+    }
+  }
+
+  termios::restore_cooked_mode(&mut state.termios);
+
+  return 0;
+}

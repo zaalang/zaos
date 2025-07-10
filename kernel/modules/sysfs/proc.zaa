@@ -130,6 +130,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
 
       stream.begin('{');
       stream.append("pid", process.id);
+      stream.append("uuid", process.uuid);
       stream.append("name", process.name);
       stream.append("state", std::meta::enumerator_name(process.state));
 
@@ -532,7 +533,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
       return proc_self_node::create(path);
 
     var pid = process::id();
-    if (std::atoi(name.begin, name.end, &mut pid).error)
+    if (std::atoi(name.begin, name.end, &mut pid).len != name.len)
       return null;
 
     var process = process::find(pid);
@@ -600,6 +601,7 @@ pub struct proc_list_node : pub sysfs::sysfs_file_node
       process::enumerate(|process| [json, stream] {
         stream.begin('{');
         stream.append("pid", process.id);
+        stream.append("uuid", process.uuid);
         stream.append("name", process.name);
         stream.append("state", std::meta::enumerator_name(process.state));
         stream.end('}');

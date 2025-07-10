@@ -218,24 +218,24 @@ pub struct response
   pub ~response() = default;
 }
 
-pub fn wait(response mut &rq) -> void
+pub fn wait(response mut &rq, bool interruptible = false) -> i32
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
 
   if (std::atomic_load(&rq.cb.outstanding) <= 0)
-    return;
+    return 0;
 
-  rq.cb.waiters.wait(&mut rq.cb.lock);
+  return rq.cb.waiters.wait(&mut rq.cb.lock, interruptible);
 }
 
-pub fn wait_until(response mut &rq, u64 abstime) -> bool
+pub fn wait_until(response mut &rq, u64 abstime, bool interruptible = false) -> i32
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
 
   if (std::atomic_load(&rq.cb.outstanding) <= 0)
-    return true;
+    return 0;
 
-  return rq.cb.waiters.wait_until(&mut rq.cb.lock, abstime);
+  return rq.cb.waiters.wait_until(&mut rq.cb.lock, abstime, interruptible);
 }
 
 pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void

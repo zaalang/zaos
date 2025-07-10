@@ -6,7 +6,6 @@ import std.stdio;
 import std.span : Span;
 import std.env;
 import aargh;
-import glob;
 
 struct opts
 {
@@ -176,26 +175,7 @@ pub fn main() -> i32
   {
     try
     {
-      var cnt = 0;
-
-      if (path == "-")
-      {
-        cut(path, ranges, opts);
-
-        cnt += 1;
-      }
-
-      for (var &file : glob::glob(path).files)
-      {
-        cut(file, ranges, opts);
-
-        cnt += 1;
-      }
-
-      if (cnt == 0)
-      {
-        std::fprint(std::stderr, "cut: ", path, ": no such file or directory");
-      }
+      cut(path, ranges, opts);
     }
     catch (std::error rc)
     {

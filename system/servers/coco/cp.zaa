@@ -70,9 +70,9 @@ pub fn cp(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
       {
         if (dstres == EAGAIN)
         {
-          var pollset = [ os::pollevt(fout, os::POLLFD, os::POLLOUT, 0) ];
+          var pollset = [ os::pollevt(fout, POLLFD, POLLOUT, 0) ];
 
-          os::select(&mut thread_ring, pollset.data, pollset.len, 0);
+          os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
 
           continue;
         }

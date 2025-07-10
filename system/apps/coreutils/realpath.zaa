@@ -1,0 +1,58 @@
+//
+// realpath
+//
+
+import std.stdio;
+import std.env;
+import sys.path;
+import aargh;
+
+struct opts
+{
+  #[arg(free, required, long="file", help="path(s)")]
+  std::vector<std::string> paths;
+
+  #[arg(flag, short='z', help="end each output line with NUL, not newline")]
+  bool zero = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn realpath(std::string &path, opts &opts) throws(std::error) -> std::string
+{
+  return sys::path::canonicalise(path);
+}
+
+fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.paths.empty)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var line_ending = opts.zero ? '\0' : '\n';
+
+  for (var &path : opts.paths)
+  {
+    try
+    {
+      std::printf("{}{}", realpath(path, opts), line_ending);
+    }
+    catch (std::error rc)
+    {
+      std::fprint(std::stderr, "realpath: ", path, ": ", rc);
+    }
+  }
+
+  std::stdout.flush();
+
+  return 0;
+}

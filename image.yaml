@@ -175,20 +175,50 @@ image:
             src: build/system/apps/coreutils/echo
             dest: /bin/echo
         - cp:
+            src: build/system/apps/coreutils/env
+            dest: /bin/env
+        - cp:
+            src: build/system/apps/coreutils/head
+            dest: /bin/head
+        - cp:
+            src: build/system/apps/coreutils/kill
+            dest: /bin/kill
+        - cp:
+            src: build/system/apps/coreutils/ln
+            dest: /bin/ln
+        - cp:
             src: build/system/apps/coreutils/ls
             dest: /bin/ls
         - cp:
             src: build/system/apps/coreutils/mkdir
             dest: /bin/mkdir
         - cp:
-            src: build/system/apps/coreutils/touch
-            dest: /bin/touch
+            src: build/system/apps/coreutils/more
+            dest: /bin/more
+        - cp:
+            src: build/system/apps/coreutils/mv
+            dest: /bin/mv
+        - cp:
+            src: build/system/apps/coreutils/pwd
+            dest: /bin/pwd
+        - cp:
+            src: build/system/apps/coreutils/realpath
+            dest: /bin/realpath
         - cp:
             src: build/system/apps/coreutils/rm
             dest: /bin/rm
         - cp:
-            src: build/system/apps/coreutils/mv
-            dest: /bin/mv
+            src: build/system/apps/coreutils/stat
+            dest: /bin/stat
+        - cp:
+            src: build/system/apps/coreutils/tail
+            dest: /bin/tail
+        - cp:
+            src: build/system/apps/coreutils/touch
+            dest: /bin/touch
+        - cp:
+            src: build/system/apps/coreutils/tty
+            dest: /bin/tty
         - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar

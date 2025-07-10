@@ -38,8 +38,12 @@
               .global __vdso_thread_create
               .global __vdso_thread_munmap_exit
               .global __vdso_wait
+              .global __vdso_sleep
               .global __vdso_futex_wait
               .global __vdso_futex_wake
+              .global __vdso_sched_get_param
+              .global __vdso_sched_set_param
+              .global __vdso_kill
 
               .section .rodata
 
@@ -162,7 +166,7 @@ __vdso_process_kill: # pid
               syscall
               ret
 
-__vdso_thread_create: # void mut *stack, fn (*start_routine)(void mut *) -> i32, void mut *start_argument, i32 priority, i32 mut *tid, u64 flags
+__vdso_thread_create: # void mut *stack, fn (*start_routine)() -> i32, void mut *start_argument, i32 priority, i32 mut *tid, u64 flags
               mov rax, 18
               mov r10, rcx
               syscall
@@ -178,13 +182,32 @@ __vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
               syscall
               ret
 
-__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
+__vdso_sleep: # u64 abstime
               mov rax, 21
               syscall
               ret
 
-__vdso_futex_wake: # u32 *addr, u32 count
+__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
               mov rax, 22
               syscall
               ret
 
+__vdso_futex_wake: # u32 *addr, u32 count
+              mov rax, 23
+              syscall
+              ret
+
+__vdso_sched_get_param: # i32 id, sched_param mut *param
+              mov rax, 24
+              syscall
+              ret
+
+__vdso_sched_set_param: # i32 id, sched_param *param
+              mov rax, 25
+              syscall
+              ret
+
+__vdso_kill: # u8 *uuid, usize uuidlen, u64 flags
+              mov rax, 26
+              syscall
+              ret

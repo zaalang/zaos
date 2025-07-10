@@ -754,13 +754,13 @@ fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws(std::error)
     switch (arg)
     {
       case Flags[flags]:
-        args.push_back(Arg::Flags(flags.value));
+        args.push_back(Arg::Flags(flags.value, arg.span));
 
       case Named[var &[name, expr]]:
-        args.push_back(Arg::Named(name.value, evaluate(&mut ctx, expr)));
+        args.push_back(Arg::Named(name.value, evaluate(&mut ctx, expr), arg.span));
 
       case Free[expr]:
-        args.push_back(Arg::Free(evaluate(&mut ctx, expr)));
+        args.push_back(Arg::Free(evaluate(&mut ctx, expr), arg.span));
     }
   }
 

@@ -34,7 +34,7 @@ pub struct event
 
   pub event()
   {
-    vfs::node::new(&node, vfs::node::type::event, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::event, vfs::node_stream_operations());
   }
 
   pub fn ref(this mut &) -> void

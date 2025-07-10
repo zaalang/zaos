@@ -194,7 +194,7 @@ extern fn main(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable) -> i32
 
   var ns = acpi::namespace();
 
-  acpi::initialise(&mut ns, &impl ns);
+  acpi::initialise(&mut ns, acpi::interface());
 
   if (var rc = acpi::parse(&mut ns, dsdt.payload); !rc)
     std::panic("acpi dsdt parse error - ", rc);

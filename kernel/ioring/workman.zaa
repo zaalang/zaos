@@ -238,19 +238,9 @@ pub fn initialise() -> void
   for (var mut &worker : workman.workers)
   {
     worker.kworkd = create_thread(process::current, &cast<(worker mut *) -> void>(kworkd), &worker);
-  }
 
-  platform::disable_interrupts();
+    // TODO: affinity
 
-  for (var cpu = 0; cpu < sys::cpu_count; ++cpu)
-  {
-    workman.workers[cpu % workman.workers.len].kworkd.pinned = &sys::runqueue(cast(cpu));
-  }
-
-  platform::enable_interrupts();
-
-  for (var mut &worker : workman.workers)
-  {
     scheduler::enqueue(worker.kworkd);
   }
 }

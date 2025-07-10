@@ -55,7 +55,7 @@ pub struct thread
   pub u64 tick_start_time;
   pub u64 quantum_used_time;
 
-  pub run_queue mut *pinned;
+  pub bool pinned;
 
   pub thread mut *next;
   pub thread mut *prev;
@@ -68,6 +68,7 @@ pub struct thread
 
   pub i32 wait_status;
   pub u64 wait_abstime;
+  pub bool interruptible;
   pub thread mut *wakenext;
 
   pub Rc<process> process;
@@ -75,7 +76,7 @@ pub struct thread
 
   pub io::response rval;
 
-  u8[72] reserved;
+  u8[64] reserved;
 
   pub platform::task task;
 
@@ -135,6 +136,9 @@ pub struct thread
   pub fn terminate(thread mut &thread) -> void
   {
     thread.task.set(platform::task::flags::killed);
+
+    if (thread.interruptible && thread.wait_status != 0)
+      scheduler::interrupt(&thread, -4);
   }
 
   #[noreturn]
@@ -306,7 +310,7 @@ fn initialise(thread mut *this) -> void
   this.quantum_used_time = 0;
   this.wait_status = 0;
   this.wait_abstime = 0;
-  this.pinned = null;
+  this.pinned = false;
   this.next = null;
   this.prev = null;
   this.cpu_time = 0;
@@ -352,8 +356,8 @@ fn undertaker(void*) -> void
 
       platform::disable_interrupts();
 
-      sys::runqueue(thread.cpu).lock.lock();
-      sys::runqueue(thread.cpu).lock.unlock();
+      sys::cpu(thread.cpu).runqueue.lock.lock();
+      sys::cpu(thread.cpu).runqueue.lock.unlock();
 
       platform::enable_interrupts();
 

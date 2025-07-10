@@ -10,6 +10,8 @@ import parser;
 import engine;
 import pipeline;
 import value;
+import diag;
+import glob;
 
 using value;
 using engine;
@@ -17,15 +19,74 @@ using pipeline;
 
 pub union Arg
 {
-  pub Flags(std::string),
-  pub Named((std::string, Value)),
-  pub Free(Value),
+  struct flags
+  {
+    pub std::string value;
+    pub std::string_view span;
+
+    pub flags(std::string &&value, std::string_view span)
+      : value(&&value), span(span)
+    {
+    }
+
+    pub flags(flags &&) = default;
+    pub ~flags() = default;
+  }
+
+  struct named
+  {
+    pub std::string name;
+    pub Value value;
+    pub std::string_view span;
+
+    pub named(std::string &&name, Value &&value, std::string_view span)
+      : name(&&name), value(&&value), span(span)
+    {
+    }
+
+    pub named(named &&) = default;
+    pub ~named() = default;
+  }
+
+  struct free
+  {
+    pub Value value;
+    pub std::string_view span;
+
+    pub free(Value &&value, std::string_view span)
+      : value(&&value), span(span)
+    {
+    }
+
+    pub free(free &&) = default;
+    pub ~free() = default;
+  }
+
+  pub Flags(flags),
+  pub Named(named),
+  pub Free(free),
 
   pub Arg(Arg &&) = default;
   pub ~Arg() = default;
 }
 
-fn to_arg(Context &&ctx, Value &value) throws(std::error) -> std::string
+union ExecError
+{
+  struct GlobFailure : pub diag::diagnostic
+  {
+    this(Engine &engine, std::string_view span)
+    {
+      super.source = &engine;
+      super.message = "Glob Expansion Failure";
+      super.loc = engine.source_ident(span);
+      super.add_label(engine.source_location(span), span.len, "no matches");
+    }
+
+    ~this() = default;
+  }
+}
+
+fn to_arg(Context mut &ctx, Value &value, std::string_view span) throws(std::error) -> std::string
 {
   switch (value)
   {
@@ -39,43 +100,56 @@ fn to_arg(Context &&ctx, Value &value) throws(std::error) -> std::string
   return std::format("{}", value);
 }
 
-pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws(std::error) -> void
+fn into_glob(Context mut &ctx, std::string_view expr, std::string_view span) throws(std::error) -> std::vector<std::string>
 {
-  var path = name;
+  var args = std::vector<std::string>();
 
-  if (!path.contains(sys::sep_byte))
+  if (glob::is_glob(expr))
   {
-    path = "";
-
-    for (var &part : std::env::var("PATH").unwrap_or("/zaos/bin").split(":"))
+    for (var &file : glob::glob(expr).files)
     {
-      try
-      {
-        for (var &file : sys::read_dir(part))
-        {
-          if (file.is_directory)
-            continue;
+      args.push_back(file);
+    }
 
-          if (file.name == name)
-          {
-            path = file.path;
+    if (args.empty)
+      ctx.raise(ExecError::GlobFailure(ctx.engine, span));
+  }
+  else
+  {
+    args.push_back(parser::unescape(expr));
+  }
 
-            break;
-          }
-        }
-      }
-      catch (std::error e)
+  return args;
+}
+
+pub fn run(Context mut &ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws(std::error) -> void
+{
+  var path = std::string();
+
+  if (!name.contains(sys::sep_byte))
+  {
+    for (var &searchpath : std::env::var("PATH").unwrap_or("/zaos/bin").split(":"))
+    {
+      if (var test = sys::path::join(searchpath, name); sys::exists(test))
       {
+        path = test;
+
+        break;
       }
     }
 
     if (path.empty)
       throw std::system_error(std::errc::not_found);
   }
-
-  if (path.starts_with("."))
+  else
   {
-    path = sys::cwd + "/" + path;
+    path = name;
+
+    if (sys::path::is_relative(path))
+      path = sys::path::normalise(sys::path::join(sys::cwd, path));
+
+    if (!sys::exists(path))
+      throw std::system_error(std::errc::not_found);
   }
 
   var cmd = sys::command(path);
@@ -85,13 +159,21 @@ pub fn run(Context &&ctx, Pipeline mut &pipeline, std::string &name, std::vector
     switch (arg)
     {
       case Flags[flags]:
-        cmd.arguments.push_back(flags);
+        cmd.arguments.push_back(flags.value);
 
-      case Named[var &[name, value]]:
-        cmd.arguments.push_back(std::format("{}={}", name, to_arg(ctx, value)));
+      case Named[named]:
+        cmd.arguments.push_back(std::format("{}={}", named.name, to_arg(&mut ctx, named.value, named.span)));
 
-      case Free[value]:
-        cmd.arguments.push_back(to_arg(ctx, value));
+      case Free[free]:
+        switch (free.value)
+        {
+          case Literal[literal]:
+            cmd.arguments.append(into_glob(&mut ctx, literal, free.span));
+
+          else:
+            cmd.arguments.push_back(to_arg(&mut ctx, free.value, free.span));
+        }
+
     }
   }
 

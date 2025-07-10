@@ -944,7 +944,7 @@ fn dir_not_empty(volume &this, Rc<vfs::node> &device, ext2_inode mut *dir) -> bo
   return false;
 }
 
-fn allocate_dir_entry(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, u16 required_len) -> entry_result
+fn append_dirent(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, u16 required_len) -> entry_result
 {
   for (var position = 0;; )
   {
@@ -978,9 +978,9 @@ fn allocate_dir_entry(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *d
       if (entry.rec_len == 0)
         break;
 
-      if (entry.ino != 0 && entry.rec_len >= dentry_required_len(entry.name_len) + required_len)
+      if (entry.ino != 0 && entry.rec_len >= dirent_required_len(entry.name_len) + required_len)
       {
-        var remaining = entry.rec_len - dentry_required_len(entry.name_len);
+        var remaining = entry.rec_len - dirent_required_len(entry.name_len);
 
         entry.rec_len -= remaining;
 
@@ -1011,7 +1011,7 @@ fn allocate_dir_entry(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *d
 
 pub fn create(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
+  var entry = this.append_dirent(device, dir, dirent_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
@@ -1049,7 +1049,7 @@ pub fn create(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std:
 
 pub fn symlink(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, std::string_view target, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
+  var entry = this.append_dirent(device, dir, dirent_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
@@ -1120,13 +1120,13 @@ pub fn symlink(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std
 
 pub fn mkdir(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std::string_view name, u32 uid, u32 gid, u16 mode) -> entry_result
 {
-  var entry = this.allocate_dir_entry(device, dir, dentry_required_len(cast(name.len)));
+  var entry = this.append_dirent(device, dir, dirent_required_len(cast(name.len)));
 
   if (!entry.result)
     return entry.result;
 
   entry.set_name(name);
-  entry.set_type(ext2_ftype::regular);
+  entry.set_type(ext2_ftype::directory);
 
   var ino = 0;
   if (var result = this.allocate_inode(device, &mut ino, EXT2_IFDIR); !result)
@@ -1206,11 +1206,11 @@ pub fn rename(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *dir, std:
   if (!entry.result)
     return entry.result;
 
-  var required_len = dentry_required_len(cast(newname.len));
+  var required_len = dirent_required_len(cast(newname.len));
 
   if (entry.ptr.rec_len < required_len)
   {
-    var newentry = this.allocate_dir_entry(device, dir, required_len);
+    var newentry = this.append_dirent(device, dir, required_len);
 
     if (!newentry.result)
       return newentry.result;
@@ -1238,7 +1238,7 @@ pub fn rename(volume mut &this, Rc<vfs::node> &device, ext2_inode mut *olddir, s
   if (!oldentry.result)
     return oldentry.result;
 
-  var newentry = this.allocate_dir_entry(device, newdir, dentry_required_len(cast(newname.len)));
+  var newentry = this.append_dirent(device, newdir, dirent_required_len(cast(newname.len)));
 
   if (!newentry.result)
     return newentry.result;
