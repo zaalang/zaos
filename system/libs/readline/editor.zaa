@@ -616,28 +616,28 @@ pub fn process(editor mut &this, event &event) -> status
             case sym[ch]:
               switch (ch)
               {
-                case 'C':
+                case 'c':
                   return status::canceled(signal::ctrl_c);
 
-                case 'D':
+                case 'd':
                   if (this.buffer.empty)
                     return status::canceled(signal::ctrl_d);
                   delete_char_right(&mut this);
                   return dirty;
 
-                case 'H':
+                case 'h':
                   delete_char_left(&mut this);
                   return dirty;
 
-                case 'U':
+                case 'u':
                   cut_home_to_cursor(&mut this);
                   return dirty;
 
-                case 'K':
+                case 'k':
                   cut_cursor_to_end(&mut this);
                   return dirty;
 
-                case 'Y':
+                case 'y':
                   insert_cut(&mut this);
                   return dirty;
               }

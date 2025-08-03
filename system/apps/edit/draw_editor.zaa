@@ -1,0 +1,384 @@
+//
+// editor
+//
+
+import std.stdlib;
+import tui.screen;
+import tui.document;
+import state as _ : *;
+
+using tui;
+
+enum SearchAction
+{
+  None,
+  Search,
+  Replace,
+  ReplaceAll,
+}
+
+pub fn draw_editor(tui::context mut &ctx, state mut &state) -> void
+{
+  if (state.wants_search.kind != StateSearchKind::Hidden && state.wants_search.kind != StateSearchKind::Disabled)
+    draw_search(&mut ctx, &mut state);
+
+  var size = ctx.size;
+  var height_reduction = 2;
+  if (state.wants_search.kind == StateSearchKind::Search)
+    height_reduction = 4;
+  if (state.wants_search.kind == StateSearchKind::Replace)
+    height_reduction = 5;
+
+  if (state.documents.active.is_some)
+  {
+    var mut &doc = state.documents.active?!;
+
+    ctx.textarea("textarea", &mut doc.buffer);
+    ctx.inherit_focus();
+  }
+  else
+  {
+    ctx.block_begin("empty");
+    ctx.block_end();
+  }
+
+  ctx.attr_intrinsic_size(size(0, size.height - height_reduction));
+}
+
+fn draw_search(tui::context mut &ctx, state mut &state) -> void
+{
+  if (state.documents.active.is_none)
+  {
+    state.wants_search.kind = StateSearchKind::Hidden;
+    return;
+  }
+
+  var mut &doc = state.documents.active?!;
+
+  var action = SearchAction::None;
+  var focus = StateSearchKind::Hidden;
+
+  if (state.wants_search.focus)
+  {
+    state.wants_search.focus = false;
+    focus = StateSearchKind::Search;
+
+    if (var selection = doc.buffer.selection_text; !selection.empty)
+    {
+      state.search_needle = &move selection;
+      focus = state.wants_search.kind;
+    }
+  }
+
+  ctx.block_begin("search");
+  ctx.attr_focus_well();
+  ctx.attr_background(indexed(color::white));
+  ctx.attr_foreground(indexed(color::black));
+
+  if (ctx.contains_focus() && ctx.consume_shortcut(shortcut(kb::escape)))
+    state.wants_search.kind = StateSearchKind::Hidden;
+
+  ctx.table_begin("needle");
+  ctx.table_cell_gap(size(1, 0));
+
+  ctx.table_next_row();
+  ctx.label("label", "Find:");
+
+  if (ctx.lineedit("needle", &mut state.search_needle))
+    action = SearchAction::Search;
+
+  if (!state.search_success)
+  {
+    ctx.attr_background(indexed(color::red));
+    ctx.attr_foreground(indexed(color::bright_white));
+  }
+
+  ctx.attr_intrinsic_size(size(ctx.size.width, 1));
+
+  if (focus == StateSearchKind::Search)
+    ctx.steal_focus();
+
+  if (ctx.is_focused() && ctx.consume_shortcut(shortcut(kb::enter)))
+    action = SearchAction::Search;
+
+  if (state.wants_search.kind == StateSearchKind::Replace)
+  {
+    ctx.table_next_row();
+    ctx.label("label", "Replace:");
+
+    ctx.lineedit("replacement", &mut state.search_replacement);
+
+    ctx.attr_intrinsic_size(size(ctx.size.width, 1));
+
+    if (focus == StateSearchKind::Replace)
+      ctx.steal_focus();
+
+    if (ctx.is_focused())
+    {
+      if (ctx.consume_shortcut(shortcut(kb::enter)))
+        action = SearchAction::Replace;
+
+      if (ctx.consume_shortcut(shortcut(kb::ctrl | kb::alt, kb::enter)))
+        action = SearchAction::ReplaceAll;
+    }
+  }
+
+  ctx.table_end();
+
+  ctx.table_begin("options");
+  ctx.table_cell_gap(size(2, 0));
+
+  var change = false;
+  var change_action = SearchAction::Search;
+
+  ctx.table_next_row();
+
+  change |= ctx.checkbox("match-case", "Match Case", &mut state.search_match_case);
+  change |= ctx.checkbox("whole-word", "Whole Word", &mut state.search_whole_word);
+  change |= ctx.checkbox("use-regex", "Use Regex", &mut state.search_use_regex);
+
+  if (state.wants_search.kind == StateSearchKind::Replace && ctx.button("replace-all", "Replace All", button_style::default()))
+  {
+    change = true;
+    change_action = SearchAction::ReplaceAll;
+  }
+
+  if (ctx.button("close", "Close", button_style::default()))
+    state.wants_search.kind = StateSearchKind::Hidden;
+
+  if (change)
+  {
+    action = change_action;
+    state.wants_search.focus = true;
+    ctx.needs_rerender();
+  }
+
+  ctx.table_end();
+
+  ctx.block_end();
+
+  if (action != SearchAction::None)
+  {
+    search_execute(&mut ctx, &mut state, action);
+  }
+}
+
+pub fn search_execute(tui::context mut &ctx, state mut &state, SearchAction action) -> void
+{
+  var mut &doc = state.documents.active?!;
+
+  var options = search_options();
+  options.match_case = state.search_match_case;
+  options.whole_word = state.search_whole_word;
+  options.use_regex = state.search_use_regex;
+
+  switch (action)
+  {
+    case Search:
+      state.search_success = doc.buffer.find_and_select(state.search_needle, options);
+
+    case Replace:
+      state.search_success = doc.buffer.find_and_replace(state.search_needle, options, state.search_replacement);
+
+    case ReplaceAll:
+      state.search_success = doc.buffer.find_and_replace_all(state.search_needle, options, state.search_replacement);
+  }
+
+  ctx.needs_rerender();
+}
+
+pub fn draw_handle_save(tui::context mut &ctx, state mut &state) -> void
+{
+  if (state.documents.active.is_some)
+  {
+    var mut &doc = state.documents.active?!;
+
+    if (doc.path.empty)
+    {
+      state.wants_file_picker = StateFilePicker::SaveAs;
+      state.wants_save = false;
+      ctx.needs_rerender();
+    }
+    else
+    {
+      try
+      {
+        doc.save();
+      }
+      catch (std::error err)
+      {
+        error_log_add(&mut ctx, &mut state, err);
+      }
+    }
+  }
+
+  state.wants_save = false;
+}
+
+pub fn draw_handle_wants_close(tui::context mut &ctx, state mut &state) -> void
+{
+  enum Action
+  {
+    None,
+    Save,
+    Discard,
+    Cancel,
+  }
+
+  if (state.documents.active.is_none)
+  {
+    state.wants_close = false;
+    return;
+  }
+
+  var mut &doc = state.documents.active?!;
+
+  if (!doc.buffer.is_dirty)
+  {
+    state.documents.remove_active();
+    state.wants_close = false;
+    ctx.needs_rerender();
+    return;
+  }
+
+  var action = Action::None;
+
+  ctx.modal_begin("unsaved-changes", "Unsaved Changes");
+  ctx.attr_background(indexed(color::red));
+  ctx.attr_foreground(indexed(color::bright_white));
+
+    var contains_focus = ctx.contains_focus();
+
+    ctx.label("description", "Do you want to save the changes you made?");
+    ctx.attr_padding(2, 1, 2, 1);
+
+    ctx.table_begin("choices");
+    ctx.inherit_focus();
+    ctx.attr_padding(2, 0, 2, 1);
+    ctx.attr_position(position::center);
+    ctx.table_cell_gap(size(2, 0));
+
+      ctx.table_next_row();
+      ctx.inherit_focus();
+
+      if (ctx.button("yes", "Save", button_style::default.accelerator('S')))
+        action = Action::Save;
+
+      ctx.inherit_focus();
+
+      if (ctx.button("no", "Don't Save", button_style::default.accelerator('N')))
+        action = Action::Discard;
+
+      if (ctx.button("cancel", "Cancel", button_style::default()))
+        action = Action::Cancel;
+
+      if (contains_focus)
+      {
+        if (ctx.consume_shortcut("S"))
+          action = Action::Save;
+
+        if (ctx.consume_shortcut("N"))
+          action = Action::Discard;
+      }
+
+    ctx.table_end();
+
+  if (ctx.modal_end())
+  {
+    action = Action::Cancel;
+  }
+
+  switch (action)
+  {
+    case Save:
+      state.wants_save = true;
+      ctx.needs_rerender();
+
+    case Discard:
+      state.documents.remove_active();
+      state.wants_close = false;
+      ctx.needs_rerender();
+
+    case Cancel:
+      state.wants_exit = false;
+      state.wants_close = false;
+      ctx.needs_rerender();
+  }
+}
+
+fn validate_goto_point(std::string &line, point mut &loc) -> bool
+{
+  var [y, x] = line.cut(':');
+
+  if (std::atoi(y.begin, y.end, &mut loc.y).error)
+    return false;
+
+  if (loc.y > 0)
+    loc.y -= 1;
+
+  if (!x.empty && std::atoi(x.begin, x.end, &mut loc.x).error)
+    return false;
+
+  if (loc.x > 0)
+    loc.x -= 1;
+
+  return true;
+}
+
+pub fn draw_goto_menu(tui::context mut &ctx, state mut &state) -> void
+{
+  var done = false;
+
+  if (state.documents.active)
+  {
+    var mut &doc = state.documents.active?!;
+
+    ctx.modal_begin("goto", "Go to Line:Column…");
+
+    if (ctx.lineedit("goto-line", &mut state.goto_target))
+      state.goto_invalid = false;
+
+    if (state.goto_invalid)
+    {
+      ctx.attr_background(indexed(color::red));
+      ctx.attr_foreground(indexed(color::bright_white));
+    }
+
+    ctx.attr_intrinsic_size(size(24, 1));
+    ctx.steal_focus();
+
+    if (ctx.consume_shortcut(shortcut(kb::enter)))
+    {
+      var loc = point();
+      if (validate_goto_point(state.goto_target, &mut loc))
+      {
+        var mut &tb = doc.buffer;
+        tb.cursor_move_to_logical(loc);
+        done = true;
+      }
+      else
+      {
+        state.goto_invalid = true;
+      }
+
+      ctx.needs_rerender();
+    }
+
+    if (ctx.modal_end())
+    {
+      done = true;
+    }
+  }
+  else
+  {
+    done = true;
+  }
+
+  if (done)
+  {
+    state.wants_goto = false;
+    state.goto_target.clear();
+    state.goto_invalid = false;
+    ctx.needs_rerender();
+  }
+}

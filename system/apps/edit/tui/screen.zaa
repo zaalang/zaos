@@ -1,0 +1,506 @@
+//
+// tui screen
+//
+
+import std.vector;
+import std.string : String;
+import std.bits.utf as utf;
+
+pub enum color
+{
+  black,
+  red,
+  green,
+  yellow,
+  blue,
+  magenta,
+  cyan,
+  white,
+  bright_black,
+  bright_red,
+  bright_green,
+  bright_yellow,
+  bright_blue,
+  bright_magenta,
+  bright_cyan,
+  bright_white,
+
+  background,
+  foreground,
+}
+
+pub const palette = [<u32>:
+  0xff000000, // black
+  0xffbe2c21, // red
+  0xff3fae3a, // green
+  0xffbe9a4a, // yellow
+  0xff204dbe, // blue
+  0xffbb54be, // magenta
+  0xff00a7b2, // cyan
+  0xffbebebe, // white
+  0xff808080, // bright black
+  0xffff3e30, // bright red
+  0xff58ea51, // bright green
+  0xffffc944, // bright yellow
+  0xff2f6aff, // bright blue
+  0xfffc74ff, // bright magenta
+  0xff00e1f0, // bright cyan
+  0xffffffff, // bright white
+  0xff000000, // background
+  0xffbebebe, // foreground
+];
+
+pub fn indexed(color color) -> u32
+{
+  return palette[cast(color)];
+}
+
+pub fn indexed_alpha(color color, u32 numerator, u32 denominator) -> u32
+{
+  let c = palette[cast(color)];
+  let a = 255 * numerator / denominator;
+  let r = (((c >> 16) & 0xff) * numerator) / denominator;
+  let g = (((c >> 8) & 0xff) * numerator) / denominator;
+  let b = (((c >> 0) & 0xff) * numerator) / denominator;
+
+  return (a << 24 | r << 16 | g << 8 | b << 0);
+}
+
+pub struct attrs
+{
+  pub const bold = 0x01;
+  pub const italic = 0x02;
+  pub const underline = 0x04;
+  pub const inverse = 0x08;
+  pub const blink = 0x010;
+
+  pub const none = 0x00;
+  pub const mask = 0xff;
+
+  pub u32 flags;
+  pub u32 foreground_color;
+  pub u32 background_color;
+
+  pub fn ==(attrs &, attrs &) -> bool = default;
+
+  pub attrs() = default;
+  pub attrs(attrs &) = default;
+  pub fn =(attrs mut &, attrs &) -> attrs mut & = default;
+  pub ~attrs() = default;
+}
+
+struct cell
+{
+  char ch;
+  usize width;
+  attrs attrs;
+
+  fn ==(cell &, cell &) -> bool = default;
+
+  cell() = default;
+  cell(cell&) = default;
+  fn =(cell mut &, cell &) -> cell mut & = default;
+  ~cell() = default;
+}
+
+struct line
+{
+  std::vector<cell> cells;
+
+  fn ==(line &, line &) -> bool = default;
+
+  line() = default;
+  line(line&) = default;
+  fn =(line mut &, line &) -> line mut & = default;
+  ~line() = default;
+}
+
+pub struct metrics
+{
+  pub int len;
+  pub int width;
+  pub usize offset;
+
+  pub metrics() = default;
+  pub metrics(metrics &) = default;
+  pub fn =(metrics mut &, metrics &) -> metrics mut & = default;
+  pub ~metrics() = default;
+}
+
+pub struct screen
+{
+  int rows;
+  int columns;
+
+  std::vector<line> backbuffer;
+  std::vector<line> frontbuffer;
+
+  int cursor_x;
+  int cursor_y;
+  int cursor_type;
+
+  pub fn rows(this &) { return this.rows; }
+  pub fn columns(this &) { return this.columns; }
+
+  pub fn metrics(String &text) -> metrics
+  {
+    var metrics = metrics();
+
+    for (var ch : text.chars)
+    {
+      metrics.len += 1;
+      metrics.width += cast<int>(cell_width(ch));
+    }
+
+    metrics.offset = text.len;
+
+    return metrics;
+  }
+
+  pub fn metrics(String &text, int maxwidth) -> metrics
+  {
+    var metrics = metrics();
+
+    for (var ch : text.chars)
+    {
+      var width = cast<int>(cell_width(ch));
+
+      if (metrics.width + width > maxwidth)
+        break;
+
+      metrics.len += 1;
+      metrics.width += width;
+      metrics.offset += utf::len(ch);
+    }
+
+    return metrics;
+  }
+
+  pub screen() = default;
+  pub ~screen() = default;
+}
+
+fn cell_width(char ch) -> usize
+{
+  if (ch == 0)
+    return 0;
+
+  if (ch < 32 || (ch >= 0x7f && ch < 0xa0))
+    return 1;
+
+  if (std::is_non_spacing(ch))
+    return 0;
+
+  if (std::is_wide_spacing(ch))
+    return 2;
+
+  return 1;
+}
+
+pub fn resize(screen mut &screen, int columns, int rows) -> void
+{
+  screen.backbuffer.resize(cast(rows));
+
+  for (var mut &line : screen.backbuffer)
+  {
+    line.cells.resize(cast(columns));
+  }
+
+  screen.rows = rows;
+  screen.columns = columns;
+  screen.frontbuffer = screen.backbuffer;
+}
+
+pub fn clear(screen mut &screen) -> void
+{
+  std::swap(&mut screen.frontbuffer, &mut screen.backbuffer);
+
+  for (var mut &line : screen.backbuffer)
+  {
+    for (var i = 0; i < line.cells.len; ++i)
+    {
+      line.cells[i].ch = ' ';
+      line.cells[i].width = 1;
+      line.cells[i].attrs.flags = 0;
+      line.cells[i].attrs.foreground_color = palette[cast(color::foreground)];
+      line.cells[i].attrs.background_color = palette[cast(color::background)];
+    }
+  }
+
+  screen.cursor_type = 0;
+}
+
+// Sets the current visible cursor position and type.
+pub fn set_cursor(screen mut &screen, int x, int y, int type) -> void
+{
+  screen.cursor_x = x;
+  screen.cursor_y = y;
+  screen.cursor_type = type;
+}
+
+pub fn put(screen mut &screen, int x, int y, char ch, attrs &attrs) -> void
+{
+  var width = cell_width(ch);
+
+  if (ch == 0 || width == 0)
+    return;
+
+  if (y < 0 || y >= screen.rows)
+    return;
+
+  if (x < 0 || x + cast(width) > screen.columns)
+    return;
+
+  var i = cast<usize>(x);
+  var j = cast<usize>(y);
+
+  var mut &line = screen.backbuffer[j];
+
+  line.cells[i].ch = ch;
+  line.cells[i].width = width;
+  line.cells[i].attrs = attrs;
+
+  for (var k = 1; k < width && i + k < line.cells.len; ++k)
+  {
+    line.cells[i + k].width = 0;
+  }
+}
+
+pub fn replace(screen mut &screen, int x, int y, int x2, String &text) -> void
+{
+  if (y < 0 || y >= screen.rows)
+    return;
+
+  var j = cast<usize>(y);
+
+  var mut &line = screen.backbuffer[j];
+
+  for (var ch : text.chars)
+  {
+    if (x >= x2)
+      break;
+
+    var width = cell_width(ch);
+
+    if (ch == 0 || width == 0)
+      continue;
+
+    if (x >= 0 && x + cast(width) <= screen.columns)
+    {
+      var i = cast<usize>(x);
+
+      line.cells[i].ch = ch;
+      line.cells[i].width = width;
+
+      for (var k = 1; k < width && i + k < line.cells.len; ++k)
+      {
+        line.cells[i + k].width = 0;
+      }
+    }
+
+    x += cast(width);
+  }
+}
+
+pub fn replace(screen mut &screen, int x, int y, int x2, u32 mask, u32 flags) -> void
+{
+  if (y < 0 || y >= screen.rows)
+    return;
+
+  var j = cast<usize>(y);
+
+  var mut &line = screen.backbuffer[j];
+
+  for (var x = std::max(x, 0); x < screen.columns; ++x)
+  {
+    if (x >= x2)
+      break;
+
+    var i = cast<usize>(x);
+
+    line.cells[i].attrs.flags = (line.cells[i].attrs.flags & ~mask) | flags;
+  }
+}
+
+fn blend(u32 dst, u32 src) -> u32
+{
+  fn premultiply(u32 rgba, u32 alpha) -> u32
+  {
+    // https://arxiv.org/pdf/2202.02864.pdf
+
+    var agrb = cast<u64>(alpha) * ((cast<u64>(rgba) | (cast<u64>(rgba) << 24)) & 0x00ff00ff00ff00ff);
+
+    agrb += 0x80008000800080;
+    agrb += (agrb >> 8) & 0x00ff00ff00ff00ff;
+    agrb >>= 8;
+
+    return cast<u32>((agrb & 0x00ff00ff) | ((agrb >> 24) & 0xff00ff00));
+  }
+
+  return std::add_with_carry(src, premultiply(dst, 255 - (src >> 24))).0;
+}
+
+pub fn blend_bg(screen mut &screen, int x1, int y1, int x2, int y2, u32 color) -> void
+{
+  if (x1 < 0)
+    x1 = 0;
+
+  if (y1 < 0)
+    y1 = 0;
+
+  if (x2 > screen.columns)
+    x2 = screen.columns;
+
+  if (y2 > screen.rows)
+    y2 = screen.rows;
+
+  if (x2 <= x1 || y2 <= y1)
+    return;
+
+  for (var j = cast<usize>(y1); j < cast<usize>(y2); ++j)
+  {
+    var mut &line = screen.backbuffer[j];
+
+    if (color >> 24 == 0xff)
+    {
+      for (var i = cast<usize>(x1); i < cast<usize>(x2); ++i)
+        line.cells[i].attrs.background_color = color;
+    }
+    else
+    {
+      for (var i = cast<usize>(x1); i < cast<usize>(x2); ++i)
+        line.cells[i].attrs.background_color = blend(line.cells[i].attrs.background_color, color);
+    }
+  }
+}
+
+pub fn blend_fg(screen mut &screen, int x1, int y1, int x2, int y2, u32 color) -> void
+{
+  if (x1 < 0)
+    x1 = 0;
+
+  if (y1 < 0)
+    y1 = 0;
+
+  if (x2 > screen.columns)
+    x2 = screen.columns;
+
+  if (y2 > screen.rows)
+    y2 = screen.rows;
+
+  if (x2 <= x1 || y2 <= y1)
+    return;
+
+  if (color >> 24 == 0)
+    return;
+
+  for (var j = cast<usize>(y1); j < cast<usize>(y2); ++j)
+  {
+    var mut &line = screen.backbuffer[j];
+
+    if (color >> 24 == 0xff)
+    {
+      for (var i = cast<usize>(x1); i < cast<usize>(x2); ++i)
+        line.cells[i].attrs.foreground_color = color;
+    }
+    else
+    {
+      for (var i = cast<usize>(x1); i < cast<usize>(x2); ++i)
+        line.cells[i].attrs.foreground_color = blend(line.cells[i].attrs.foreground_color, color);
+    }
+  }
+}
+
+pub fn reverse(screen mut &screen, int x1, int y1, int x2, int y2) -> void
+{
+  if (x1 < 0)
+    x1 = 0;
+
+  if (y1 < 0)
+    y1 = 0;
+
+  if (x2 > screen.columns)
+    x2 = screen.columns;
+
+  if (y2 > screen.rows)
+    y2 = screen.rows;
+
+  if (x2 <= x1 || y2 <= y1)
+    return;
+
+  for (var j = cast<usize>(y1); j < cast<usize>(y2); ++j)
+  {
+    var mut &line = screen.backbuffer[j];
+
+    for (var i = cast<usize>(x1); i < cast<usize>(x2); ++i)
+    {
+      std::swap(&mut line.cells[i].attrs.foreground_color, &mut line.cells[i].attrs.background_color);
+    }
+  }
+}
+
+pub fn draw(screen mut &screen) -> void
+{
+  std::puts("\x1b[?25l");
+  std::puts("\x1b[m");
+
+  var current = attrs();
+
+  for (var j = 0; j < cast<usize>(screen.rows); ++j)
+  {
+    if (screen.backbuffer[j] == screen.frontbuffer[j])
+      continue;
+
+    std::printf("\x1b[{};1H", j + 1);
+
+    for (var &cell : screen.backbuffer[j].cells)
+    {
+      if (cell.width == 0)
+        continue;
+
+      if (cell.attrs.background_color != current.background_color)
+      {
+        var r = (cell.attrs.background_color >> 16) & 0xff;
+        var g = (cell.attrs.background_color >> 8) & 0xff;
+        var b = (cell.attrs.background_color >> 0) & 0xff;
+
+        std::printf("\x1b[48;2;{};{};{}m", r, g, b);
+
+        current.background_color = cell.attrs.background_color;
+      }
+
+      if (cell.attrs.foreground_color != current.foreground_color)
+      {
+        var r = (cell.attrs.foreground_color >> 16) & 0xff;
+        var g = (cell.attrs.foreground_color >> 8) & 0xff;
+        var b = (cell.attrs.foreground_color >> 0) & 0xff;
+
+        std::printf("\x1b[38;2;{};{};{}m", r, g, b);
+
+        current.foreground_color = cell.attrs.foreground_color;
+      }
+
+      if (cell.attrs.flags != current.flags)
+      {
+        if (cell.attrs.flags & attrs::underline != current.flags & attrs::underline)
+        {
+          if (cell.attrs.flags & attrs::underline != 0)
+            std::printf("\x1b[4m");
+          else
+            std::printf("\x1b[24m");
+        }
+
+        current.flags = cell.attrs.flags;
+      }
+
+      std::putc(cell.ch);
+    }
+  }
+
+  if (screen.cursor_type != 0)
+  {
+    std::printf("\x1b[{};{}H\x1b[{} q\x1b[?25h", screen.cursor_y + 1, screen.cursor_x + 1, screen.cursor_type);
+  }
+
+  std::stdout.flush();
+}

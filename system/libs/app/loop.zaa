@@ -155,6 +155,11 @@ pub struct loop
     return thread_default_loop;
   }
 
+  pub fn state(this &) -> state
+  {
+    return this.state;
+  }
+
   pub fn begin_wait(this mut &loop, i32 id, u16 type, u16 mask, wait_t mut *handler) -> i32
   {
     handler.id = id;
@@ -301,6 +306,9 @@ pub fn initialise(loop mut &loop, options flags = options::make_default | option
 
 pub fn dispatch(loop mut &loop, u64 deadline = ~0) -> i32
 {
+  if (deadline > loop.timeouts.next.deadline)
+    deadline = loop.timeouts.next.deadline;
+
   if (var rc = loop.pollset.wait(deadline); rc < 0)
     std::panic("pollset wait - ", cast<std::errc>(-rc));
 

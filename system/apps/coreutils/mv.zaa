@@ -132,7 +132,7 @@ fn move_file(std::string &src, std::string &dst, opts &opts) throws(std::error) 
 
 fn move(std::string &src, std::string &dst, opts &opts) throws(std::error) -> i32
 {
-  if (dst.starts_with(src))
+  if (sys::path_view(dst).starts_with(src))
   {
     std::print("omitting recursive source: ", src);
 

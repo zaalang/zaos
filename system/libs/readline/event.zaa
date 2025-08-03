@@ -39,14 +39,36 @@ pub union key_code
   pub page_up,
   pub page_down,
 
-  key_code(key_code&) = default;
-  ~key_code() = default;
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn ==(key_code &lhs, key_code &rhs) -> bool
+  {
+    switch (lhs.kind)
+    {
+      case sym:
+        return (rhs.kind == lhs.kind) && (lhs.sym == rhs.sym);
+
+      case f:
+        return (rhs.kind == lhs.kind) && (lhs.f == rhs.f);
+
+      else:
+        return (rhs.kind == lhs.kind);
+    }
+  }
+
+  pub key_code() = default;
+  pub key_code(key_code&) = default;
+  pub fn =(key_code mut &, key_code &) -> key_code mut & = default;
+  pub ~key_code() = default;
 }
 
 pub enum key_state
 {
+  released = 0,
   pressed,
-  released,
   repeat,
 }
 
@@ -60,6 +82,7 @@ pub enum key_modifiers
   hyper = 0x10,
   meta = 0x20,
 
+  pub fn bool(key_modifiers modifiers) -> bool { return cast<int>(modifiers) != 0; }
   pub fn |(key_modifiers lhs, key_modifiers rhs) -> key_modifiers { return cast<key_modifiers>(cast<int>(lhs) | cast<int>(rhs)); }
   pub fn &(key_modifiers lhs, key_modifiers rhs) -> key_modifiers { return cast<key_modifiers>(cast<int>(lhs) & cast<int>(rhs)); }
 }
@@ -70,7 +93,7 @@ pub struct key_event
   pub key_state state;
   pub key_modifiers modifiers;
 
-  pub key_event(key_code key, key_state state, key_modifiers modifiers)
+  key_event(key_code key, key_state state, key_modifiers modifiers)
     : key(key), state(state), modifiers(modifiers)
   {
   }
@@ -99,7 +122,7 @@ pub struct mouse_event
   pub buttons_state buttons;
   pub key_modifiers modifiers;
 
-  pub mouse_event(u32 cursor_x, u32 cursor_y, buttons_state buttons, key_modifiers modifiers)
+  mouse_event(u32 cursor_x, u32 cursor_y, buttons_state buttons, key_modifiers modifiers)
     : cursor_x(cursor_x), cursor_y(cursor_y), buttons(buttons), modifiers(modifiers)
   {
   }
@@ -202,27 +225,22 @@ fn csi_buttons_state(u32 mask) -> buttons_state
 {
   var buttons = buttons_state::none;
 
-  if (mask >= 32)
+  switch (mask & 0xc3)
   {
-    mask -= 32;
+    case 0:
+      buttons |= buttons_state::primary;
 
-    switch (mask & 0xc3)
-    {
-      case 0:
-        buttons |= buttons_state::primary;
+    case 1:
+      buttons |= buttons_state::middle;
 
-      case 1:
-        buttons |= buttons_state::middle;
+    case 2:
+      buttons |= buttons_state::secondary;
 
-      case 2:
-        buttons |= buttons_state::secondary;
+    case 0x40:
+      buttons |= buttons_state::scroll_up;
 
-      case 0x40:
-        buttons |= buttons_state::scroll_up;
-
-      case 0x41:
-        buttons |= buttons_state::scroll_down;
-    }
+    case 0x41:
+      buttons |= buttons_state::scroll_down;
   }
 
   return buttons;
@@ -232,19 +250,14 @@ fn csi_button_modifiers(u32 mask) -> key_modifiers
 {
   var modifiers = key_modifiers::none;
 
-  if (mask >= 32)
-  {
-    mask -= 32;
+  if (mask & 0x4 == 0x4)
+    modifiers |= key_modifiers::shift;
 
-    if (mask & 0x4 == 0x4)
-      modifiers |= key_modifiers::shift;
+  if (mask & 0x8 == 0x8)
+    modifiers |= key_modifiers::alt;
 
-    if (mask & 0x8 == 0x8)
-      modifiers |= key_modifiers::alt;
-
-    if (mask & 0x10 == 0x10)
-      modifiers |= key_modifiers::control;
-  }
+  if (mask & 0x10 == 0x10)
+    modifiers |= key_modifiers::control;
 
   return modifiers;
 }
@@ -284,30 +297,38 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
       case 0 .. 0xff:
         switch (in)
         {
-          case 0x00 ..= 0x1f:
-            switch (in)
-            {
-              case 0x00:
-                ctx.next = event::key(key_code::sym(' '), key_state::pressed, key_modifiers::control);
-                return true;
+          case 0x00:
+            ctx.next = event::key(key_code::sym(' '), key_state::pressed, key_modifiers::control);
+            return true;
 
-              case 0x09:
-                ctx.next = event::key(key_code::tab, key_state::pressed, key_modifiers::none);
-                return true;
+          case 0x01 ..= 0x08:
+            ctx.next = event::key(key_code::sym(cast(0x60 + in)), key_state::pressed, key_modifiers::control);
+            return true;
 
-              case 0x0d:
-                ctx.next = event::key(key_code::enter, key_state::pressed, key_modifiers::none);
-                return true;
+          case 0x09:
+            ctx.next = event::key(key_code::tab, key_state::pressed, key_modifiers::none);
+            return true;
 
-              case 0x1b:
-                ctx.argc = 0;
-                ctx.argv = [0; 16];
-                ctx.state = 0xfe1b;
+          case 0x0a ..= 0x0c:
+            ctx.next = event::key(key_code::sym(cast(0x60 + in)), key_state::pressed, key_modifiers::control);
+            return true;
 
-              else:
-                ctx.next = event::key(key_code::sym(cast(0x40 + in)), key_state::pressed, key_modifiers::control);
-                return true;
-            }
+          case 0x0d:
+            ctx.next = event::key(key_code::enter, key_state::pressed, key_modifiers::none);
+            return true;
+
+          case 0x0e ..= 0x1a:
+            ctx.next = event::key(key_code::sym(cast(0x60 + in)), key_state::pressed, key_modifiers::control);
+            return true;
+
+          case 0x1b:
+            ctx.argc = 0;
+            ctx.argv = [0; 16];
+            ctx.state = 0xfe1b;
+
+          case 0x1c ..= 0x1f:
+            ctx.next = event::key(key_code::sym(cast(0x40 + in)), key_state::pressed, key_modifiers::control);
+            return true;
 
           case 0x20 ..= 0x40:
             ctx.next = event::key(key_code::sym(cast(in)), key_state::pressed, key_modifiers::none);
@@ -360,7 +381,7 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
             return true;
 
           case 0x61 ..= 0x7b:
-            ctx.next = event::key(key_code::sym(cast(in - 0x20)), key_state::pressed, key_modifiers::alt);
+            ctx.next = event::key(key_code::sym(cast(in)), key_state::pressed, key_modifiers::alt);
             ctx.state = 0;
             return true;
 
@@ -417,6 +438,9 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
               if (ctx.argc < ctx.argv.len)
                 ctx.argv[ctx.argc] = ctx.argv[ctx.argc] * 10 + cast(in - 0x30);
 
+            case 0x3c:
+              ctx.state = 0xfe3c;
+
             case 0x3b:
               if (ctx.argc < ctx.argv.len)
                 ctx.argc += 1;
@@ -468,9 +492,10 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
                   ctx.state = 0xfe4d;
 
                 case 2:
+                  ctx.argv[0] = std::max(ctx.argv[0], 32);
                   ctx.argv[1] = std::max(ctx.argv[1], 1);
                   ctx.argv[2] = std::max(ctx.argv[2], 1);
-                  ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0]), csi_button_modifiers(ctx.argv[0]));
+                  ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0] - 32), csi_button_modifiers(ctx.argv[0] - 32));
                   ctx.state = 0;
                   return true;
 
@@ -482,6 +507,35 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
               ctx.state = 0;
           }
 
+          case 0xfe3c:
+            switch (in)
+            {
+              case 0x30 ..= 0x39:
+                if (ctx.argc < ctx.argv.len)
+                  ctx.argv[ctx.argc] = ctx.argv[ctx.argc] * 10 + cast(in - 0x30);
+
+              case 0x3b:
+                if (ctx.argc < ctx.argv.len)
+                  ctx.argc += 1;
+
+              case 0x4d:
+                ctx.argv[1] = std::max(ctx.argv[1], 1);
+                ctx.argv[2] = std::max(ctx.argv[2], 1);
+                ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0]), csi_button_modifiers(ctx.argv[0]));
+                ctx.state = 0;
+                return true;
+
+              case 0x6d:
+                ctx.argv[1] = std::max(ctx.argv[1], 1);
+                ctx.argv[2] = std::max(ctx.argv[2], 1);
+                ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, buttons_state::none, csi_button_modifiers(ctx.argv[0]));
+                ctx.state = 0;
+                return true;
+
+              else:
+                ctx.state = 0;
+            }
+
         case 0xfe4d:
           switch (ctx.argc)
           {
@@ -492,9 +546,10 @@ pub fn dispatch(termin mut &ctx, int fd) -> bool
 
             case 2:
               ctx.argv[ctx.argc] = cast(in);
-              ctx.argv[1] = std::max(ctx.argv[1], 33) - 32;
-              ctx.argv[2] = std::max(ctx.argv[2], 33) - 32;
-              ctx.next = event::mouse(ctx.argv[1] - 1, ctx.argv[2] - 1, csi_buttons_state(ctx.argv[0]), csi_button_modifiers(ctx.argv[0]));
+              ctx.argv[0] = std::max(ctx.argv[0], 32);
+              ctx.argv[1] = std::max(ctx.argv[1], 33);
+              ctx.argv[2] = std::max(ctx.argv[2], 33);
+              ctx.next = event::mouse(ctx.argv[1] - 33, ctx.argv[2] - 33, csi_buttons_state(ctx.argv[0] - 32), csi_button_modifiers(ctx.argv[0] - 32));
               ctx.state = 0;
               return true;
           }
@@ -508,4 +563,5 @@ pub fn enable_mouse_capture(int fd)
   termios::write(fd, "\x1b[?1002h".data, 8);
   termios::write(fd, "\x1b[?1003h".data, 8);
   termios::write(fd, "\x1b[?1015h".data, 8);
+  termios::write(fd, "\x1b[?1006h".data, 8);
 }

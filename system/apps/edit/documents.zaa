@@ -1,0 +1,155 @@
+//
+// document management
+//
+
+import std.list;
+import std.optional;
+import std.string : String;
+import sys.path;
+import tui.buffer;
+import tui.document;
+import state as _ : *;
+
+using tui;
+
+pub struct Document
+{
+  pub textbuffer buffer;
+  pub std::string path;
+  pub std::string filename;
+  //pub file_id: Option<sys::FileId>,
+  pub usize new_file_counter;
+
+  pub fn save(this mut &) throws(std::error) -> void
+  {
+    this.buffer.save_to_file(this.path);
+
+//    if let Ok(id) = sys::file_id(None, path)
+//        self.file_id = Some(id);
+
+    this.buffer.mark_as_clean();
+  }
+
+  pub fn save_as(this mut &, String &path) throws(std::error) -> void
+  {
+    this.path = path;
+    this.filename = sys::path_view(path).basename();
+
+    this.buffer.save_to_file(this.path);
+
+  //    if let Ok(id) = sys::file_id(None, path)
+  //        self.file_id = Some(id);
+
+    this.buffer.mark_as_clean();
+  }
+
+  pub Document() = default;
+  pub ~Document() = default;
+}
+
+pub struct DocumentManager
+{
+  std::list<Document> list;
+
+  pub fn len(this &) -> usize
+  {
+    return this.list.len;
+  }
+
+  pub fn active(this &) -> std::optional<Document &>
+  {
+    if (this.list.len != 0)
+      return &this.list.front;
+
+    return None;
+  }
+
+  pub fn active(this mut &) -> std::optional<Document mut &>
+  {
+    if (this.list.len != 0)
+      return &this.list.front;
+
+    return None;
+  }
+
+  pub fn update_active<Func>(this mut &, Func &&func) -> void
+  {
+    var mut &list = this.list;
+
+    for (var i = list.begin; i != list.end; ++i)
+    {
+      if (func(list[i]))
+      {
+        list.splice(list.begin, &mut this.list, i);
+
+        break;
+      }
+    }
+  }
+
+  pub fn remove_active(this mut &) -> void
+  {
+    this.list.pop_front();
+  }
+
+  fn create_buffer() throws(std::error) -> textbuffer
+  {
+    var buffer = textbuffer();
+
+    if (var rc = buffer.init_memory_buffer(4*1024*1024*1024); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    buffer.set_margin_enabled(true);
+    buffer.set_line_highlight_enabled(true);
+
+    return buffer;
+  }
+
+  pub fn add_untitled(this mut &) throws(std::error) -> Document mut &
+  {
+    var new_file_counter = 0;
+    for (var &doc : this.list)
+      new_file_counter = std::max(new_file_counter, doc.new_file_counter);
+    new_file_counter += 1;
+
+    var buffer = create_buffer();
+
+    var mut &document = this.list.push_front();
+    document.buffer = &move buffer;
+    document.filename = std::format("Untitled-{}.txt", new_file_counter);
+    document.new_file_counter = new_file_counter;
+
+    return &document;
+  }
+
+  pub fn add_file_path(this mut &, String &path) throws(std::error) -> Document mut &
+  {
+//        let file_id = if file.is_some() { Some(sys::file_id(file.as_ref(), &path)?) } else { None };
+//
+//        // Check if the file is already open.
+//        if file_id.is_some() && self.update_active(|doc| doc.file_id == file_id) {
+//            let doc = self.active_mut().unwrap();
+//            if let Some(goto) = goto {
+//                doc.buffer.borrow_mut().cursor_move_to_logical(goto);
+//            }
+//            return Ok(doc);
+//        }
+
+    var buffer = create_buffer();
+
+    buffer.load_from_file(path);
+
+    if (this.active && this.active?!.buffer.generation == 0)
+      this.remove_active();
+
+    var mut &document = this.list.push_front();
+    document.buffer = &move buffer;
+    document.path = path;
+    document.filename = sys::path_view(path).basename();
+
+    return &document;
+  }
+
+  pub DocumentManager() = default;
+  pub ~DocumentManager() = default;
+}

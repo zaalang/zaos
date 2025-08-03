@@ -64,7 +64,7 @@ pub struct fadt : pub acpi::sdt
 {
   pub u32 facs;
   pub u32 dsdt;
-  pub u8 reserved;
+  pub u8 reserved1;
   pub u8 preferred_pm_profile;
   pub u16 sci_interrupt;
   pub u32 smi_command;

@@ -196,115 +196,182 @@ pub struct window : pub gui::window
   {
     if (evt.state == 1)
     {
-      switch (evt.key)
+      switch (evt.modifiers)
       {
-        case Key::Home:
-          post(&mut this, "\x1bOH".data, 3);
-
-        case Key::Left:
-          if (evt.modifiers & gui::modifiers::control)
-            post(&mut this, "\x1b[1;5D".data, 6);
-          else
-            post(&mut this, "\x1bOD".data, 3);
-
-        case Key::Up:
-          if (evt.modifiers & gui::modifiers::control)
-            post(&mut this, "\x1b[1;5A".data, 6);
-          else
-            post(&mut this, "\x1bOA".data, 3);
-
-        case Key::Right:
-          if (evt.modifiers & gui::modifiers::control)
-            post(&mut this, "\x1b[1;5C".data, 6);
-          else
-            post(&mut this, "\x1bOC".data, 3);
-
-        case Key::Down:
-          if (evt.modifiers & gui::modifiers::control)
-            post(&mut this, "\x1b[1;5B".data, 6);
-          else
-            post(&mut this, "\x1bOB".data, 3);
-
-        case Key::PageUp:
-          post(&mut this, "\x1b[5~".data, 4);
-
-        case Key::PageDown:
-          post(&mut this, "\x1b[6~".data, 4);
-
-        case Key::End:
-          post(&mut this, "\x1bOF".data, 3);
-
-        case Key::Insert:
-          post(&mut this, "\x1b[2~".data, 4);
-
-        case Key::Delete:
-          post(&mut this, "\x1b[3~".data, 4);
-
-        case Key::Enter:
-        case Key::NumEnter:
-          post(&mut this, "\r".data, 1);
-
-        case Key::F1:
-          post(&mut this, "\x1bOP".data, 3);
-
-        case Key::F2:
-          post(&mut this, "\x1bOQ".data, 3);
-
-        case Key::F3:
-          post(&mut this, "\x1bOR".data, 3);
-
-        case Key::F4:
-          post(&mut this, "\x1bOS".data, 3);
-
-        case Key::F5:
-          post(&mut this, "\x1b[15~".data, 5);
-
-        case Key::F6:
-          post(&mut this, "\x1b[17~".data, 5);
-
-        case Key::F7:
-          post(&mut this, "\x1b[18~".data, 5);
-
-        case Key::F8:
-          post(&mut this, "\x1b[19~".data, 5);
-
-        case Key::F9:
-          post(&mut this, "\x1b[20~".data, 5);
-
-        case Key::F10:
-          post(&mut this, "\x1b[21~".data, 5);
-
-        case Key::F11:
-          post(&mut this, "\x1b[23~".data, 5);
-
-        case Key::F12:
-          post(&mut this, "\x1b[24~".data, 5);
-
-        else:
-
-          var ch = evt.sym;
-
-          if (evt.modifiers & gui::modifiers::control)
+        case gui::modifiers::control:
+          switch (evt.key)
           {
-            switch (ch)
-            {
-              case ' ':
-                ch = 0;
+            case Key::Home:
+              post(&mut this, "\x1b[1;5H".data, 6);
 
-              case 'a' ..= 'z':
-                ch = ch - 'a' + 1;
+            case Key::Left:
+              post(&mut this, "\x1b[1;5D".data, 6);
 
-              case 'A' ..= 'Z':
-                ch = ch - 'A' + 1;
-            }
+            case Key::Up:
+              post(&mut this, "\x1b[1;5A".data, 6);
+
+            case Key::Right:
+              post(&mut this, "\x1b[1;5C".data, 6);
+
+            case Key::Down:
+              post(&mut this, "\x1b[1;5B".data, 6);
+
+            case Key::End:
+              post(&mut this, "\x1b[1;5F".data, 6);
+
+            case Key::Insert:
+              post(&mut this, "\x1b[2;5~".data, 6);
+
+            case Key::Delete:
+              post(&mut this, "\x1b[3;5~".data, 6);
+
+            case Key::Backspace:
+              post(&mut this, "\x08".data, 1);
+
+            case ' ':
+            case 'A' ..= 'Z':
+              var buf = [ cast<u8>(evt.sym) ];
+
+              post(&mut this, buf.data, buf.len);
           }
 
-          if (ch != 0)
+        case gui::modifiers::alt:
+          switch (evt.key)
           {
-            var buf = [0; 16];
-            var str = std::ctoa(buf.begin, buf.end, ch);
+            case Key::Enter:
+              post(&mut this, "\x1b\x0d".data, 2);
 
-            post(&mut this, str.ptr, str.len);
+            case 'A' ..= 'Z':
+              var buf = [ cast<u8>('\x1b'), cast<u8>(evt.sym) ];
+
+              post(&mut this, buf.data, buf.len);
+          }
+
+        case gui::modifiers::shift:
+          switch (evt.key)
+          {
+            case Key::Home:
+              post(&mut this, "\x1b[1;2H".data, 6);
+
+            case Key::Left:
+              post(&mut this, "\x1b[1;2D".data, 6);
+
+            case Key::Up:
+              post(&mut this, "\x1b[1;2A".data, 6);
+
+            case Key::Right:
+              post(&mut this, "\x1b[1;2C".data, 6);
+
+            case Key::Down:
+              post(&mut this, "\x1b[1;2B".data, 6);
+
+            case Key::PageUp:
+              post(&mut this, "\x1b[5;2~".data, 6);
+
+            case Key::PageDown:
+              post(&mut this, "\x1b[6;2~".data, 6);
+
+            case Key::End:
+              post(&mut this, "\x1b[1;2F".data, 6);
+
+            case Key::Insert:
+              post(&mut this, "\x1b[2;2~".data, 6);
+
+            case Key::Delete:
+              post(&mut this, "\x1b[3;2~".data, 6);
+
+            case Key::Enter:
+            case Key::NumEnter:
+              post(&mut this, "\x1b[13;2u".data, 7);
+
+            else:
+              var buf = [0; 16];
+              var str = std::ctoa(buf.begin, buf.end, evt.sym);
+
+              post(&mut this, str.ptr, str.len);
+          }
+
+        case gui::modifiers::none:
+          switch (evt.key)
+          {
+            case Key::Home:
+              post(&mut this, "\x1bOH".data, 3);
+
+            case Key::Left:
+              post(&mut this, "\x1bOD".data, 3);
+
+            case Key::Up:
+              post(&mut this, "\x1bOA".data, 3);
+
+            case Key::Right:
+              post(&mut this, "\x1bOC".data, 3);
+
+            case Key::Down:
+              post(&mut this, "\x1bOB".data, 3);
+
+            case Key::PageUp:
+              post(&mut this, "\x1b[5~".data, 4);
+
+            case Key::PageDown:
+              post(&mut this, "\x1b[6~".data, 4);
+
+            case Key::End:
+              post(&mut this, "\x1bOF".data, 3);
+
+            case Key::Insert:
+              post(&mut this, "\x1b[2~".data, 4);
+
+            case Key::Delete:
+              post(&mut this, "\x1b[3~".data, 4);
+
+            case Key::Backspace:
+              post(&mut this, "\x7f".data, 1);
+
+            case Key::Enter:
+            case Key::NumEnter:
+              post(&mut this, "\r".data, 1);
+
+            case Key::F1:
+              post(&mut this, "\x1bOP".data, 3);
+
+            case Key::F2:
+              post(&mut this, "\x1bOQ".data, 3);
+
+            case Key::F3:
+              post(&mut this, "\x1bOR".data, 3);
+
+            case Key::F4:
+              post(&mut this, "\x1bOS".data, 3);
+
+            case Key::F5:
+              post(&mut this, "\x1b[15~".data, 5);
+
+            case Key::F6:
+              post(&mut this, "\x1b[17~".data, 5);
+
+            case Key::F7:
+              post(&mut this, "\x1b[18~".data, 5);
+
+            case Key::F8:
+              post(&mut this, "\x1b[19~".data, 5);
+
+            case Key::F9:
+              post(&mut this, "\x1b[20~".data, 5);
+
+            case Key::F10:
+              post(&mut this, "\x1b[21~".data, 5);
+
+            case Key::F11:
+              post(&mut this, "\x1b[23~".data, 5);
+
+            case Key::F12:
+              post(&mut this, "\x1b[24~".data, 5);
+
+            else:
+              var buf = [0; 16];
+              var str = std::ctoa(buf.begin, buf.end, evt.sym);
+
+              post(&mut this, str.ptr, str.len);
           }
       }
     }

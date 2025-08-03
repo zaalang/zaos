@@ -220,6 +220,9 @@ image:
             src: build/system/apps/coreutils/tty
             dest: /bin/tty
         - cp:
+            src: build/system/apps/edit/edit
+            dest: /bin/edit
+        - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar
         - cp:

@@ -1,0 +1,354 @@
+//
+// filepicker
+//
+
+import std.stdlib;
+import sys.fs;
+import sys.path;
+import tui.screen;
+import tui.document;
+import state as _ : *;
+
+using tui;
+
+pub fn draw_filepicker(tui::context mut &ctx, state mut &state) -> void
+{
+  if (state.wants_file_picker == StateFilePicker::SaveAs)
+  {
+    state.wants_file_picker = StateFilePicker::SaveAsShown;
+
+    if (state.file_picker_pending_name.empty)
+      state.file_picker_pending_name = state.documents.active.transform(|doc| doc.filename).unwrap_or("Untitled.txt");
+  }
+
+  var width = std::max(ctx.size().width - 20, 10);
+  var height = std::max(ctx.size().height - 10, 10);
+  var done = false;
+
+  ctx.modal_begin("file-picker", (state.wants_file_picker == StateFilePicker::Open) ? "Open File…" : "Save As…");
+  ctx.attr_intrinsic_size(size(width, height));
+
+  var activated = false;
+  var contains_focus = ctx.contains_focus();
+
+  ctx.table_begin("path");
+  ctx.table_columns([0, 9999]);
+  ctx.table_cell_gap(size(1, 0));
+  ctx.attr_padding(1, 1, 1, 1);
+  ctx.inherit_focus();
+
+  ctx.table_next_row();
+  ctx.label("dir-label", "Folder:");
+  ctx.label("dir", state.file_picker_pending_dir);
+  ctx.attr_overflow(overflow::truncate_middle);
+
+  ctx.table_next_row();
+  ctx.inherit_focus();
+  ctx.label("name-label", "File name:");
+
+  var name_changed = ctx.lineedit("name", &mut state.file_picker_pending_name);
+  ctx.inherit_focus();
+
+  if (ctx.contains_focus)
+  {
+    if (name_changed && ctx.is_focused)
+      update_autocomplete_suggestions(&mut state);
+  }
+  else
+  {
+    if (!state.file_picker_autocomplete.empty)
+      state.file_picker_autocomplete.clear();
+  }
+
+  if (!state.file_picker_autocomplete.empty)
+  {
+    var focus_list_beg = ctx.is_focused() && ctx.consume_shortcut(shortcut(kb::down));
+    var focus_list_end = ctx.is_focused() && ctx.consume_shortcut(shortcut(kb::up));
+    var autocomplete_done = ctx.consume_shortcut(shortcut(kb::escape));
+
+    ctx.list_begin("suggestions");
+    ctx.attr_float(anchor::last, 0.0, 0.0, 0.0, 1.0);
+    ctx.attr_border();
+    ctx.attr_background(indexed_alpha(color::background, 3, 4));
+    ctx.attr_foreground(indexed(color::white));
+
+    for (var &[idx, suggestion] : std::enumerate(state.file_picker_autocomplete))
+    {
+      var sel = ctx.list_item(false, suggestion);
+
+      if (sel != list_selection::unchanged)
+        state.file_picker_pending_name = suggestion;
+
+      if (sel == list_selection::activated)
+        autocomplete_done = true;
+
+      var is_first = (idx == 0);
+      var is_last = (idx == state.file_picker_autocomplete.len - 1);
+
+      if ((is_first && focus_list_beg) || (is_last && focus_list_end))
+        ctx.steal_focus();
+
+      if (ctx.is_focused() && ((is_first && ctx.consume_shortcut(shortcut(kb::up))) || (is_last && ctx.consume_shortcut(shortcut(kb::down)))))
+        ctx.toss_focus_up();
+    }
+
+    ctx.list_end();
+
+    if (ctx.input_available)
+    {
+      ctx.set_input_consumed();
+      autocomplete_done = true;
+    }
+
+    if (autocomplete_done)
+      state.file_picker_autocomplete.clear();
+   }
+
+  if (ctx.is_focused() && ctx.consume_shortcut(shortcut(kb::enter)))
+    activated = true;
+
+  ctx.table_end();
+
+  if (state.file_picker_entries.is_none)
+    draw_dialog_saveas_refresh_files(&mut state);
+
+  ctx.scrollarea_begin("directory", size(0, height - 3));
+  ctx.attr_background(indexed_alpha(color::black, 1, 4));
+  ctx.next_block_id_mixin(state.file_picker_pending_dir_revision);
+  ctx.list_begin("files");
+  ctx.inherit_focus();
+
+  for (var &entries : state.file_picker_entries?!)
+  {
+    for (var &entry : entries)
+    {
+      switch (ctx.list_item(false, entry))
+      {
+        case selected:
+          state.file_picker_pending_name = entry;
+
+        case activated:
+          activated = true;
+      }
+
+      ctx.attr_overflow(overflow::truncate_middle);
+    }
+  }
+
+  ctx.list_end();
+
+  ctx.scrollarea_end();
+
+  if (contains_focus && ctx.consume_shortcut(shortcut(kb::back)))
+  {
+    state.file_picker_pending_name = "..";
+    activated = true;
+  }
+
+  if (activated)
+  {
+    draw_file_picker_update_path(&mut state);
+
+    if (state.file_picker_pending_name.empty)
+      activated = false;
+  }
+
+  if (ctx.modal_end())
+  {
+    done = true;
+  }
+
+  if (state.file_picker_overwrite_warning)
+  {
+    ctx.modal_begin("overwrite", "Confirm Save As");
+    ctx.attr_background(indexed(color::red));
+    ctx.attr_foreground(indexed(color::bright_white));
+
+    var save = false;
+    var contains_focus = ctx.contains_focus();
+
+    ctx.label("description", "File already exists. Do you want to overwrite it?");
+    ctx.attr_overflow(overflow::truncate_tail);
+    ctx.attr_padding(2, 1, 2, 1);
+
+    ctx.table_begin("choices");
+    ctx.inherit_focus();
+    ctx.attr_padding(2, 0, 2, 1);
+    ctx.attr_position(position::center);
+    ctx.table_cell_gap(size(2, 0));
+
+    ctx.table_next_row();
+    ctx.inherit_focus();
+
+    if (ctx.button("yes", "Yes", button_style::default()))
+      save = true;
+
+    ctx.inherit_focus();
+
+    if (ctx.button("no", "No", button_style::default()))
+      state.file_picker_overwrite_warning = false;
+
+    ctx.table_end();
+
+    if (contains_focus)
+    {
+      if (ctx.consume_shortcut("Y"))
+        save = true;
+
+      if (ctx.consume_shortcut("N"))
+        state.file_picker_overwrite_warning = false;
+    }
+
+    if (ctx.modal_end())
+    {
+      state.file_picker_overwrite_warning = false;
+    }
+
+    if (save)
+    {
+      state.file_picker_overwrite_warning = false;
+    }
+
+    activated = save;
+  }
+
+  if (activated)
+  {
+    try
+    {
+      var path = sys::path::join(state.file_picker_pending_dir, state.file_picker_pending_name);
+
+      switch (state.wants_file_picker)
+      {
+        case Open:
+          state.documents.add_file_path(path);
+
+        case SaveAsShown:
+          state.documents.active?!.save_as(path);
+      }
+
+      ctx.needs_rerender();
+      done = true;
+    }
+    catch (std::error err)
+    {
+      error_log_add(&mut ctx, &mut state, err);
+    }
+  }
+
+  if (done)
+  {
+    state.file_picker_entries.clear();
+    state.file_picker_pending_name.clear();
+    state.file_picker_autocomplete.clear();
+    state.file_picker_overwrite_warning = false;
+    state.wants_file_picker = StateFilePicker::None;
+  }
+}
+
+fn draw_file_picker_update_path(state mut &state) -> void
+{
+  var path = sys::path::join(state.file_picker_pending_dir, state.file_picker_pending_name);
+
+  try
+  {
+    var dir = sys::path_view(path).parent;
+    var name = sys::path_view(path).basename;
+
+    if (sys::exists(path) && sys::stat(path).is_directory)
+    {
+      dir = sys::path_view(path);
+      name = "";
+    }
+
+    if (dir != state.file_picker_pending_dir)
+    {
+      state.file_picker_pending_dir = sys::path::normalise(dir);
+      state.file_picker_pending_dir_revision = std::add_with_carry(state.file_picker_pending_dir_revision, 1).0;
+      state.file_picker_entries.clear();
+    }
+
+    if (name.len != 0)
+    {
+      switch (state.wants_file_picker)
+      {
+        case SaveAsShown:
+          if (sys::exists(path))
+            state.file_picker_overwrite_warning = true;
+      }
+    }
+
+    state.file_picker_pending_name = name;
+  }
+  catch (std::error err)
+  {
+    state.file_picker_pending_name.clear();
+  }
+}
+
+fn draw_dialog_saveas_refresh_files(state mut &state) -> void
+{
+  var dir = state.file_picker_pending_dir;
+
+  var dirs_files = [std::vector<std::string>(); 3];
+
+  if (sys::path_view(dir).parent != "")
+    dirs_files[0].push_back("..");
+
+  try
+  {
+    for (var &entry : sys::read_dir(dir))
+    {
+      if (entry.is_directory || (entry.is_symlink && sys::stat(entry.path).is_directory))
+      {
+        dirs_files[1].push_back(entry.name).append("/");
+      }
+      else
+      {
+        dirs_files[2].push_back(entry.name);
+      }
+    }
+
+    for (var mut &entries : dirs_files)
+    {
+      std::sort(&mut entries, |a, b| {
+        return std::fwd_as_tuple(a.ends_with("/"), a) < std::fwd_as_tuple(b.ends_with("/"), b);
+      });
+    }
+  }
+  catch (std::error err)
+  {
+  }
+
+  state.file_picker_entries = &move dirs_files;
+}
+
+fn update_autocomplete_suggestions(state mut &state) -> void
+{
+  state.file_picker_autocomplete.clear();
+
+  if (state.file_picker_pending_name.empty)
+    return;
+
+  if (state.file_picker_entries.is_none)
+    return;
+
+  var needle = state.file_picker_pending_name;
+  var needle_upper_bound = needle + "\xf4\x8f\xbf\xbf";
+
+  for (var &entries : state.file_picker_entries?!)
+  {
+    var lower = std::lower_bound(entries, needle);
+
+    for (var &entry : entries[lower .. entries.end])
+    {
+      if (entry > needle_upper_bound)
+        break;
+
+      if (state.file_picker_autocomplete.len >= 5)
+        break;
+
+      state.file_picker_autocomplete.push_back(entry);
+    }
+  }
+}

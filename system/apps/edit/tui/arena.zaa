@@ -1,0 +1,169 @@
+//
+// tui arena
+//
+
+import std.stdlib;
+
+pub struct arena
+{
+  u8 mut *base;
+  usize capacity;
+  usize offset;
+
+  pub fn new(usize capacity) throws(std::error) -> arena
+  {
+    var arena = arena();
+
+    if (var rc = initialise(&mut arena, capacity); rc < 0)
+      throw std::system_error(cast(-rc));
+
+    return arena;
+  }
+
+  pub arena() = default;
+
+  pub fn empty(this &) -> bool
+  {
+    return this.base == null;
+  }
+
+  pub fn base(this &&)
+  {
+    return this.base;
+  }
+
+  pub fn capacity(this &) -> usize
+  {
+    return this.capacity;
+  }
+
+  pub fn offset(this &) -> usize
+  {
+    return this.offset;
+  }
+
+  pub fn reset(this mut &, usize offset) -> void
+  {
+    this.offset = offset;
+  }
+
+  pub fn allocate(this mut &, usize size, usize alignment) -> void mut *
+  {
+    var offset = std::align_up(this.offset, alignment);
+
+    if (offset + size > this.capacity)
+      std::panic("arena exhausted");
+
+    this.offset = offset + size;
+
+    return this.base + offset;
+  }
+
+  pub fn free(this mut &, void *addr, usize size) -> void
+  {
+  }
+
+  pub arena(arena &&other)
+    where __is_rvalue<typeof(other)>
+  {
+    this = &move other;
+  }
+
+  pub fn =(arena mut &this, arena &&other) -> arena mut &
+    where __is_rvalue<typeof(other)>
+  {
+    std::launder(other);
+
+    std::swap(&mut this.base, &mut other.base);
+    std::swap(&mut this.capacity, &mut other.capacity);
+    std::swap(&mut this.offset, &mut other.offset);
+
+    return &this;
+  }
+
+  pub ~arena()
+  {
+    destroy(&mut this);
+  }
+}
+
+#if __cfg("os.linux")
+
+pub fn initialise(arena mut &arena, usize capacity) -> i32
+{
+  import os.linux.mman : *;
+
+  var base = mmap(null, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+  if (var rc = std::bit_cast<intptr>(base); rc < 0)
+    return cast<i32>(rc);
+
+  arena.base = cast<u8 mut *>(base);
+  arena.capacity = capacity;
+
+  return 0;
+}
+
+pub fn destroy(arena mut &arena) -> i32
+{
+  if (!arena.base)
+    return 0;
+
+  import os.linux.mman;
+
+  os::munmap(arena.base, arena.capacity);
+
+  return 0;
+}
+
+#end
+
+#if __cfg("os.zaos")
+
+pub fn initialise(arena mut &arena, usize capacity) -> i32
+{
+  import os.zaos.mman : *;
+
+  var mmvec = os::mmvec();
+  mmvec.length = capacity;
+  mmvec.flags = os::mmap::anonymous;
+  mmvec.prot = os::prot::readwrite;
+
+  var base = null<u8 mut *>();
+  if (var rc = os::mmap(-1, &mmvec, 1, &base, 0); rc < 0)
+    return rc;
+
+  arena.base = base;
+  arena.capacity = capacity;
+
+  return 0;
+}
+
+pub fn destroy(arena mut &arena) -> i32
+{
+  if (!arena.base)
+    return 0;
+
+  import os.zaos.mman;
+
+  os::munmap(arena.base, arena.capacity);
+
+  return 0;
+}
+
+#end
+
+pub struct scratch_allocator : pub arena mut &
+{
+  usize offset;
+
+  pub scratch_allocator(arena mut *base)
+    : super(&*base), offset(base.offset)
+  {
+  }
+
+  pub ~arena()
+  {
+    super.reset(offset);
+  }
+}

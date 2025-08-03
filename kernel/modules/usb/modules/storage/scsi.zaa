@@ -71,7 +71,7 @@ pub struct read_capacity_16_response
 {
   u64 block_count;
   u32 block_size;
-  u8[20] reserved;
+  u8[20] reserved1;
 
   pub fn block_count(this &) -> u64
   {

@@ -1,0 +1,258 @@
+//
+// edit
+//
+
+// based on microsoft edit - MIT
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// https://github.com/microsoft/edit
+
+import std.stdio : STDIN;
+import std.string : String;
+import sys.fs;
+import app.loop;
+import tui.screen;
+import tui.document;
+import readline : termin;
+import os.zaos.time;
+import termios;
+
+import draw_menubar : draw_menubar, draw_dialog_about;
+import draw_editor : draw_editor, draw_handle_wants_close, draw_handle_save, draw_goto_menu, search_execute;
+import draw_statusbar : draw_statusbar, draw_go_to_file;
+import draw_filepicker : draw_filepicker;
+import state as _ : *;
+
+pub struct application
+{
+  app::loop loop;
+  tui::document tui;
+  tui::screen screen;
+  termin termin;
+  state state;
+
+  app::loop::wait_t input_handler;
+  app::loop::timeout_t update_handler;
+
+  pub application() = default;
+  pub ~application() = default;
+}
+
+fn draw(tui::context mut &ctx, state mut &state) -> void
+{
+  if (state.wants_exit)
+    draw_handle_wants_exit(&mut ctx, &mut state);
+
+  if (state.wants_close)
+    draw_handle_wants_close(&mut ctx, &mut state);
+
+  if (state.wants_goto)
+    draw_goto_menu(&mut ctx, &mut state);
+
+  if (state.wants_file_picker != StateFilePicker::None)
+    draw_filepicker(&mut ctx, &mut state);
+
+  if (state.wants_save)
+    draw_handle_save(&mut ctx, &mut state);
+
+  if (state.wants_go_to_file)
+    draw_go_to_file(&mut ctx, &mut state);
+
+  if (state.wants_about)
+    draw_dialog_about(&mut ctx, &mut state);
+
+  if (state.error_log.len != 0)
+    draw_error_log(&mut ctx, &mut state);
+
+  if (ctx.consume_shortcut("Ctrl+N"))
+    draw_add_untitled_document(&mut ctx, &mut state);
+
+  draw_menubar(&mut ctx, &mut state);
+  draw_editor(&mut ctx, &mut state);
+  draw_statusbar(&mut ctx, &mut state);
+
+  if (ctx.input_available)
+  {
+    if (ctx.consume_shortcut("Ctrl+O"))
+      state.wants_file_picker = StateFilePicker::Open;
+
+    if (ctx.consume_shortcut("Ctrl+S"))
+      state.wants_save = true;
+
+    if (ctx.consume_shortcut("Ctrl+Shift+S"))
+      state.wants_file_picker = StateFilePicker::SaveAs;
+
+    if (ctx.consume_shortcut("Ctrl+W"))
+      state.wants_close = true;
+
+    if (ctx.consume_shortcut("Ctrl+P"))
+      state.wants_go_to_file = true;
+
+    if (ctx.consume_shortcut("Ctrl+Q"))
+      state.wants_exit = true;
+
+    if (ctx.consume_shortcut("Ctrl+G"))
+      state.wants_goto = true;
+
+    if (state.wants_search.kind != StateSearchKind::Disabled && ctx.consume_shortcut("Ctrl+F"))
+    {
+      state.wants_search.kind = StateSearchKind::Search;
+      state.wants_search.focus = true;
+    }
+
+    if (state.wants_search.kind != StateSearchKind::Disabled && ctx.consume_shortcut("Ctrl+R"))
+    {
+      state.wants_search.kind = StateSearchKind::Replace;
+      state.wants_search.focus = true;
+    }
+
+    ctx.needs_rerender();
+  }
+}
+
+fn draw_handle_wants_exit(tui::context mut &ctx, state mut &state) -> void
+{
+  while (state.documents.active)
+  {
+    var mut &doc = state.documents.active?!;
+
+    if (doc.buffer.is_dirty)
+    {
+      state.wants_close = true;
+      return;
+    }
+
+    state.documents.remove_active();
+  }
+
+  if (state.documents.len == 0)
+    state.exit = true;
+}
+
+fn initialise(application mut &app) -> i32
+{
+  if (var rc = app::initialise(&mut app.loop); rc < 0)
+    return rc;
+
+  app.input_handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(input_handler);
+
+  if (var rc = app.loop.begin_wait_fd(STDIN, &app.input_handler); rc < 0)
+    return rc;
+
+  var width = 0;
+  var height = 0;
+  termios::get_winsize(&mut width, &mut height);
+
+  if (var rc = tui::initialise(&mut app.tui, width, height); rc < 0)
+    return rc;
+
+  app.screen.resize(width, height);
+
+  var now = os::timespec(void);
+  os::clock_time(os::clock::monotonic, &now);
+
+  app.update_handler.deadline = now;
+  app.update_handler.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(update_handler);
+
+  app::loop::current.begin_timeout(&app.update_handler);
+
+  return 0;
+}
+
+fn input_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
+{
+  var app = cast<application mut *>(cast<uintptr>(wait) - offsetof(application::input_handler));
+
+  while (dispatch(&mut app.termin, STDIN))
+  {
+    draw(&mut app.tui.create_context(app.termin.next), &mut app.state);
+  }
+}
+
+fn update_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> void
+{
+  var app = cast<application mut *>(cast<uintptr>(timeout) - offsetof(application::update_handler));
+
+
+  //timeout.deadline += 1_000_000_000 / 15;
+  //app::loop::current.begin_timeout(&app.update_handler);
+}
+
+fn run(application mut &app) -> i32
+{
+  while (app.loop.state == app::loop::state::runnable)
+  {
+    app.screen.clear();
+
+    app::dispatch(&mut app.loop);
+
+    while (app.tui.needs_settling)
+    {
+      draw(&mut app.tui.create_context(), &mut app.state);
+    }
+
+    app.tui.render(&mut app.screen);
+
+    if (app.state.exit)
+      app.loop.quit();
+
+    app.screen.draw();
+  }
+
+  return 0;
+}
+
+fn handle_args(state mut &state) -> void
+{
+  try
+  {
+    var cwd = sys::cwd();
+
+    for (var &arg : std::env::args.drop_n(1))
+    {
+      if (arg.starts_with("-"))
+      {
+        continue;
+      }
+
+      var path = sys::path::resolve(cwd, arg);
+
+      if (!sys::exists(path) || sys::stat(path).is_directory)
+        continue;
+
+      state.documents.add_file_path(sys::path::normalise(path));
+    }
+
+    if (state.documents.len == 0)
+      state.documents.add_untitled();
+
+    state.file_picker_pending_dir = cwd;
+  }
+  catch (std::error err)
+  {
+    std::panic("error on argument - ", err);
+  }
+}
+
+fn main() -> int
+{
+  var app = application();
+
+  if (var rc = initialise(&mut app); rc < 0)
+    std::panic("unable to initialise - ", cast<std::errc>(-rc));
+
+  handle_args(&mut app.state);
+
+  var termstate = termios::termios(void);
+
+  termios::enable_raw_mode(&mut termstate);
+
+  std::print("\x1b[?1049h\x1b[?2004h\x1b[?1036h");
+
+  app.run();
+
+  std::print("\x1b[m\x1b[0 q\x1b[?25h\x1b]0;\x07\x1b[?1002;1006;2004l\x1b[?1049l");
+
+  termios::restore_cooked_mode(&mut termstate);
+
+  return 0;
+}

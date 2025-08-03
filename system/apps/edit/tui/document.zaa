@@ -1,0 +1,3203 @@
+//
+// tui
+//
+
+// based on microsoft edit tui - MIT
+// https://github.com/microsoft/edit/blob/main/src/tui.rs
+
+//
+// An immediate mode UI framework for terminals.
+//
+// While this file is fairly lengthy, the overall algorithm is simple.
+// On the first frame ever:
+// * Prepare an empty `arena_next`.
+// * Parse the incoming [`input::Input`] which should be a resize event.
+// * Create a new [`Context`] instance and give it the caller.
+// * Now the caller will draw their UI with the [`Context`] by calling the
+//   various [`Context`] UI methods, such as [`Context::block_begin()`] and
+//   [`Context::block_end()`]. These two are the basis which all other UI
+//   elements are built upon by the way. Each UI element that is created gets
+//   allocated onto `arena_next` and inserted into the UI tree.
+//   That tree works exactly like the DOM tree in HTML: Each node in the tree
+//   has a parent, children, and siblings. The tree layout at the end is then
+//   a direct mirror of the code "layout" that created it.
+// * Once the caller is done and drops the [`Context`], it'll secretly call
+//   `report_context_completion`. This causes a number of things:
+//   * The DOM tree that was built is stored in `tree`.
+//   * A hashmap of all nodes is built and stored in `node_map`.
+//   * `arena_next` is swapped with `arena_prev`.
+//   * Each UI node is measured and laid out.
+// * Now the caller is expected to repeat this process with a [`None`]
+//   input event until [`Tui::needs_settling()`] returns false.
+//   This is necessary, because when [`Context::button()`] returns `true`
+//   in one frame, it may change the state in the caller's code
+//   and require another frame to be drawn.
+// * Finally a call to [`Tui::render()`] will render the UI tree into the
+//   framebuffer and return VT output.
+//
+// On every subsequent frame the process is similar, but one crucial element
+// of any immediate mode UI framework is added:
+// Now when the caller draws their UI, the various [`Context`] UI elements
+// have access to `node_map` and the previously built UI tree.
+// This allows the UI framework to reuse the previously computed layout for
+// hit tests, caching scroll offsets, and so on.
+//
+// In the end it looks very similar:
+// * Prepare an empty `arena_next`.
+// * Parse the incoming [`input::Input`]...
+//   * **BUT** now we can hit-test mouse clicks onto the previously built
+//     UI tree. This way we can delegate focus on left mouse clicks.
+// * Create a new [`Context`] instance and give it the caller.
+// * The caller draws their UI with the [`Context`]...
+//   * **BUT** we can preserve the UI state across frames.
+// * Continue rendering until [`Tui::needs_settling()`] returns false.
+// * And the final call to [`Tui::render()`].
+//
+// # Classnames and node IDs
+//
+// So how do we find which node from the previous tree correlates to the
+// current node? Each node needs to be constructed with a "classname".
+// The classname is hashed with the parent node ID as the seed. This derived
+// hash is then used as the new child node ID. Under the assumption that the
+// collision likelihood of the hash function is low, this serves as true IDs.
+//
+// This has the nice added property that finding a node with the same ID
+// guarantees that all of the parent nodes must have equivalent IDs as well.
+// This turns "is the focus anywhere inside this subtree" into an O(1) check.
+//
+// The reason "classnames" are used is because I was hoping to add theming
+// in the future with a syntax similar to CSS (simplified, however).
+//
+// # Example
+//
+// ```
+// import tui.screen : screen, attrs, color;
+// import tui.document;
+//
+// struct state
+// {
+//   i32 counter;
+// }
+//
+// fn main()
+// {
+//    // Create a `Tui` instance which holds state across frames.
+//    var tui = tui::document();
+//    var screen = screen();
+//    var state = state();
+//
+//    init(&mut tui, width, height);
+//
+//    // Continue until the layout has settled.
+//    while (tui.needs_settling)
+//    {
+//      var ctx = tui.create_context();
+//
+//      draw(&mut ctx, &mut state);
+//    }
+//
+//    // Render the output.
+//    tui.render(&mut screen);
+// }
+//
+// fn format<Allocator>(Allocator allocator, String &format, var & ...args)
+// {
+//   var str = std::string<Allocator: Allocator>(allocator);
+//   str.appendf(format, args...);
+//   return str;
+// }
+//
+// fn draw(tui::context mut &ctx, state mut &state) -> void
+// {
+//    ctx.table_begin("classname");
+//    {
+//      ctx.table_next_row();
+//
+//      // Thanks to the lack of callbacks, we can use a primitive
+//      // if condition here, as well as in any potential C code.
+//      if ctx.button("button", "Click me!", ButtonStyle::default())
+//        state.counter += 1;
+//
+//      // Similarly, formatting and showing labels is straightforward.
+//      // It's impossible to forget updating the label this way.
+//      ctx.label("label", format(ctx.arena, "Counter: {}", state.counter));
+//    }
+//    ctx.table_end();
+// }
+// ```
+
+import std.stdlib;
+import std.span : Span;
+import std.string : String;
+import std.vector;
+import std.flat_hash_map;
+import std.optional;
+import tui.screen : screen, color, attrs;
+import tui.arena : arena, scratch_allocator;
+import tui.wyhash : wyhash, wymix;
+import tui.buffer : textbuffer, cursor, selection, movement;
+import readline;
+
+pub struct point
+{
+  pub int x;
+  pub int y;
+
+  pub point(int x, int y)
+    : x(x), y(y)
+  {
+  }
+
+  pub fn <=>(point &lhs, point &rhs) -> int
+  {
+    return (lhs.y, lhs.x) <=> (rhs.y, rhs.x);
+  }
+
+  pub fn ==(point &lhs, point &rhs) -> bool = default;
+
+  pub point() = default;
+  pub point(point &) = default;
+  pub fn =(point mut &, point &) -> point mut & = default;
+  pub ~point() = default;
+}
+
+pub struct size
+{
+  pub int width;
+  pub int height;
+
+  pub size(int width, int height)
+    : width(width), height(height)
+  {
+  }
+
+  pub fn ==(size &, size &) -> bool = default;
+
+  pub size() = default;
+  pub size(size &) = default;
+  pub fn =(size mut &, size &) -> size mut & = default;
+  pub ~size() = default;
+}
+
+pub struct rect
+{
+  pub int left;
+  pub int top;
+  pub int right;
+  pub int bottom;
+
+  pub rect(int left, int top, int right, int bottom)
+    : left(left), top(top), right(right), bottom(bottom)
+  {
+  }
+
+  pub fn empty(this &) -> bool
+  {
+    return (this.left >= this.right) || (this.top >= this.bottom);
+  }
+
+  pub fn width(this &) -> int
+  {
+    return (this.right - this.left);
+  }
+
+  pub fn height(this &) -> int
+  {
+    return (this.bottom - this.top);
+  }
+
+  pub fn ==(rect &, rect &) -> bool = default;
+
+  pub rect() = default;
+  pub rect(rect &) = default;
+  pub fn =(rect mut &, rect &) -> rect mut & = default;
+  pub ~rect() = default;
+}
+
+pub fn contains(rect &rect, point &point) -> bool
+{
+  return (point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom);
+}
+
+pub fn intersection(rect &lhs, rect &rhs) -> rect
+{
+  var l = std::max(lhs.left, rhs.left);
+  var t = std::max(lhs.top, rhs.top);
+  var r = std::min(lhs.right, rhs.right);
+  var b = std::min(lhs.bottom, rhs.bottom);
+
+  return rect(l, t, std::max(l, r), std::max(t, b));
+}
+
+pub enum anchor
+{
+  last,   // The floater is attached relative to the node created last.
+  parent, // The floater is attached relative to the current node (= parent of new nodes).
+  root,   // The floater is attached relative to the root node (= usually the viewport).
+}
+
+pub enum list_selection
+{
+  unchanged, // The selection wasn't changed.
+  selected,  // The selection was changed to the current list item.
+  activated, // The selection was changed to the current list item
+}
+
+// Controls the position of a node relative to its parent.
+pub enum position
+{
+  stretch, // The child is stretched to fill the parent.
+  left,    // The child is positioned at the left edge of the parent.
+  center,  // The child is positioned at the center of the parent.
+  right,   // The child is positioned at the right edge of the parent.
+}
+
+// Controls the text overflow behavior of a label when the text doesn't fit the container.
+pub enum overflow
+{
+  clip,            // Text is simply cut off when it doesn't fit.
+  truncate_head,   // An ellipsis is shown at the end of the text.
+  truncate_middle, // An ellipsis is shown in the middle of the text.
+  truncate_tail,   // An ellipsis is shown at the beginning of the text.
+}
+
+pub enum kb
+{
+  pub const none = readline::key_modifiers::none;
+  pub const shift = readline::key_modifiers::shift;
+  pub const ctrl = readline::key_modifiers::control;
+  pub const alt = readline::key_modifiers::alt;
+
+  pub const enter = 0x10;
+  pub const escape = 0x1b;
+  pub const left = 0x1c;
+  pub const up = 0x1e;
+  pub const right = 0x1d;
+  pub const down = 0x1f;
+  pub const back = 0x08;
+}
+
+pub struct shortcut
+{
+  pub u8 keycode;
+  pub readline::key_modifiers modifiers;
+
+  pub shortcut(char keycode)
+    : keycode(cast<u8>(keycode))
+  {
+  }
+
+  pub shortcut(readline::key_modifiers modifiers, char keycode)
+    : keycode(cast<u8>(keycode)), modifiers(modifiers)
+  {
+  }
+
+  pub shortcut() = default;
+  pub shortcut(shortcut &) = default;
+  pub fn =(shortcut mut &, shortcut &) -> shortcut mut & = default;
+  pub ~shortcut() = default;
+}
+
+pub const fn shortcut(#std::string_literal sequence) -> shortcut
+{
+  var shortcut = shortcut();
+
+  if (sequence.starts_with("Ctrl+"))
+    shortcut.modifiers |= kb::ctrl;
+
+  if (sequence.starts_with("Ctrl+Shift+"))
+    shortcut.modifiers |= kb::shift;
+
+  if (sequence.starts_with("Shift+"))
+    shortcut.modifiers |= kb::shift;
+
+  if (sequence.starts_with("Alt+"))
+    shortcut.modifiers |= kb::alt;
+
+  if (sequence.len != 0)
+    shortcut.keycode = sequence[sequence.len - 1];
+
+  return shortcut;
+}
+
+// Clipboard facilities for the editor.
+pub struct clipboard
+{
+  pub std::string data;
+  pub bool wants_host_sync;
+
+  pub clipboard() = default;
+  pub clipboard(clipboard &) = default;
+  pub fn =(clipboard mut &, clipboard &) -> clipboard mut & = default;
+  pub ~clipboard() = default;
+}
+
+// Controls the style with which a button label renders
+pub struct button_style
+{
+  std::optional<char> accelerator;
+  std::optional<bool> checked;
+  bool bracketed;
+
+  pub fn default() -> button_style
+  {
+    return button_style(std::optional<char>(), std::optional<bool>(), true);
+  }
+
+  // Draw an accelerator label: `[_E_xample button]` or `[Example button(X)]`
+  pub fn accelerator(this &, char char) -> button_style
+  {
+    return button_style(std::optional(char), this.checked, this.bracketed);
+  }
+
+  // Draw a checkbox prefix: `[🗹 Example Button]`
+  pub fn checked(this &, bool checked) -> button_style
+  {
+    return button_style(this.accelerator, std::optional(checked), this.bracketed);
+  }
+
+  // Draw with or without brackets: `[Example Button]` or `Example Button`
+  pub fn bracketed(this &, bool bracketed) -> button_style
+  {
+    return button_style(this.accelerator, this.checked, bracketed);
+  }
+
+  button_style(std::optional<char> accelerator, std::optional<bool> checked, bool bracketed)
+    : accelerator(accelerator), checked(checked), bracketed(bracketed)
+  {
+  }
+
+  pub button_style() = default;
+  pub button_style(button_style &) = default;
+  pub fn =(button_style mut &, button_style &) -> button_style mut & = default;
+  pub ~button_style() = default;
+}
+
+pub struct document
+{
+  arena arena_prev;
+  arena arena_next;
+
+  tree tree;
+  node_map node_map;
+
+  pub u32 modal_default_bg;
+  pub u32 modal_default_fg;
+  pub u32 floater_default_bg;
+  pub u32 floater_default_fg;
+  pub u32 menubar_default_bg;
+  pub u32 menubar_default_fg;
+
+  pub clipboard clipboard;
+
+  size size;
+
+  std::vector<usize> focused_node_path;
+  usize focused_node_for_scrolling;
+
+  std::flat_hash_map<usize, textbuffer> cached_text_buffers;
+
+  i32 settling_have;
+  i32 settling_want;
+
+  pub fn size(this &) -> size
+  {
+    return this.size;
+  }
+
+  pub fn needs_settling(this &) -> bool
+  {
+    return this.settling_have <= this.settling_want;
+  }
+
+  fn needs_more_settling(this mut &) -> void
+  {
+    std::assert(this.settling_have < 15);
+
+    this.settling_want = this.settling_have + 1;
+  }
+
+  fn is_node_focused(this &, usize id) -> bool
+  {
+    return this.focused_node_path.back == id;
+  }
+
+  fn is_subtree_focused(this &, node *node) -> bool
+  {
+    return this.focused_node_path.get(node.depth) == node.id;
+  }
+
+  fn pop_focusable_node(this mut &, usize pop_minimum) -> bool
+  {
+    var len = 0;
+
+    for (var i = 0; i < std::max(this.focused_node_path.len, pop_minimum) - pop_minimum; ++i)
+    {
+      var id = this.focused_node_path[i];
+      var node = this.node_map.get(id);
+
+      if (!node)
+        break;
+
+      if (pop_minimum != 0 && node.attributes.focus_void)
+        break;
+
+      if (node.attributes.focusable)
+        len = i + 1;
+    }
+
+    if (len == this.focused_node_path.len)
+      return false;
+
+    this.focused_node_path.resize(len);
+
+    if (this.focused_node_path.empty)
+      clean_node_path(&mut this.focused_node_path);
+
+    return true;
+  }
+
+  // Scroll the focused node(s) into view inside scrollviews
+  fn scroll_to_focused(this mut &) -> bool
+  {
+    var focused_id = this.focused_node_path.back;
+    if (this.focused_node_for_scrolling == focused_id)
+      return false;
+
+    var node = this.node_map.get(focused_id);
+    if (!node)
+      return true;
+
+    var scroll_to = node.outer;
+
+    while (node.parent && !node.attributes.float)
+    {
+      if (node.content.is_scrollarea)
+      {
+        var mut &sc = node.content.scrollarea;
+
+        var off_y = std::max(sc.scroll_offset.y, 0);
+        var y = off_y;
+        y = std::min(y, scroll_to.top - node.inner.top + off_y);
+        y = std::max(y, scroll_to.bottom - node.inner.bottom + off_y);
+        sc.scroll_offset.y = y;
+        scroll_to = node.outer;
+      }
+
+      node = node.parent;
+    }
+
+    this.focused_node_for_scrolling = focused_id;
+
+    return true;
+  }
+
+  pub document() = default;
+  pub ~document() = default;
+}
+
+const ROOT_ID = 0x14057B7EF767814F; // Knuth's MMIX constant
+
+pub fn initialise(document mut &tui, int width, int height) -> i32
+{
+  if (var rc = initialise(&mut tui.arena_prev, 128*1024*1024); rc < 0)
+    return rc;
+
+  if (var rc = initialise(&mut tui.arena_next, 128*1024*1024); rc < 0)
+    return rc;
+
+  tui.size = size(width, height);
+
+  tui.modal_default_bg = 0xc63f3f3f;
+  tui.modal_default_fg = 0xffffffff;
+  tui.floater_default_bg = 0xc63f3f3f;
+  tui.floater_default_fg = 0xffffffff;
+  tui.menubar_default_bg = 0x5811317e;
+  tui.menubar_default_fg = 0xffffffff;
+
+  init(&mut tui.tree, &tui.arena_next);
+  build_node_map(&mut tui.node_map, &tui.arena_next, &mut tui.tree);
+
+  clean_node_path(&mut tui.focused_node_path);
+
+  return 0;
+}
+
+enum VisitControl
+{
+  Continue,
+  SkipChildren,
+  Stop,
+}
+
+struct tree
+{
+  node mut *tail;
+  node mut *root_first;
+  node mut *root_last;
+  node mut *last_node;
+  node mut *current_node;
+
+  usize count;
+  usize checksum;
+
+  fn alloc_node(arena mut *arena) -> node mut *
+  {
+    return new<node>(arena.allocate(sizeof<node>, alignof<node>))();
+  }
+
+  fn push_child(this mut &, node mut *node) -> void
+  {
+    var current_node = this.current_node;
+
+    node.parent = current_node;
+    node.stack_parent = current_node;
+
+    node.siblings.prev = current_node.children.last;
+    node.depth = current_node.depth + 1;
+
+    if (current_node.children.last)
+      current_node.children.last.siblings.next = node;
+
+    if (!current_node.children.first)
+      current_node.children.first = node;
+
+    current_node.children.last = node;
+    current_node.child_count += 1;
+
+    node.prev = this.tail;
+    this.tail.next = node;
+
+    this.tail = node;
+
+    this.last_node = node;
+    this.current_node = node;
+    this.count += 1;
+
+    this.checksum = wymix(this.checksum, node.id);
+  }
+
+  // Removes the current node from its parent and appends it as a new root.
+  fn move_node_to_root(this mut &, node mut *node, node mut *anchor) -> void
+  {
+    if (!node.parent)
+      return;
+
+    if (node.siblings.prev)
+      node.siblings.prev.siblings.next = node.siblings.next;
+
+    if (node.siblings.next)
+      node.siblings.next.siblings.prev = node.siblings.prev;
+
+    if (node.parent.children.first == node)
+      node.parent.children.first = node.siblings.next;
+
+    if (node.parent.children.last == node)
+      node.parent.children.last = node.siblings.prev;
+
+    node.parent.child_count -= 1;
+
+    node.parent = anchor;
+    node.depth = (anchor) ? anchor.depth + 1 : 0;
+    node.siblings.prev = this.root_last;
+    node.siblings.next = null;
+
+    this.root_last.siblings.next = node;
+    this.root_last = node;
+  }
+
+  fn pop_stack(this mut &) -> void
+  {
+    var current_node = this.current_node;
+
+    if (current_node.stack_parent)
+    {
+      this.last_node = current_node;
+      this.current_node = current_node.stack_parent;
+    }
+  }
+
+  tree() = default;
+  tree(tree &) = default;
+  fn =(tree mut &, tree &) -> tree mut & = default;
+  ~tree() = default;
+}
+
+fn init(tree mut &tree, arena mut *arena) -> void
+{
+  var root = tree::alloc_node(arena);
+
+  root.id = ROOT_ID;
+  root.classname = "root";
+  root.attributes.focusable = true;
+  root.attributes.focus_well = true;
+
+  tree.tail = root;
+  tree.root_first = root;
+  tree.root_last = root;
+  tree.last_node = root;
+  tree.current_node = root;
+  tree.count = 1;
+  tree.checksum = ROOT_ID;
+}
+
+// Visits all nodes under and including `root` in depth order.
+fn visit<Fn>(node mut *root, node mut *start, bool forward, Fn &&cb) -> void
+{
+  var root_depth = root.depth;
+  var node = start;
+
+  for (;;)
+  {
+    switch (cb(node))
+    {
+      case VisitControl::Continue:
+        if (var next = (forward) ? node.children.first : node.children.last)
+        {
+          node = next;
+          continue;
+        }
+
+      case VisitControl::SkipChildren:
+        ;
+
+      case VisitControl::Stop:
+        return;
+    }
+
+    for (;;)
+    {
+      if (node.depth <= root_depth)
+      {
+        if (var next = (forward) ? node.children.first : node.children.last)
+          node = next;
+
+        break;
+      }
+
+      if (var next = (forward) ? node.siblings.next : node.siblings.prev)
+      {
+        node = next;
+        break;
+      }
+
+      node = node.parent;
+    }
+
+    if (node == start)
+      break;
+  }
+}
+
+struct node
+{
+  node mut *prev;
+  node mut *next;
+  node mut *stack_parent;
+
+  usize id;
+  std::string_literal classname;
+  node mut *parent;
+  usize depth;
+  node_siblings siblings;
+  node_children children;
+  usize child_count;
+
+  node_attributes attributes;
+  node_content content;
+
+  size intrinsic_size;
+  bool intrinsic_size_set;
+  rect outer;
+  rect inner;
+  rect outer_clipped;
+  rect inner_clipped;
+
+  node() = default;
+}
+
+struct node_siblings
+{
+  node mut *prev;
+  node mut *next;
+
+  node_siblings() = default;
+}
+
+struct node_children
+{
+  node mut *first;
+  node mut *last;
+
+  node_children() = default;
+}
+
+struct node_attributes
+{
+  position position;
+  rect padding;
+  u32 bg;
+  u32 fg;
+  bool float;
+  f32 gravity_x;
+  f32 gravity_y;
+  f32 offset_x;
+  f32 offset_y;
+  anchor anchor;
+  bool reverse;
+  bool bordered;
+  bool focusable;
+  bool focus_well;
+  bool focus_void;
+
+  node_attributes() = default;
+}
+
+union node_content
+{
+  list(list_content),
+  modal(modal_content),
+  table(table_content),
+  text(text_content),
+  textarea(textarea_content),
+  scrollarea(scrollarea_content),
+
+  fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  fn is_list(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::list;
+  }
+
+  fn is_modal(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::modal;
+  }
+
+  fn is_table(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::table;
+  }
+
+  fn is_text(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::text;
+  }
+
+  fn is_textarea(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::textarea;
+  }
+
+  fn is_scrollarea(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::scrollarea;
+  }
+
+  node_content() = default;
+}
+
+struct list_content
+{
+  usize selected;
+  node mut *selected_node;
+
+  list_content(arena mut *allocator)
+  {
+  }
+}
+
+struct modal_content
+{
+  std::string<Allocator: arena mut *> title;
+
+  modal_content(arena mut *allocator)
+    : title(allocator)
+  {
+  }
+}
+
+struct table_content
+{
+  std::vector<int, Allocator: arena mut *> columns;
+  size cell_gap;
+
+  table_content(arena mut *allocator)
+    : columns(allocator)
+  {
+  }
+}
+
+struct text_content
+{
+  std::string<Allocator: arena mut *> text;
+  std::vector<styled_text_chunk, Allocator: arena mut *> chunks;
+  overflow overflow;
+
+  text_content(arena mut *allocator)
+    : text(allocator), chunks(allocator)
+  {
+  }
+}
+
+struct textarea_content
+{
+  textbuffer mut *buffer;
+
+  point scroll_offset;
+  int preferred_column;
+
+  bool multi_line;
+  bool has_focus;
+
+  bool last_word_wrap;
+  point last_cursor_logical;
+  bool make_cursor_visible;
+
+  textarea_content(arena mut *allocator)
+  {
+  }
+}
+
+struct scrollarea_content
+{
+  bool scrolled;
+  point scroll_offset;
+
+  scrollarea_content(arena mut *allocator)
+  {
+  }
+}
+
+struct styled_text_chunk
+{
+  usize offset;
+  attrs attrs;
+
+  styled_text_chunk() = default;
+  styled_text_chunk(styled_text_chunk &&) = default;
+  ~styled_text_chunk() = default;
+}
+
+struct node_map
+{
+  node mut * mut *slots;
+  usize shift;
+  usize mask;
+
+  fn get(this &&, usize id)
+  {
+    var shift = this.shift;
+    var mask = this.mask;
+    var slot = id >> shift;
+
+    for (;;)
+    {
+      if (var node = *(this.slots + slot); !node || node.id == id)
+        return node;
+
+      slot = (slot + 1) & mask;
+    }
+  }
+
+  node_map() = default;
+  ~node_map() = default;
+}
+
+fn build_node_map(node_map mut &map, arena mut *arena, tree mut &tree) -> void
+{
+  var width = std::floor_log2(4 * tree.count + 1);
+  var size = 1 << width;
+  var shift = 64 - width;
+  var mask = size - 1;
+
+  var slots = cast<node mut * mut *>(arena.allocate(size * sizeof<node*>, alignof<node*>));
+  std::memset(slots, 0, size * sizeof<node*>);
+
+  for (var node = tree.root_first; node; node = node.next)
+  {
+    var slot = node.id >> shift;
+
+    while (*(slots + slot))
+      slot = (slot + 1) & mask;
+
+    *(slots + slot) = node;
+  }
+
+  map.slots = slots;
+  map.shift = shift;
+  map.mask = mask;
+}
+
+pub struct context
+{
+  document mut &tui;
+
+  readline::key_code input_keyboard_key;
+  readline::key_state input_keyboard_state;
+  readline::key_modifiers input_keyboard_modifiers;
+  bool input_available;
+
+  tree tree;
+  node mut *last_modal;
+  node mut *focused_node;
+  usize next_block_id_mixin;
+  bool needs_settling;
+
+  pub fn arena(this mut &) -> arena mut *
+  {
+    return &this.tui.arena_next;
+  }
+
+  pub fn clipboard(this mut &) -> clipboard mut &
+  {
+    return &this.tui.clipboard;
+  }
+
+  pub fn size(this &) -> size
+  {
+    return this.tui.size;
+  }
+
+  pub fn needs_rerender(this mut &) -> void
+  {
+    std::assert(this.tui.settling_have < 15);
+
+    this.needs_settling = true;
+  }
+
+  // Begins a generic UI block (container) with a unique ID derived from the given `classname`.
+  pub fn block_begin(this mut &, std::string_literal classname) -> void
+  {
+    var parent = this.tree.current_node;
+
+    var id = wyhash(parent.id, classname);
+
+    if (this.next_block_id_mixin != 0)
+    {
+      id = wyhash(id, this.next_block_id_mixin);
+      this.next_block_id_mixin = 0;
+    }
+
+    var node = tree::alloc_node(this.arena);
+
+    node.id = id;
+    node.classname = classname;
+
+    this.tree.push_child(node);
+  }
+
+  // Ends the current UI block, returning to its parent container.
+  pub fn block_end(this mut &) -> void
+  {
+    this.tree.pop_stack();
+    this.block_end_move_focus();
+  }
+
+  fn block_end_move_focus(this mut &) -> void
+  {
+    var focus_well = this.tree.last_node;
+
+    if (this.is_focused)
+      this.focused_node = focus_well;
+
+    if (!this.focused_node)
+      return;
+
+    if (!focus_well.attributes.focus_well || focus_well.depth > this.focused_node.depth)
+      return;
+
+    if (this.input_available)
+    {
+      switch (this.input_keyboard_key)
+      {
+        case tab:
+          var forward = !(this.input_keyboard_modifiers & kb::shift);
+          var focused_start = this.focused_node;
+          var focused_next = this.focused_node;
+
+          for (;;)
+          {
+            if (focused_start == focus_well)
+            {
+              focused_start = this.focused_node;
+              break;
+            }
+
+            focused_start = focused_start.parent;
+
+            if (focused_start.attributes.focus_void)
+              break;
+          }
+
+          visit(focus_well, focused_start, forward, |node| {
+            if (node.attributes.focusable && node != focused_start)
+            {
+              focused_next = node;
+              return VisitControl::Stop;
+            }
+            else if (node.attributes.focus_void)
+            {
+              return VisitControl::SkipChildren;
+            }
+            else
+            {
+              return VisitControl::Continue;
+            }
+          });
+
+          if (focused_next == focused_start)
+            return;
+
+          build_node_path(&mut this.tui.focused_node_path, focused_next);
+
+          this.set_input_consumed();
+          this.needs_rerender();
+      }
+    }
+  }
+
+  // Mixes in an extra value to the next UI block's ID for uniqueness.
+  // Use this when you build a list of items with the same classname.
+  pub fn next_block_id_mixin(this mut &, usize id) -> void
+  {
+    this.next_block_id_mixin = id;
+  }
+
+  fn attr_focusable(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.focusable = true;
+  }
+
+  // If this is the first time the current node is being drawn,
+  // it'll steal the active focus.
+  pub fn focus_on_first_present(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.focusable = true;
+
+    if (!this.tui.node_map.get(last_node.id))
+      this.steal_focus();
+  }
+
+  // Steals the focus unconditionally.
+  pub fn steal_focus(this mut &) -> void
+  {
+    this.steal_focus_for(this.tree.last_node);
+
+    if (this.tree.current_node.content.is_list && this.tree.last_node != this.tree.current_node)
+    {
+      var container = this.tree.current_node;
+
+      container.content.list.selected = this.tree.last_node.id;
+      container.content.list.selected_node = this.tree.last_node;
+    }
+  }
+
+  fn steal_focus_for(this mut &, node mut *node) -> void
+  {
+    if (!this.tui.is_node_focused(node.id))
+    {
+      build_node_path(&mut this.tui.focused_node_path, node);
+      this.needs_rerender();
+    }
+  }
+
+  // If the current node owns the focus, it'll be given to the parent.
+  pub fn toss_focus_up(this mut &) -> void
+  {
+    if (this.tui.pop_focusable_node(1))
+      this.needs_rerender();
+  }
+
+  // If the parent node owns the focus, it'll be given to the current node.
+  pub fn inherit_focus(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    if (!last_node.parent)
+      return;
+
+    last_node.attributes.focusable = true;
+    last_node.parent.attributes.focusable = true;
+
+    if (this.tui.is_node_focused(last_node.parent.id))
+    {
+      this.tui.focused_node_path.push_back(last_node.id);
+      this.needs_rerender();
+    }
+  }
+
+  // Causes keyboard focus to be unable to escape this node and its children.
+  pub fn attr_focus_well(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.focus_well = true;
+  }
+
+  // Explicitly sets the intrinsic size of the current node.
+  pub fn attr_intrinsic_size(this mut &, size size) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.intrinsic_size = size;
+    last_node.intrinsic_size_set = true;
+  }
+
+  // Turns the current node into a floating node, like a popup, modal or a tooltip.
+  pub fn attr_float(this mut &, anchor anchor, f32 gravity_x, f32 gravity_y, f32 offset_x, f32 offset_y) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    var anchored = last_node.parent;
+
+    switch (anchor)
+    {
+      case last:
+        if (last_node.siblings.prev)
+          anchored = last_node.siblings.prev;
+
+      case root:
+        anchored = null;
+    }
+
+    this.tree.move_node_to_root(last_node, anchored);
+
+    last_node.attributes.focus_well = true;
+    last_node.attributes.float = true;
+    last_node.attributes.gravity_x = std::clamp(gravity_x, 0.0, 1.0);
+    last_node.attributes.gravity_y = std::clamp(gravity_y, 0.0, 1.0);
+    last_node.attributes.offset_x = offset_x;
+    last_node.attributes.offset_y = offset_y;
+
+    last_node.attributes.bg = this.tui.floater_default_bg;
+    last_node.attributes.fg = this.tui.floater_default_fg;
+  }
+
+  // Gives the current node a border.
+  pub fn attr_border(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.bordered = true;
+  }
+
+  // Sets the current node's position inside the parent.
+  pub fn attr_position(this mut &, position align) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.position = align;
+  }
+
+  // Assigns padding to the current node.
+  pub fn attr_padding(this mut &, int left, int top, int right, int bottom) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.padding.left = std::max(left, 0);
+    last_node.attributes.padding.top = std::max(top, 0);
+    last_node.attributes.padding.right = std::max(right, 0);
+    last_node.attributes.padding.bottom = std::max(bottom, 0);
+  }
+
+  pub fn attr_padding(this mut &, rect &padding) -> void
+  {
+    this.attr_padding(padding.left, padding.top, padding.right, padding.bottom);
+  }
+
+  // Assigns a sRGB background color to the current node.
+  pub fn attr_background(this mut &, u32 bg) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.bg = bg;
+  }
+
+  // Assigns a background color to the current node.
+  pub fn attr_background(this mut &, color color) -> void
+  {
+    attr_background(&mut this, indexed(color));
+  }
+
+  // Assigns a sRGB foreground color to the current node.
+  pub fn attr_foreground(this mut &, u32 fg) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.fg = fg;
+  }
+
+  // Assigns a foreground color to the current node.
+  pub fn attr_foreground(this mut &, color color) -> void
+  {
+    attr_foreground(&mut this, indexed(color));
+  }
+
+  // Applies reverse-video to the current node:
+  pub fn attr_reverse(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.attributes.reverse = true;
+  }
+
+  pub fn input_available(this &) -> bool
+  {
+    return this.input_available;
+  }
+
+  // Checks if the current keyboard input matches the given shortcut,
+  // consumes it if it is and returns true in that case.
+  pub fn consume_shortcut(this mut &, shortcut shortcut) -> bool
+  {
+    if (this.input_available)
+    {
+      var consume = false;
+
+      if (this.input_keyboard_modifiers == cast(shortcut.modifiers))
+      {
+        switch (this.input_keyboard_key)
+        {
+          case sym[key]:
+            if (cast(std::to_lowercase(shortcut.keycode)) == key)
+              consume = true;
+
+          case enter:
+            if (shortcut.keycode == kb::enter)
+              consume = true;
+
+          case escape:
+            if (shortcut.keycode == kb::escape)
+              consume = true;
+
+          case left:
+            if (shortcut.keycode == kb::left)
+              consume = true;
+
+          case up:
+            if (shortcut.keycode == kb::up)
+              consume = true;
+
+          case right:
+            if (shortcut.keycode == kb::right)
+              consume = true;
+
+          case down:
+            if (shortcut.keycode == kb::down)
+              consume = true;
+
+          case backspace:
+            if (shortcut.keycode == kb::back)
+              consume = true;
+        }
+      }
+
+      if (consume)
+      {
+        this.set_input_consumed();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  pub fn consume_shortcut(this mut &, #std::string_literal sequence) -> bool
+  {
+    return consume_shortcut(&mut this, shortcut(sequence));
+  }
+
+  pub fn set_input_consumed(this mut &) -> void
+  {
+    this.input_available = false;
+  }
+
+  pub fn is_focused(this mut &) -> bool
+  {
+    return this.tui.is_node_focused(this.tree.last_node.id);
+  }
+
+  // Returns whether the current node's subtree is focused.
+  pub fn contains_focus(this mut &) -> bool
+  {
+    return this.tui.is_subtree_focused(this.tree.last_node);
+  }
+
+  // Begins a modal window
+  pub fn modal_begin(this mut &, std::string_literal classname, String &title) -> void
+  {
+    this.block_begin(classname);
+    this.attr_float(anchor::root, 0.5, 0.5, cast<f32>(this.tui.size.width) * 0.5, cast<f32>(this.tui.size.height) * 0.5);
+    this.attr_border();
+    this.attr_background(this.tui.modal_default_bg);
+    this.attr_foreground(this.tui.modal_default_fg);
+    this.attr_focus_well();
+    this.focus_on_first_present();
+
+    new<node_content>(&this.tree.last_node.content)(node_content::modal(this.arena));
+
+    if (!title.empty)
+      sprintf(&mut this.tree.last_node.content.modal.title, " {} ", title);
+
+    this.last_modal = this.tree.last_node;
+  }
+
+  // Ends the current modal window block.
+  // Returns true if the user pressed Escape (a request to close).
+  pub fn modal_end(this mut &) -> bool
+  {
+    this.block_end();
+
+    if (this.input_available && this.contains_focus)
+    {
+      if (this.consume_shortcut(shortcut(kb::escape)))
+        return true;
+
+      this.set_input_consumed();
+    }
+
+    return false;
+  }
+
+  // Begins a table block.
+  // Tables are the primary way to create a grid layout,
+  // and to layout controls on a single row (= a table with 1 row).
+  pub fn table_begin(this mut &, std::string_literal classname) -> void
+  {
+    this.block_begin(classname);
+
+    new<node_content>(&this.tree.last_node.content)(node_content::table(this.arena));
+  }
+
+  // Assigns widths to the columns of the current table.
+  // By default, the table will left-align all columns.
+  pub fn table_columns(this mut &, Span<int> &columns) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.content.table.columns.append(columns);
+  }
+
+  // Assigns the gap between cells in the current table.
+  pub fn table_cell_gap(this mut &, size &cell_gap) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.content.table.cell_gap = cell_gap;
+  }
+
+  // Starts the next row in the current table.
+  pub fn table_next_row(this mut &) -> void
+  {
+    var current_node = this.tree.current_node;
+
+    if (!current_node.content.is_table)
+    {
+      if (!current_node.parent)
+        return;
+
+      this.block_end();
+      this.table_end_row();
+
+      this.next_block_id_mixin = current_node.parent.child_count;
+    }
+
+    this.block_begin("row");
+  }
+
+  fn table_end_row(this mut &) -> void
+  {
+    this.table_move_focus(readline::key_code::left, readline::key_code::right);
+  }
+
+  // Ends the current table block.
+  pub fn table_end(this mut &) -> void
+  {
+    var current_node = this.tree.current_node;
+
+    if (!current_node.content.is_table)
+    {
+      this.block_end();
+      this.table_end_row();
+    }
+
+    this.block_end();
+    this.table_move_focus(readline::key_code::up, readline::key_code::down);
+  }
+
+  fn table_move_focus(this mut &, readline::key_code prev_key, readline::key_code next_key) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    if (this.input_available && this.contains_focus)
+    {
+      if (this.input_keyboard_key != prev_key && this.input_keyboard_key != next_key)
+        return;
+
+      var forward = (this.input_keyboard_key == next_key);
+      var focused_id = this.tui.focused_node_path.get(last_node.depth + 1);
+      var focused_next = null<node mut *>();
+
+      for (var cell = last_node.children.first; cell; cell = cell.siblings.next)
+      {
+        if (cell.id == focused_id)
+        {
+          visit(last_node, cell, forward, |node| {
+            if (node.attributes.focusable && node != cell)
+            {
+              focused_next = node;
+              return VisitControl::Stop;
+            }
+            else
+            {
+              return VisitControl::SkipChildren;
+            }
+          });
+
+          break;
+        }
+      }
+
+      if (!focused_next)
+        return;
+
+      build_node_path(&mut this.tui.focused_node_path, focused_next);
+      this.set_input_consumed();
+      this.needs_rerender();
+    }
+  }
+
+  // Creates a simple text label.
+  pub fn label(this mut &, std::string_literal classname, String &&text) -> void
+  {
+    this.styled_label_begin(classname);
+    this.styled_label_text(&&text);
+    this.styled_label_end();
+  }
+
+  // Creates a styled text label.
+  //
+  // # Example
+  // ```
+  // use edit::framebuffer::IndexedColor;
+  // use edit::tui::Context;
+  //
+  // fn draw(ctx: &mut Context) {
+  //     ctx.styled_label_begin("label");
+  //     // Shows "Hello" in the inherited foreground color.
+  //     ctx.styled_label_text("Hello");
+  //     // Shows ", World!" next to "Hello" in red.
+  //     ctx.styled_label_foreground(ctx.indexed(IndexedColor::Red));
+  //     ctx.styled_label_text(", World!");
+  //     ctx.styled_label_end();
+  // }
+  // ```
+  pub fn styled_label_begin(this mut &, std::string_literal classname) -> void
+  {
+    this.block_begin(classname);
+
+    new<node_content>(&this.tree.last_node.content)(node_content::text(this.arena));
+  }
+
+  // Changes the active pencil color of the current label.
+  pub fn styled_label_foreground(this mut &, u32 fg) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    var chunk = styled_text_chunk();
+    if (!last_node.content.text.chunks.empty)
+      chunk.attrs = last_node.content.text.chunks.back.attrs;
+
+    chunk.offset = last_node.content.text.text.len;
+    chunk.attrs.foreground_color = fg;
+
+    last_node.content.text.chunks.push_back(chunk);
+  }
+
+  // Changes the active pencil color of the current label.
+  pub fn styled_label_foreground(this mut &, color fg) -> void
+  {
+    styled_label_foreground(&mut this, indexed(fg));
+  }
+
+  // Changes the active pencil attributes of the current label.
+  pub fn styled_label_attributes(this mut &, u32 flags) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    var chunk = styled_text_chunk();
+    if (!last_node.content.text.chunks.empty)
+      chunk.attrs = last_node.content.text.chunks.back.attrs;
+
+    chunk.offset = last_node.content.text.text.len;
+    chunk.attrs.flags = flags;
+
+    last_node.content.text.chunks.push_back(chunk);
+  }
+
+  // Adds text to the current label.
+  pub fn styled_label_text(this mut &, String &&text) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    if (last_node.content.text.text.empty)
+      last_node.content.text.text = &&text;
+    else
+      last_node.content.text.text += text;
+  }
+
+  // Ends the current label block.
+  pub fn styled_label_end(this mut &) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.intrinsic_size.width = screen::metrics(last_node.content.text.text).width;
+    last_node.intrinsic_size.height = 1;
+    last_node.intrinsic_size_set = true;
+
+    this.block_end();
+  }
+
+  // Sets the overflow behavior of the current label.
+  pub fn attr_overflow(this mut &, overflow overflow) -> void
+  {
+    var last_node = this.tree.last_node;
+
+    last_node.content.text.overflow = overflow;
+  }
+
+  // Creates a button with the given text.
+  // Returns true if the button was activated.
+  pub fn button(this mut &, std::string_literal classname, String &&text, button_style style) -> bool
+  {
+    this.button_label(classname, &&text, style);
+
+    this.attr_focusable();
+    if (this.is_focused)
+      this.attr_reverse();
+
+    return this.button_activated();
+  }
+
+  // Creates a checkbox with the given text.
+  // Returns true if the checkbox was activated.
+  pub fn checkbox(this mut &, std::string_literal classname, String &&text, bool mut &checked) -> bool
+  {
+    this.styled_label_begin(classname);
+
+    this.attr_focusable();
+    if (this.is_focused)
+      this.attr_reverse();
+
+    this.styled_label_text((checked) ? "[🗹 " : "[☐ ");
+    this.styled_label_text(text);
+    this.styled_label_text("]");
+    this.styled_label_end();
+
+    if (this.button_activated())
+    {
+      checked = !checked;
+
+      return true;
+    }
+
+    return false;
+  }
+
+  fn button_activated(this mut &) -> bool
+  {
+    if (this.input_available && this.is_focused)
+    {
+      switch (this.input_keyboard_key)
+      {
+        case enter:
+          this.set_input_consumed();
+          return true;
+
+        case sym[sym]:
+          if (sym == ' ')
+          {
+            this.set_input_consumed();
+            return true;
+          }
+      }
+    }
+
+    return false;
+  }
+
+  // Creates a text input field.
+  // Returns true if the text contents changed.
+  pub fn lineedit(this mut &, std::string_literal classname, String mut &text) -> bool
+  {
+    this.block_begin(classname);
+    this.block_end();
+
+    new<node_content>(&this.tree.last_node.content)(node_content::textarea(this.arena));
+
+    var container = this.tree.last_node;
+
+    var j = this.tui.cached_text_buffers.find(container.id);
+
+    if (j == this.tui.cached_text_buffers.end)
+    {
+      j = this.tui.cached_text_buffers.insert(container.id, textbuffer()).0;
+    }
+
+    var mut &tb = this.tui.cached_text_buffers[j].value;
+
+    if (!compare(tb, text))
+    {
+      tb.load_from(text);
+      tb.select_all();
+    }
+
+    if (this.textarea_internal(&mut tb))
+    {
+      tb.save_into(&mut text);
+      tb.mark_as_clean();
+
+      return true;
+    }
+
+    return false;
+  }
+
+  // Creates a text area.
+  #[lifetime(assign(this, depend(text)))]
+  pub fn textarea(this mut &, std::string_literal classname, textbuffer mut &text) -> void
+  {
+    this.block_begin(classname);
+    this.block_end();
+
+    new<node_content>(&this.tree.last_node.content)(node_content::textarea(this.arena));
+
+    this.textarea_internal(&mut text, multi_line: true);
+  }
+
+  fn textarea_internal(this mut &, textbuffer mut &tb, bool multi_line = false) -> bool
+  { 
+    var container = this.tree.last_node;
+    var mut &textarea = container.content.textarea;
+
+    textarea.buffer = &tb;
+    textarea.multi_line = multi_line;
+    textarea.has_focus = this.tui.is_node_focused(container.id);
+
+    if (var prev_container = this.tui.node_map.get(container.id))
+    {
+      var mut &prev_content = prev_container.content.textarea;
+
+      textarea.scroll_offset = prev_content.scroll_offset;
+      textarea.preferred_column = prev_content.preferred_column;
+
+      var text_width = prev_container.inner.width;
+      if (multi_line)
+        text_width -= 1;
+
+      if (tb.width != text_width)
+        textarea.make_cursor_visible = true;
+
+      if (tb.is_word_wrap_enabled != prev_content.last_word_wrap)
+        textarea.make_cursor_visible = true;
+
+      if (tb.cursor_logical_position != prev_content.last_cursor_logical)
+        textarea.make_cursor_visible = true;
+
+      if (tb.width != text_width)
+        tb.set_width(text_width);
+
+      if (this.input_available && textarea.has_focus)
+      {
+        this.textarea_handle_input(&mut textarea, prev_container);
+      }
+
+      if (textarea.make_cursor_visible)
+      {
+        this.textarea_make_cursor_visible(&mut textarea, prev_container);
+      }
+
+      textarea.last_word_wrap = tb.is_word_wrap_enabled;
+      textarea.last_cursor_logical = tb.cursor_logical_position;
+    }
+
+    this.textarea_adjust_scroll_offset(&mut textarea);
+
+    if (!multi_line)
+    {
+      container.attributes.fg = indexed(color::foreground);
+      container.attributes.bg = indexed(color::background);
+
+      if (!textarea.has_focus)
+      {
+        container.attributes.fg = indexed(color::bright_white);
+        container.attributes.bg = indexed_alpha(color::background, 1, 2);
+      }
+    }
+
+    container.attributes.focusable = true;
+    container.intrinsic_size.height = tb.visual_line_count;
+    container.intrinsic_size_set = true;
+
+    return tb.is_dirty();
+  }
+
+  fn textarea_handle_input(this mut &, textarea_content mut &textarea, node mut *prev_container) -> void
+  {
+    var tb = textarea.buffer;
+    var make_cursor_visible = true;
+    var change_preferred_column = false;
+
+    var modifiers = this.input_keyboard_modifiers;
+
+    switch (this.input_keyboard_key)
+    {
+      case backspace:
+        var granularity = (modifiers & kb::ctrl) ? movement::word : movement::grapheme;
+
+        tb.delete(granularity, -1);
+
+        change_preferred_column = true;
+
+      case delete:
+        var granularity = (modifiers & kb::ctrl) ? movement::word : movement::grapheme;
+
+        tb.delete(granularity, +1);
+
+        change_preferred_column = true;
+
+      case tab:
+        if (!textarea.multi_line)
+          return;
+
+        tb.indent((modifiers == kb::shift) ? -1 : +1);
+
+        change_preferred_column = true;
+
+      case enter:
+        if (!textarea.multi_line)
+          return;
+
+        tb.insert("\n");
+
+        change_preferred_column = true;
+
+      case escape:
+        if (!tb.has_selection)
+        {
+          if (!textarea.multi_line)
+            return;
+
+          make_cursor_visible = false;
+        }
+
+        tb.clear_selection();
+
+      case page_up:
+        var x = textarea.preferred_column;
+        var y = tb.cursor_visual_position.y - (prev_container.inner.height - 1);
+
+        if (y < 0)
+        {
+          x = 0;
+          change_preferred_column = true;
+        }
+
+        if (modifiers & kb::shift)
+          tb.selection_update_visual(point(x, y));
+        else
+          tb.cursor_move_to_visual(point(x, y));
+
+      case page_down:
+        var x = textarea.preferred_column;
+        var y = tb.cursor_visual_position.y + (prev_container.inner.height - 1);
+
+        if (y >= tb.visual_line_count)
+        {
+          x = (1 << 30);
+          change_preferred_column = true;
+        }
+
+        if (modifiers & kb::shift)
+          tb.selection_update_visual(point(x, y));
+        else
+          tb.cursor_move_to_visual(point(x, y));
+
+      case home:
+        var position = tb.cursor_logical_position;
+        var destination = point(0, (modifiers & kb::ctrl) ? 0 : tb.cursor_visual_position.y);
+
+        if (modifiers & kb::shift)
+          tb.selection_update_visual(destination);
+        else
+          tb.cursor_move_to_visual(destination);
+
+        if (!(modifiers & kb::ctrl))
+        {
+          if (tb.is_word_wrap_enabled && tb.cursor_logical_position == position)
+          {
+            destination.y = tb.cursor_logical_position.y;
+
+            if (modifiers & kb::shift)
+              tb.selection_update_logical(destination);
+            else
+              tb.cursor_move_to_logical(destination);
+          }
+
+          if (tb.cursor_logical_position.x == 0)
+          {
+            var indent = tb.indent_logical_position;
+
+            if (position > indent || position.x == 0)
+            {
+              if (modifiers & kb::shift)
+                tb.selection_update_logical(indent);
+              else
+                tb.cursor_move_to_logical(indent);
+            }
+          }
+        }
+
+        change_preferred_column = true;
+
+      case end:
+        var position = tb.cursor_logical_position;
+        var destination = point(1 << 30, (modifiers & kb::ctrl) ? 1 << 30 : tb.cursor_visual_position.y);
+
+        if (modifiers & kb::shift)
+          tb.selection_update_visual(destination);
+        else
+          tb.cursor_move_to_visual(destination);
+
+        if (!(modifiers & kb::ctrl))
+        {
+          if (tb.is_word_wrap_enabled && tb.cursor_logical_position == position)
+          {
+            destination.y = tb.cursor_logical_position.y;
+
+            if (modifiers & kb::shift)
+              tb.selection_update_logical(destination);
+            else
+              tb.cursor_move_to_logical(destination);
+          }
+        }
+
+        change_preferred_column = true;
+
+      case left:
+        var granularity = (modifiers & kb::ctrl) ? movement::word : movement::grapheme;
+
+        if (modifiers & kb::shift)
+          tb.selection_update_delta(granularity, -1);
+        else if (var range = tb.selection_range(); range.is_some)
+          tb.set_cursor(range?!.0);
+        else
+          tb.cursor_move_delta(granularity, -1);
+
+        change_preferred_column = true;
+
+      case right:
+        var granularity = (modifiers & kb::ctrl) ? movement::word : movement::grapheme;
+
+        if (modifiers & kb::shift)
+          tb.selection_update_delta(granularity, +1);
+        else if (var range = tb.selection_range(); range.is_some)
+          tb.set_cursor(range?!.1);
+        else
+          tb.cursor_move_delta(granularity, +1);
+
+        change_preferred_column = true;
+
+      case up:
+        if (!textarea.multi_line)
+          return;
+
+        switch (modifiers)
+        {
+          case kb::none:
+            var x = textarea.preferred_column;
+            var y = tb.cursor_visual_position.y - 1;
+
+            if (var range = tb.selection_range(); range.is_some)
+            {
+              x = range?!.0.visual.x;
+              y = range?!.0.visual.y - 1;
+              change_preferred_column = true;
+            }
+
+            if (y < 0)
+            {
+              x = 0;
+              change_preferred_column = true;
+            }
+
+            tb.cursor_move_to_visual(point(x, y));
+
+          case kb::ctrl:
+            textarea.scroll_offset.y -= 1;
+            make_cursor_visible = false;
+
+          case kb::shift:
+            var x = textarea.preferred_column;
+            var y = tb.cursor_visual_position.y - 1;
+
+            if (y < 0)
+            {
+              x = 0;
+              change_preferred_column = true;
+            }
+
+            tb.selection_update_visual(point(x, y));
+
+          case #(kb::ctrl | kb::shift):
+            tb.displace(-1);
+        }
+
+      case down:
+        if (!textarea.multi_line)
+          return;
+
+        switch (modifiers)
+        {
+          case kb::none:
+            var x = textarea.preferred_column;
+            var y = tb.cursor_visual_position.y + 1;
+
+            if (var range = tb.selection_range(); range.is_some)
+            {
+              x = range?!.1.visual.x;
+              y = range?!.1.visual.y + 1;
+              change_preferred_column = true;
+            }
+
+            if (y >= tb.visual_line_count)
+            {
+              x = (1 << 30);
+              change_preferred_column = true;
+            }
+
+            tb.cursor_move_to_visual(point(x, y));
+
+          case kb::ctrl:
+            textarea.scroll_offset.y += 1;
+            make_cursor_visible = false;
+
+          case kb::shift:
+            var x = textarea.preferred_column;
+            var y = tb.cursor_visual_position.y + 1;
+
+            if (y >= tb.visual_line_count)
+            {
+              x = (1 << 30);
+              change_preferred_column = true;
+            }
+
+            tb.selection_update_visual(point(x, y));
+
+          case #(kb::ctrl | kb::shift):
+            tb.displace(+1);
+        }
+
+      case insert:
+        tb.set_overtype(!tb.is_overtype);
+
+      case sym[sym]:
+        switch (modifiers)
+        {
+          case kb::none:
+          case kb::shift:
+            tb.insert(sym);
+
+          case kb::ctrl:
+            switch (sym)
+            {
+              case 'a':
+                tb.select_all();
+
+              case 'l':
+                tb.select_line();
+
+              case 'h':
+                tb.delete(movement::word, -1);
+
+              case 'x':
+                tb.cut(&mut this.tui.clipboard);
+
+              case 'c':
+                tb.copy(&mut this.tui.clipboard);
+
+              case 'v':
+                tb.paste(this.tui.clipboard);
+
+              case 'y':
+                tb.redo();
+
+              case 'z':
+                tb.undo();
+
+              else:
+                return;
+            }
+
+          case #(kb::ctrl | kb::shift):
+            switch (sym)
+            {
+              case 'z':
+                tb.redo();
+
+              else:
+                return;
+            }
+
+          else:
+            return;
+        }
+
+        change_preferred_column = true;
+
+      else:
+        return;
+    }
+
+    if (change_preferred_column)
+    {
+      textarea.preferred_column = tb.cursor_visual_position.x;
+    }
+
+    textarea.make_cursor_visible |= make_cursor_visible;
+
+    this.set_input_consumed();
+  }
+
+  fn textarea_make_cursor_visible(this mut &, textarea_content mut &textarea, node mut *prev_container) -> void
+  {
+    var tb = textarea.buffer;
+    var scroll_x = textarea.scroll_offset.x;
+    var scroll_y = textarea.scroll_offset.y;
+
+    var text_width = tb.text_width;
+    var cursor_x = tb.cursor_visual_position.x;
+    scroll_x = std::min(scroll_x, cursor_x - 10);
+    scroll_x = std::max(scroll_x, cursor_x - text_width + 10);
+
+    var viewport_height = prev_container.inner.height;
+    var cursor_y = tb.cursor_visual_position.y;
+    scroll_y = std::min(scroll_y, cursor_y);
+    scroll_y = std::max(scroll_y, cursor_y - viewport_height + 1);
+
+    textarea.scroll_offset.x = scroll_x;
+    textarea.scroll_offset.y = scroll_y;
+  }
+
+  fn textarea_adjust_scroll_offset(this mut &, textarea_content mut &textarea) -> void
+  {
+    var tb = textarea.buffer;
+    var scroll_x = textarea.scroll_offset.x;
+    var scroll_y = textarea.scroll_offset.y;
+
+    scroll_x = std::clamp(scroll_x, 0, tb.visual_width - 10);
+    scroll_y = std::clamp(scroll_y, 0, tb.visual_line_count - 1);
+
+    if (tb.is_word_wrap_enabled)
+      scroll_x = 0;
+
+    textarea.scroll_offset.x = scroll_x;
+    textarea.scroll_offset.y = scroll_y;
+  }
+
+  // Creates a scrollable area.
+  pub fn scrollarea_begin(this mut &, std::string_literal classname, size &intrinsic_size) -> void
+  {
+    this.block_begin(classname);
+
+    new<node_content>(&this.tree.last_node.content)(node_content::scrollarea(this.arena));
+
+    var container = this.tree.last_node;
+
+    if (intrinsic_size.width > 0 || intrinsic_size.height > 0)
+    {
+      container.intrinsic_size.width = std::max(intrinsic_size.width, 0);
+      container.intrinsic_size.height = std::max(intrinsic_size.height, 0);
+      container.intrinsic_size_set = true;
+    }
+
+    this.block_begin("content");
+    this.inherit_focus();
+
+    this.tree.last_node = container;
+  }
+
+  // Scrolls the current scrollable area to the given position.
+  pub fn scrollarea_scroll_to(this mut &, point &pos) -> void
+  {
+    var container = this.tree.last_node;
+
+    container.content.text.scroll_offset = pos;
+    container.content.text.scrolled = true;
+  }
+
+  // Ends the current scrollarea block.
+  pub fn scrollarea_end(this mut &) -> void
+  {
+    this.block_end(); // content block
+    this.block_end(); // outer container
+
+    var container = this.tree.last_node;
+    var mut &scrollarea = container.content.scrollarea;
+
+    if (var prev_container = this.tui.node_map.get(container.id))
+    {
+      var mut &prev_content = prev_container.content.scrollarea;
+
+      if (!scrollarea.scrolled)
+        scrollarea.scroll_offset = prev_content.scroll_offset;
+
+      if (this.input_available && this.tui.focused_node_path.get(container.depth) == container.id)
+      {
+        switch (this.input_keyboard_key)
+        {
+          case page_up:
+            scrollarea.scroll_offset.y -= prev_container.inner_clipped.height;
+            this.set_input_consumed();
+
+          case page_down:
+            scrollarea.scroll_offset.y += prev_container.inner_clipped.height;
+            this.set_input_consumed();
+
+          case end:
+            scrollarea.scroll_offset.y = (1 << 30);
+            this.set_input_consumed();
+
+          case home:
+            scrollarea.scroll_offset.y = 0;
+            this.set_input_consumed();
+        }
+      }
+    }
+  }
+
+  // Creates a list where exactly one item is selected.
+  pub fn list_begin(this mut &, std::string_literal classname) -> void
+  {
+    this.block_begin(classname);
+    this.attr_focusable();
+
+    new<node_content>(&this.tree.last_node.content)(node_content::list(this.arena));
+
+    var container = this.tree.last_node;
+
+    container.attributes.focus_void = true;
+
+    if (var prev_container = this.tui.node_map.get(container.id))
+    {
+      container.content.list.selected = prev_container.content.list.selected;
+    }
+  }
+
+  // Creates a list item with the given text.
+  pub fn list_item(this mut &, bool selected, String &text) -> list_selection
+  {
+    this.styled_list_item_begin();
+    this.styled_label_text(text);
+    return this.styled_list_item_end(selected);
+  }
+
+  // Creates a list item consisting of a styled label.
+  pub fn styled_list_item_begin(this mut &) -> void
+  {
+    var container = this.tree.current_node;
+    var idx = container.child_count;
+
+    this.next_block_id_mixin = idx;
+    this.styled_label_begin("item");
+    this.styled_label_text("  ");
+    this.attr_focusable();
+  }
+
+  // Ends the current styled list item.
+  pub fn styled_list_item_end(this mut &, bool selected) -> list_selection
+  {
+    this.styled_label_end();
+
+    var container = this.tree.current_node;
+
+    var item = this.tree.last_node;
+    var selected_before = (container.content.list.selected == item.id);
+    var focused = this.is_focused;
+
+    var selected_now = selected_before || (selected && container.content.list.selected == 0) || focused;
+
+    if (selected_now)
+    {
+      container.content.list.selected_node = item;
+
+      if (!selected_before)
+      {
+        container.content.list.selected = item.id;
+        this.needs_rerender();
+      }
+    }
+
+    if (this.input_available && focused && selected_before)
+    {
+      switch (this.input_keyboard_key)
+      {
+        case enter:
+          this.set_input_consumed();
+          return list_selection::activated;
+      }
+    }
+
+    if (selected_now && !selected_before)
+      return list_selection::selected;
+
+    return list_selection::unchanged;
+  }
+
+  // Ends the current list block.
+  pub fn list_end(this mut &) -> void
+  {
+    this.block_end();
+
+    var container = this.tree.last_node;
+
+    var contains_focus = this.tui.is_subtree_focused(container);
+    var selected_now = container.content.list.selected_node;
+    var selected_next = (selected_now) ? selected_now : container.children.first;
+
+    if (!selected_next)
+      return;
+
+    if (var prev_container = this.tui.node_map.get(container.id))
+    {
+      if (this.input_available && contains_focus)
+      {
+        switch (this.input_keyboard_key)
+        {
+          case page_up:
+            selected_next = selected_now;
+            for (var i = 0; i < prev_container.inner_clipped.height - 1; ++i)
+            {
+              if (!selected_next.siblings.prev)
+                break;
+
+              selected_next = selected_next.siblings.prev;
+            }
+            this.set_input_consumed();
+
+          case page_down:
+            selected_next = selected_now;
+            for (var i = 0; i < prev_container.inner_clipped.height - 1; ++i)
+            {
+              if (!selected_next.siblings.next)
+                break;
+
+              selected_next = selected_next.siblings.next;
+            }
+            this.set_input_consumed();
+
+          case end:
+            selected_next = container.children.last;
+            this.set_input_consumed();
+
+          case home:
+            selected_next = container.children.first;
+            this.set_input_consumed();
+
+          case up:
+            selected_next = (selected_now.siblings.prev) ? selected_now.siblings.prev : container.children.last;
+            this.set_input_consumed();
+
+          case down:
+            selected_next = (selected_now.siblings.next) ? selected_now.siblings.next : container.children.first;
+            this.set_input_consumed();
+        }
+      }
+    }
+
+    if (selected_now != selected_next)
+    {
+      container.content.list.selected_node = selected_next;
+    }
+
+    selected_next.content.text.text[0] = cast<u8>('>');
+
+    if (contains_focus)
+    {
+      selected_next.attributes.bg = indexed(color::green);
+      selected_next.attributes.fg = indexed(color::black);
+      this.steal_focus_for(selected_next);
+    }
+  }
+
+  // Creates a menubar, to be shown at the top of the screen.
+  pub fn menubar_begin(this mut &) -> void
+  {
+    this.table_begin("menubar");
+    this.attr_focus_well();
+    this.table_next_row();
+    this.attr_background(this.tui.menubar_default_bg);
+    this.attr_foreground(this.tui.menubar_default_fg);
+  }
+
+  // Appends a menu to the current menubar.
+  //
+  // Returns true if the menu is open. Continue appending items to it in that case.
+  pub fn menubar_menu_begin(this mut &, String &&text, char accelerator) -> bool
+  {
+    var mixin = this.tree.current_node.child_count;
+    this.next_block_id_mixin = mixin;
+
+    this.button_label("menu_button", &&text, button_style(std::optional(accelerator), std::optional<bool>(), false));
+    this.attr_focusable();
+    this.attr_padding(1, 0, 1, 0);
+
+    var contains_focus = this.contains_focus();
+    var keyboard_focus = !contains_focus && this.consume_shortcut(shortcut(kb::alt, accelerator));
+
+    if (contains_focus || keyboard_focus)
+    {
+      this.attr_background(this.tui.floater_default_bg);
+      this.attr_foreground(this.tui.floater_default_fg);
+
+      if (this.is_focused)
+      {
+        this.attr_background(color::green);
+        this.attr_foreground(color::black);
+      }
+
+      this.next_block_id_mixin = mixin;
+      this.table_begin("flyout");
+      this.attr_float(anchor::last, 0.0, 0.0, 0.0, 1.0);
+      this.attr_border();
+      this.attr_focus_well();
+
+      if (keyboard_focus)
+        this.steal_focus();
+
+      return true;
+    }
+
+    return false;
+  }
+
+  // Appends a button to the current menu.
+  pub fn menubar_menu_button(this mut &, String &&text, char accelerator, shortcut shortcut) -> bool
+  {
+    return this.menubar_menu_checkbox(&&text, false, accelerator, shortcut);
+  }
+
+  pub fn menubar_menu_button(this mut &, String &&text, char accelerator, #std::string_literal sequence = "") -> bool
+  {
+    return this.menubar_menu_checkbox(&&text, false, accelerator, shortcut(sequence));
+  }
+
+  // Appends a checkbox to the current menu.
+  // Returns true if the checkbox was activated.
+  pub fn menubar_menu_checkbox(this mut &, String &&text, bool checked, char accelerator, shortcut shortcut) -> bool
+  {
+    this.table_next_row();
+    this.attr_focusable();
+
+    // First menu item? Steal focus.
+    if (!this.tree.current_node.siblings.prev)
+      this.inherit_focus();
+
+    if (this.is_focused)
+    {
+      this.attr_background(color::green);
+      this.attr_foreground(color::black);
+    }
+
+    var activated = this.button_activated() || this.consume_shortcut(shortcut(accelerator));
+
+    this.button_label("menu_checkbox", &&text, button_style(std::optional(accelerator), std::optional(checked), false));
+    this.menubar_shortcut(shortcut);
+
+    if (activated)
+    {
+      clean_node_path(&mut this.tui.focused_node_path);
+      this.needs_rerender();
+    }
+
+    return activated;
+  }
+
+  pub fn menubar_menu_checkbox(this mut &, String &&text, bool checked, char accelerator, #std::string_literal sequence = "") -> bool
+  {
+    return this.menubar_menu_checkbox(&&text, checked, accelerator, shortcut(sequence));
+  }
+
+  // Ends the current menu.
+  pub fn menubar_menu_end(this mut &) -> void
+  {
+    this.table_end();
+
+    if (this.input_available)
+    {
+      var last_node = this.tree.last_node;
+
+      switch (this.input_keyboard_key)
+      {
+        case up:
+          if (this.tui.is_node_focused(last_node.parent.id) && last_node.children.last)
+          {
+            this.steal_focus_for(last_node.children.last);
+            this.set_input_consumed();
+          }
+
+        case down:
+          if (this.tui.is_node_focused(last_node.parent.id) && last_node.children.first)
+          {
+            this.steal_focus_for(last_node.children.first);
+            this.set_input_consumed();
+          }
+
+        case escape:
+          if (this.contains_focus)
+            this.tui.pop_focusable_node(1);
+      }
+    }
+  }
+
+  // Ends the current menubar.
+  pub fn menubar_end(this mut &) -> void
+  {
+    this.table_end();
+  }
+
+  // Renders a button label with an optional accelerator character
+  // May also renders a checkbox or square brackets for inline buttons
+  fn button_label(this mut &, std::string_literal classname, String &&text, button_style style) -> void
+  {
+    // Label prefix
+    this.styled_label_begin(classname);
+
+    if (style.bracketed)
+      this.styled_label_text("[");
+
+    if (style.checked)
+      this.styled_label_text((style.checked?!) ? "🗹 " : "  ");
+
+    // Label text
+    if (style.accelerator)
+    {
+      var accelerator = style.accelerator?!;
+
+      // Complex case:
+      // Locate the offset of the accelerator character in the label text
+      var off = text.len;
+      for (var i = 0; i < text.len; ++i)
+      {
+        if (text[i] == cast(accelerator)) {
+          off = i;
+          break;
+        }
+
+        if (text[i] & ~0x20 == cast(accelerator) && off == text.len)
+          off = i;
+      }
+
+      if (off < text.len)
+      {
+        // Add an underline to the accelerator.
+        this.styled_label_text(text[0 .. off]);
+        this.styled_label_attributes(attrs::underline);
+        this.styled_label_text(text[off .. off + 1]);
+        this.styled_label_attributes(attrs::none);
+        this.styled_label_text(text[off + 1 .. text.len]);
+      }
+      else
+      {
+        // Add the accelerator in parentheses and underline it.
+        var ch = cast<u8>(accelerator);
+        this.styled_label_text(text);
+        this.styled_label_text("(");
+        this.styled_label_attributes(attrs::underline);
+        this.styled_label_text(std::string_view(&ch, 1));
+        this.styled_label_attributes(attrs::none);
+        this.styled_label_text(")");
+      }
+    }
+    else
+    {
+      // Simple case:
+      // no accelerator character
+      this.styled_label_text(text);
+    }
+
+    // Label postfix
+    if (style.bracketed)
+      this.styled_label_text("]");
+
+    this.styled_label_end();
+  }
+
+  fn menubar_shortcut(this mut &, shortcut &shortcut) -> void
+  {
+    var shortcut_letter = cast<char>(shortcut.keycode);
+
+    if (std::is_uppercase(shortcut_letter))
+    {
+      var shortcut_text = std::string<Allocator: arena mut *>(this.arena);
+
+      if (shortcut.modifiers & kb::ctrl == kb::ctrl)
+        shortcut_text.append("Ctrl+");
+
+      if (shortcut.modifiers & kb::shift == kb::shift)
+        shortcut_text.append("Shift+");
+
+      if (shortcut.modifiers & kb::alt == kb::alt)
+        shortcut_text.append("Alt+");
+
+      shortcut_text.append(shortcut_letter);
+
+      this.label("shortcut", &shortcut_text);
+    }
+    else
+    {
+      this.block_begin("shortcut");
+      this.block_end();
+    }
+
+    this.attr_padding(2, 0, 2, 0);
+  }
+
+  pub context(document mut &tui)
+    : tui(&tui)
+  {
+  }
+
+  pub ~context()
+  {
+    tui.report_context_completion(&mut this);
+  }
+}
+
+fn clean_node_path(std::vector<usize> mut &path) -> void
+{
+  path.clear();
+  path.push_back(ROOT_ID);
+}
+
+fn build_node_path(std::vector<usize> mut &path, node *node) -> void
+{
+  path.clear();
+
+  for (; node; node = node.parent)
+    path.push_back(node.id);
+
+  std::reverse!(&mut path);
+}
+
+// Given an outer rectangle (including padding and borders) of this node,
+// this returns the inner rectangle (excluding padding and borders).
+fn outer_to_inner(node &node, rect &outer) -> rect
+{
+  var l = node.attributes.bordered;
+  var t = node.attributes.bordered;
+  var r = node.attributes.bordered || node.content.is_scrollarea;
+  var b = node.attributes.bordered;
+
+  var rect = outer;
+  rect.left += node.attributes.padding.left + cast(l);
+  rect.top += node.attributes.padding.top + cast(t);
+  rect.right -= node.attributes.padding.right + cast(r);
+  rect.bottom -= node.attributes.padding.bottom + cast(b);
+
+  return rect;
+}
+
+// Given an intrinsic size (excluding padding and borders) of this node,
+// this returns the outer size (including padding and borders).
+fn intrinsic_to_outer(node &node) -> size
+{
+  var l = node.attributes.bordered;
+  var t = node.attributes.bordered;
+  var r = node.attributes.bordered || node.content.is_scrollarea;
+  var b = node.attributes.bordered;
+
+  var size = node.intrinsic_size;
+  size.width += node.attributes.padding.left + node.attributes.padding.right + cast(l) + cast(r);
+  size.height += node.attributes.padding.top + node.attributes.padding.bottom + cast(t) + cast(b);
+
+  return size;
+}
+
+// Computes the intrinsic size of this node and its children.
+fn compute_intrinsic_size(node mut &node) -> void
+{
+  switch (node.content)
+  {
+    case table[table]:
+
+      for (var row = node.children.first; row; row = row.siblings.next)
+      {
+        var column = 0;
+        var row_height = 0;
+
+        for (var cell = row.children.first; cell; cell = cell.siblings.next)
+        {
+          cell.compute_intrinsic_size();
+
+          var size = cell.intrinsic_to_outer();
+
+          if (column == table.columns.len)
+            table.columns.push_back(0);
+
+          if (table.columns[column] < size.width)
+            table.columns[column] = size.width;
+
+          row_height = std::max(row_height, size.height);
+
+          column += 1;
+        }
+
+        row.intrinsic_size.height = row_height;
+      }
+
+      var total_gap_width = table.cell_gap.width * cast<int>(std::max(table.columns.len, 1) - 1);
+      var total_inner_width = table.columns.sum + total_gap_width;
+      var total_width = 0;
+      var total_height = 0;
+
+      for (var row = node.children.first; row; row = row.siblings.next)
+      {
+        row.intrinsic_size.width = total_inner_width;
+        row.intrinsic_size_set = true;
+
+        var size = row.intrinsic_to_outer();
+        total_width = std::max(total_width, size.width);
+        total_height += size.height;
+      }
+
+      var total_gap_height = table.cell_gap.height * cast<int>(std::max(node.child_count, 1) - 1);
+      total_height += total_gap_height;
+
+      if (!node.intrinsic_size_set)
+      {
+        node.intrinsic_size.width = total_width;
+        node.intrinsic_size.height = total_height;
+        node.intrinsic_size_set = true;
+      }
+
+    else:
+      var max_width = 0;
+      var total_height = 0;
+
+      for (var child = node.children.first; child; child = child.siblings.next)
+      {
+        child.compute_intrinsic_size();
+
+        var size = child.intrinsic_to_outer();
+        max_width = std::max(max_width, size.width);
+        total_height += size.height;
+      }
+
+      if (!node.intrinsic_size_set)
+      {
+        node.intrinsic_size.width = max_width;
+        node.intrinsic_size.height = total_height;
+        node.intrinsic_size_set = true;
+      }
+  }
+}
+
+// Lays out the children of this node.
+// The clip rect restricts "rendering" to a certain area (the viewport).
+fn layout_children(node mut &node, rect &clip) -> void
+{
+  if (node.child_count == 0 || node.inner.empty)
+    return;
+
+  switch (node.content)
+  {
+    case table[table]:
+      var y = node.inner.top;
+
+      for (var row = node.children.first; row; row = row.siblings.next)
+      {
+        var size = row.intrinsic_to_outer();
+        size.width = node.inner.width;
+
+        row.outer.left = node.inner.left;
+        row.outer.right = node.inner.left + size.width;
+        row.outer.top = y;
+        row.outer.bottom = y + size.height;
+        row.outer = intersection(row.outer, node.inner);
+        row.inner = row.outer_to_inner(row.outer);
+        row.outer_clipped = intersection(row.outer, clip);
+        row.inner_clipped = intersection(row.inner, clip);
+
+        var column = 0;
+        var row_height = 0;
+        var x = node.inner.left;
+
+        for (var cell = row.children.first; cell; cell = cell.siblings.next)
+        {
+          var size = cell.intrinsic_to_outer();
+          size.width = table.columns[column];
+
+          cell.outer.left = x;
+          cell.outer.top = y;
+          cell.outer.right = x + size.width;
+          cell.outer.bottom = y + size.height;
+          cell.outer = intersection(cell.outer, node.inner);
+          cell.inner = cell.outer_to_inner(cell.outer);
+          cell.outer_clipped = intersection(cell.outer, clip);
+          cell.inner_clipped = intersection(cell.inner, clip);
+
+          x += size.width + table.cell_gap.width;
+          row_height = std::max(row_height, size.height);
+
+          cell.layout_children(clip);
+
+          column += 1;
+        }
+
+        y += row_height + table.cell_gap.height;
+      }
+
+    case scrollarea[scrollarea]:
+      var child = node.children.first;
+
+      var sx = node.inner.width;
+      var sy = node.inner.height;
+      var cx = sx;
+      var cy = std::max(child.intrinsic_size.height, sy);
+      var ox = 0;
+      var oy = std::clamp(scrollarea.scroll_offset.y, 0, cy - sy);
+
+      scrollarea.scroll_offset.x = ox;
+      scrollarea.scroll_offset.y = oy;
+
+      child.outer.left = node.inner.left - ox;
+      child.outer.top = node.inner.top - oy;
+      child.outer.right = child.outer.left + cx;
+      child.outer.bottom = child.outer.top + cy;
+      child.inner = child.outer_to_inner(child.outer);
+      child.outer_clipped = intersection(child.outer, node.inner_clipped);
+      child.inner_clipped = intersection(child.inner, node.inner_clipped);
+
+      child.layout_children(child.inner_clipped);
+
+    else:
+      var y = node.inner.top;
+
+      for (var child = node.children.first; child; child = child.siblings.next)
+      {
+        var size = child.intrinsic_to_outer();
+
+        switch (child.attributes.position)
+        {
+          case left:
+            child.outer.left = node.inner.left;
+            child.outer.right = node.inner.left + size.width;
+
+          case center:
+            child.outer.left = node.inner.left + std::max(node.inner.width - size.width, 0) / 2;
+            child.outer.right = child.outer.left + size.width;
+
+          case right:
+            child.outer.left = node.inner.right - size.width;
+            child.outer.right = node.inner.right;
+
+          case stretch:
+            child.outer.left = node.inner.left;
+            child.outer.right = node.inner.right;
+        }
+
+        child.outer.top = y;
+        child.outer.bottom = y + size.height;
+
+        child.outer = intersection(child.outer, node.inner);
+        child.inner = child.outer_to_inner(child.outer);
+        child.outer_clipped = intersection(child.outer, clip);
+        child.inner_clipped = intersection(child.inner, clip);
+
+        y += size.height;
+      }
+
+      for (var child = node.children.first; child; child = child.siblings.next)
+      {
+        child.layout_children(clip);
+      }
+  }
+}
+
+fn report_context_completion(document mut &tui, context mut &ctx) -> void
+{
+  std::assert(ctx.tree.current_node.stack_parent == null);
+
+  // End the root node.
+  ctx.block_end();
+
+  // Ensure that focus doesn't escape the active modal.
+  if (ctx.last_modal && !tui.is_subtree_focused(ctx.last_modal))
+    ctx.steal_focus_for(ctx.last_modal);
+
+  var needs_settling = ctx.needs_settling;
+  needs_settling |= (tui.tree.checksum != ctx.tree.checksum);
+
+  tui.tree = ctx.tree;
+  build_node_map(&mut tui.node_map, ctx.arena, &mut ctx.tree);
+
+  tui.cached_text_buffers.erase_if(|kv| [var node_map = &tui.node_map] {
+    return !node_map.get(kv.key);
+  });
+
+  var focus_path_pop_min = 0;
+
+  if (ctx.consume_shortcut(shortcut(kb::escape)))
+    focus_path_pop_min = 1;
+
+  needs_settling |= tui.pop_focusable_node(focus_path_pop_min);
+
+  if (needs_settling)
+    tui.needs_more_settling();
+
+  tui.settling_have += 1;
+
+  for (var root = tui.tree.root_first; root; root = root.siblings.next)
+  {
+    root.compute_intrinsic_size();
+  }
+
+  let viewport = rect(0, 0, tui.size.width, tui.size.height);
+
+  for (var root = tui.tree.root_first; root; root = root.siblings.next)
+  {
+    if (root.attributes.float)
+    {
+      var x = 0;
+      var y = 0;
+
+      if (root.parent)
+      {
+        x = root.parent.outer.left;
+        y = root.parent.outer.top;
+      }
+
+      var size = root.intrinsic_to_outer();
+
+      x += cast(root.attributes.offset_x - root.attributes.gravity_x * cast<f32>(size.width));
+      y += cast(root.attributes.offset_y - root.attributes.gravity_y * cast<f32>(size.height));
+
+      root.outer.left = x;
+      root.outer.top = y;
+      root.outer.right = x + size.width;
+      root.outer.bottom = y + size.height;
+      root.outer = intersection(root.outer, viewport);
+    }
+    else
+    {
+      root.outer = viewport;
+    }
+
+    root.inner = root.outer_to_inner(root.outer);
+    root.outer_clipped = root.outer;
+    root.inner_clipped = root.inner;
+
+    root.layout_children(root.outer);
+  }
+}
+
+fn render_styled_text(document mut &tui, screen mut &screen, rect &target, int actual_width, String &text, Span<styled_text_chunk> &chunks, overflow overflow) -> void
+{
+  var target_width = target.width;
+
+  var skipped = (0, 0);
+  var skipped_cols = 0;
+
+  if (overflow == overflow::clip || target_width >= actual_width)
+  {
+    screen.replace(target.left, target.top, target.right, text);
+  }
+  else
+  {
+    switch (overflow)
+    {
+      case truncate_head:
+        var beg = screen::metrics(text, actual_width - target_width + 2);
+        skipped = (0 .. beg.offset);
+        skipped_cols = beg.width - 1;
+
+      case truncate_middle:
+        var mid_beg_x = (target_width - 1) / 2;
+        var mid_end_x = actual_width - target_width / 2;
+        var beg = screen::metrics(text, mid_beg_x);
+        var end = screen::metrics(text, mid_end_x);
+        skipped = (beg.offset .. end.offset);
+        skipped_cols = end.width - beg.width - 1;
+
+      case truncate_tail:
+        var end = screen::metrics(text, target_width - 1);
+        skipped = (end.offset .. text.len);
+        skipped_cols = actual_width - end.width - 1;
+    }
+
+    var scratch = scratch_allocator(&tui.arena_next);
+
+    var modified = std::string<Allocator: arena mut *>(scratch);
+    modified.reserve(text.len + 3);
+    modified.append(text[0 .. skipped.0]);
+    modified.append("…");
+    modified.append(text[skipped.1 .. text.len]);
+
+    screen.replace(target.left, target.top, target.right, modified);
+  }
+
+  if (!chunks.empty)
+  {
+    var p = 0;
+    var x0 = target.left;
+    var x1 = target.left;
+
+    for (var i = 0; i < chunks.len; ++i)
+    {
+      var beg = chunks[i].offset;
+      var end = (i + 1 != chunks.len) ? chunks[i + 1].offset : text.len;
+
+      if (beg < skipped.0)
+      {
+        x0 = x1 + screen::metrics(text[p .. beg]).width;
+        x1 = x0 + screen::metrics(text[beg .. std::min(skipped.0, end)]).width;
+
+        screen.blend_fg(x0, target.top, x1, target.bottom, chunks[i].attrs.foreground_color);
+
+        for (var y = target.top; y < target.bottom; ++y)
+          screen.replace(x0, y, x1, chunks[i].attrs.flags, chunks[i].attrs.flags);
+
+        p = std::min(skipped.0, end);
+      }
+
+      if (end > skipped.1)
+      {
+        x0 = x1 + screen::metrics(text[p .. std::max(beg, skipped.1)]).width;
+        x1 = x0 + screen::metrics(text[std::max(beg, skipped.1) .. end]).width;
+
+        screen.blend_fg(x0 - skipped_cols, target.top, x1 - skipped_cols, target.bottom, chunks[i].attrs.foreground_color);
+
+        for (var y = target.top; y < target.bottom; ++y)
+          screen.replace(x0 - skipped_cols, y, x1 - skipped_cols, chunks[i].attrs.flags, chunks[i].attrs.flags);
+
+        p = end;
+      }
+    }
+  }
+}
+
+fn render_scrollbar(document mut &tui, screen mut &screen, rect &clip, rect &track, int content_offset, int content_height) -> void
+{
+  var track_clipped = intersection(track, clip);
+  if (track_clipped.empty)
+    return;
+
+  var viewport_height = track.height * 8;
+  var content_height = std::max(content_height * 8, viewport_height);
+
+  var content_offset_max = content_height - viewport_height;
+  if (content_offset_max == 0)
+    return;
+
+  var content_offset = std::clamp(content_offset * 8, 0, content_offset_max);
+  var thumb_height = std::max((viewport_height * viewport_height + content_height / 2) / content_height, 8);
+
+  var thumb_top = std::max(track.top * 8 + ((viewport_height - thumb_height) * content_offset + content_offset_max / 2) / content_offset_max, track_clipped.top * 8);
+  var thumb_bottom = std::min(thumb_top + thumb_height, track_clipped.bottom * 8);
+
+  var thumb_y0 = (thumb_top + 7) / 8;
+  var thumb_y1 = thumb_bottom / 8;
+
+  screen.blend_bg(track_clipped.left, track_clipped.top, track_clipped.right, track_clipped.bottom, indexed(color::bright_black));
+  screen.blend_fg(track_clipped.left, track_clipped.top, track_clipped.right, track_clipped.bottom, indexed(color::bright_white));
+
+  for (var y = thumb_y0; y < thumb_y1; ++y)
+    screen.replace(track_clipped.left, y, track_clipped.right, "█");
+
+  if (thumb_top % 8 != 0)
+  {
+    var fract = cast<u8>(thumb_top % 8);
+    var fract_buf = [<u8>: 0xe2, 0x96, 0x88 - fract];
+
+    screen.replace(track_clipped.left, thumb_y0 - 1, track_clipped.right, fract_buf);
+  }
+
+  if (thumb_bottom % 8 != 0)
+  {
+    var fract = cast<u8>(thumb_bottom % 8);
+    var fract_buf = [<u8>: 0xe2, 0x96, 0x88 - fract];
+
+    screen.replace(track_clipped.left, thumb_y1, track_clipped.right, fract_buf);
+    screen.reverse(track_clipped.left, thumb_y1, track_clipped.right, thumb_y1 + 1);
+  }
+}
+
+fn render(document mut &tui, screen mut &screen, node *node) -> void
+{
+  var outer_clipped = node.outer_clipped;
+
+  if (outer_clipped.empty)
+    return;
+
+  var scratch = scratch_allocator(&tui.arena_next);
+
+  if (node.attributes.bordered)
+  {
+    // ┌────┐
+    {
+      var fill = std::string<Allocator: arena mut *>(scratch);
+      fill.append("┌");
+      fill.append_n(cast(outer_clipped.right - outer_clipped.left - 2), "─");
+      fill.append("┐");
+
+      screen.replace(outer_clipped.left, outer_clipped.top, outer_clipped.right, fill);
+    }
+
+    // │    │
+    {
+      var fill = std::string<Allocator: arena mut *>(scratch);
+      fill.append("│");
+      fill.append_n(cast(outer_clipped.right - outer_clipped.left - 2), " ");
+      fill.append("│");
+
+      for (var y = outer_clipped.top + 1; y < outer_clipped.bottom - 1; ++y)
+        screen.replace(outer_clipped.left, y, outer_clipped.right, fill);
+    }
+
+    // └────┘
+    {
+      var fill = std::string<Allocator: arena mut *>(scratch);
+      fill.append("└");
+      fill.append_n(cast(outer_clipped.right - outer_clipped.left - 2), "─");
+      fill.append("┘");
+
+      screen.replace(outer_clipped.left, outer_clipped.bottom - 1, outer_clipped.right, fill);
+    }
+  }
+
+  if (node.attributes.float)
+  {
+    if (!node.attributes.bordered)
+    {
+      var fill = std::string<Allocator: arena mut *>(scratch);
+      fill.append_n(cast(outer_clipped.right - outer_clipped.left), " ");
+
+      for (var y = outer_clipped.top; y < outer_clipped.bottom; ++y)
+        screen.replace(outer_clipped.left, y, outer_clipped.right, fill);
+    }
+
+    for (var y = outer_clipped.top; y < outer_clipped.bottom; ++y)
+      screen.replace(outer_clipped.left, y, outer_clipped.right, attrs::mask, attrs::none);
+
+    if (node.content.is_modal)
+    {
+      var dim = indexed_alpha(color::background, 1, 2);
+
+      screen.blend_bg(0, 0, tui.size.width, tui.size.height, dim);
+      screen.blend_fg(0, 0, tui.size.width, tui.size.height, dim);
+    }
+  }
+
+  screen.blend_bg(outer_clipped.left, outer_clipped.top, outer_clipped.right, outer_clipped.bottom, node.attributes.bg);
+  screen.blend_fg(outer_clipped.left, outer_clipped.top, outer_clipped.right, outer_clipped.bottom, node.attributes.fg);
+
+  if (node.attributes.reverse)
+    screen.reverse(outer_clipped.left, outer_clipped.top, outer_clipped.right, outer_clipped.bottom);
+
+  var inner = node.inner;
+  var inner_clipped = node.inner_clipped;
+
+  if (inner_clipped.empty)
+    return;
+
+  switch (node.content)
+  {
+    case modal[modal]:
+      if (!modal.title.empty)
+        screen.replace(node.outer.left + 2, node.outer.top, node.outer.right - 1, modal.title);
+
+    case text[text]:
+      render_styled_text(&mut tui, &mut screen, inner, node.intrinsic_size.width, text.text, text.chunks, text.overflow);
+
+    case textarea[textarea]:
+      var destination = inner_clipped;
+
+      if (textarea.multi_line)
+        destination.right -= 1;
+
+      textarea.buffer.render(&mut screen, textarea.scroll_offset, destination, textarea.has_focus);
+
+      if (textarea.multi_line)
+      {
+        var track = rect(inner_clipped.right - 1, inner_clipped.top, inner_clipped.right, inner_clipped.bottom);
+
+        render_scrollbar(&mut tui, &mut screen, inner_clipped, track, textarea.scroll_offset.y, textarea.buffer.visual_line_count + inner.height - 1);
+      }
+
+    case scrollarea[scrollarea]:
+      var track = rect(inner.right, inner.top, inner.right + 1, inner.bottom);
+
+      render_scrollbar(&mut tui, &mut screen, outer_clipped, track, scrollarea.scroll_offset.y, node.children.first.intrinsic_size.height);
+  }
+
+  for (var child = node.children.first; child; child = child.siblings.next)
+  {
+    render(&mut tui, &mut screen, child);
+  }
+}
+
+pub fn create_context(document mut &tui) -> context
+{
+  var ctx = context(&mut tui);
+
+  std::swap(&mut tui.arena_prev, &mut tui.arena_next);
+
+  tui.arena_next.reset(0);
+
+  if (tui.scroll_to_focused())
+    tui.needs_more_settling();
+
+  if (!tui.needs_settling)
+  {
+    tui.settling_have = 0;
+    tui.settling_want = 1;
+  }
+
+  init(&mut ctx.tree, &tui.arena_next);
+
+  return ctx;
+}
+
+pub fn create_context(document mut &tui, readline::event &event) -> context
+{
+  var ctx = create_context(&mut tui);
+
+  switch (event)
+  {
+    case key[key]:
+      ctx.input_keyboard_key = key.key;
+      ctx.input_keyboard_state = key.state;
+      ctx.input_keyboard_modifiers = key.modifiers;
+  }
+
+  ctx.input_available = true;
+
+  return ctx;
+}
+
+pub fn render(document mut &tui, screen mut &screen) -> void
+{
+  for (var child = tui.tree.root_first; child; child = child.siblings.next)
+  {
+    render(&mut tui, &mut screen, child);
+  }
+}

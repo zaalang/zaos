@@ -77,9 +77,10 @@ pub using palette = u32[std::meta::enumerators_of($color).len];
 pub struct attrs
 {
   pub const bold = 0x01;
-  pub const underline = 0x02;
-  pub const inverse = 0x04;
-  pub const blink = 0x08;
+  pub const italic = 0x02;
+  pub const underline = 0x04;
+  pub const inverse = 0x08;
+  pub const blink = 0x010;
 
   pub u32 flags;
   pub u32 foreground_color;
@@ -460,6 +461,9 @@ fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
       case 1:
         vte.attrs.flags |= attrs::bold;
 
+      case 3:
+        vte.attrs.flags |= attrs::italic;
+
       case 4:
         vte.attrs.flags |= attrs::underline;
 
@@ -471,6 +475,9 @@ fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
 
       case 22:
         vte.attrs.flags &= ~attrs::bold;
+
+      case 23:
+        vte.attrs.flags &= ~attrs::italic;
 
       case 24:
         vte.attrs.flags &= ~attrs::underline;
@@ -487,6 +494,10 @@ fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
       case 37:
         vte.attrs.foreground_color = vte.palette[cast(color::light_grey)];
 
+      case 38:
+        vte.attrs.foreground_color = 0xff000000 | (vte.argv[2] << 16) | (vte.argv[3] << 8) | (vte.argv[4] << 0);
+        i += 4;
+
       case 39:
         vte.attrs.foreground_color = vte.palette[cast(color::foreground)];
 
@@ -495,6 +506,10 @@ fn csi_character_attributes(vt::screen mut &screen, vte mut &vte) -> void
 
       case 47:
         vte.attrs.background_color = vte.palette[cast(color::light_grey)];
+
+      case 48:
+        vte.attrs.background_color = 0xff000000 | (vte.argv[2] << 16) | (vte.argv[3] << 8) | (vte.argv[4] << 0);
+        i += 4;
 
       case 49:
         vte.attrs.background_color = vte.palette[cast(color::background)];

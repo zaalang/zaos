@@ -46,6 +46,13 @@ const cursor_palette = [
   0xffcd6600, // orange
 ];
 
+enum modifiers
+{
+  const shift = 0x1;
+  const control = 0x2;
+  const alt = 0x4;
+}
+
 pub struct terminal
 {
   seat::seat mut &seat;
@@ -65,6 +72,7 @@ pub struct terminal
   font::font font;
   vt::screen screen;
 
+  u32 modifiers;
   usize cursor_color;
 
   readline::default_history history;
@@ -197,88 +205,231 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
           switch (kv.state)
           {
             case pressed:
+
               switch (kv.key)
               {
-                case Enter:
-                  pty.write_master("\r".data, 1);
+                case LeftShift:
+                case RightShift:
+                  terminal.modifiers |= modifiers::shift;
 
-                case Backspace:
-                  pty.write_master("\x7f".data, 1);
+                case LeftControl:
+                case RightControl:
+                  terminal.modifiers |= modifiers::control;
 
-                case Left:
-                  pty.write_master("\x1bOD".data, 3);
+                case LeftAlt:
+                case RightAlt:
+                  terminal.modifiers |= modifiers::alt;
+              }
 
-                case Up:
-                  pty.write_master("\x1bOA".data, 3);
+              if (terminal.modifiers == modifiers::control)
+              {
+                switch (kv.key)
+                {
+                  case Home:
+                    pty.write_master("\x1b[1;5H".data, 6);
 
-                case Right:
-                  pty.write_master("\x1bOC".data, 3);
+                  case Left:
+                    pty.write_master("\x1b[1;5D".data, 6);
 
-                case Down:
-                  pty.write_master("\x1bOB".data, 3);
+                  case Up:
+                    pty.write_master("\x1b[1;5A".data, 6);
 
-                case Insert:
-                  pty.write_master("\x1b[2~".data, 4);
+                  case Right:
+                    pty.write_master("\x1b[1;5C".data, 6);
 
-                case Delete:
-                  pty.write_master("\x1b[3~".data, 4);
+                  case Down:
+                    pty.write_master("\x1b[1;5B".data, 6);
 
-                case Home:
-                  pty.write_master("\x1bOH".data, 3);
+                  case End:
+                    pty.write_master("\x1b[1;5F".data, 6);
 
-                case End:
-                  pty.write_master("\x1bOF".data, 3);
+                  case Insert:
+                    pty.write_master("\x1b[2;5~".data, 6);
 
-                case PageUp:
-                  pty.write_master("\x1b[5~".data, 4);
+                  case Delete:
+                    pty.write_master("\x1b[3;5~".data, 6);
 
-                case PageDown:
-                  pty.write_master("\x1b[6~".data, 4);
+                  case Backspace:
+                    pty.write_master("\x08".data, 1);
 
-                case F1:
-                  pty.write_master("\x1bOP".data, 3);
+                  else:
+                    if (kv.sym != 0)
+                    {
+                      var buf = [ cast<u8>(kv.sym) ];
 
-                case F2:
-                  pty.write_master("\x1bOQ".data, 3);
+                      pty.write_master(buf.data, buf.len);
+                    }
+                }
+              }
 
-                case F3:
-                  pty.write_master("\x1bOR".data, 3);
+              if (terminal.modifiers == modifiers::alt)
+              {
+                switch (kv.key)
+                {
+                  case Enter:
+                    pty.write_master("\x1b\x0d".data, 2);
 
-                case F4:
-                  pty.write_master("\x1bOS".data, 3);
+                  else:
+                    if (kv.sym != 0)
+                    {
+                      var buf = [ cast<u8>('\x1b'), cast<u8>(kv.sym) ];
 
-                case F5:
-                  pty.write_master("\x1b[15~".data, 5);
+                      pty.write_master(buf.data, buf.len);
+                    }
+                }
+              }
 
-                case F6:
-                  pty.write_master("\x1b[17~".data, 5);
+              if (terminal.modifiers == modifiers::shift)
+              {
+                switch (kv.key)
+                {
+                  case Home:
+                    pty.write_master("\x1b[1;2H".data, 6);
 
-                case F7:
-                  pty.write_master("\x1b[18~".data, 5);
+                  case Left:
+                    pty.write_master("\x1b[1;2D".data, 6);
 
-                case F8:
-                  pty.write_master("\x1b[19~".data, 5);
+                  case Up:
+                    pty.write_master("\x1b[1;2A".data, 6);
 
-                case F9:
-                  pty.write_master("\x1b[20~".data, 5);
+                  case Right:
+                    pty.write_master("\x1b[1;2C".data, 6);
 
-                case F10:
-                  pty.write_master("\x1b[21~".data, 5);
+                  case Down:
+                    pty.write_master("\x1b[1;2B".data, 6);
 
-                case F11:
-                  pty.write_master("\x1b[23~".data, 5);
+                  case PageUp:
+                    pty.write_master("\x1b[5;2~".data, 6);
 
-                case F12:
-                  pty.write_master("\x1b[24~".data, 5);
+                  case PageDown:
+                    pty.write_master("\x1b[6;2~".data, 6);
 
-                else:
-                  if (kv.sym != 0)
-                  {
-                    var buf = [0; 8];
-                    var len = std::ctoa(buf.begin, buf.end, kv.sym).len;
+                  case End:
+                    pty.write_master("\x1b[1;2F".data, 6);
 
-                    pty.write_master(buf.data, len);
-                  }
+                  case Insert:
+                    pty.write_master("\x1b[2;2~".data, 6);
+
+                  case Delete:
+                    pty.write_master("\x1b[3;2~".data, 6);
+
+                  case Enter:
+                  case NumEnter:
+                    pty.write_master("\x1b[13;2u".data, 7);
+
+                  else:
+                    if (kv.sym != 0)
+                    {
+                      var buf = [0; 8];
+                      var len = std::ctoa(buf.begin, buf.end, kv.sym).len;
+
+                      pty.write_master(buf.data, len);
+                    }
+                }
+              }
+
+              if (terminal.modifiers == 0)
+              {
+                switch (kv.key)
+                {
+                  case Enter:
+                    pty.write_master("\r".data, 1);
+
+                  case Backspace:
+                    pty.write_master("\x7f".data, 1);
+
+                  case Left:
+                    pty.write_master("\x1bOD".data, 3);
+
+                  case Up:
+                    pty.write_master("\x1bOA".data, 3);
+
+                  case Right:
+                    pty.write_master("\x1bOC".data, 3);
+
+                  case Down:
+                    pty.write_master("\x1bOB".data, 3);
+
+                  case Insert:
+                    pty.write_master("\x1b[2~".data, 4);
+
+                  case Delete:
+                    pty.write_master("\x1b[3~".data, 4);
+
+                  case Home:
+                    pty.write_master("\x1bOH".data, 3);
+
+                  case End:
+                    pty.write_master("\x1bOF".data, 3);
+
+                  case PageUp:
+                    pty.write_master("\x1b[5~".data, 4);
+
+                  case PageDown:
+                    pty.write_master("\x1b[6~".data, 4);
+
+                  case F1:
+                    pty.write_master("\x1bOP".data, 3);
+
+                  case F2:
+                    pty.write_master("\x1bOQ".data, 3);
+
+                  case F3:
+                    pty.write_master("\x1bOR".data, 3);
+
+                  case F4:
+                    pty.write_master("\x1bOS".data, 3);
+
+                  case F5:
+                    pty.write_master("\x1b[15~".data, 5);
+
+                  case F6:
+                    pty.write_master("\x1b[17~".data, 5);
+
+                  case F7:
+                    pty.write_master("\x1b[18~".data, 5);
+
+                  case F8:
+                    pty.write_master("\x1b[19~".data, 5);
+
+                  case F9:
+                    pty.write_master("\x1b[20~".data, 5);
+
+                  case F10:
+                    pty.write_master("\x1b[21~".data, 5);
+
+                  case F11:
+                    pty.write_master("\x1b[23~".data, 5);
+
+                  case F12:
+                    pty.write_master("\x1b[24~".data, 5);
+
+                  else:
+                    if (kv.sym != 0)
+                    {
+                      var buf = [0; 8];
+                      var len = std::ctoa(buf.begin, buf.end, kv.sym).len;
+
+                      pty.write_master(buf.data, len);
+                    }
+                }
+              }
+
+            case released:
+
+              switch (kv.key)
+              {
+                case LeftShift:
+                case RightShift:
+                  terminal.modifiers &= ~modifiers::shift;
+
+                case LeftControl:
+                case RightControl:
+                  terminal.modifiers &= ~modifiers::control;
+
+                case LeftAlt:
+                case RightAlt:
+                  terminal.modifiers &= ~modifiers::alt;
               }
           }
       }

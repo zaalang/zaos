@@ -1,0 +1,2374 @@
+//
+//
+//
+
+import std.stdlib;
+import std.string : String;
+import std.optional;
+import std.vector;
+import std.bits.utf as utf;
+import tui.document : point, rect, clipboard;
+import tui.screen : screen, color;
+import tui.arena : arena;
+import unicode.grapheme;
+import regex;
+
+union buffer
+{
+  vector(std::vector<u8>),
+  memory(arena),
+
+  buffer() = default;
+  buffer(buffer &&) = default;
+  fn =(buffer mut &, buffer &&) -> buffer mut & = default;
+  ~buffer() = default;
+}
+
+pub enum movement
+{
+  grapheme,
+  word,
+}
+
+pub struct cursor
+{
+  pub usize offset;
+  pub point logical;
+  pub point visual;
+
+  int column;
+  bool wrap_opp;
+
+  pub cursor() = default;
+  pub cursor(cursor &&) = default;
+  pub fn =(cursor mut &, cursor &&) -> cursor mut & = default;
+  pub ~cursor() = default;
+}
+
+pub struct selection
+{
+  pub point beg;
+  pub point end;
+
+  pub selection(point &beg, point &end)
+    : beg(beg), end(end)
+  {
+  }
+
+  pub selection() = default;
+  pub selection(selection &&) = default;
+  pub fn =(selection mut &, selection &&) -> selection mut & = default;
+  pub ~selection() = default;
+}
+
+pub struct search_options
+{
+  pub bool match_case;
+  pub bool whole_word;
+  pub bool use_regex;
+
+  pub fn ==(search_options &, search_options &) -> bool = default;
+
+  pub search_options() = default;
+  pub search_options(search_options &&) = default;
+  pub fn =(search_options mut &, search_options &&) -> search_options mut & = default;
+  pub ~search_options() = default;
+}
+
+struct active_search
+{
+  std::string pattern;
+  search_options options;
+  regex::regex regex;
+  u32 buffer_generation;
+  u32 selection_generation;
+  bool no_matches;
+
+  pub active_search() = default;
+  pub active_search(active_search &&) = default;
+  pub fn =(active_search mut &, active_search &&) -> active_search mut & = default;
+  pub ~active_search() = default;
+}
+
+enum history_type
+{
+  other,
+  insert,
+  delete,
+}
+
+struct history_entry
+{
+  int logical_lines_before;
+  int visual_lines_before;
+  u32 generation_before;
+  point cursor;
+  std::string deleted;
+  std::string inserted;
+
+  pub history_entry() = default;
+  pub history_entry(history_entry &&) = default;
+  pub fn =(history_entry mut &, history_entry &&) -> history_entry mut & = default;
+  pub ~history_entry() = default;
+}
+
+struct active_edit_line
+{
+  cursor safe_start;
+  int line_height_in_rows;
+  usize distance_next_line_start;
+
+  pub active_edit_line() = default;
+  pub active_edit_line(active_edit_line &&) = default;
+  pub fn =(active_edit_line mut &, active_edit_line &&) -> active_edit_line mut & = default;
+  pub ~active_edit_line() = default;
+}
+
+const MAX_COLUMN = (1 << 30);
+const MAX_OFFSET = (1 << 63);
+
+pub struct textbuffer
+{
+  buffer buffer;
+
+  cursor cursor;
+
+  usize text_length;
+  usize text_gap_offset;
+  usize text_gap_length;
+
+  int logical_lines;
+  int visual_lines;
+
+  u32 dirty_generation;
+  u32 buffer_generation;
+
+  u32 selection_generation;
+  std::optional<selection> selection;
+
+  std::optional<u32> active_edit_group;
+  std::optional<active_edit_line> active_edit_line;
+  history_type last_history_type;
+
+  std::vector<history_entry> undo_stack;
+  std::vector<history_entry> redo_stack;
+
+  std::optional<active_search> active_search;
+
+  int width;
+  int margin_width;
+  bool margin_enabled;
+  int word_wrap_column;
+  bool word_wrap_enabled;
+  int tab_size;
+  bool indent_with_tabs;
+  bool line_highlight_enabled;
+  int ruler;
+  bool newlines_are_crlf;
+  bool overtype;
+
+  mut int visual_width;
+  mut cursor cursor_for_rendering;
+
+  pub fn is_dirty(this &) -> bool
+  {
+    return this.dirty_generation != this.buffer_generation;
+  }
+
+  pub fn has_selection(this &) -> bool
+  {
+    return this.selection.is_some();
+  }
+
+  pub fn is_overtype(this &) -> bool
+  {
+    return this.overtype;
+  }
+
+  pub fn is_word_wrap_enabled(this &) -> bool
+  {
+    return this.word_wrap_enabled;
+  }
+
+  pub fn is_indent_with_tabs(this &) -> bool
+  {
+    return this.indent_with_tabs;
+  }
+
+  pub fn is_newlines_are_crlf(this &) -> bool
+  {
+    return this.newlines_are_crlf;
+  }
+
+  pub fn is_margin_enabled(this &) -> bool
+  {
+    return this.margin_enabled;
+  }
+
+  pub fn is_line_highlight_enabled(this &) -> bool
+  {
+    return this.line_highlight_enabled;
+  }
+
+  pub fn width(this &) -> int
+  {
+    return this.width;
+  }
+
+  pub fn text_width(this &) -> int
+  {
+    return this.width - this.margin_width;
+  }
+
+  pub fn visual_width(this &) -> int
+  {
+    return this.visual_width;
+  }
+
+  pub fn tab_size(this &) -> int
+  {
+    return this.tab_size;
+  }
+
+  pub fn visual_line_count(this &) -> int
+  {
+    return this.visual_lines;
+  }
+
+  pub fn cursor_logical_position(this &) -> point
+  {
+    return this.cursor.logical;
+  }
+
+  pub fn cursor_visual_position(this &) -> point
+  {
+    return this.cursor.visual;
+  }
+
+  pub fn indent_logical_position(this &) -> point
+  {
+    return point(this.measure_indent(this.cursor).0, this.cursor.logical.y);
+  }
+
+  pub fn selection_range(this &) -> std::optional<(cursor, cursor)>
+  {
+    if (!this.selection)
+      return None;
+
+    var beg = this.selection.transform(|s| std::min(s.beg, s.end))?!;
+    var end = this.selection.transform(|s| std::max(s.beg, s.end))?!;
+
+    var cursor_beg = this.cursor;
+    cursor_move_to_logical(this, &mut cursor_beg, beg);
+
+    var cursor_end = cursor_beg;
+    cursor_move_to_logical(this, &mut cursor_end, end);
+
+    if (cursor_end.offset <= cursor_beg.offset)
+      return None;
+
+    return (cursor_beg, cursor_end);
+  }
+
+  pub fn selection_text(this &) -> std::string
+  {
+    var range = this.selection_range();
+
+    if (!range)
+      return "";
+
+    var beg = range?!.0;
+    var end = range?!.1;
+
+    var text = std::string();
+    this.extract(beg.offset, end.offset - beg.offset, &mut text);
+
+    return text;
+  }
+
+  pub fn set_overtype(this mut &, bool overtype) -> void
+  {
+    this.overtype = overtype;
+  }
+
+  pub fn set_word_wrap_enabled(this mut &, bool enabled) -> void
+  {
+    if (this.word_wrap_enabled == enabled)
+      return;
+
+    this.word_wrap_enabled = enabled;
+    this.reflow(force: true);
+  }
+
+  pub fn set_indent_with_tabs(this mut &, bool enabled) -> void
+  {
+    this.indent_with_tabs = enabled;
+  }
+
+  pub fn set_newlines_are_crlf(this mut &, bool enabled) -> void
+  {
+    this.newlines_are_crlf = enabled;
+  }
+
+  pub fn set_margin_enabled(this mut &, bool enabled) -> void
+  {
+    this.margin_enabled = enabled;
+  }
+
+  pub fn set_line_highlight_enabled(this mut &, bool enabled) -> void
+  {
+    this.line_highlight_enabled = enabled;
+  }
+
+  pub fn set_width(this mut &, int width) -> void
+  {
+    if (width <= 0 || width == this.width)
+      return;
+
+    this.width = width;
+    this.reflow(force: true);
+  }
+
+  pub fn set_tab_size(this mut &, int size) -> void
+  {
+    if (size <= 0 || size == this.tab_size)
+      return;
+
+    if (size > 8)
+      size = 8;
+
+    this.tab_size = size;
+    this.reflow(force: true);
+  }
+
+  pub fn generation(this &) -> u32
+  {
+    return this.buffer_generation;
+  }
+
+  pub textbuffer()
+  {
+    tab_size = 4;
+
+    init_vector_buffer(&mut this);
+  }
+
+  pub textbuffer(textbuffer &&) = default;
+  pub fn =(textbuffer mut &, textbuffer &&) -> textbuffer mut & = default;
+  pub ~textbuffer() = default;
+}
+
+pub fn init_vector_buffer(textbuffer mut &this) -> i32
+{
+  this.text_length = 0;
+  this.text_gap_offset = 0;
+  this.text_gap_length = 0;
+  this.buffer = buffer::vector();
+
+  this.logical_lines = 1;
+  this.visual_lines = 1;
+
+  this.recalc_after_content_swap();
+
+  return 0;
+}
+
+pub fn init_memory_buffer(textbuffer mut &this, usize capacity) -> i32
+{
+  this.text_length = 0;
+  this.text_gap_offset = 0;
+  this.text_gap_length = 0;
+  this.buffer = buffer::memory();
+
+  this.logical_lines = 1;
+  this.visual_lines = 1;
+
+  if (var rc = initialise(&mut this.buffer.memory, capacity); rc < 0)
+    return rc;
+
+  this.recalc_after_content_swap();
+
+  return 0;
+}
+
+fn data(textbuffer &this, usize offset, usize length) -> std::string_view
+{
+  switch (this.buffer)
+  {
+    case vector[vector]:
+      return std::string_view(vector.data + offset, length);
+
+    case memory[memory]:
+      return std::string_view(memory.base + offset, length);
+  }
+
+  std::panic();
+}
+
+fn read_forward(textbuffer &this, usize offset) -> std::string_view
+{
+  std::assert(offset <= this.text_length);
+
+  if (offset < this.text_gap_offset)
+    return this.data(offset, this.text_gap_offset - offset);
+  else
+    return this.data(offset + this.text_gap_length, this.text_length - offset);
+}
+
+fn read_backward(textbuffer &this, usize offset) -> std::string_view
+{
+  std::assert(offset <= this.text_length);
+
+  if (offset <= this.text_gap_offset)
+    return this.data(0, offset);
+  else
+    return this.data(this.text_gap_offset + this.text_gap_length, offset - this.text_gap_offset);
+}
+
+fn move_gap(textbuffer mut &this, usize offset) -> void
+{
+  if (this.text_gap_length != 0)
+  {
+    var src = (offset < this.text_gap_offset) ? offset : this.text_gap_offset + this.text_gap_length;
+    var dst = (offset < this.text_gap_offset) ? offset + this.text_gap_length : this.text_gap_offset;
+    var len = (offset < this.text_gap_offset) ? this.text_gap_offset - offset : offset - this.text_gap_offset;
+
+    switch (this.buffer)
+    {
+      case vector[vector]:
+        std::memmove(vector.data + dst, vector.data + src, len);
+
+      case memory[memory]:
+        std::memmove(memory.base + dst, memory.base + src, len);
+    }
+  }
+
+  this.text_gap_offset = offset;
+}
+
+fn grow_gap(textbuffer mut &this, usize length) -> void
+{
+  var src = this.text_gap_offset + this.text_gap_length;
+
+  switch (this.buffer)
+  {
+    case vector[vector]:
+      var len = std::align_up(length - this.text_gap_length, 16);
+
+      vector.reserve(vector.len + len);
+      std::memmove(vector.data + src + len, vector.data + src, this.text_length - this.text_gap_offset);
+      vector.append_from_capacity(len);
+
+      this.text_gap_length += len;
+
+    case memory[memory]:
+      var len = std::align_up(length - this.text_gap_length, 4096);
+
+      memory.allocate(len, 1);
+      std::memmove(memory.base + src + len, memory.base + src, this.text_length - this.text_gap_offset);
+
+      this.text_gap_length += len;
+  }
+}
+
+fn replace(textbuffer mut &this, usize offset, usize count, std::string_view &text) -> void
+{
+  std::assert(offset <= this.text_length);
+  std::assert(offset + count <= this.text_length);
+
+  var length = text.len;
+
+  if (offset != this.text_gap_offset)
+    this.move_gap(offset);
+
+  this.text_length -= count;
+  this.text_gap_length += count;
+
+  if (length > this.text_gap_length)
+    this.grow_gap(length);
+
+  switch (this.buffer)
+  {
+    case vector[vector]:
+      std::memcpy(vector.data + this.text_gap_offset, text.data, text.len);
+
+    case memory[memory]:
+      std::memcpy(memory.base + this.text_gap_offset, text.data, text.len);
+  }
+
+  this.text_length += length;
+  this.text_gap_offset += length;
+  this.text_gap_length -= length;
+
+  this.buffer_generation = std::add_with_carry(this.buffer_generation, 1).0;
+}
+
+fn extract(textbuffer &this, usize offset, usize count, std::string mut &text) -> void
+{
+  std::assert(offset <= this.text_length);
+  std::assert(offset + count <= this.text_length);
+
+  text.reserve(text.len + count);
+
+  for (var end = offset + count; offset < end; )
+  {
+    var chunk = this.read_forward(offset);
+
+    text += chunk[0 .. std::min(chunk.len, end - offset)];
+
+    offset += chunk.len;
+  }
+}
+
+fn reflow(textbuffer mut &this, bool force = false) -> void
+{
+  var word_wrap_column_before = this.word_wrap_column;
+
+  this.margin_width = 0;
+  if (this.margin_enabled)
+    this.margin_width = cast<int>(std::log10(cast<f64>(this.logical_lines))) + 4;
+
+  var text_width = this.width - this.margin_width;
+
+  this.word_wrap_column = 0;
+  if (this.word_wrap_enabled && text_width >= 2)
+    this.word_wrap_column = text_width;
+
+  if (force || this.word_wrap_column != word_wrap_column_before)
+  {
+    var logical_pos = this.cursor.logical;
+
+    this.cursor = cursor();
+    cursor_move_to_logical(this, &mut this.cursor, logical_pos);
+
+    if (this.word_wrap_column > 0)
+    {
+      var end = cursor();
+      cursor_move_to_logical(this, &mut end, point(0, this.logical_lines + 1));
+
+      this.visual_lines = end.visual.y + 1;
+    }
+    else
+    {
+      this.visual_lines = this.logical_lines;
+    }
+  }
+
+  this.cursor_for_rendering = this.cursor;
+}
+
+pub fn mark_as_clean(textbuffer mut &this) -> void
+{
+  this.dirty_generation = this.buffer_generation;
+}
+
+fn recalc_after_content_swap(textbuffer mut &this) -> void
+{
+  this.undo_stack.clear();
+  this.redo_stack.clear();
+  this.last_history_type = history_type::other;
+  this.cursor = cursor();
+  this.selection.clear();
+  this.mark_as_clean();
+  this.reflow(force: true);
+}
+
+fn cursor_goto_line_start(textbuffer &this, cursor mut &cursor, int y) -> void
+{
+  var initial = cursor;
+
+  if (y > cursor.logical.y)
+  {
+    var offset = cursor.offset;
+
+    while (y > cursor.logical.y)
+    {
+      var chunk = this.read_forward(offset);
+      if (chunk.empty)
+        break;
+
+      for (var end = offset + chunk.len; offset != end; )
+      {
+        if ((offset += std::memchr(chunk.data, cast('\n'), chunk.len)) != end)
+        {
+          offset += 1;
+          cursor.offset = offset;
+          cursor.logical.x = 0;
+          cursor.logical.y += 1;
+
+          if (cursor.logical.y == y)
+            break;
+        }
+
+        chunk.drop_front!(chunk.len - (end - offset));
+      }
+    }
+  }
+
+  if (y < cursor.logical.y || cursor.logical.x != 0)
+  {
+    for (;;)
+    {
+      var chunk = this.read_backward(cursor.offset);
+      if (chunk.empty)
+        break;
+
+      if (cursor.logical.y == y && chunk.back == cast('\n'))
+        break;
+
+      rof (var i = chunk.len; i == 0; --i)
+      {
+        if (chunk[i] == cast('\n'))
+        {
+          if (cursor.logical.y == y)
+            break;
+
+          cursor.logical.y -= 1;
+        }
+
+        cursor.offset -= 1;
+      }
+    }
+
+    cursor.logical.x = 0;
+  }
+
+  if (cursor.offset == initial.offset)
+    return;
+
+  cursor.visual.x = 0;
+  cursor.visual.y = cursor.logical.y;
+  cursor.column = 0;
+  cursor.wrap_opp = false;
+
+  if (this.word_wrap_column > 0)
+  {
+    var upward = (cursor.offset < initial.offset);
+
+    var top = upward ? cursor : initial;
+    var bottom = upward ? initial : cursor;
+
+    var bottom_remeasured = top;
+    cursor_measure_forward(this, &mut bottom_remeasured, logical_target: bottom.logical);
+
+    if (upward)
+    {
+      var a = bottom.visual.x;
+      var b = bottom_remeasured.visual.x;
+      bottom_remeasured.visual.y += cast<int>(a == 0 && b != 0) - cast<int>(a != 0 && b == 0);
+    }
+
+    var delta = bottom_remeasured.visual.y - top.visual.y;
+    if (upward)
+      delta = -delta;
+
+    cursor.visual.y = initial.visual.y + delta;
+  }
+}
+
+fn calc_tab_x(int tab_size, int column) -> int
+{
+  return tab_size - (column % tab_size);
+}
+
+fn calc_target_x(point &target, int pos_y) -> int
+{
+  if (target.y < pos_y)
+    return 0;
+
+  if (target.y > pos_y)
+    return MAX_COLUMN;
+
+  return target.x;
+}
+
+fn cursor_measure_forward(textbuffer &this, cursor mut &cursor, usize offset_target = MAX_OFFSET, point &logical_target = point(MAX_COLUMN, MAX_COLUMN), point &visual_target = point(MAX_COLUMN, MAX_COLUMN)) -> void
+{
+  var offset = cursor.offset;
+  var logical_x = cursor.logical.x;
+  var logical_y = cursor.logical.y;
+  var visual_x = cursor.visual.x;
+  var visual_y = cursor.visual.y;
+  var column = cursor.column;
+
+  var logical_target_x = calc_target_x(logical_target, logical_y);
+  var visual_target_x = calc_target_x(visual_target, visual_y);
+
+  var wrap_opp = cursor.wrap_opp;
+  var wrap_opp_offset = offset;
+  var wrap_opp_logical_x = logical_x;
+  var wrap_opp_visual_x = visual_x;
+  var wrap_opp_column = column;
+
+  var chunk = this.read_forward(offset);
+  var chunk_iter = chunk.chars.begin;
+
+  for (;;)
+  {
+    if (offset >= offset_target || logical_x >= logical_target_x || visual_x >= visual_target_x)
+      break;
+
+    if (chunk_iter == chunk.end)
+    {
+      chunk = this.read_forward(offset);
+      chunk_iter = chunk.chars.begin;
+
+      if (chunk_iter == chunk.end)
+        break;
+    }
+
+    var ch = *chunk_iter;
+    var next = unicode::next_grapheme_boundary(chunk_iter, chunk.end);
+    var metrics = screen::metrics(std::string_view(chunk_iter, next));
+
+    chunk_iter = next;
+
+    var width = metrics.width;
+
+    if (ch == '\t')
+    {
+      width = calc_tab_x(this.tab_size, column);
+    }
+
+    if (ch == '\n' || (ch == '\r' && metrics.offset == 2))
+    {
+      wrap_opp = false;
+
+      if (logical_y >= logical_target.y || visual_y >= visual_target.y)
+        break;
+
+      offset += metrics.offset;
+      logical_x = 0;
+      logical_y += 1;
+      visual_x = 0;
+      visual_y += 1;
+      column = 0;
+
+      logical_target_x = calc_target_x(logical_target, logical_y);
+      visual_target_x = calc_target_x(visual_target, visual_y);
+
+      continue;
+    }
+
+    if (visual_x + width > visual_target_x)
+      break;
+
+    if (this.word_wrap_column > 0 && visual_x + width > this.word_wrap_column)
+    {
+      if (!wrap_opp)
+      {
+        wrap_opp_offset = offset;
+        wrap_opp_logical_x = logical_x;
+        wrap_opp_visual_x = visual_x;
+        wrap_opp_column = column;
+        visual_x = 0;
+      }
+      else
+      {
+        visual_x -= wrap_opp_visual_x;
+      }
+
+      wrap_opp = false;
+      visual_y += 1;
+      visual_target_x = calc_target_x(visual_target, visual_y);
+
+      if (visual_x == visual_target_x)
+        break;
+
+      if (visual_x > visual_target_x)
+      {
+        offset = wrap_opp_offset;
+        logical_x = wrap_opp_logical_x;
+        visual_x = 0;
+        column = wrap_opp_column;
+
+        chunk = this.read_forward(offset);
+        chunk_iter = chunk.chars.begin;
+
+        continue;
+      }
+    }
+
+    logical_x += 1;
+    visual_x += width;
+    column += width;
+    offset += metrics.offset;
+
+    if (this.word_wrap_column > 0 && ch == ' ')
+    {
+      wrap_opp = true;
+      wrap_opp_offset = offset;
+      wrap_opp_logical_x = logical_x;
+      wrap_opp_visual_x = visual_x;
+      wrap_opp_column = column;
+    }
+  }
+
+  if (this.word_wrap_column > 0)
+  {
+    if (wrap_opp)
+    {
+      if (wrap_opp_logical_x != logical_x && visual_y <= visual_target.y)
+      {
+        var lookahead_offset = offset;
+        var lookahead_visual_x = visual_x;
+
+        for (;;)
+        {
+          if (chunk_iter == chunk.end)
+          {
+            chunk = this.read_forward(lookahead_offset);
+            chunk_iter = chunk.chars.begin;
+
+            if (chunk_iter == chunk.end)
+              break;
+          }
+
+          var ch = *chunk_iter;
+          var next = unicode::next_grapheme_boundary(chunk_iter, chunk.end);
+          var metrics = screen::metrics(std::string_view(chunk_iter, next));
+
+          chunk_iter = next;
+
+          var width = metrics.width;
+
+          if (ch == '\t')
+          {
+            width = calc_tab_x(this.tab_size, column);
+          }
+
+          if (ch == '\n' || (ch == '\r' && metrics.offset == 2))
+          {
+            break;
+          }
+
+          lookahead_visual_x += width;
+          lookahead_offset += metrics.offset;
+
+          if (lookahead_visual_x > this.word_wrap_column)
+          {
+            visual_x -= wrap_opp_visual_x;
+            visual_y += 1;
+            break;
+          }
+
+          if (this.word_wrap_column > 0 && ch == ' ')
+          {
+            break;
+          }
+        }
+      }
+    }
+
+    if (visual_y > visual_target.y)
+    {
+      offset = wrap_opp_offset;
+      logical_x = wrap_opp_logical_x;
+      visual_x = wrap_opp_visual_x;
+      visual_y = visual_target.y;
+      column = wrap_opp_column;
+      wrap_opp = true;
+    }
+  }
+
+  cursor.offset = offset;
+  cursor.logical = point(logical_x, logical_y);
+  cursor.visual = point(visual_x, visual_y);
+  cursor.column = column;
+  cursor.wrap_opp = wrap_opp;
+}
+
+fn cursor_move_to_offset(textbuffer &this, cursor mut &cursor, usize offset) -> void
+{
+  if (cursor.offset == offset)
+    return;
+
+  while (offset < cursor.offset)
+  {
+    cursor_goto_line_start(this, &mut cursor, cursor.logical.y - 1);
+  }
+
+  cursor_measure_forward(this, &mut cursor, offset_target: offset);
+}
+
+fn cursor_move_to_logical(textbuffer &this, cursor mut &cursor, point &position) -> void
+{
+  var position = point(std::max(position.x, 0), std::max(position.y, 0));
+
+  if (cursor.logical == position)
+    return;
+
+  if (position.y != cursor.logical.y || position.x < cursor.logical.x)
+  {
+    cursor_goto_line_start(this, &mut cursor, position.y);
+  }
+
+  cursor_measure_forward(this, &mut cursor, logical_target: position);
+}
+
+fn cursor_move_to_visual(textbuffer &this, cursor mut &cursor, point &position) -> void
+{
+  var position = point(std::max(position.x, 0), std::max(position.y, 0));
+
+  if (cursor.visual == position)
+    return;
+
+  if (this.word_wrap_column <= 0)
+  {
+    if (position.y != cursor.visual.y || position.x < cursor.visual.x)
+    {
+      cursor_goto_line_start(this, &mut cursor, position.y);
+    }
+  }
+  else
+  {
+    while (position.y < cursor.visual.y)
+    {
+      cursor_goto_line_start(this, &mut cursor, cursor.logical.y - 1);
+    }
+
+    if (position.y == cursor.visual.y && position.x < cursor.visual.x)
+    {
+      cursor_goto_line_start(this, &mut cursor, cursor.logical.y);
+    }
+  }
+
+  cursor_measure_forward(this, &mut cursor, visual_target: position);
+}
+
+fn cursor_move_delta(textbuffer &this, cursor mut &cursor, movement granularity, int delta) -> void
+{
+  if (delta == 0)
+    return;
+
+  var sign = std::signum(delta);
+
+  switch (granularity)
+  {
+    case grapheme:
+      var start_x = (delta > 0) ? 0 : MAX_COLUMN;
+
+      for (;;)
+      {
+        var target_x = cursor.logical.x + delta;
+
+        cursor_move_to_logical(this, &mut cursor, point(target_x, cursor.logical.y));
+
+        delta = target_x - cursor.logical.x;
+        if (std::signum(delta) != sign || (delta < 0 && cursor.offset == 0) || (delta > 0 && cursor.offset >= this.text_length))
+          break;
+
+        cursor_move_to_logical(this, &mut cursor, point(start_x, cursor.logical.y + sign));
+
+        delta -= sign;
+        if (std::signum(delta) != sign || cursor.offset == 0 || cursor.offset >= this.text_length)
+          break;
+      }
+
+    case word:
+      var offset = cursor.offset;
+
+      for (;;)
+      {
+        if (delta < 0)
+        {
+          for (;;)
+          {
+            var chunk = this.read_backward(offset);
+            if (chunk.empty)
+              break;
+
+            var i = chunk.chars.end;
+
+            for (--i; i != chunk.begin; --i)
+            {
+              if (!std::is_whitespace(*i))
+                break;
+            }
+
+            offset -= (chunk.end - i.super);
+
+            if (i != chunk.begin)
+              break;
+
+            if (!std::is_whitespace(*i))
+              break;
+          }
+
+          for (;;)
+          {
+            var chunk = this.read_backward(offset);
+            if (chunk.empty)
+              break;
+
+            var i = chunk.chars.end;
+
+            for (--i; i != chunk.begin; --i)
+            {
+              if (std::is_whitespace(*i))
+              {
+                ++i;
+
+                break;
+              }
+            }
+
+            offset -= (chunk.end - i.super);
+
+            if (i != chunk.begin)
+              break;
+
+            if (std::is_whitespace(*i))
+            {
+              ++offset;
+
+              break;
+            }
+          }
+        }
+        else
+        {
+          for (;;)
+          {
+            var chunk = this.read_forward(offset);
+            if (chunk.empty)
+              break;
+
+            var i = chunk.chars.begin;
+
+            for (; i != chunk.end; ++i)
+            {
+              if (!std::is_whitespace(*i))
+                break;
+            }
+
+            offset += (i.super - chunk.begin);
+
+            if (i != chunk.end)
+              break;
+          }
+
+          for (;;)
+          {
+            var chunk = this.read_forward(offset);
+            if (chunk.empty)
+              break;
+
+            var i = chunk.chars.begin;
+
+            for (; i != chunk.end; ++i)
+            {
+              if (std::is_whitespace(*i))
+                break;
+            }
+
+            offset += (i.super - chunk.begin);
+
+            if (i != chunk.end)
+              break;
+          }
+        }
+
+        delta -= sign;
+        if (std::signum(delta) != sign || cursor.offset == 0 || cursor.offset >= this.text_length)
+          break;
+      }
+
+      cursor_move_to_offset(this, &mut cursor, offset);
+  }
+}
+
+// clear the buffer
+pub fn clear(textbuffer mut &this) -> void
+{
+  this.text_gap_offset = 0;
+  this.text_gap_length += this.text_length;
+  this.text_length = 0;
+
+  this.logical_lines = 1;
+  this.buffer_generation = std::add_with_carry(this.buffer_generation, 1).0;
+
+  this.recalc_after_content_swap();
+}
+
+// Compares the entire buffer contents with the given `text`.
+pub fn compare(textbuffer &this, String &text) -> bool
+{
+  if (this.text_length != text.len)
+    return false;
+
+  for (var offset = 0;; )
+  {
+    var dst_chunk = this.read_forward(offset);
+
+    var dst_len = dst_chunk.len;
+    var src_len = text.len - offset;
+    var length = std::min(dst_len, src_len);
+
+    if (std::memcmp(dst_chunk.data, text.data + offset, length) != 0)
+      return false;
+
+    if (length == 0)
+    {
+      if (dst_len != src_len)
+        return false;
+
+      break;
+    }
+
+    offset += length;
+  }
+
+  return true;
+}
+
+fn edit_begin_grouping(textbuffer mut &this) -> void
+{
+  var entry = history_entry();
+  entry.logical_lines_before = this.logical_lines;
+  entry.visual_lines_before = this.visual_lines;
+  entry.generation_before = this.buffer_generation;
+  entry.cursor = this.cursor.logical;
+
+  this.undo_stack.push_back(&move entry);
+
+  this.last_history_type = history_type::other;
+
+  this.active_edit_group = this.buffer_generation;
+}
+
+fn edit_end_grouping(textbuffer mut &this) -> void
+{
+  var entry = history_entry();
+  entry.logical_lines_before = this.logical_lines;
+  entry.visual_lines_before = this.visual_lines;
+  entry.generation_before = this.active_edit_group?!;
+  entry.cursor = this.cursor.logical;
+
+  this.undo_stack.push_back(&move entry);
+
+  this.active_edit_group.clear();
+}
+
+fn edit_begin(textbuffer mut &this, history_type history_type, cursor &cursor) -> void
+{
+  var cursor_before = std::exchange(&mut this.cursor, cursor);
+
+  if (cursor_before.offset != cursor.offset || history_type != this.last_history_type || history_type == history_type::other)
+  {
+    this.redo_stack.clear();
+    // if (this.undo_stack.len > 1024)
+    //   this.undo_stack.erase(this.undo_stack.begin, 64);
+
+    var entry = history_entry();
+    entry.logical_lines_before = this.logical_lines;
+    entry.visual_lines_before = this.visual_lines;
+    entry.generation_before = this.buffer_generation;
+    entry.cursor = cursor.logical;
+
+    if (this.active_edit_group)
+    {
+      entry.generation_before = this.active_edit_group?!;
+    }
+
+    this.undo_stack.push_back(&move entry);
+
+    this.last_history_type = history_type;
+  }
+
+  if (this.word_wrap_column > 0)
+  {
+    var safe_start = cursor;
+    cursor_goto_line_start(this, &mut safe_start, cursor.logical.y);
+
+    var next_line = cursor;
+    cursor_move_to_logical(this, &mut next_line, point(0, cursor.logical.y + 1));
+
+    var edit_line = active_edit_line();
+    edit_line.safe_start = safe_start;
+    edit_line.line_height_in_rows = next_line.visual.y - safe_start.visual.y;
+    edit_line.distance_next_line_start = next_line.offset - cursor.offset;
+
+    this.active_edit_line = edit_line;
+  }
+}
+
+fn edit_insert(textbuffer mut &this, std::string_view &text) -> void
+{
+  var logical_y_before = this.cursor.logical.y;
+
+  this.undo_stack.back.inserted += text;
+
+  replace(&mut this, this.cursor.offset, 0, text);
+
+  cursor_move_to_offset(this, &mut this.cursor, this.cursor.offset + text.len);
+
+  this.logical_lines += this.cursor.logical.y - logical_y_before;
+}
+
+fn edit_delete(textbuffer mut &this, cursor &position) -> void
+{
+  var logical_y_before = this.cursor.logical.y;
+
+  this.extract(this.cursor.offset, position.offset - this.cursor.offset, &mut this.undo_stack.back.deleted);
+
+  replace(&mut this, this.cursor.offset, position.offset - this.cursor.offset, std::string_view());
+
+  this.logical_lines += logical_y_before - position.logical.y;
+}
+
+fn edit_end(textbuffer mut &this) -> void
+{
+  if (this.active_edit_line)
+  {
+    var &edit_line = this.active_edit_line?!;
+
+    var target = this.cursor.logical;
+    var deleted_count = this.undo_stack.back.deleted.len;
+
+    this.cursor = edit_line.safe_start;
+    cursor_move_to_logical(this, &mut this.cursor, target);
+
+    if (deleted_count < edit_line.distance_next_line_start)
+    {
+      var next_line = this.cursor;
+      cursor_move_to_logical(this, &mut next_line, point(0, target.y + 1));
+
+      var lines_before = edit_line.line_height_in_rows;
+      var lines_after = next_line.visual.y - edit_line.safe_start.visual.y;
+
+      this.visual_lines += lines_after - lines_before;
+    }
+    else
+    {
+      var end = this.cursor;
+      cursor_move_to_logical(this, &mut end, point(MAX_COLUMN, MAX_COLUMN));
+
+      this.visual_lines = end.visual.y + 1;
+    }
+
+    this.active_edit_line.clear();
+  }
+  else
+  {
+    this.visual_lines = this.logical_lines;
+  }
+
+  this.reflow();
+}
+
+fn insert(textbuffer mut &this, std::string_view text, bool overtype) -> void
+{
+  const WHITESPACE = "            ";
+
+  if (text.empty && !this.selection)
+    return;
+
+  if (var range = this.selection_range(); range.is_some)
+  {
+    this.edit_begin(history_type::insert, range?!.0);
+    this.edit_delete(range?!.1);
+    this.selection.clear();
+  }
+  else
+  {
+    this.edit_begin(history_type::insert, this.cursor);
+  }
+
+  var offset = 0;
+  var newline = std::string();
+
+  for (; !text.empty; )
+  {
+    var n = std::memchr(text.data, cast('\n'), text.len);
+
+    if (n != 0 && n != text.len && text[n - 1] == cast('\r'))
+      n -= 1;
+
+    var line = text[0 .. n];
+    var column_before = this.cursor.logical.x;
+
+    for (; !line.empty; )
+    {
+      var plain = line;
+      if (!this.indent_with_tabs)
+        plain = line[0 .. std::memchr(line.data, cast('\t'), line.len)];
+
+      this.edit_insert(plain);
+      line.drop_front!(plain.len);
+
+      while (line.starts_with(cast<u8>('\t')))
+      {
+        this.edit_insert(WHITESPACE.substr(0, cast<usize>(calc_tab_x(this.tab_size, this.cursor.column))));
+
+        line.drop_front!(1);
+      }
+    }
+
+    if (overtype)
+    {
+      var count = this.cursor.logical.x - column_before;
+
+      var end = this.cursor;
+      cursor_move_to_logical(this, &mut end, point(this.cursor.logical.x + count, this.cursor.logical.y));
+
+      this.edit_delete(end);
+    }
+
+    text.drop_front!(n);
+
+    if (text.empty)
+      break;
+
+    newline.clear();
+    newline.append((this.newlines_are_crlf) ? "\r\n" : "\n");
+
+    var newline_indentation = std::min(this.measure_indent(this.cursor).1, this.cursor.column);
+
+    if (this.indent_with_tabs)
+    {
+      var count = newline_indentation / this.tab_size;
+      newline.append_n(cast<usize>(count), "\t");
+      newline_indentation -= count * this.tab_size;
+    }
+
+    newline.append_n(cast<usize>(newline_indentation), " ");
+
+    this.edit_insert(newline.view);
+
+    if (text.starts_with("\r\n"))
+      text.drop_front!(1);
+
+    if (text.starts_with(cast<u8>('\n')))
+      text.drop_front!(1);
+  }
+
+  this.edit_end();
+}
+
+pub fn insert(textbuffer mut &this, String &text, bool overtype) -> void
+{
+  this.insert(std::string_view(text), overtype);
+}
+
+pub fn insert(textbuffer mut &this, String &text) -> void
+{
+  this.insert(text, overtype: this.overtype);
+}
+
+pub fn insert(textbuffer mut &this, char ch, bool overtype) -> void
+{
+  var buf = [0; 8];
+  var len = utf::encode(buf.data, ch);
+
+  this.insert(buf.substr(0, len), overtype);
+}
+
+pub fn insert(textbuffer mut &this, char ch) -> void
+{
+  this.insert(ch, overtype: this.overtype);
+}
+
+pub fn delete(textbuffer mut &this, movement granularity, int delta) -> void
+{
+  if (delta == 0)
+    return;
+
+  var beg = this.cursor;
+  var end = this.cursor;
+
+  if (var range = this.selection_range(); range.is_some)
+  {
+    beg = range?!.0;
+    end = range?!.1;
+  }
+  else
+  {
+    if ((delta < 0 && this.cursor.offset == 0) || (delta > 0 && this.cursor.offset >= this.text_length))
+      return;
+
+    cursor_move_delta(this, &mut end, granularity, delta);
+
+    if (beg.offset == end.offset)
+      return;
+
+    if (beg.offset > end.offset)
+      std::swap(&mut beg, &mut end);
+  }
+
+  this.edit_begin(history_type::delete, beg);
+  this.edit_delete(end);
+  this.edit_end();
+
+  this.selection.clear();
+}
+
+fn measure_indent(textbuffer &this, cursor &cursor) -> (int, int)
+{
+  var chars = 0;
+  var columns = 0;
+
+  var line_beg = cursor;
+  cursor_goto_line_start(this, &mut line_beg, cursor.logical.y);
+
+  for (var offset = line_beg.offset; offset < this.text_length; )
+  {
+    for (var ch : this.read_forward(offset); offset < this.text_length; ++offset)
+    {
+      switch (ch)
+      {
+        case ' ':
+          chars += 1;
+          columns += 1;
+
+        case '\t':
+          chars += 1;
+          columns += calc_tab_x(this.tab_size, columns);
+
+        else:
+          offset = this.text_length;
+      }
+    }
+  }
+
+  return (chars, columns);
+}
+
+pub fn indent(textbuffer mut &this, int direction) -> void
+{
+  var cursor = this.cursor;
+  var selection = this.selection;
+  var selection_beg = this.cursor.logical;
+  var selection_end = this.cursor.logical;
+
+  if (selection)
+  {
+    selection_beg = selection.transform(|s| std::min(s.beg, s.end)).unwrap_or_default;
+    selection_end = selection.transform(|s| std::max(s.beg, s.end)).unwrap_or_default;
+
+    if (selection_end.x == 0)
+    {
+      selection_end.x = MAX_COLUMN;
+      selection_end.y -= 1;
+    }
+  }
+
+  if (direction > 0 && selection.is_none)
+  {
+    this.insert("\t", overtype: false);
+    return;
+  }
+
+  this.edit_begin_grouping();
+
+  for (var y = selection_beg.y; y <= selection_end.y; ++y)
+  {
+    this.cursor_move_to_logical(point(0, y));
+
+    var delta = 0;
+    var indent = this.measure_indent(this.cursor);
+
+    if (direction < 0)
+    {
+      if (indent.1 <= 0)
+        continue;
+
+      cursor_move_to_visual(this, &mut this.cursor, point(std::min(indent.1, this.tab_size), y));
+
+      delta = -this.cursor.logical.x;
+
+      this.delete(movement::grapheme, delta);
+    }
+
+    if (direction > 0)
+    {
+      this.insert("\t", overtype: false);
+
+      delta = this.cursor.logical.x;
+    }
+
+    if (y == selection_beg.y)
+      selection_beg.x += delta;
+
+    if (y == selection_end.y)
+      selection_end.x += delta;
+  }
+
+  cursor_move_to_logical(this, &mut this.cursor, selection_end);
+
+  this.set_selection(selection_beg, selection_end);
+
+  this.edit_end_grouping();
+}
+
+// Displaces the current, cursor or the selection, line(s) in the given direction.
+pub fn displace(textbuffer mut &this, int direction) -> void
+{
+  var cursor = this.cursor;
+  var selection = this.selection;
+  var selection_beg = this.cursor.logical;
+  var selection_end = this.cursor.logical;
+
+  if (selection)
+  {
+    selection_beg = selection.transform(|s| std::min(s.beg, s.end)).unwrap_or_default;
+    selection_end = selection.transform(|s| std::max(s.beg, s.end)).unwrap_or_default;
+
+    if (selection_end.x == 0)
+    {
+      selection_end.x = MAX_COLUMN;
+      selection_end.y -= 1;
+    }
+  }
+
+  if (direction < 0 && selection_beg.y <= 0)
+    return;
+
+  if (direction > 0 && selection_end.y >= this.logical_lines - 1)
+    return;
+
+  this.edit_begin_grouping();
+
+  var src = (direction < 0) ? selection_beg.y - 1 : selection_end.y + 1;
+  var dst = (direction < 0) ? selection_end.y : selection_beg.y;
+
+  var beg = this.cursor;
+  cursor_move_to_logical(this, &mut beg, point(0, src));
+
+  var end = beg;
+  cursor_move_to_logical(this, &mut end, point(0, src + 1));
+
+  var line = std::string();
+  this.extract(beg.offset, end.offset - beg.offset, &mut line);
+
+  this.edit_begin(history_type::delete, beg);
+  this.edit_delete(end);
+  this.edit_end();
+
+  cursor_move_to_logical(this, &mut this.cursor, point(0, dst));
+
+  if (!line.ends_with("\n"))
+  {
+    line.insert(line.end, (this.newlines_are_crlf) ? "\r\n" : "\n");
+  }
+
+  if (this.cursor.logical.y != dst)
+  {
+    line.chomp!();
+    line.insert(line.begin, (this.newlines_are_crlf) ? "\r\n" : "\n");
+  }
+
+  this.edit_begin(history_type::insert, this.cursor);
+  this.edit_insert(line.view);
+  this.edit_end();
+
+  selection_beg.y += direction;
+  selection_end.y += direction;
+
+  cursor_move_to_logical(this, &mut this.cursor, point(cursor.logical.x, cursor.logical.y + direction));
+
+  this.set_selection(selection_beg, selection_end);
+
+  this.edit_end_grouping();
+}
+
+// Changes the newline type used in the document.
+pub fn normalize_newlines(textbuffer mut &this, bool crlf) -> void
+{
+  var newline = crlf ? "\r\n" : "\n";
+
+  var cursor_offset = this.cursor.offset;
+  var cursor_for_rendering_offset = this.cursor_for_rendering.offset;
+
+  for (var offset = 0;; )
+  {
+    var chunk = this.read_forward(offset);
+    if (chunk.empty)
+      break;
+
+    for (var end = offset + chunk.len; offset != end; )
+    {
+      if ((offset += std::memchr(chunk.data, cast('\n'), chunk.len)) != end)
+      {
+        var chunk = this.read_backward(offset);
+        var chunk_newline_len = chunk.ends_with("\r\n") ? 2 : 1;
+        var chunk_newline = chunk[chunk.len - chunk_newline_len .. chunk.len];
+
+        if (chunk_newline != newline)
+        {
+          var delta = cast<int>(newline.len) - cast<int>(chunk_newline_len);
+
+          if (offset <= cursor_offset)
+            cursor_offset = std::saturating_add(cursor_offset, delta);
+
+          if (offset <= cursor_for_rendering_offset)
+            cursor_for_rendering_offset = std::saturating_add(cursor_for_rendering_offset, delta);
+
+          offset -= chunk_newline_len;
+          this.replace(offset, chunk_newline_len, std::string_view(newline));
+          offset += newline.len;
+        }
+      }
+    }
+  }
+
+  this.cursor.offset = cursor_offset;
+  this.cursor_for_rendering.offset = cursor_for_rendering_offset;
+
+  this.newlines_are_crlf = crlf;
+}
+
+fn undo_redo(textbuffer mut &this, std::vector<history_entry> mut &src, std::vector<history_entry> mut &dst) -> void
+{
+  var buffer_generation = this.buffer_generation;
+  var entry_buffer_generation = src.back.generation_before;
+
+  for (;;)
+  {
+    if (src.empty)
+      break;
+
+    if (src.back.generation_before != entry_buffer_generation)
+      break;
+
+    var mut &change = src.back;
+
+    std::swap(&mut change.deleted, &mut change.inserted);
+
+    this.cursor_move_to_logical(change.cursor);
+
+    this.replace(this.cursor.offset, change.deleted.len, std::string_view());
+    this.replace(this.cursor.offset, 0, change.inserted.view);
+
+    std::swap(&mut this.visual_lines, &mut change.visual_lines_before);
+    std::swap(&mut this.logical_lines, &mut change.logical_lines_before);
+
+    if (this.word_wrap_column > 0)
+      cursor_goto_line_start(this, &mut this.cursor, this.cursor.logical.y);
+
+    cursor_move_to_logical(this, &mut this.cursor, change.cursor);
+    cursor_move_to_offset(this, &mut this.cursor, this.cursor.offset + change.inserted.len);
+
+    change.generation_before = buffer_generation;
+
+    dst.push_back(src.take_back());
+  }
+
+  this.buffer_generation = entry_buffer_generation;
+
+  this.reflow();
+}
+
+pub fn undo(textbuffer mut &this) -> void
+{
+  if (this.undo_stack.empty)
+    return;
+
+  undo_redo(&mut this, &mut this.undo_stack, &mut this.redo_stack);
+}
+
+pub fn redo(textbuffer mut &this) -> void
+{
+  if (this.redo_stack.empty)
+    return;
+
+  undo_redo(&mut this, &mut this.redo_stack, &mut this.undo_stack);
+}
+
+fn set_selection(textbuffer mut &this, point &beg, point &end) -> u32
+{
+  this.selection = std::optional(selection(beg, end)).filter(|s| s.beg != s.end);
+  this.selection_generation = std::add_with_carry(this.selection_generation, 1).0;
+
+  return this.selection_generation;
+}
+
+fn set_selection_for_cursor(textbuffer mut &this, cursor &cursor) -> void
+{
+  var beg = this.selection.transform(|s| s.beg).unwrap_or(this.cursor.logical);
+  var end = cursor.logical;
+
+  this.set_cursor(cursor);
+  this.set_selection(beg, end);
+}
+
+// Moves the cursor by `offset` and updates the selection to contain it.
+pub fn selection_update_offset(textbuffer mut &this, usize offset) -> void
+{
+  var cursor = this.cursor;
+  cursor_move_to_offset(this, &mut cursor, offset);
+
+  this.set_selection_for_cursor(cursor);
+}
+
+// Moves the cursor to `visual position` and updates the selection to contain it.
+pub fn selection_update_visual(textbuffer mut &this, point &position) -> void
+{
+  var cursor = this.cursor;
+  cursor_move_to_visual(this, &mut cursor, position);
+
+  this.set_selection_for_cursor(cursor);
+}
+
+// Moves the cursor to `logical position` and updates the selection to contain it.
+pub fn selection_update_logical(textbuffer mut &this, point &position) -> void
+{
+  var cursor = this.cursor;
+  cursor_move_to_logical(this, &mut cursor, position);
+
+  this.set_selection_for_cursor(cursor);
+}
+
+// Moves the cursor by `delta` and updates the selection to contain it.
+pub fn selection_update_delta(textbuffer mut &this, movement granularity, int delta) -> void
+{
+  var cursor = this.cursor;
+  cursor_move_delta(this, &mut cursor, granularity, delta);
+
+  this.set_selection_for_cursor(cursor);
+}
+
+// Select the current line.
+pub fn select_line(textbuffer mut &this) -> void
+{
+  var beg = this.cursor;
+  cursor_move_to_logical(this, &mut beg, point(0, this.cursor.logical.y));
+
+  var end = this.cursor;
+  cursor_move_to_logical(this, &mut end, point(MAX_COLUMN, this.cursor.logical.y));
+
+  this.set_cursor(end);
+  this.set_selection(beg.logical, end.logical);
+}
+
+// Select the entire document.
+pub fn select_all(textbuffer mut &this) -> void
+{
+  var beg = cursor();
+  cursor_move_to_logical(this, &mut beg, point(0, 0));
+
+  var end = cursor();
+  cursor_move_to_logical(this, &mut end, point(0, this.logical_lines + 1));
+
+  this.set_cursor(end);
+  this.set_selection(beg.logical, end.logical);
+}
+
+// Starts a new selection, if there's none already.
+pub fn start_selection(textbuffer mut &this) -> void
+{
+  if (this.selection.is_none)
+  {
+    this.set_selection(this.cursor.logical, this.cursor.logical);
+  }
+}
+
+// Destroy the current selection.
+pub fn clear_selection(textbuffer mut &this) -> void
+{
+  this.selection.clear();
+}
+
+fn find_construct_search(textbuffer mut &this, std::string &pattern, search_options &options) -> bool
+{
+  if (pattern.empty)
+    return false;
+
+  var flags = regex::options::foldcase | regex::options::multiline;
+
+  if (options.match_case)
+    flags &= ~regex::options::foldcase;
+
+  var regex = pattern;
+
+  if (!options.use_regex)
+  {
+    regex.clear();
+
+    for (var ch : pattern)
+    {
+      if ("*?+[(){}^$|\\.".contains(ch))
+        regex.push_back(cast<u8>('\\'));
+
+      regex.push_back(ch);
+    }
+  }
+
+  if (options.whole_word)
+  {
+    regex = std::format("\\b(?:{})\\b", regex);
+  }
+
+  var search = active_search();
+
+  search.pattern = pattern;
+  search.options = options;
+
+  search.regex = regex::create(regex, flags);
+
+  if (search.regex.error)
+    return false;
+
+  search.buffer_generation = this.buffer_generation;
+
+  this.active_search = &move search;
+
+  return true;
+}
+
+fn find_select_next(textbuffer mut &this, usize offset, bool wrap = false) -> void
+{
+  var mut &search = this.active_search?!;
+
+  var hit = std::optional<(usize, usize)>();
+
+  if (offset != this.text_gap_offset)
+    this.move_gap(offset);
+
+  var chunk = this.read_forward(offset);
+
+  if (var j = search.regex.find(chunk); j.len != 0)
+    hit = (offset + (j.begin - chunk.begin), j.len);
+
+  if (wrap && !hit)
+  {
+    this.move_gap(0);
+
+    chunk = this.read_forward(0);
+
+    if (var j = search.regex.find(chunk); j.len != 0)
+      hit = (j.begin - chunk.begin, j.len);
+  }
+
+  if (hit)
+  {
+    var hit = hit?!;
+
+    var beg = this.cursor;
+    cursor_move_to_offset(this, &mut beg, hit.0);
+
+    var end = this.cursor;
+    cursor_move_to_offset(this, &mut end, hit.0 + hit.1);
+
+    this.set_cursor(end);
+    this.set_selection(beg.logical, end.logical);
+  }
+  else
+  {
+    this.clear_selection();
+    search.no_matches = true;
+  }
+
+  search.selection_generation = this.selection_generation;
+}
+
+// Find the next occurrence of the given `pattern` and select it.
+pub fn find_and_select(textbuffer mut &this, std::string &pattern, search_options &options) -> bool
+{
+  if (this.active_search)
+  {
+    var mut &search = this.active_search?!;
+
+    if (search.pattern != pattern || search.options != options)
+    {
+      this.active_search.clear();
+
+      if (this.selection)
+        this.cursor_move_to_logical(this.selection?!.beg);
+    }
+  }
+
+  if (!this.active_search)
+  {
+    if (pattern.empty)
+      return true;
+
+    if (!this.find_construct_search(pattern, options))
+      return false;
+  }
+
+  var mut &search = this.active_search?!;
+
+  if (search.no_matches)
+    return true;
+
+  this.find_select_next(this.cursor.offset, wrap: true);
+
+  return true;
+}
+
+// Find the next occurrence of the given `pattern` and replace it with `replacement`.
+pub fn find_and_replace(textbuffer mut &this, std::string &pattern, search_options &options, std::string &replacement) -> bool
+{
+  if (this.active_search && this.selection)
+  {
+    var mut &search = this.active_search?!;
+
+    if (search.selection_generation == this.selection_generation)
+    {
+      this.insert(replacement, overtype: false);
+    }
+  }
+
+  if (!this.find_and_select(pattern, options))
+    return false;
+
+  return true;
+}
+
+// Find all occurrences of the given `pattern` and replace them with `replacement`.
+pub fn find_and_replace_all(textbuffer mut &this, std::string &pattern, search_options &options, std::string &replacement) -> bool
+{
+  if (!this.find_construct_search(pattern, options))
+    return false;
+
+  for (var offset = 0;; )
+  {
+    this.find_select_next(offset);
+
+    if (this.selection.is_none)
+      break;
+
+    this.insert(replacement, overtype: false);
+
+    offset = this.cursor.offset;
+  }
+
+  return true;
+}
+
+// Moves the cursor to the given offset.
+pub fn cursor_move_to_offset(textbuffer mut &this, usize offset) -> void
+{
+  cursor_move_to_offset_internal(this, &mut this.cursor, offset);
+
+  this.last_history_type = history_type::other;
+  this.selection.clear();
+}
+
+// Moves the cursor to the given logical position.
+pub fn cursor_move_to_logical(textbuffer mut &this, point &position) -> void
+{
+  cursor_move_to_logical(this, &mut this.cursor, position);
+
+  this.last_history_type = history_type::other;
+  this.selection.clear();
+}
+
+// Moves the cursor to the given visual position.
+pub fn cursor_move_to_visual(textbuffer mut &this, point &position) -> void
+{
+  cursor_move_to_visual(this, &mut this.cursor, position);
+
+  this.last_history_type = history_type::other;
+  this.selection.clear();
+}
+
+// Moves the cursor by the given delta.
+pub fn cursor_move_delta(textbuffer mut &this, movement granularity, int delta) -> void
+{
+  cursor_move_delta(this, &mut this.cursor, granularity, delta);
+
+  this.last_history_type = history_type::other;
+  this.selection.clear();
+}
+
+// Sets the cursor to the given position, and clears the selection.
+pub fn set_cursor(textbuffer mut &this, cursor &cursor) -> void
+{
+  this.cursor = cursor;
+
+  this.last_history_type = history_type::other;
+  this.selection.clear();
+}
+
+pub fn cut(textbuffer mut &this, clipboard mut &clipboard) -> void
+{
+  if (this.selection.is_none)
+    return;
+
+  var range = this.selection_range();
+
+  clipboard.data = this.selection_text();
+  clipboard.wants_host_sync = true;
+
+  this.edit_begin(history_type::delete, range?!.0);
+  this.edit_delete(range?!.1);
+  this.selection.clear();
+  this.edit_end();
+}
+
+pub fn copy(textbuffer mut &this, clipboard mut &clipboard) -> void
+{
+  if (this.selection.is_none)
+    return;
+
+  clipboard.data = this.selection_text();
+  clipboard.wants_host_sync = true;
+}
+
+pub fn paste(textbuffer mut &this, clipboard &clipboard) -> void
+{
+  if (clipboard.data.empty)
+    return;
+
+  if (var range = this.selection_range(); range.is_some)
+  {
+    this.edit_begin(history_type::insert, range?!.0);
+    this.edit_delete(range?!.1);
+    this.selection.clear();
+  }
+  else
+  {
+    this.edit_begin(history_type::insert, this.cursor);
+  }
+
+  this.edit_insert(clipboard.data.view);
+  this.edit_end();
+}
+
+// Replaces the entire buffer contents with the given `text`.
+pub fn load_from(textbuffer mut &this, String &text) -> void
+{
+  this.replace(0, this.text_length, std::string_view(text));
+
+  var lines = 0;
+
+  for (var line : this.read_forward(0).lines)
+  {
+    lines += 1;
+  }
+
+  this.logical_lines = std::max(lines, 1);
+
+  this.recalc_after_content_swap();
+}
+
+// Reads a file from disk into the text buffer
+pub fn load_from_file(textbuffer mut &this, String &path) throws(std::error) -> void
+{
+  this.clear();
+
+  var file = std::file::open(path);
+  var filesize = cast<usize>(file.stat().size);
+
+  if (filesize >= this.text_gap_length)
+    this.grow_gap(filesize + 1);
+
+  switch (this.buffer)
+  {
+    case vector[vector]:
+      file.read(vector.data, filesize);
+
+    case memory[memory]:
+      file.read(memory.base, filesize);
+  }
+
+  this.text_length += filesize;
+  this.text_gap_offset += filesize;
+  this.text_gap_length -= filesize;
+
+  var lines = 0;
+  var crlf_count = 0;
+  var tab_indentations = 0;
+  var space_indentations = 0;
+  var space_indentation_sizes = [0; 9];
+
+  for (var line : this.read_forward(0).lines)
+  {
+    if (line.starts_with("\t"))
+      tab_indentations += 1;
+
+    if (var spaces = line.take(8).find_first_not_of(" ") - line.begin; spaces > 1 && spaces <= 8)
+    {
+      space_indentations += 1;
+
+      if (spaces & 4 != 0)
+        space_indentation_sizes[2] += 1;
+
+      if (spaces == 6 || spaces == 8)
+        space_indentation_sizes[spaces / 2] += 1;
+
+      space_indentation_sizes[spaces] += 1;
+    }
+
+    if (*(line.data + line.len) == cast('\r'))
+      crlf_count += 1;
+
+    lines += 1;
+  }
+
+  if (this.read_forward(0).ends_with("\n"))
+    lines += 1;
+
+  this.tab_size = 4;
+  this.indent_with_tabs = true;
+
+  if (space_indentations > tab_indentations)
+  {
+    this.tab_size = cast(std::max_element(space_indentation_sizes) - space_indentation_sizes.begin);
+    this.indent_with_tabs = false;
+  }
+
+  this.logical_lines = std::max(lines, 1);
+  this.newlines_are_crlf = (crlf_count >= lines / 2);
+
+  this.recalc_after_content_swap();
+}
+
+// Copies the contents of the buffer into a string.
+pub fn save_into(textbuffer &this, std::string mut &text) -> void
+{
+  text.clear();
+
+  this.extract(0, this.text_length, &mut text);
+}
+
+// Writes the text buffer contents to a file, handling BOM and encoding.
+pub fn save_to_file(textbuffer &this, String &path) throws (std::error) -> void
+{
+  var file = std::file::create(path);
+
+  file.puts("\xEF\xBB\xBF");
+
+  for (var offset = 0; offset < this.text_length; )
+  {
+    var chunk = this.read_forward(offset);
+
+    file.write(chunk.data, chunk.len);
+
+    offset += chunk.len;
+  }
+}
+
+pub fn render(textbuffer &this, screen mut &screen, point &origin, rect &destination, bool focused) -> void
+{
+  const MARGIN_TEMPLATE = "                    │ ";
+  const VISUAL_SPACE = "･";
+  const VISUAL_SPACE_PREFIX_ADD = 2;
+  const VISUAL_TAB = "￫       ";
+  const VISUAL_TAB_PREFIX_ADD = 2;
+
+  if (destination.empty)
+    return;
+
+  var width = destination.width;
+  var height = destination.height;
+  var line_number_width = cast<usize>(std::max(this.margin_width - 3, 0));
+  var text_width = width - this.margin_width;
+  var cursor = this.cursor_for_rendering;
+  var line = std::string::with_capacity(cast<usize>(width) * 2);
+  var visualizer_buf = [<u8>: 0xe2, 0x90, 0x80];
+  var visual_x_max = 0;
+
+  var selection_beg = this.selection.transform(|s| std::min(s.beg, s.end)).unwrap_or_default;
+  var selection_end = this.selection.transform(|s| std::max(s.beg, s.end)).unwrap_or_default;
+
+  for (var y = 0; y < height; ++y)
+  {
+    line.clear();
+
+    var visual_line = origin.y + y;
+
+    var cursor_beg = cursor;
+    cursor_move_to_visual(this, &mut cursor_beg, point(origin.x, visual_line));
+
+    var cursor_end = cursor_beg;
+    cursor_move_to_visual(this, &mut cursor_end, point(origin.x + text_width, visual_line));
+
+    if (y == 0)
+      this.cursor_for_rendering = cursor_beg;
+
+    if (line_number_width != 0)
+    {
+      if (visual_line >= this.visual_lines)
+      {
+        line.append(MARGIN_TEMPLATE.substr(19 - line_number_width, MARGIN_TEMPLATE.len));
+      }
+      else if (this.word_wrap_column <= 0 || cursor_beg.logical.x == 0)
+      {
+        line.appendf("{:>*} | ", line_number_width, cursor_beg.logical.y + 1);
+      }
+      else
+      {
+        var number_width = cast<usize>(std::log10(cast<f64>(cursor_beg.logical.y + 1))) + 1;
+
+        line.appendf("{:*}{:.<*} | ", line_number_width - number_width, "", number_width, "");
+
+        var top = destination.top + y;
+        var left = destination.left;
+
+        screen.blend_fg(left, top, left + cast(line_number_width), top + 1, indexed_alpha(color::background, 1, 2));
+      }
+    }
+
+    var selection_offset = 0 .. 0;
+
+    if (cursor_beg.visual.y == visual_line && selection_beg <= cursor_end.logical && selection_end >= cursor_beg.logical)
+    {
+      var cursor = cursor_beg;
+      var visual = (0 .. MAX_COLUMN);
+
+      selection_offset.0 = cursor_beg.offset;
+      selection_offset.1 = cursor_end.offset;
+
+      if (selection_beg <= cursor_end.logical && selection_beg >= cursor_beg.logical)
+      {
+        cursor_move_to_logical(this, &mut cursor, selection_beg);
+
+        visual.0 = cursor.visual.x;
+        selection_offset.0 = cursor.offset;
+      }
+
+      if (selection_end <= cursor_end.logical && selection_end >= cursor_beg.logical)
+      {
+        cursor_move_to_logical(this, &mut cursor, selection_end);
+
+        visual.1 = cursor.visual.x;
+        selection_offset.1 = cursor.offset;
+      }
+
+      var top = destination.top + y;
+      var left = destination.left + this.margin_width - origin.x;
+
+      var fg = focused ? 0xff000000 : 0xffffffff;
+      var bg = focused ? 0x5585adfb : 0x552d3f62;
+
+      screen.blend_fg(left + std::max(visual.0, origin.x), top, left + std::min(visual.1, origin.x + text_width), top + 1, fg);
+      screen.blend_bg(left + std::max(visual.0, origin.x), top, left + std::min(visual.1, origin.x + text_width), top + 1, bg);
+    }
+
+    if (cursor_beg.offset != cursor_end.offset)
+    {
+      if (cursor_beg.visual.x < origin.x)
+      {
+        var cursor_next = cursor_beg;
+        cursor_move_to_logical(this, &mut cursor_next, point(cursor_beg.logical.x + 1, cursor_beg.logical.y));
+
+        if (cursor_next.visual.x > origin.x)
+        {
+          line.append(MARGIN_TEMPLATE.substr(0, cast<usize>(cursor_next.visual.x - origin.x)));
+
+          cursor_beg = cursor_next;
+        }
+      }
+
+      var cursor_line = cursor_beg;
+
+      for (var offset = cursor_beg.offset; offset < cursor_end.offset; )
+      {
+        for (var ch : this.read_forward(offset); offset < cursor_end.offset; ++offset)
+        {
+          switch (ch)
+          {
+            case ' ':
+            case '\t':
+              var is_tab = (ch == cast('\t'));
+              var visualize = (selection_offset.0 <= offset && offset < selection_offset.1);
+              var whitespace = MARGIN_TEMPLATE;
+              var prefix_add = 0;
+
+              if (is_tab || visualize)
+              {
+                cursor_move_to_offset(this, &mut cursor_line, offset);
+              }
+
+              var tab_size = is_tab ? calc_tab_x(this.tab_size, cursor_line.column) : 1;
+
+              if (visualize)
+              {
+                if (is_tab)
+                {
+                  whitespace = VISUAL_TAB;
+                  prefix_add = VISUAL_TAB_PREFIX_ADD;
+                }
+                else
+                {
+                  whitespace = VISUAL_SPACE;
+                  prefix_add = VISUAL_SPACE_PREFIX_ADD;
+                }
+
+                var top = destination.top + cursor_line.visual.y - origin.y;
+                var left = destination.left + this.margin_width + cursor_line.visual.x - origin.x;
+
+                screen.blend_fg(left, top, left + 1, top + 1, indexed_alpha(color::foreground, 1, 2));
+              }
+
+              line.append(whitespace.substr(0, cast<usize>(prefix_add + tab_size)));
+
+            case 0 ..= 0x8:
+            case 0x0a ..= 0x1f:
+            case 0x7f:
+              if (ch <= 0x1f)
+                visualizer_buf[2] = 0x80 | ch; // u+2400..=u+241f
+              else if (ch == 0x7f)
+                visualizer_buf[2] = 0xa1; // u+2421
+              else
+                visualizer_buf[2] = 0xa6; // u+2426
+
+              line.append(std::string_view(visualizer_buf));
+
+              cursor_move_to_offset(this, &mut cursor_line, offset);
+
+              var top = destination.top + cursor_line.visual.y - origin.y;
+              var left = destination.left + this.margin_width + cursor_line.visual.x - origin.x;
+
+              screen.blend_bg(left, top, left + 1, top + 1, indexed(color::yellow));
+              screen.blend_fg(left, top, left + 1, top + 1, indexed(color::black));
+
+            else:
+              line.push_back(ch);
+          }
+        }
+      }
+
+      visual_x_max = std::max(visual_x_max, cursor_end.visual.x);
+    }
+
+    screen.replace(destination.left, destination.top + y, destination.right, line);
+
+    cursor = cursor_end;
+  }
+
+  if (this.margin_width > 0)
+  {
+    screen.blend_fg(destination.left, destination.top, destination.left + this.margin_width, destination.bottom, 0x7f3f3f3f);
+  }
+
+  if (this.ruler > 0)
+  {
+    var left = destination.left + this.margin_width + std::max(this.ruler - origin.x, 0);
+    let right = destination.right;
+
+    if (left < right)
+    {
+      screen.blend_bg(left, destination.top, right, destination.bottom, indexed_alpha(color::bright_red, 1, 4));
+    }
+  }
+
+  if (focused)
+  {
+    var cursor = this.cursor.visual;
+
+    if (this.word_wrap_column > 0 && cursor.x >= this.word_wrap_column)
+    {
+      cursor.x = 0;
+      cursor.y += 1;
+    }
+
+    cursor.x += destination.left - origin.x + this.margin_width;
+    cursor.y += destination.top - origin.y;
+
+    if (rect(destination.left + this.margin_width, destination.top, destination.right, destination.bottom).contains(cursor))
+    {
+      screen.set_cursor(cursor.x, cursor.y, this.overtype ? 1 : 5);
+
+      if (this.line_highlight_enabled && selection_beg >= selection_end)
+      {
+        screen.blend_bg(destination.left, cursor.y, destination.right, cursor.y + 1, 0x50282828);
+      }
+    }
+  }
+
+  this.visual_width = visual_x_max;
+}

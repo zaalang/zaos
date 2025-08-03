@@ -65,6 +65,7 @@ pub struct ext2fs : pub vfs::file_system
   std::string source;
   Rc<vfs::node> root;
   std::flat_hash_map<ext2_ino_t, Rc<inode>> node_cache;
+  mutex rename_lock;
 
   ext2fs(vfs::node mut *dev, std::string &source)
     : super(&impl this), dev(dev), source(source)
@@ -416,6 +417,8 @@ pub fn rename(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *n
   var fs = cast<inode mut &>(*oldpath).fs;
   var mut &olddir = cast<inode mut &>(*oldpath);
   var mut &newdir = cast<inode mut &>(*newpath);
+
+  var guard = std::lock_guard(&mut fs.rename_lock);
 
   if (oldname ==  "." || oldname == "..")
     return not_permitted;

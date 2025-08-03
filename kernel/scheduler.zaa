@@ -541,11 +541,13 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
 {
   std::assert(status <= 0);
 
+  var target_cpu = sys::cpu(thread.cpu);
+
   if (std::atomic_xchg(&thread.wait_status, status) == status::waiting)
   {
-    sys::cpu(thread.cpu).runqueue.wake(thread);
+    target_cpu.runqueue.wake(thread);
 
-    if (sys::cpu(thread.cpu).current_thread.priority < thread.priority)
+    if (target_cpu.current_thread.priority < thread.priority)
     {
       var irqs = platform::disable_interrupts();
 

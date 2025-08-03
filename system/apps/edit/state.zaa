@@ -1,0 +1,143 @@
+//
+// state
+//
+
+import std.stdlib;
+import std.circular_buffer;
+import tui.document;
+import tui.buffer;
+import documents : DocumentManager;
+
+pub struct StateSearch
+{
+  pub StateSearchKind kind;
+  pub bool focus;
+
+  pub StateSearch() = default;
+  pub ~StateSearch() = default;
+}
+
+pub enum StateSearchKind
+{
+  Hidden,
+  Disabled,
+  Search,
+  Replace,
+}
+
+pub enum StateFilePicker
+{
+  None,
+  Open,
+  SaveAs,
+
+  SaveAsShown, // Transitioned from SaveAs
+}
+
+pub enum StateEncodingChange
+{
+  None,
+  Convert,
+  Reopen,
+}
+
+pub struct OscTitleFileStatus
+{
+  pub std::string filename;
+  pub bool dirty;
+
+  OscTitleFileStatus() = default;
+  ~OscTitleFileStatus() = default;
+}
+
+pub struct state
+{
+  pub DocumentManager documents;
+
+  // A ring buffer of the last n errors.
+  pub std::circular_buffer<std::string, N:8> error_log;
+
+  pub StateFilePicker wants_file_picker;
+  pub std::string file_picker_pending_dir;
+  pub usize file_picker_pending_dir_revision; // Bumped every time `file_picker_pending_dir` changes.
+  pub std::string file_picker_pending_name;
+  pub std::optional<std::vector<std::string>[3]> file_picker_entries; // ["..", directories, files]
+  pub bool file_picker_overwrite_warning;
+  pub std::vector<std::string> file_picker_autocomplete;
+
+  pub StateSearch wants_search;
+  pub std::string search_needle;
+  pub std::string search_replacement;
+  pub bool search_match_case;
+  pub bool search_whole_word;
+  pub bool search_use_regex;
+  pub bool search_success;
+
+  pub bool wants_save;
+  pub bool wants_statusbar_focus;
+  pub bool wants_indentation_picker;
+  pub bool wants_go_to_file;
+  pub bool wants_about;
+  pub bool wants_close;
+  pub bool wants_exit;
+  pub bool wants_goto;
+  pub std::string goto_target;
+  pub bool goto_invalid;
+
+//  pub osc_title_file_status: OscTitleFileStatus,
+  pub bool osc_clipboard_sync;
+  pub bool exit;
+
+  pub state() = default;
+  pub ~state() = default;
+}
+
+pub fn draw_add_untitled_document(tui::context mut &ctx, state mut &state) -> void
+{
+  try
+  {
+    state.documents.add_untitled();
+  }
+  catch (std::error err)
+  {
+    error_log_add(&mut ctx, &mut state, err);
+  }
+}
+
+pub fn error_log_add(tui::context mut &ctx, state mut &state, std::error &err) -> void
+{
+  state.error_log.push_back(std::format("{}", err));
+  ctx.needs_rerender();
+}
+
+pub fn draw_error_log(tui::context mut &ctx, state mut &state) -> void
+{
+  using tui;
+
+  ctx.modal_begin("error", "Error");
+  ctx.attr_background(indexed(color::red));
+  ctx.attr_foreground(indexed(color::bright_white));
+
+  ctx.block_begin("content");
+  ctx.attr_padding(2, 0, 2, 1);
+
+    for (var i = 0; i < state.error_log.len; ++i)
+    {
+      ctx.next_block_id_mixin(i);
+      ctx.label("error", state.error_log[i]);
+      ctx.attr_overflow(overflow::truncate_tail);
+    }
+
+  ctx.block_end();
+
+  if (ctx.button("ok", "Ok", button_style::default()))
+    state.error_log.clear();
+
+  ctx.attr_position(position::center);
+  ctx.inherit_focus();
+
+  if (ctx.modal_end())
+  {
+    state.error_log.clear();
+  }
+}

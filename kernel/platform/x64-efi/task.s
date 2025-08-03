@@ -18,11 +18,11 @@
             .section .tdata
 
             .align 64
-tss:        .long 0    # _reserved1
+tss:        .long 0    # reserved1
             .quad 0    # rsp[0]
             .quad 0    # rsp[1]
             .quad 0    # rsp[2]
-            .quad 0    # _reserved2
+            .quad 0    # reserved2
             .quad 0    # ist[0]
             .quad 0    # ist[1]
             .quad 0    # ist[2]
@@ -30,8 +30,8 @@ tss:        .long 0    # _reserved1
             .quad 0    # ist[4]
             .quad 0    # ist[5]
             .quad 0    # ist[6]
-            .quad 0    # _reserved3
-            .word 0    # _reserved4
+            .quad 0    # reserved3
+            .word 0    # reserved4
             .word 0    # io_map_base
 
             .section .text

@@ -808,6 +808,9 @@ pub fn parse(std::string_view &src, diag::diag mut &diag) -> Block
             consume_til(&mut tokens, token::type::eol);
         }
 
+      case eol:
+        consume_token(&mut tokens);
+
       else:
         ctx.diag.error(ParseError::ExpectedBlockElement(ctx.text, tokens[0].span));
         consume_til(&mut tokens, token::type::eol);

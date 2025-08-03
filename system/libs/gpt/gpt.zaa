@@ -48,7 +48,7 @@ pub struct header
   pub u32 revision;
   pub u32 header_size;
   pub u32 header_crc32;
-  pub u32 reserved0;
+  pub u32 reserved1;
 
   pub u64 absolute_block;
   pub u64 alternate_block;

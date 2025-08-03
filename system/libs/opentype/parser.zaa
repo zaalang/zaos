@@ -1163,7 +1163,7 @@ fn cmap_format_4(stream table, char codepoint) throws(errc) -> std::optional<gly
   var entry_selector = table.read<u16>();
   var range_shift = table.read<u16>();
   var end_codes = view<u16>(table.read(cast<usize>(seg_count_x2)));
-  var reserved0 = table.read<u16>();
+  var reserved1 = table.read<u16>();
   var start_codes = view<u16>(table.read(cast<usize>(seg_count_x2)));
   var id_deltas = view<i16>(table.read(cast<usize>(seg_count_x2)));
   var id_range_offsets = view<u16>(table.data);
@@ -2124,10 +2124,10 @@ fn parse_hhea(std::span<u8> &data) throws(errc) -> hhea
   var caret_slope_rise = stream.read<i16>();
   var caret_slope_run = stream.read<i16>();
   var caret_offset = stream.read<i16>();
-  var reserved0 = stream.read<i16>();
   var reserved1 = stream.read<i16>();
   var reserved2 = stream.read<i16>();
   var reserved3 = stream.read<i16>();
+  var reserved4 = stream.read<i16>();
   var metric_data_format = stream.read<i16>();
   hhea.number_of_metrics = stream.read<u16>();
 

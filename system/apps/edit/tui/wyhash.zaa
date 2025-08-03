@@ -1,0 +1,110 @@
+//
+// wyhash
+//
+
+// https://github.com/wangyi-fudan/wyhash
+
+import std.string : String;
+
+fn wyr3(u8 *p, usize k) -> usize
+{
+  let p0 = cast<usize>(*p);
+  let p1 = cast<usize>(*(p + (k >> 1)));
+  let p2 = cast<usize>(*(p + (k - 1)));
+
+  return (p0 << 16) | (p1 << 8) | p2;
+}
+
+fn wyr4(u8 *p) -> usize
+{
+  return cast<usize>(*cast<u32 *>(p));
+}
+
+fn wyr8(u8 *p) -> usize
+{
+  return cast<usize>(*cast<u64*>(p));
+}
+
+pub fn wyhash(usize mut &seed, u8 *p, usize len) -> usize
+{
+  const S0 = 0xa0761d6478bd642f;
+  const S1 = 0xe7037ed1a0b428db;
+  const S2 = 0x8ebc6af09c88c6e3;
+  const S3 = 0x589965cc75374cc3;
+
+  var a = 0;
+  var b = 0;
+
+  seed ^= S0;
+
+  if (len <= 16)
+  {
+    if (len >= 4)
+    {
+      a = (wyr4(p) << 32) | wyr4(p + ((len >> 3) << 2));
+      b = (wyr4(p + (len - 4)) << 32) | wyr4(p + (len - 4 - ((len >> 3) << 2)));
+    }
+    else if (len > 0)
+    {
+      a = wyr3(p, len);
+      b = 0;
+    }
+    else
+    {
+      a = 0;
+      b = 0;
+    }
+  }
+  else
+  {
+    var i = len;
+
+    if (i > 48)
+    {
+      var seed1 = seed;
+      var seed2 = seed;
+
+      while (i > 48)
+      {
+        seed = wymix(wyr8(p) ^ S1, wyr8(p + 8) ^ seed);
+        seed1 = wymix(wyr8(p + 16) ^ S2, wyr8(p + 24) ^ seed1);
+        seed2 = wymix(wyr8(p + 32) ^ S3, wyr8(p + 40) ^ seed2);
+
+        p += 48;
+        i -= 48;
+      }
+
+      seed ^= seed1 ^ seed2;
+    }
+
+    while (i > 16)
+    {
+      seed = wymix(wyr8(p) ^ S1, wyr8(p + 8) ^ seed);
+
+      p += 16;
+      i -= 16;
+    }
+
+    a = wyr8((i < 16) ? p - (16 - i) : p + (i - 16));
+    b = wyr8((i < 8) ? p - (8 - i) : p + (i - 8));
+  }
+
+  return wymix(S1 ^ len, wymix(a ^ S1, b ^ seed));
+}
+
+pub fn wymix(usize lhs, usize rhs) -> usize
+{
+  var r = __mul_with_carry(lhs, rhs);
+
+  return r.1 ^ r.0;
+}
+
+pub fn wyhash(usize seed, usize value) -> usize
+{
+  return wyhash(&mut seed, cast<u8*>(&value), sizeof(value));
+}
+
+pub fn wyhash(usize seed, String &str) -> usize
+{
+  return wyhash(&mut seed, str.data, str.len);
+}

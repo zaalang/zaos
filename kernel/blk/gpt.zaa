@@ -16,7 +16,7 @@ struct gpt_header
   u32 revision;
   u32 header_size;
   u32 header_crc32;
-  u32 reserved0;
+  u32 reserved1;
 
   u64 absolute_block;
   u64 alternate_block;

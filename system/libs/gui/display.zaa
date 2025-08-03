@@ -366,6 +366,7 @@ pub enum button : u32
 
 pub enum modifiers : u32
 {
+  none = 0x0,
   shift = 0x1,
   control = 0x2,
   alt = 0x4,

@@ -1,0 +1,188 @@
+//
+// statusbar
+//
+
+import std.stdio;
+import tui.screen;
+import tui.document;
+import state as _ : *;
+
+using tui;
+
+pub fn draw_statusbar(tui::context mut &ctx, state mut &state) -> void
+{
+  ctx.table_begin("statusbar");
+  ctx.attr_focus_well();
+  ctx.attr_background(0x5811317e);
+  ctx.attr_foreground(0xffffffff);
+  ctx.table_cell_gap(size(2, 0));
+  ctx.attr_intrinsic_size(size(ctx.size.width, 1));
+  ctx.attr_padding(1, 0, 1, 0);
+
+  if (state.documents.active.is_some)
+  {
+    var mut &doc = state.documents.active?!;
+    var mut &tb  = doc.buffer;
+
+    ctx.table_next_row();
+
+    var is_crlf = tb.is_newlines_are_crlf();
+    if (ctx.button("newline", is_crlf ? "CRLF" : "LF", button_style::default()))
+    {
+      tb.normalize_newlines(!is_crlf);
+    }
+    if (state.wants_statusbar_focus)
+    {
+      state.wants_statusbar_focus = false;
+      ctx.steal_focus();
+    }
+
+    var is_tabs = tb.is_indent_with_tabs();
+    if (ctx.button("indentation", std::format("{}:{}", is_tabs ? "Tabs" : "Spaces", tb.tab_size), button_style::default()))
+    {
+      state.wants_indentation_picker = true;
+    }
+
+    if (state.wants_indentation_picker)
+    {
+      ctx.table_begin("indentation-picker");
+      ctx.attr_float(anchor::last, 0.0, 1.0, 0.0, 0.0);
+      ctx.attr_border();
+      ctx.attr_padding(1, 0, 1, 0);
+      ctx.table_cell_gap(size(1, 0));
+
+      if (ctx.contains_focus() && ctx.consume_shortcut(shortcut(kb::enter)))
+        ctx.toss_focus_up();
+
+      ctx.table_next_row();
+
+      ctx.list_begin("type");
+      ctx.focus_on_first_present();
+      ctx.attr_padding(1, 0, 1, 0);
+
+        if (ctx.list_item(tb.is_indent_with_tabs(), "Tabs") != list_selection::unchanged)
+        {
+          tb.set_indent_with_tabs(true);
+          ctx.needs_rerender();
+        }
+
+        if (ctx.list_item(!tb.is_indent_with_tabs(), "Spaces") != list_selection::unchanged)
+        {
+          tb.set_indent_with_tabs(false);
+          ctx.needs_rerender();
+        }
+
+      ctx.list_end();
+
+      ctx.list_begin("width");
+      ctx.attr_padding(2, 0, 2, 0);
+
+        for (var width = 1; width <= 8; ++width)
+        {
+          if (ctx.list_item(tb.tab_size() == width, std::format("{:02}", width)) != list_selection::unchanged)
+          {
+            tb.set_tab_size(width);
+            ctx.needs_rerender();
+          }
+        }
+
+      ctx.list_end();
+
+      ctx.table_end();
+
+      if (!ctx.contains_focus())
+      {
+        state.wants_indentation_picker = false;
+        ctx.needs_rerender();
+      }
+    }
+
+    ctx.label("location", std::format("{}:{}", tb.cursor_logical_position.y + 1, tb.cursor_logical_position.x + 1));
+
+    if (tb.is_overtype())
+    {
+      if (ctx.button("overtype", "OVR", button_style::default()))
+      {
+        tb.set_overtype(false);
+        ctx.needs_rerender();
+      }
+    }
+
+    if (tb.is_dirty())
+    {
+      ctx.label("dirty", "*");
+    }
+
+    ctx.block_begin("filename-container");
+    ctx.attr_intrinsic_size(size(ctx.size.width, 1));
+
+      var filename = std::string(doc.filename, ctx.arena);
+      if (var total = state.documents.len; total > 1)
+        filename.appendf(" + {}", total - 1);
+
+      if (ctx.button("filename", filename, button_style::default()))
+         state.wants_go_to_file = true;
+
+      ctx.inherit_focus();
+      ctx.attr_overflow(overflow::truncate_middle);
+      ctx.attr_position(position::right);
+
+    ctx.block_end();
+  }
+  else
+  {
+    state.wants_statusbar_focus = false;
+    state.wants_indentation_picker = false;
+  }
+
+  ctx.table_end();
+}
+
+pub fn draw_go_to_file(tui::context mut &ctx, state mut &state) -> void
+{
+  ctx.modal_begin("go-to-file", "Go to File…");
+  var width = std::max(ctx.size.width - 20, 10);
+  var height = std::max(ctx.size.height - 10, 10);
+
+  ctx.scrollarea_begin("scrollarea", size(width, height));
+  ctx.attr_background(indexed_alpha(color::black, 1, 4));
+  ctx.inherit_focus();
+
+    ctx.list_begin("documents");
+    ctx.inherit_focus();
+
+      state.documents.update_active(|doc| {
+        var &tb = doc.buffer;
+
+        ctx.styled_list_item_begin();
+        ctx.attr_overflow(overflow::truncate_tail);
+        ctx.styled_label_text(tb.is_dirty ? "* " : "  ");
+        ctx.styled_label_text(doc.filename);
+
+        if (doc.path.len != 0)
+        {
+          ctx.styled_label_text("   ");
+          ctx.styled_label_attributes(attrs::italic);
+          ctx.styled_label_text(doc.path);
+        }
+
+        if (ctx.styled_list_item_end(false) == list_selection::activated)
+        {
+          state.wants_go_to_file = false;
+          ctx.needs_rerender();
+
+          return true;
+        }
+
+        return false;
+      });
+
+    ctx.list_end();
+
+  ctx.scrollarea_end();
+
+  if (ctx.modal_end())
+  {
+    state.wants_go_to_file = false;
+  }
+}
