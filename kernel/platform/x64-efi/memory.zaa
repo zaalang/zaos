@@ -61,18 +61,25 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
           if (max_usable_memory < end)
             max_usable_memory = end;
-         }
-
-      case efi::EFI_MEMORY_TYPE::EfiACPIReclaimMemory:
-      case efi::EFI_MEMORY_TYPE::EfiACPIMemoryNVS:
-        ;
-
-      else:
-        ;
+        }
     }
 
-    if (var page = entry.PhysicalStart/4096 + entry.NumberOfPages; max_physical_pages < page)
-      max_physical_pages = page;
+    switch (entry.Type)
+    {
+      case efi::EFI_MEMORY_TYPE::EfiLoaderCode:
+      case efi::EFI_MEMORY_TYPE::EfiLoaderData:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesData:
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesData:
+      case efi::EFI_MEMORY_TYPE::EfiConventionalMemory:
+      case efi::EFI_MEMORY_TYPE::EfiACPIReclaimMemory:
+      case efi::EFI_MEMORY_TYPE::EfiACPIMemoryNVS:
+      case efi::EFI_MEMORY_TYPE::EfiPersistentMemory:
+
+        if (var page = entry.PhysicalStart/4096 + entry.NumberOfPages; max_physical_pages < page)
+          max_physical_pages = page;
+    }
   }
 
   max_physical_pages = (max_physical_pages + 0x3ffff) / 0x40000; // 1Gb pages
