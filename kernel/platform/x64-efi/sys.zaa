@@ -437,7 +437,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   }
 
   cpu::wrmsr(cpu::msr_index::efer, cpu::rdmsr(cpu::msr_index::efer) | 0x1); // sce
-  cpu::wrmsr(cpu::msr_index::star, 0x0018_0008_0000_0000); // sysret
+  cpu::wrmsr(cpu::msr_index::star, 0x001b_0008_0000_0000); // sysret
   cpu::wrmsr(cpu::msr_index::lstar, cast<u64>(extern(syscall_entry))); // syscall
   cpu::wrmsr(cpu::msr_index::fmask, 0x47fff); // mask syscall flags
 
