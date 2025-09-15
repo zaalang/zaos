@@ -52,7 +52,7 @@ pub struct ptm : pub vfs::node
   pub ptm(Rc<pty::ptty> &&ptty)
     : ptty(&&ptty)
   {
-    vfs::node::init(&super, vfs::node::type::device, vfs::node_device_operations());
+    vfs::node::init(&this, vfs::node::type::device, vfs::node::ops::device(&impl this));
   }
 
   pub ~ptm() = default;
@@ -63,12 +63,12 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return ok;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }

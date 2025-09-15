@@ -1,0 +1,110 @@
+//
+// sys module
+//
+
+import std.stdlib;
+import basic.machine;
+import terminal;
+
+using basic::errc;
+using basic::result;
+using basic::operand;
+using basic::machine;
+
+struct Sys
+{
+  terminal::terminal mut *terminal;
+
+  fn instance() -> Sys mut &
+  {
+    static Sys = #Sys();
+
+    return &Sys;
+  }
+
+  Sys() = default;
+  Sys(#Sys &) = default;
+  ~Sys() = default;
+}
+
+fn tmode(Sys mut &sys, machine mut &vm, usize argc) -> result
+{
+  var mode = operand();
+
+  if (var rc = vm.pop(&mut mode); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut mode); !rc)
+    return rc;
+
+  if (!mode.is_string)
+    return errc::illegal_argument;
+
+  for (var opt : mode.as_string.words)
+  {
+    switch (opt)
+    {
+      case "raw":
+        sys.terminal.pty.enable_raw_mode();
+
+      case "+echo":
+        sys.terminal.pty.echo_on();
+
+      case "-echo":
+        sys.terminal.pty.echo_off();
+
+      case "cooked":
+        sys.terminal.pty.restore_cooked_mode();
+
+      else:
+        return errc::illegal_argument;
+    }
+  }
+
+  return ok;
+}
+
+fn inkey(Sys mut &sys, machine mut &vm, usize argc) -> result
+{
+  var key = operand();
+
+  if (var rc = vm.pop(&mut key); !rc)
+    return rc;
+
+  var ch = 0;
+  var bytes = sys.terminal.read(std::mutable_span(&ch, 1));
+
+  if (var rc = vm.store(&mut key, operand(std::string::from_utf8(&ch, cast<usize>(bytes)))); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn dispatch(machine mut &vm, std::string_view function, usize argc) -> result
+{
+  var mut &sys = Sys::instance;
+
+  switch (function)
+  {
+    case "TMode":
+      if (var rc = tmode(&mut sys, &mut vm, argc); !rc)
+        return rc;
+
+    case "Inkey":
+      if (var rc = inkey(&mut sys, &mut vm, argc); !rc)
+        return rc;
+
+    else:
+      return errc::unknown_procedure;
+  }
+
+  return ok;
+}
+
+pub fn initialise(machine mut &vm, terminal::terminal mut &terminal) -> void
+{
+  var mut &sys = Sys::instance;
+  sys.terminal = &terminal;
+
+  vm.register("Sys", &cast<(machine mut &, std::string_view, usize) -> result>(dispatch));
+}

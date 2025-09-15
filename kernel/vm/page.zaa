@@ -299,6 +299,11 @@ pub struct page_allocator
 
 pub struct page_cache
 {
+  pub fn len(this &) -> usize
+  {
+    return this.len;
+  }
+
   pub fn get(this mut &) -> page mut *
   {
     std::assert(cpu::interrupts_disabled);
@@ -310,6 +315,8 @@ pub struct page_cache
 
     this.head = std::exchange(&mut page.next, null);
 
+    this.len -= 1;
+
     return page;
   }
 
@@ -318,8 +325,11 @@ pub struct page_cache
     std::assert(cpu::interrupts_disabled);
 
     page.next = std::exchange(&mut this.head, page);
+
+    this.len += 1;
   }
 
+  usize len;
   page mut *head;
 
   pub page_cache() = default;
@@ -537,7 +547,7 @@ pub fn release(page_allocator mut &this, std::mutable_span<page> &pages) -> void
 
   var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
-  for (var i = order; index | (1 << i) < pages.len; ++i)
+  for (var i = order; index | (1 << i) < this.pages.len; ++i)
   {
     var mut &buddy = this.pages[index ^ (1 << i)];
 

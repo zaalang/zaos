@@ -99,7 +99,7 @@ pub fn sys_open(process mut *process, ioring_ctx mut &ctx, i32 dirfd, usize path
   if (flags & (flags::write | flags::truncate) == (flags::write | flags::truncate))
   {
     stat.size = 0;
-    if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+    if (var result = vfs::putstat(node, stat, vfs::stats::size); !result)
       return result;
   }
 

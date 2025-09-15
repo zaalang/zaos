@@ -1,0 +1,2973 @@
+//
+// machine
+//
+
+import std.stdlib;
+import std.span : Span;
+import std.string : String;
+import std.map;
+import basic;
+import chrono;
+import rand;
+
+using basic::errc;
+
+pub enum op
+{
+  invalid = -1,
+  stream_end = -2,
+  kw_param = 0x01,
+  kw_type = 0x02,
+  kw_dim = 0x03,
+  kw_data = 0x04,
+  kw_stop = 0x05,
+  kw_return = 0x0c,
+  kw_let = 0x0d,
+  kw_if = 0x10,
+  kw_else = 0x11,
+  kw_endif = 0x12,
+  kw_for = 0x13,
+  kw_next = 0x14,
+  kw_while = 0x15,
+  kw_endwhile = 0x16,
+  kw_repeat = 0x17,
+  kw_until = 0x18,
+  kw_loop = 0x19,
+  kw_endloop = 0x1a,
+  kw_exitif = 0x1b,
+  kw_endexit = 0x1c,
+  kw_on = 0x1d,
+  kw_error = 0x1e,
+  kw_goto = 0x20,
+  kw_gosub = 0x22,
+  kw_run = 0x23,
+  kw_input = 0x25,
+  kw_print = 0x26,
+  kw_create = 0x29,
+  kw_open = 0x2a,
+  kw_seek = 0x2b,
+  kw_read = 0x2c,
+  kw_write = 0x2d,
+  kw_get = 0x2e,
+  kw_put = 0x2f,
+  kw_close = 0x30,
+  kw_restore = 0x31,
+  kw_rem = 0x37,
+  end = 0x39,
+  label = 0x3a,
+  lref = 0x3b,
+  nop = 0x3c,
+  eoi = 0x3e,
+  eol = 0x3f,
+  kw_then = 0x45,
+  kw_to = 0x46,
+  kw_step = 0x47,
+  kw_do = 0x48,
+  kw_using = 0x49,
+  mode = 0x4a,
+  comma = 0x4b,
+  colon = 0x4c,
+  l_paren = 0x4d,
+  r_paren = 0x4e,
+  l_square = 0x4f,
+  r_square = 0x50,
+  semi = 0x51,
+  assign = 0x53,
+  hash = 0x54,
+  jmp_fwd_ne = 0x55,
+  jmp_bck_ne = 0x56,
+  symbol = 0x57,
+
+  mode_read = 0x1,
+  mode_write = 0x2,
+  mode_update = 0x3,
+  mode_dir = 0x4,
+
+  type_real = 0x58,
+  type_byte = 0x59,
+  type_integer = 0x5a,
+  type_boolean = 0x5b,
+  type_string = 0x5c,
+  type_record = 0x5d,
+  type_real_vector = 0x60,
+  type_byte_vector = 0x61,
+  type_integer_vector = 0x62,
+  type_boolean_vector = 0x63,
+  type_string_vector = 0x64,
+  type_record_vector = 0x65,
+  type_real_table = 0x68,
+  type_byte_table = 0x69,
+  type_integer_table = 0x6a,
+  type_boolean_table = 0x6b,
+  type_string_table = 0x6c,
+  type_record_table = 0x6d,
+  type_real_matrix = 0x70,
+  type_byte_matrix = 0x71,
+  type_integer_matrix = 0x72,
+  type_boolean_matrix = 0x73,
+  type_string_matrix = 0x74,
+  type_record_matrix = 0x75,
+
+  variable_real = 0x60,
+  variable_byte = 0x61,
+  variable_integer = 0x62,
+  variable_unused = 0x63,
+  variable_unit = 0x64,
+  variable_vector = 0x65,
+  variable_table = 0x66,
+  variable_matrix = 0x67,
+  variable_field_real = 0x68,
+  variable_field_byte = 0x69,
+  variable_field_integer = 0x6a,
+  variable_field_unused = 0x6b,
+  variable_field_unit = 0x6c,
+  variable_field_vector = 0x6d,
+  variable_field_table = 0x6e,
+  variable_field_matrix = 0x6f,
+
+  variable_reference_real = 0x70,
+  variable_reference_byte = 0x71,
+  variable_reference_integer = 0x72,
+  variable_reference_unused = 0x73,
+  variable_reference_unit = 0x74,
+  variable_reference_vector = 0x75,
+  variable_reference_table = 0x76,
+  variable_reference_matrix = 0x77,
+  variable_field_reference_real = 0x78,
+  variable_field_reference_byte = 0x79,
+  variable_field_reference_integer = 0x7a,
+  variable_field_reference_unused = 0x7b,
+  variable_field_reference_unit = 0x7c,
+  variable_field_reference_vector = 0x7d,
+  variable_field_reference_table = 0x7e,
+  variable_field_reference_matrix = 0x7f,
+
+  parameter_unit = 0x80,
+  parameter_vector = 0x81,
+  parameter_table = 0x82,
+  parameter_matrix = 0x83,
+  parameter_reference_unit = 0x90,
+  parameter_reference_vector = 0x91,
+  parameter_reference_table = 0x92,
+  parameter_reference_matrix = 0x93,
+
+  literal_true = 0x8a,
+  literal_false = 0x8b,
+  literal_real = 0x8c,
+  literal_integer = 0x8d,
+  literal_string = 0x8e,
+  literal_hexadecimal = 0x8f,
+
+  size = 0x94,
+  err = 0x97,
+  modi = 0x98,
+  modf = 0x99,
+  rnd = 0x9a,
+  pi = 0x9b,
+  substr = 0x9c,
+  sgni = 0x9d,
+  sgnf = 0x9e,
+  cos = 0x9f,
+  sin = 0xa0,
+  tan = 0xa1,
+  asn = 0xa2,
+  acs = 0xa3,
+  atn = 0xa4,
+  exp = 0xa5,
+  sqrt = 0xaa,
+  absi = 0xa6,
+  absf = 0xa7,
+  log = 0xa8,
+  log10= 0xa9,
+  int = 0xac,
+  fix = 0xae,
+  float = 0xb0,
+  sqi = 0xb2,
+  sqf = 0xb3,
+  lnot = 0xb5,
+  val = 0xb6,
+  len = 0xb7,
+  asc = 0xb8,
+  land = 0xb9,
+  lor = 0xba,
+  lxor = 0xbb,
+  ext = 0xbd,
+  eof = 0xbe,
+  trim$ = 0xbf,
+  mid$ = 0xc0,
+  left$ = 0xc1,
+  right$ = 0xc2,
+  chr$ = 0xc3,
+  str$ = 0xc4,
+  date$ = 0xc6,
+  plus = 0xcc,
+  not = 0xcd,
+  negi = 0xce,
+  negf = 0xcf,
+  and = 0xd0,
+  or = 0xd1,
+  xor  = 0xd2,
+  gti = 0xd3,
+  gta = 0xd4,
+  gtf = 0xd5,
+  lti = 0xd6,
+  lta = 0xd7,
+  ltf = 0xd8,
+  nei = 0xd9,
+  nea = 0xda,
+  nef = 0xdb,
+  eqi = 0xdd,
+  eqa = 0xde,
+  eqf = 0xdf,
+  gei = 0xe1,
+  gea = 0xe2,
+  gef = 0xe3,
+  lei = 0xe4,
+  lea = 0xe5,
+  lef = 0xe6,
+  addi = 0xe7,
+  adda = 0xe8,
+  addf = 0xe9,
+  subi = 0xea,
+  subf = 0xeb,
+  muli = 0xec,
+  mulf = 0xed,
+  divi = 0xee,
+  divf = 0xef,
+  powi = 0xf0,
+  powf = 0xf1,
+}
+
+#[packed]
+pub struct header
+{
+  pub u16 magic;
+  pub u16 size;
+  pub u16 name_offset;
+  pub u8 language;
+  pub u8 attributes;
+  pub u8 parity;
+  pub u16 data_size;
+  pub u32 text_offset;
+  pub u32 rodata_offset;
+  pub u32 symbol_table_offset;
+  pub u32 link_storage_offset;
+  pub u32 first_data_statement;
+  pub u32 first_code_statement;
+  pub u8 status;
+
+  pub fn name(this &) -> std::string_view
+  {
+    return std::string_view(cast<u8*>(&this) + cast<usize>(this.name_offset) + 1, cast<usize>(*(cast<u8*>(&this) + cast<usize>(this.name_offset))));
+  }
+
+  pub fn text(this &) -> std::span<u8>
+  {
+    return std::span(cast<u8*>(&this) + cast<usize>(this.text_offset), cast<u8*>(&this) + cast<usize>(this.rodata_offset));
+  }
+
+  pub fn rodata(this &) -> std::span<u8>
+  {
+    return std::span(cast<u8*>(&this) + cast<usize>(this.rodata_offset), cast<u8*>(&this) + cast<usize>(this.symbol_table_offset));
+  }
+
+  pub fn description_type(this &, usize offset) -> op
+  {
+    return cast<op>(this.rodata[offset]);
+  }
+
+  pub fn description_addr(this &, usize offset) -> usize
+  {
+    return cast<usize>(this.rodata[offset + 1]) + cast<usize>(this.rodata[offset + 2]) << 8;
+  }
+
+  pub fn symtab(this &) -> std::span<u8>
+  {
+    return std::span(cast<u8*>(&this) + cast<usize>(this.symbol_table_offset), cast<u8*>(&this) + cast<usize>(this.size));
+  }
+
+  pub fn symbol_name(this &, usize offset) -> std::string_view
+  {
+    return this.symtab[offset + 1 .. offset + 1 + cast<usize>(this.symtab[offset])];
+  }
+}
+
+pub union operand
+{
+  pub real(float),
+  pub integer(int),
+  pub string(std::string),
+  pub string_view(std::string_view),
+  pub reference((op, u8 mut *, usize)),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn is_real(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::real;
+  }
+
+  pub fn is_integer(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::integer;
+  }
+
+  pub fn is_string(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::string || this.kind == typeof(this.kind)::string_view;
+  }
+
+  pub fn is_reference(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::reference;
+  }
+
+  pub fn as_real(this &) -> float
+  {
+    switch (this)
+    {
+      case real[real]:
+        return real;
+
+      case integer[integer]:
+        return cast<float>(integer);
+    }
+
+    std::panic("invalid access");
+  }
+
+  pub fn as_integer(this &) -> int
+  {
+    switch (this)
+    {
+      case real[real]:
+        return cast<int>(std::clamp(std::round(real), cast<float>(std::numeric_traits<int>::min), cast<float>(std::numeric_traits<int>::max)));
+
+      case integer[integer]:
+        return integer;
+    }
+
+    std::panic("invalid access");
+  }
+
+  pub fn as_string(this &) -> std::string
+  {
+    switch (this)
+    {
+      case string[string]:
+        return string;
+
+      case string_view[string_view]:
+        return string_view;
+    }
+
+    std::panic("invalid access");
+  }
+
+  pub fn as_string_view(this &) -> std::string_view
+  {
+    switch (this)
+    {
+      case string[string]:
+        return string;
+
+      case string_view[string_view]:
+        return string_view;
+    }
+
+    std::panic("invalid access");
+  }
+
+  pub operand(float real)
+    : real(real)
+  {
+  }
+
+  pub operand(int integer)
+    : integer(integer)
+  {
+  }
+
+  pub operand(bool boolean)
+    : integer(cast<int>(boolean))
+  {
+  }
+
+  pub operand(String &&string)
+    : string(&&string)
+  {
+  }
+
+  pub operand() = default;
+  pub operand(operand &&) = default;
+  pub fn =(operand mut &, operand &&) -> operand mut & = default;
+  pub ~operand() = default;
+}
+
+pub fn fmt<T>(std::OutputStream mut &os, std::fmt_context mut &ctx, operand &value) throws(std::error) -> void
+{
+  switch (value)
+  {
+    case real[real]:
+      ctx.written += std::print_to(&mut os, real);
+
+    case integer[integer]:
+      ctx.written += std::print_to(&mut os, integer);
+
+    case string[string]:
+      ctx.written += std::print_to(&mut os, string);
+
+    case string_view[string_view]:
+      ctx.written += std::print_to(&mut os, string_view);
+
+    case reference[reference]:
+      ctx.written += std::print_to(&mut os, std::span(reference.1, reference.2));
+  }
+}
+
+struct frame
+{
+  std::span<u8> text;
+  std::span<u8> rodata;
+  std::vector<u8> memory;
+  usize link_storage_offset;
+  usize first_data_statement;
+
+  u8 *dp;
+  u8 *ep;
+
+  usize sp;
+  usize bp;
+  u8 *ip;
+
+  frame() = default;
+  frame(frame &&) = default;
+  ~frame() = default;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+  stop = 1,
+
+  pub fn bool(this &) -> bool
+  {
+    return cast<i32>(this) >= 0;
+  }
+
+  pub fn error(this &) -> errc
+  {
+    return cast<errc>(-cast<i32>(this));
+  }
+
+  pub result(errc error)
+    : this(cast<result>(-cast<i32>(error)))
+  {
+  }
+}
+
+pub struct procedure
+{
+  std::vector<u8> icode;
+
+  pub fn name(this &) -> std::string_view
+  {
+    return cast<header*>(this.icode.data).name;
+  }
+
+  pub fn text(this &) -> std::span<u8>
+  {
+    return cast<header*>(this.icode.data).text;
+  }
+
+  pub fn rodata(this &) -> std::span<u8>
+  {
+    return cast<header*>(this.icode.data).rodata;
+  }
+
+  pub fn data_size(this &) -> usize
+  {
+    return cast<usize>(cast<header*>(this.icode.data).data_size);
+  }
+
+  pub fn icode(this &) -> std::span<u8>
+  {
+    return this.icode.span;
+  }
+
+  pub procedure(Span<u8> &&icode)
+    : icode(&&icode)
+  {
+  }
+
+  pub procedure() = default;
+  pub procedure(procedure &&) = default;
+  pub fn =(procedure mut &, procedure &&) -> procedure mut & = default;
+  pub ~procedure() = default;
+}
+
+pub struct machine
+{
+  u8 *ip;
+  std::vector<frame> frames;
+  std::vector<operand> stack;
+  std::vector<u8*> substack;
+  std::map<int, file> files;
+  std::string linebuf;
+  int errno;
+
+  std::map<std::string, procedure> procedures;
+  std::map<std::string, fn (*)(machine mut &, std::string_view, usize) -> result> modules;
+
+  pub std::input_stream stdin;
+  pub std::output_stream stdout;
+
+  pub fn procedures(this &) -> std::map<std::string, procedure> &
+  {
+    return &this.procedures;
+  }
+
+  pub fn pop(this mut &, operand mut &operand) -> result
+  {
+    if (this.stack.len == this.frame.sp)
+      return errc::illegal_argument;
+
+    operand = this.stack.take_back();
+
+    return ok;
+  }
+
+  pub fn load(this mut &, operand mut &operand) -> result
+  {
+    std::assert(operand.is_reference);
+
+    operand = load(&mut this, operand.reference.0, operand.reference.1, operand.reference.2);
+
+    return ok;
+  }
+
+  pub fn store(this mut &, operand mut &operand, operand &value) -> result
+  {
+    std::assert(operand.is_reference);
+
+    switch (operand.reference.0)
+    {
+      case type_real:
+      case type_byte:
+      case type_integer:
+      case type_boolean:
+        if (!value.is_integer && !value.is_real)
+          return errc::illegal_expression_type;
+
+      case type_string:
+        if (!value.is_string)
+          return errc::illegal_expression_type;
+    }
+
+    if (var rc = store(&mut this, operand.reference.0, operand.reference.1, operand.reference.2, value); !rc)
+      return rc;
+
+    return ok;
+  }
+
+  fn frame(this &&)
+  {
+    return &this.frames.back;
+  }
+
+  fn push_frame(this mut &, procedure &procedure, usize nargs) -> void
+  {
+    var mut &frame = this.frames.push_back();
+
+    frame.text = procedure.text;
+    frame.rodata = procedure.rodata;
+    frame.memory.reserve(procedure.data_size);
+
+    frame.link_storage_offset = cast<usize>(cast<header*>(procedure.icode.data).link_storage_offset);
+    frame.first_data_statement = cast<usize>(cast<header*>(procedure.icode.data).first_data_statement);
+
+    if (frame.first_data_statement != 0)
+    {
+      frame.first_data_statement -= cast<usize>(cast<header*>(procedure.icode.data).text_offset);
+
+      frame.dp = frame.text.begin + frame.first_data_statement + 4;
+    }
+
+    frame.ip = this.ip;
+    frame.sp = this.stack.len - nargs;
+    frame.bp = this.substack.len;
+
+    this.ip = frame.text.begin;
+  }
+
+  fn pop_frame(this mut &) -> void
+  {
+    this.substack.resize(this.frame.bp);
+    this.stack.resize(this.frame.sp);
+    this.ip = this.frame.ip;
+
+    this.frames.pop_back();
+  }
+
+  pub machine()
+    : stdin(&mut std::stdin_raw), stdout(&mut std::stdout_raw)
+  {
+    stack.reserve(16);
+  }
+
+  pub ~machine() = default;
+}
+
+struct file
+{
+  bool eof;
+  u64 cursor;
+  std::file file;
+
+  usize rdhead;
+  std::vector<u8> rdbuf;
+
+  fn ext(this mut &) -> u64
+  {
+    try
+    {
+      return this.file.stat.size;
+    }
+    catch (std::error)
+    {
+      return 0;
+    }
+  }
+
+  fn read_line(this mut &, std::string mut &line) throws(std::error) -> void
+  {
+    for (; !this.eof; )
+    {
+      if (this.rdhead == this.rdbuf.len)
+      {
+        this.rdhead = 0;
+        this.rdbuf.clear();
+        this.rdbuf.append_from_capacity(this.file.read(this.rdbuf.data, this.rdbuf.capacity));
+        this.eof = this.rdbuf.empty;
+      }
+
+      var n = std::memchr(this.rdbuf.data + this.rdhead, cast('\n'), this.rdbuf.len - this.rdhead);
+
+      if (this.rdhead + n < this.rdbuf.len)
+      {
+        line.write(this.rdbuf.data + this.rdhead, n + 1);
+        this.rdhead += n + 1;
+        break;
+      }
+
+      line.write(this.rdbuf.data + this.rdhead, n);
+      this.rdhead += n;
+    }
+  }
+
+  fn write(this mut &, u8 *data, usize len) throws(std::error) -> void
+  {
+    this.file.write(data, len);
+  }
+
+  fn seek(this mut &, u64 position) -> void
+  {
+    this.cursor = position;
+  }
+
+  fn get(this mut &, u8 mut *data, usize len) throws(std::error) -> void
+  {
+    this.file.read_at(this.cursor, data, len);
+
+    this.cursor += cast(len);
+  }
+
+  fn put(this mut &, u8 *data, usize len) throws(std::error) -> void
+  {
+    this.file.write_at(this.cursor, data, len);
+
+    this.cursor += cast(len);
+  }
+
+  fn close(this mut &) throws(std::error) -> void
+  {
+    return this.file.close();
+  }
+
+  file(std::file &&file)
+    : file(&&file)
+  {
+    rdbuf.reserve(1024);
+  }
+
+  file(file &&) = default;
+  ~file() = default;
+}
+
+fn gep(machine mut &vm, op mut &type, std::mutable_span<u8> mut &span) -> result
+{
+  var addr = usize();
+  var base = usize();
+  var size = usize();
+
+  switch (*vm.ip & 0xe7)
+  {
+    case op::variable_real:
+      type = op::type_real;
+      size = sizeof<float>;
+      addr = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+    case op::variable_byte:
+      type = op::type_byte;
+      size = sizeof<u8>;
+      addr = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+    case op::variable_integer:
+      type = op::type_integer;
+      size = sizeof<int>;
+      addr = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+    case op::variable_unused:
+      ;
+
+    case op::variable_unit:
+    case op::parameter_unit:
+      var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      var desc = vm.frame.rodata[offset .. offset + 5];
+
+      type = cast<op>(desc[0]);
+      addr = cast<usize>(desc[1]) + cast<usize>(desc[2]) << 8;
+      size = cast<usize>(desc[3]) + cast<usize>(desc[4]) << 8;
+
+    case op::variable_vector:
+    case op::parameter_vector:
+      var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      var i = vm.stack.take_back.as_integer;
+
+      var desc = vm.frame.rodata[offset .. offset + 7];
+
+      var maxi = cast<usize>(desc[5]) + cast<usize>(desc[6]) << 8;
+
+      if (i < 0 || cast<usize>(i) >= maxi)
+        return errc::subscript_out_of_range;
+
+      type = cast<op>(cast<int>(desc[0]) - 8);
+      size = (cast<usize>(desc[3]) + cast<usize>(desc[4]) << 8) / maxi;
+      addr = (cast<usize>(desc[1]) + cast<usize>(desc[2]) << 8);
+      base = cast<usize>(i) * size;
+
+    case op::variable_table:
+    case op::parameter_table:
+      var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      var j = vm.stack.take_back.as_integer;
+      var i = vm.stack.take_back.as_integer;
+
+      var desc = vm.frame.rodata[offset .. offset + 9];
+
+      var maxj = cast<usize>(desc[5]) + cast<usize>(desc[6]) << 8;
+      var maxi = cast<usize>(desc[7]) + cast<usize>(desc[8]) << 8;
+
+      if (i < 0 || cast<usize>(i) >= maxi)
+        return errc::subscript_out_of_range;
+
+      if (j < 0 || cast<usize>(j) >= maxj)
+        return errc::subscript_out_of_range;
+
+      type = cast<op>(cast<int>(desc[0]) - 2*8);
+      size = (cast<usize>(desc[3]) + cast<usize>(desc[4]) << 8) / (maxi * maxj);
+      addr = (cast<usize>(desc[1]) + cast<usize>(desc[2]) << 8);
+      base = ((cast<usize>(j) * maxi) + cast<usize>(i)) * size;
+
+    case op::variable_matrix:
+    case op::parameter_matrix:
+      var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      var k = vm.stack.take_back.as_integer;
+      var j = vm.stack.take_back.as_integer;
+      var i = vm.stack.take_back.as_integer;
+
+      var desc = vm.frame.rodata[offset .. offset + 11];
+
+      var maxk = cast<usize>(desc[5]) + cast<usize>(desc[6]) << 8;
+      var maxj = cast<usize>(desc[7]) + cast<usize>(desc[8]) << 8;
+      var maxi = cast<usize>(desc[9]) + cast<usize>(desc[10]) << 8;
+
+      if (i < 0 || cast<usize>(i) >= maxi)
+        return errc::subscript_out_of_range;
+
+      if (j < 0 || cast<usize>(j) >= maxj)
+        return errc::subscript_out_of_range;
+
+      if (k < 0 || cast<usize>(k) >= maxk)
+        return errc::subscript_out_of_range;
+
+      type = cast<op>(cast<int>(desc[0]) - 3*8);
+      size = (cast<usize>(desc[3]) + cast<usize>(desc[4]) << 8) / (maxi * maxj * maxk);
+      addr = (cast<usize>(desc[1]) + cast<usize>(desc[2]) << 8);
+      base = ((cast<usize>(k) * maxj + cast<usize>(j)) * maxi + cast<usize>(i)) * size;
+
+    else:
+      std::panic("unhandled");
+  }
+
+  switch (*vm.ip & 0xef)
+  {
+    case op::parameter_unit:
+    case op::parameter_vector:
+    case op::parameter_table:
+    case op::parameter_matrix:
+      span.len = size;
+      span.data = vm.stack[vm.frame.sp + addr].reference.1 + base;
+
+    case op::variable_real:
+    case op::variable_byte:
+    case op::variable_integer:
+    case op::variable_unused:
+    case op::variable_unit:
+    case op::variable_vector:
+    case op::variable_table:
+    case op::variable_matrix:
+      span.len = size;
+      span.data = vm.frame.memory.data + addr + base;
+
+    case op::variable_field_real:
+    case op::variable_field_byte:
+    case op::variable_field_integer:
+    case op::variable_field_unused:
+    case op::variable_field_unit:
+    case op::variable_field_vector:
+    case op::variable_field_table:
+    case op::variable_field_matrix:
+      span.len = size;
+      span.data = vm.stack.take_back.reference.1 + addr + base;
+
+    else:
+      std::panic("unhandled");
+  }
+
+  vm.ip += 3;
+
+  return ok;
+}
+
+fn load(machine mut &vm, op type, u8 mut *addr, usize size) -> operand
+{
+  switch (type)
+  {
+    case type_real:
+      var number = float();
+      std::memcpy(&number, addr, sizeof(number));
+
+      return operand::real(number);
+
+    case type_byte:
+      var byte = u8();
+      std::memcpy(&byte, addr, sizeof(byte));
+
+      return operand::integer(cast<int>(byte));
+
+    case type_integer:
+      var integer = int();
+      std::memcpy(&integer, addr, sizeof(integer));
+
+      return operand::integer(integer);
+
+    case type_boolean:
+      var boolean = bool();
+      std::memcpy(&boolean, addr, sizeof(boolean));
+
+      return operand::integer(cast<int>(boolean));
+
+    case type_string:
+      var len = cast<usize>(*(addr + 0)) + cast<usize>(*(addr + 1)) << 8;
+
+      if (len > (size - 2))
+        len = (size - 2);
+
+      return operand::string_view(addr + 2, len);
+
+    case type_record:
+    case type_real_vector:
+    case type_byte_vector:
+    case type_integer_vector:
+    case type_boolean_vector:
+    case type_string_vector:
+    case type_record_vector:
+    case type_real_table:
+    case type_byte_table:
+    case type_integer_table:
+    case type_boolean_table:
+    case type_string_table:
+    case type_record_table:
+    case type_real_matrix:
+    case type_byte_matrix:
+    case type_integer_matrix:
+    case type_boolean_matrix:
+    case type_string_matrix:
+    case type_record_matrix:
+      return operand::reference(type, addr, size);
+
+    else:
+      std::panic("unhandled");
+  }
+}
+
+fn store(machine mut &vm, op type, u8 mut *addr, usize size, operand &operand) -> result
+{
+  switch (type)
+  {
+    case type_real:
+      var number = operand.as_real;
+      std::memcpy(addr, &number, sizeof(number));
+
+    case type_byte:
+      var byte = cast<u8>(operand.as_integer & 0xff);
+
+      if (cast<int>(byte) != operand.as_integer)
+        return errc::overflow;
+
+      std::memcpy(addr, &byte, sizeof(byte));
+
+    case type_integer:
+      var integer = operand.as_integer;
+      std::memcpy(addr, &integer, sizeof(integer));
+
+    case type_boolean:
+      var boolean = operand.as_integer != 0;
+      std::memcpy(addr, &boolean, sizeof(boolean));
+
+    case type_string:
+      var string = operand.as_string_view;
+
+      if (string.len > (size - 2))
+        string = string[0 .. size - 2];
+
+      *(addr + 0) = cast<u8>(string.len & 0xff);
+      *(addr + 1) = cast<u8>(string.len >> 8 & 0xff);
+      std::memcpy(addr + 2, string.data, string.len);
+
+    case type_record:
+    case type_real_vector:
+    case type_byte_vector:
+    case type_integer_vector:
+    case type_boolean_vector:
+    case type_string_vector:
+    case type_record_vector:
+    case type_real_table:
+    case type_byte_table:
+    case type_integer_table:
+    case type_boolean_table:
+    case type_string_table:
+    case type_record_table:
+    case type_real_matrix:
+    case type_byte_matrix:
+    case type_integer_matrix:
+    case type_boolean_matrix:
+    case type_string_matrix:
+    case type_record_matrix:
+      std::memcpy(addr, operand.reference.1, std::min(operand.reference.2, size));
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn scan(machine mut &vm, op type, std::string &input, usize mut &cursor) -> result
+{
+  switch (type)
+  {
+    case type_real:
+    case type_byte:
+    case type_integer:
+    case type_boolean:
+
+      while (cursor < input.len && input[cursor] == cast(' '))
+        ++cursor;
+
+      if (cursor < input.len && input[cursor] == cast('+'))
+        ++cursor;
+
+      switch (type)
+      {
+        case type_real:
+          var real = float();
+          var strconv_result = std::atof(input.begin + cursor, input.end, &mut real);
+
+          if (strconv_result.error)
+            return errc::illegal_number;
+
+          vm.stack.push_back(real);
+
+          cursor += strconv_result.len;
+
+        case type_byte:
+        case type_integer:
+        case type_boolean:
+          var integer = i32();
+          var strconv_result = std::atoi(input.begin + cursor, input.end, &mut integer);
+
+          if (strconv_result.error)
+            return errc::illegal_number;
+
+          vm.stack.push_back(integer);
+
+          cursor += strconv_result.len;
+      }
+
+      if (cursor < input.len && input[cursor] != 0 && input[cursor] != cast(' ') && input[cursor] != cast(','))
+        return errc::illegal_number;
+
+    case type_string:
+      var string = input[cursor .. input.len].cut('\0').0;
+
+      vm.stack.push_back(string);
+
+      cursor += string.len;
+
+    else:
+      return errc::illegal_input_variable;
+  }
+
+  return ok;
+}
+
+fn evaluate(machine mut &vm) -> result
+{
+  for (;;)
+  {
+    switch (*vm.ip)
+    {
+      case op::symbol:
+        vm.ip += 3;
+
+      case op::literal_true:
+        vm.stack.push_back(true);
+
+        vm.ip += 1;
+
+      case op::literal_false:
+        vm.stack.push_back(false);
+
+        vm.ip += 1;
+
+      case op::literal_integer:
+        var integer = int();
+        std::memcpy(&integer, vm.ip + 1, sizeof(integer));
+
+        vm.stack.push_back(integer);
+
+        vm.ip += 1 + sizeof(integer);
+
+      case op::literal_real:
+        var number = float();
+        std::memcpy(&number, vm.ip + 1, sizeof(number));
+
+        vm.stack.push_back(number);
+
+        vm.ip += 1 + sizeof(number);
+
+      case op::literal_string:
+        var len = cast<usize>(*(vm.ip + 1));
+
+        vm.stack.push_back(operand::string_view(vm.ip + 2, len));
+
+        vm.ip += 2 + len;
+
+      case op::literal_hexadecimal:
+        var integer = u32();
+        std::memcpy(&integer, vm.ip + 1, sizeof(integer));
+
+        vm.stack.push_back(std::bit_cast<int>(integer));
+
+        vm.ip += 1 + sizeof(integer);
+
+      case op::parameter_unit:
+        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+        var type = cast<op>(vm.frame.rodata[offset]);
+        var idx = cast<usize>(vm.frame.rodata[offset + 1]);
+
+        if (vm.stack.len <= vm.frame.sp + idx)
+          return errc::parameter_error;
+
+        switch (vm.stack[vm.frame.sp + idx])
+        {
+          case reference[reference]:
+            if (type != reference.0)
+              return errc::parameter_error;
+
+            vm.stack.push_back(load(&mut vm, reference.0, reference.1, reference.2));
+
+          else:
+            std::panic("unhandled");
+        }
+
+        vm.ip += 3;
+
+      case op::parameter_vector:
+      case op::parameter_table:
+      case op::parameter_matrix:
+        var type = op();
+        var span = std::mutable_span<u8>();
+
+        if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+          return rc;
+
+        vm.stack.push_back(load(&mut vm, type, span.data, span.len));
+
+      case op::parameter_reference_unit:
+        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+        var type = cast<op>(vm.frame.rodata[offset]);
+        var idx = cast<usize>(vm.frame.rodata[offset + 1]);
+
+        if (vm.stack.len <= vm.frame.sp + idx)
+          return errc::parameter_error;
+
+        switch (vm.stack[vm.frame.sp + idx])
+        {
+          case reference[reference]:
+            if (type != reference.0)
+              return errc::parameter_error;
+
+            vm.stack.push_back(operand::reference(reference.0, reference.1, reference.2));
+
+          else:
+            std::panic("unhandled");
+        }
+
+        vm.ip += 3;
+
+      case op::parameter_reference_vector:
+      case op::parameter_reference_table:
+      case op::parameter_reference_matrix:
+        var type = op();
+        var span = std::mutable_span<u8>();
+
+        if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+          return rc;
+
+        vm.stack.push_back(operand::reference(type, span.data, span.len));
+
+      case op::variable_real:
+      case op::variable_byte:
+      case op::variable_integer:
+      case op::variable_unused:
+      case op::variable_unit:
+      case op::variable_vector:
+      case op::variable_table:
+      case op::variable_matrix:
+      case op::variable_field_real:
+      case op::variable_field_byte:
+      case op::variable_field_integer:
+      case op::variable_field_unused:
+      case op::variable_field_unit:
+      case op::variable_field_vector:
+      case op::variable_field_table:
+      case op::variable_field_matrix:
+        var type = op();
+        var span = std::mutable_span<u8>();
+
+        if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+          return rc;
+
+        vm.stack.push_back(load(&mut vm, type, span.data, span.len));
+
+      case op::variable_reference_real:
+      case op::variable_reference_byte:
+      case op::variable_reference_integer:
+      case op::variable_reference_unused:
+      case op::variable_reference_unit:
+      case op::variable_reference_vector:
+      case op::variable_reference_table:
+      case op::variable_reference_matrix:
+      case op::variable_field_reference_real:
+      case op::variable_field_reference_byte:
+      case op::variable_field_reference_integer:
+      case op::variable_field_reference_unused:
+      case op::variable_field_reference_unit:
+      case op::variable_field_reference_vector:
+      case op::variable_field_reference_table:
+      case op::variable_field_reference_matrix:
+        var type = op();
+        var span = std::mutable_span<u8>();
+
+        if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+          return rc;
+
+        vm.stack.push_back(operand::reference(type, span.data, span.len));
+
+      case op::pi:
+      case op::date$:
+      case op::err:
+        switch (*vm.ip)
+        {
+          case op::pi:
+            vm.stack.push_back(std::PI);
+
+          case op::date$:
+            vm.stack.push_back(chrono::format("%Y/%m/%d %X", chrono::system_clock::now()));
+
+          case op::err:
+            vm.stack.push_back(std::exchange(&mut vm.errno, 0));
+        }
+
+        vm.ip += 1;
+
+      case op::plus:
+        vm.ip += 1;
+
+      case op::negi:
+      case op::negf:
+      case op::not:
+        var subexpr = vm.stack.take_back();
+
+        switch (*vm.ip)
+        {
+          case op::negi:
+            if (subexpr.integer != std::numeric_traits<int>::min)
+              vm.stack.push_back(-subexpr.integer);
+            else
+              return errc::overflow;
+
+          case op::negf:
+            vm.stack.push_back(-subexpr.real);
+
+          case op::not:
+            vm.stack.push_back(~subexpr.integer & 1);
+        }
+
+        vm.ip += 1;
+
+      case op::absi:
+      case op::absf:
+      case op::asc:
+      case op::cos:
+      case op::acs:
+      case op::chr$:
+      case op::eof:
+      case op::exp:
+      case op::ext:
+      case op::fix:
+      case op::float:
+      case op::int:
+      case op::lnot:
+      case op::log:
+      case op::log10:
+      case op::len:
+      case op::rnd:
+      case op::sin:
+      case op::asn:
+      case op::size:
+      case op::str$:
+      case op::sgni:
+      case op::sgnf:
+      case op::sqi:
+      case op::sqf:
+      case op::sqrt:
+      case op::tan:
+      case op::atn:
+      case op::trim$:
+      case op::val:
+        var arg0 = vm.stack.take_back();
+
+        switch (*vm.ip)
+        {
+          case op::absi:
+            if (arg0.integer != std::numeric_traits<int>::min)
+              vm.stack.push_back(std::abs(arg0.integer));
+            else
+              return errc::overflow;
+
+          case op::absf:
+            vm.stack.push_back(std::abs(arg0.real));
+
+          case op::asc:
+            if (arg0.as_string_view.len != 0)
+              vm.stack.push_back(cast<int>(arg0.as_string_view.chars.front));
+            else
+              return errc::illegal_argument;
+
+          case op::cos:
+            vm.stack.push_back(std::cos(arg0.as_real));
+
+          case op::acs:
+            vm.stack.push_back(std::acos(arg0.as_real));
+
+          case op::chr$:
+            vm.stack.push_back(std::format("{}", cast<char>(std::clamp(arg0.as_integer, 0, 0x1ffff))));
+
+          case op::eof:
+            switch (vm.files.get(arg0.integer))
+            {
+              case Some[file]:
+                vm.stack.push_back(file.eof);
+
+              else:
+                return errc::illegal_path_number;
+            }
+
+          case op::ext:
+            switch (vm.files.get(arg0.integer))
+            {
+              case Some[file]:
+                vm.stack.push_back(cast<int>(file.ext));
+
+              else:
+                return errc::illegal_path_number;
+            }
+
+          case op::exp:
+            vm.stack.push_back(std::exp(arg0.as_real));
+
+          case op::fix:
+            vm.stack.push_back(arg0.as_integer);
+
+          case op::float:
+            vm.stack.push_back(arg0.as_real);
+
+          case op::int:
+            vm.stack.push_back(std::trunc(arg0.as_real));
+
+          case op::lnot:
+            vm.stack.push_back(~arg0.integer);
+
+          case op::log:
+            vm.stack.push_back(std::ln(arg0.as_real));
+
+          case op::log10:
+            vm.stack.push_back(std::log10(arg0.as_real));
+
+          case op::len:
+            vm.stack.push_back(cast<int>(arg0.as_string_view.len));
+
+          case op::rnd:
+            vm.stack.push_back(rand::random<float>() * arg0.as_real);
+
+          case op::sin:
+            vm.stack.push_back(std::sin(arg0.as_real));
+
+          case op::asn:
+            vm.stack.push_back(std::asin(arg0.as_real));
+
+          case op::size:
+            vm.stack.push_back(cast<int>(arg0.reference.2));
+
+          case op::str$:
+            vm.stack.push_back(std::format("{}", arg0));
+
+          case op::sgni:
+            vm.stack.push_back(std::signum(arg0.integer));
+
+          case op::sgnf:
+            vm.stack.push_back(std::signum(arg0.real));
+
+          case op::sqi:
+            vm.stack.push_back(arg0.integer * arg0.integer);
+
+          case op::sqf:
+            vm.stack.push_back(arg0.real * arg0.real);
+
+          case op::sqrt:
+            vm.stack.push_back(std::sqrt(arg0.as_real));
+
+          case op::tan:
+            vm.stack.push_back(std::tan(arg0.as_real));
+
+          case op::atn:
+            vm.stack.push_back(std::atan(arg0.as_real));
+
+          case op::trim$:
+            vm.stack.push_back(arg0.as_string.trim_right!);
+
+          case op::val:
+            var real = float();
+            if (var str = arg0.as_string_view; std::atof(str.begin, str.end, &mut real).error)
+              return errc::illegal_number;
+            vm.stack.push_back(real);
+        }
+
+        vm.ip += 1;
+
+      case op::addi:
+      case op::adda:
+      case op::addf:
+      case op::subi:
+      case op::subf:
+      case op::muli:
+      case op::mulf:
+      case op::divi:
+      case op::divf:
+      case op::powi:
+      case op::powf:
+      case op::and:
+      case op::xor:
+      case op::or:
+      case op::land:
+      case op::lxor:
+      case op::lor:
+      case op::lti:
+      case op::lta:
+      case op::ltf:
+      case op::gti:
+      case op::gta:
+      case op::gtf:
+      case op::lei:
+      case op::lea:
+      case op::lef:
+      case op::gei:
+      case op::gea:
+      case op::gef:
+      case op::eqi:
+      case op::eqa:
+      case op::eqf:
+      case op::nei:
+      case op::nea:
+      case op::nef:
+        var rhs = vm.stack.take_back();
+        var lhs = vm.stack.take_back();
+
+        switch (*vm.ip)
+        {
+          case op::addi:
+            if (var z = std::add_with_carry(lhs.integer, rhs.integer); z.1 == 0)
+              vm.stack.push_back(z.0);
+            else
+              return errc::overflow;
+
+          case op::adda:
+            vm.stack.push_back(lhs.as_string + rhs.as_string_view);
+
+          case op::addf:
+            vm.stack.push_back(lhs.as_real + rhs.as_real);
+
+          case op::subi:
+            if (var z = std::sub_with_borrow(lhs.integer, rhs.integer); z.1 == 0)
+              vm.stack.push_back(z.0);
+            else
+              return errc::overflow;
+
+          case op::subf:
+            vm.stack.push_back(lhs.as_real - rhs.as_real);
+
+          case op::muli:
+            if (var z = std::mul_with_carry(lhs.integer, rhs.integer); z.1 == 0)
+              vm.stack.push_back(z.0);
+            else
+              return errc::overflow;
+
+          case op::mulf:
+            vm.stack.push_back(lhs.as_real * rhs.as_real);
+
+          case op::divi:
+            if (rhs.integer != 0 && !(lhs.integer == std::numeric_traits<int>::min && rhs.integer == -1))
+              vm.stack.push_back(lhs.integer / rhs.integer);
+            else
+              return errc::overflow;
+
+          case op::divf:
+            if (var divisor = rhs.as_real; divisor != 0.0)
+              vm.stack.push_back(lhs.as_real / divisor);
+            else
+              return errc::divide_by_zero;
+
+          case op::powi:
+            if (var z = std::checked_pow(lhs.integer, rhs.integer); z.1 == 0)
+              vm.stack.push_back(z.0);
+            else
+              return errc::overflow;
+
+          case op::powf:
+            vm.stack.push_back(std::pow(lhs.as_real, rhs.as_real));
+
+          case op::and:
+          case op::land:
+            vm.stack.push_back(lhs.integer & rhs.integer);
+
+          case op::xor:
+          case op::lxor:
+            vm.stack.push_back(lhs.integer ^ rhs.integer);
+
+          case op::or:
+          case op::lor:
+            vm.stack.push_back(lhs.integer | rhs.integer);
+
+          case op::lti:
+            vm.stack.push_back(lhs.integer < rhs.integer);
+
+          case op::lta:
+            vm.stack.push_back(lhs.as_string_view < rhs.as_string_view);
+
+          case op::ltf:
+            vm.stack.push_back(lhs.as_real < rhs.as_real);
+
+          case op::gti:
+            vm.stack.push_back(lhs.integer > rhs.integer);
+
+          case op::gta:
+            vm.stack.push_back(lhs.as_string_view > rhs.as_string_view);
+
+          case op::gtf:
+            vm.stack.push_back(lhs.as_real > rhs.as_real);
+
+          case op::lei:
+            vm.stack.push_back(lhs.integer <= rhs.integer);
+
+          case op::lea:
+            vm.stack.push_back(lhs.as_string_view <= rhs.as_string_view);
+
+          case op::lef:
+            vm.stack.push_back(lhs.as_real <= rhs.as_real);
+
+          case op::gei:
+            vm.stack.push_back(lhs.integer >= rhs.integer);
+
+          case op::gea:
+            vm.stack.push_back(lhs.as_string_view >= rhs.as_string_view);
+
+          case op::gef:
+            vm.stack.push_back(lhs.as_real >= rhs.as_real);
+
+          case op::eqi:
+            vm.stack.push_back(lhs.integer == rhs.integer);
+
+          case op::eqa:
+            vm.stack.push_back(lhs.as_string_view == rhs.as_string_view);
+
+          case op::eqf:
+            vm.stack.push_back(lhs.as_real == rhs.as_real);
+
+          case op::nei:
+            vm.stack.push_back(lhs.integer != rhs.integer);
+
+          case op::nea:
+            vm.stack.push_back(lhs.as_string_view != rhs.as_string_view);
+
+          case op::nef:
+            vm.stack.push_back(lhs.as_real != rhs.as_real);
+        }
+
+        vm.ip += 1;
+
+      case op::assign:
+        var rhs = vm.stack.take_back();
+        var lhs = vm.stack.take_back().reference;
+
+        if (var rc = store(&mut vm, lhs.0, lhs.1, lhs.2, rhs); !rc)
+          return rc;
+
+        vm.ip += 1;
+
+      case op::left$:
+      case op::modi:
+      case op::modf:
+      case op::right$:
+      case op::substr:
+        var arg1 = vm.stack.take_back();
+        var arg0 = vm.stack.take_back();
+
+        switch (*vm.ip)
+        {
+          case op::left$:
+            vm.stack.push_back(arg0.as_string.take!(cast<usize>(std::max(arg1.as_integer, 0))));
+
+          case op::modi:
+            vm.stack.push_back(arg0.integer % arg1.integer);
+
+          case op::modf:
+            vm.stack.push_back(arg0.as_real % arg1.as_real);
+
+          case op::right$:
+            vm.stack.push_back(arg0.as_string.drop!(std::saturating_sub(arg0.as_string_view.chars.len, arg1.as_integer)));
+
+          case op::substr:
+            if (var x = arg1.as_string_view, var z = x.find_first(arg0.as_string_view); z != x.end)
+              vm.stack.push_back(cast<int>(z - x.begin) + 1);
+            else
+              vm.stack.push_back(0);
+        }
+
+        vm.ip += 1;
+
+      case op::mid$:
+        var arg2 = vm.stack.take_back();
+        var arg1 = vm.stack.take_back();
+        var arg0 = vm.stack.take_back();
+
+        switch (*vm.ip)
+        {
+          case op::mid$:
+            vm.stack.push_back(arg0.as_string.drop!(cast<usize>(std::max(arg1.as_integer, 1) - 1)).take!(cast<usize>(std::max(arg2.as_integer, 0))));
+        }
+
+        vm.ip += 1;
+
+      else:
+        break;
+    }
+  }
+
+  return ok;
+}
+
+fn skip(machine mut &vm) -> result
+{
+  for (vm.ip += 1; *vm.ip != cast<u8>(op::eol); )
+  {
+    switch (*vm.ip)
+    {
+      case op::symbol:
+        vm.ip += 3;
+
+      case op::literal_integer:
+        vm.ip += 1 + sizeof<int>;
+
+      case 0x01 ..= 0x56:
+        vm.ip += 1;
+
+      case 0x58 ..= 0x75:
+        vm.ip += 1;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  vm.ip += 1;
+
+  return ok;
+}
+
+fn print(machine mut &vm) -> result
+{
+  var fd = 0;
+  vm.linebuf.clear();
+
+  var format = std::string_view();
+  var groups = std::vector<u8*>();
+  var fmt = format.end;
+
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case op::hash:
+        vm.ip += 1;
+
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        fd = vm.stack.take_back().integer;
+
+      case op::kw_using:
+        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+        format = vm.frame.rodata[offset + 1 .. offset + 1 + cast<usize>(vm.frame.rodata[offset])];
+        fmt = format.begin;
+
+        vm.ip += 4;
+
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        var ident = u8(0);
+        var width = int();
+        var precision = int(-1);
+        var justifcation = cast<u8>('<');
+
+        if (fmt != format.end)
+        {
+          ident = *fmt++;
+
+          fmt += std::atoi(fmt, format.end, &mut width).len;
+
+          if (*fmt == cast('.'))
+            fmt += std::atoi(fmt + 1, format.end, &mut precision).len + 1;
+
+          if (*fmt == cast('<') || *fmt == cast('>') || *fmt == cast('^'))
+            justifcation = *fmt++;
+
+          if (!(fmt == format.end || *fmt == cast(',') || *fmt == cast(')')))
+            return errc::format_syntax_error;
+        }
+
+        switch (ident)
+        {
+          case 0:
+            vm.linebuf.appendf("{}", vm.stack.take_back);
+
+            if (*vm.ip == cast<u8>(op::comma))
+              vm.linebuf.append("\t");
+
+          case 'R':
+          case 'E':
+            if (!vm.stack.back.is_integer && !vm.stack.back.is_real)
+              return errc::format_syntax_error;
+
+            switch (ident)
+            {
+              case 'R':
+                switch (justifcation)
+                {
+                  case '^':
+                    vm.linebuf.appendf("{:^*.*f}", width, precision, vm.stack.take_back.as_real);
+
+                  case '>':
+                    vm.linebuf.appendf("{:>*.*f}", width, precision, vm.stack.take_back.as_real);
+
+                  case '<':
+                    vm.linebuf.appendf("{:<*.*f}", width, precision, vm.stack.take_back.as_real);
+                }
+
+              case 'E':
+                switch (justifcation)
+                {
+                  case '^':
+                    vm.linebuf.appendf("{:^*.*e}", width, precision, vm.stack.take_back.as_real);
+
+                  case '>':
+                    vm.linebuf.appendf("{:>*.*e}", width, precision, vm.stack.take_back.as_real);
+
+                  case '<':
+                    vm.linebuf.appendf("{:<*.*e}", width, precision, vm.stack.take_back.as_real);
+                }
+            }
+
+          case 'I':
+          case 'H':
+            if (!vm.stack.back.is_integer && !vm.stack.back.is_real)
+              return errc::format_syntax_error;
+
+            switch (ident)
+            {
+              case 'I':
+                switch (justifcation)
+                {
+                  case '^':
+                    vm.linebuf.appendf("{:^*}", width, vm.stack.take_back.as_integer);
+
+                  case '>':
+                    vm.linebuf.appendf("{:>*}", width, vm.stack.take_back.as_integer);
+
+                  case '<':
+                    vm.linebuf.appendf("{:<*}", width, vm.stack.take_back.as_integer);
+                }
+
+              case 'H':
+                vm.linebuf.appendf("{:0*x}", width, std::bit_cast<u32>(vm.stack.take_back.as_integer));
+            }
+
+          case 'S':
+            if (!vm.stack.back.is_string)
+              return errc::format_syntax_error;
+
+            switch (justifcation)
+            {
+              case '^':
+                vm.linebuf.appendf("{:^*}", width, vm.stack.take_back.as_string_view);
+
+              case '>':
+                vm.linebuf.appendf("{:>*}", width, vm.stack.take_back.as_string_view);
+
+              case '<':
+                vm.linebuf.appendf("{:<*}", width, vm.stack.take_back.as_string_view);
+            }
+
+          case 'B':
+            if (!vm.stack.back.is_integer)
+              return errc::format_syntax_error;
+
+            switch (justifcation)
+            {
+              case '^':
+                vm.linebuf.appendf("{:^*}", width, vm.stack.take_back.as_integer != 0);
+
+              case '>':
+                vm.linebuf.appendf("{:>*}", width, vm.stack.take_back.as_integer != 0);
+
+              case '<':
+                vm.linebuf.appendf("{:<*}", width, vm.stack.take_back.as_integer != 0);
+            }
+
+          else:
+            return errc::format_syntax_error;
+        }
+
+      case op::comma:
+        vm.ip += 1;
+        if (*vm.ip == cast<u8>(op::eol))
+          break;
+
+      case op::semi:
+        vm.ip += 1;
+        if (*vm.ip == cast<u8>(op::eol))
+          break;
+
+      case op::eol:
+        vm.linebuf.append("\n");
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+
+    for (; fmt != format.end; )
+    {
+      switch (*fmt)
+      {
+        case ',':
+          ++fmt;
+
+        case 'T':
+          var count = int();
+          fmt += std::atoi(fmt + 1, format.end, &mut count).len + 1;
+
+          for (var i = 0; i < count; ++i)
+            vm.linebuf.append("\t");
+
+        case 'X':
+          var count = int();
+          fmt += std::atoi(fmt + 1, format.end, &mut count).len + 1;
+
+          for (var i = 0; i < count; ++i)
+            vm.linebuf.append(" ");
+
+        case '\'':
+          var len = 0;
+          for (++fmt; fmt != format.end && *fmt != cast(','); ++fmt)
+            ++len;
+
+          vm.linebuf.append(std::string_view(fmt - len, fmt - 1));
+
+        case '0' ..= '9':
+          var count = int();
+          fmt += std::atoi(fmt, format.end, &mut count).len;
+
+          if (fmt == format.end || *fmt++ != cast('('))
+            return errc::format_syntax_error;
+
+          for (var i = 0; i < count - 1; ++i)
+            groups.push_back(fmt);
+
+        case ')':
+          ++fmt;
+
+          if (!groups.empty)
+            fmt = groups.take_back();
+
+        else:
+          break;
+      }
+    }
+  }
+
+  try
+  {
+    switch (fd)
+    {
+      case 0:
+      case 1:
+        vm.stdout.write(vm.linebuf.data, vm.linebuf.len);
+
+      else:
+        switch (vm.files.get(fd))
+        {
+          case Some[file]:
+            file.write(vm.linebuf.data, vm.linebuf.len);
+
+          else:
+            return errc::illegal_path_number;
+        }
+    }
+  }
+  catch (std::error err)
+  {
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn input(machine mut &vm) -> result
+{
+  var ip = vm.ip;
+
+  for (vm.ip += 1; *vm.ip != cast<u8>(op::eol); )
+  {
+    var pos = 0;
+
+    try
+    {
+      var len = cast<usize>(*(vm.ip + 1));
+
+      vm.stdout.write(vm.ip + 2, len);
+
+      vm.ip += 2 + len;
+    }
+    catch (std::error err)
+    {
+      return errc::io_error;
+    }
+
+    try
+    {
+      vm.linebuf.clear();
+      vm.linebuf.reserve(256);
+
+      vm.linebuf.append_from_capacity(vm.stdin.read(vm.linebuf.data, vm.linebuf.capacity));
+    }
+    catch (std::error err)
+    {
+      return errc::io_error;
+    }
+
+    vm.linebuf.chomp!();
+
+    for (;;)
+    {
+      switch (*vm.ip)
+      {
+        case 0x60 ..= 0xff:
+          if (var rc = evaluate(&mut vm); !rc)
+            return rc;
+
+          var lhs = vm.stack.take_back().reference;
+
+          if (var rc = scan(&mut vm, lhs.0, vm.linebuf, &mut pos); !rc)
+            break;
+
+          if (var rc = store(&mut vm, lhs.0, lhs.1, lhs.2, vm.stack.take_back()); !rc)
+            break;
+
+          while (std::is_whitespace(*(vm.linebuf.data + pos)))
+            ++pos;
+
+          if (*(vm.linebuf.data + pos) == cast(','))
+            ++pos;
+
+        case op::comma:
+          vm.ip += 1;
+
+        case op::eol:
+          break;
+
+        else:
+          std::panic("unhandled");
+      }
+    }
+
+    if (*vm.ip == cast<u8>(op::eol) && pos == vm.linebuf.len)
+      break;
+
+    try
+    {
+      vm.stdout.write("** Input Error - reenter **\n".data, 28);
+    }
+    catch (std::error err)
+    {
+      return errc::io_error;
+    }
+
+    vm.ip = ip + 1;
+  }
+
+  vm.ip += 1;
+
+  return ok;
+}
+
+fn for_next(machine mut &vm) -> result
+{
+  switch (*vm.ip)
+  {
+    case op::kw_for:
+      vm.ip += 1;
+
+      var type = op();
+      var span = std::mutable_span<u8>();
+
+      if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+        return rc;
+
+      vm.stack.push_back(operand::reference(type, span.data, span.len));
+
+      if (var rc = evaluate(&mut vm); !rc)
+        return rc;
+
+      var to_addr = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      vm.ip += 3;
+
+      if (var rc = evaluate(&mut vm); !rc)
+        return rc;
+
+      if (var rc = store(&mut vm, type, vm.frame.memory.data + to_addr, span.len, vm.stack.back); !rc)
+        return rc;
+
+      var finish = vm.stack.take_back();
+
+      var step = operand::integer(1);
+
+      switch (*vm.ip)
+      {
+        case op::kw_step:
+          var step_addr = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+          vm.ip += 3;
+
+          if (var rc = evaluate(&mut vm); !rc)
+            return rc;
+
+          if (var rc = store(&mut vm, type, vm.frame.memory.data + step_addr, span.len, vm.stack.back); !rc)
+            return rc;
+
+          step = vm.stack.take_back();
+      }
+
+      switch (load(&mut vm, type, span.data, span.len))
+      {
+        case integer[integer]:
+          vm.stack.push_back((integer == finish.as_integer) | (integer < finish.as_integer) ^ (step.as_integer < 0));
+
+        case real[real]:
+          vm.stack.push_back((real == finish.as_real) | (real < finish.as_real) ^ (step.as_real < 0.0));
+
+        else:
+          std::panic("unhandled");
+      }
+
+    case op::kw_next:
+      var flag = *(vm.ip + 1);
+      var to_addr = cast<usize>(*(vm.ip + 2)) + cast<usize>(*(vm.ip + 3)) << 8;
+      var step_addr = cast<usize>(*(vm.ip + 4)) + cast<usize>(*(vm.ip + 5)) << 8;
+      var next = vm.ip - (cast<usize>(*(vm.ip + 6)) + cast<usize>(*(vm.ip + 7)) << 8);
+
+      vm.ip += 8;
+
+      var type = op();
+      var span = std::mutable_span<u8>();
+
+      if (var rc = gep(&mut vm, &mut type, &mut span); !rc)
+        return rc;
+
+      var counter = load(&mut vm, type, span.data, span.len);
+      var finish = load(&mut vm, type, vm.frame.memory.data + to_addr, span.len);
+
+      switch (counter)
+      {
+        case integer[integer]:
+          var step = operand::integer(1);
+
+          if (flag & 1 == 1)
+          {
+            step = load(&mut vm, type, vm.frame.memory.data + step_addr, span.len);
+          }
+
+          if (var z = std::add_with_carry(integer, step.integer); z.1 == 0)
+            integer = z.0;
+          else
+            return errc::overflow;
+
+          if ((integer == finish.integer) | (integer < finish.integer) ^ (step.integer < 0))
+            vm.ip = next;
+
+        case real[real]:
+          var step = operand::real(1.0);
+
+          if (flag & 1 == 1)
+          {
+            step = load(&mut vm, type, vm.frame.memory.data + step_addr, span.len);
+          }
+
+          real += step.real;
+
+          if ((real == finish.real) | (real < finish.real) ^ (step.real < 0.0))
+            vm.ip = next;
+
+        else:
+          std::panic("unhandled");
+      }
+
+      if (var rc = store(&mut vm, type, span.data, span.len, counter); !rc)
+        return rc;
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn run(machine mut &vm) -> result
+{
+  var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+  var name = std::string_view(vm.frame.rodata[offset + 1 .. offset + 1 + cast<usize>(vm.frame.rodata[offset])]);
+
+  var argc = 0;
+  var stack = vm.stack.len;
+  var storage = vm.frame.memory.data + vm.frame.link_storage_offset;
+
+  for (vm.ip += 3;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        if (!vm.stack.back.is_reference)
+        {
+          var type = op();
+          var size = usize();
+
+          switch (vm.stack.back)
+          {
+            case real[real]:
+              type = op::type_real;
+              size = sizeof(real);
+
+            case integer[integer]:
+              type = op::type_integer;
+              size = sizeof(integer);
+
+            case string:
+            case string_view:
+              type = op::type_string;
+              size = sizeof<u16> + vm.stack.back.as_string_view.len;
+
+            else:
+              std::panic("unhandled");
+          }
+
+          if (var rc = store(&mut vm, type, storage, size, vm.stack.take_back()); !rc)
+            return rc;
+
+          vm.stack.push_back(operand::reference(type, storage, size));
+
+          storage += size;
+        }
+
+        argc += 1;
+
+      case op::l_paren:
+      case op::r_paren:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  switch (vm.procedures.get(name))
+  {
+    case Some[procedure]:
+      vm.push_frame(procedure, argc);
+
+    case None:
+      var [module, function] = name.cut(".");
+
+      switch (vm.modules.get(module))
+      {
+        case Some[dispatch]:
+          if (var rc = dispatch(&mut vm, function, argc); !rc)
+            return rc;
+
+          if (vm.stack.len != stack)
+            return errc::parameter_error;
+
+        else:
+          return errc::unknown_procedure;
+      }
+  }
+
+  return ok;
+}
+
+fn open(machine mut &vm) -> result
+{
+  var mode = std::fd::rights::read | std::fd::rights::write;
+
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::mode:
+        switch (*(vm.ip + 1))
+        {
+          case op::mode_read:
+            mode = std::fd::rights::read;
+
+          case op::mode_write:
+            mode = std::fd::rights::write;
+
+          case op::mode_update:
+            mode = std::fd::rights::read | std::fd::rights::write;
+        }
+
+        vm.ip += 2;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  var path = vm.stack.take_back();
+  var ref = vm.stack.take_back().reference;
+
+  try
+  {
+    var fd = std::fd::open(path.as_string_view, std::fd::oflags::open, mode);
+
+    if (var rc = store(&mut vm, ref.0, ref.1, ref.2, operand(cast<int>(std::bit_cast<uintptr>(fd)))); !rc)
+      return rc;
+
+    vm.files.insert(cast<int>(std::bit_cast<uintptr>(fd)), std::file(fd));
+  }
+  catch (std::error err)
+  {
+    if (err == std::errc::not_found)
+      return errc::file_not_found;
+
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn create(machine mut &vm) -> result
+{
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::mode:
+        vm.ip += 2;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  var path = vm.stack.take_back();
+  var ref = vm.stack.take_back().reference;
+
+  try
+  {
+    var fd = std::fd::open(path.as_string_view, std::fd::oflags::create | std::fd::oflags::trunc, std::fd::rights::read | std::fd::rights::write);
+
+    if (var rc = store(&mut vm, ref.0, ref.1, ref.2, operand(cast<int>(std::bit_cast<uintptr>(fd)))); !rc)
+      return rc;
+
+    vm.files.insert(cast<int>(std::bit_cast<uintptr>(fd)), std::file(fd));
+  }
+  catch (std::error err)
+  {
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn read(machine mut &vm) -> result
+{
+  var fd = -1;
+  var pos = 0;
+
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case op::hash:
+        vm.ip += 1;
+
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        fd = vm.stack.take_back().integer;
+
+        try
+        {
+          vm.linebuf.clear();
+          vm.linebuf.reserve(256);
+
+          switch (fd)
+          {
+            case 0:
+              vm.linebuf.append_from_capacity(vm.stdin.read(vm.linebuf.data, vm.linebuf.capacity));
+
+            else:
+              switch (vm.files.get(fd))
+              {
+                case Some[file]:
+                  if (file.eof)
+                    return errc::end_of_file;
+
+                  file.read_line(&mut vm.linebuf);
+
+                else:
+                  return errc::illegal_path_number;
+              }
+          }
+        }
+        catch (std::error err)
+        {
+          return errc::io_error;
+        }
+
+        vm.linebuf.chomp!();
+
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        var lhs = vm.stack.take_back().reference;
+
+        switch (fd)
+        {
+          case -1:
+
+            if (!vm.frame.dp)
+              return errc::missing_data_statement;
+
+            std::swap(&mut vm.ip, &mut vm.frame.dp);
+
+            if (var rc = evaluate(&mut vm); !rc)
+              return rc;
+
+            switch (*vm.ip)
+            {
+              case op::comma:
+                vm.ip += 1;
+
+              case op::jmp_fwd_ne:
+                vm.ip += cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+                if (*vm.ip == cast<u8>(op::jmp_fwd_ne))
+                  vm.ip = vm.frame.text.begin + vm.frame.first_data_statement + 4;
+
+              else:
+                std::panic("unhandled");
+            }
+
+            std::swap(&mut vm.ip, &mut vm.frame.dp);
+
+            switch (lhs.0)
+            {
+              case type_real:
+              case type_byte:
+              case type_integer:
+              case type_boolean:
+                if (!vm.stack.back.is_integer && !vm.stack.back.is_real)
+                  return errc::illegal_expression_type;
+
+              case type_string:
+                if (!vm.stack.back.is_string)
+                  return errc::illegal_expression_type;
+
+              else:
+                return errc::illegal_input_variable;
+            }
+
+          else:
+
+            if (var rc = scan(&mut vm, lhs.0, vm.linebuf, &mut pos); !rc)
+              return rc;
+
+            pos += 1;
+        }
+
+        if (var rc = store(&mut vm, lhs.0, lhs.1, lhs.2, vm.stack.take_back()); !rc)
+          return rc;
+
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  return ok;
+}
+
+fn write(machine mut &vm) -> result
+{
+  var fd = 1;
+  vm.linebuf.clear();
+
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case op::hash:
+        vm.ip += 1;
+
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        fd = vm.stack.take_back().integer;
+
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        vm.linebuf.appendf("{}", vm.stack.take_back);
+
+        if (*vm.ip == cast<u8>(op::comma))
+          vm.linebuf.append("\0");
+
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.linebuf.append("\n");
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  try
+  {
+    switch (fd)
+    {
+      case 1:
+        vm.stdout.write(vm.linebuf.data, vm.linebuf.len);
+
+      else:
+        switch (vm.files.get(fd))
+        {
+          case Some[file]:
+            file.write(vm.linebuf.data, vm.linebuf.len);
+
+          else:
+            return errc::illegal_path_number;
+        }
+    }
+  }
+  catch (std::error err)
+  {
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn seek(machine mut &vm) -> result
+{
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  var pos = vm.stack.take_back().integer;
+  var fd = vm.stack.take_back().integer;
+
+  if (pos < 0)
+    return errc::overflow;
+
+  switch (vm.files.get(fd))
+  {
+    case Some[file]:
+      file.seek(cast<u64>(pos));
+
+    else:
+      return errc::illegal_path_number;
+  }
+
+  return ok;
+}
+
+fn get(machine mut &vm) -> result
+{
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  try
+  {
+    var obj = vm.stack.take_back().reference;
+    var fd = vm.stack.take_back().integer;
+
+    switch (fd)
+    {
+      case 0:
+        vm.stdin.read(obj.1, obj.2);
+
+      else:
+        switch (vm.files.get(fd))
+        {
+          case Some[file]:
+            file.get(obj.1, obj.2);
+
+          else:
+            return errc::illegal_path_number;
+        }
+    }
+  }
+  catch (std::error err)
+  {
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn put(machine mut &vm) -> result
+{
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  try
+  {
+    var obj = vm.stack.take_back().reference;
+    var fd = vm.stack.take_back().integer;
+
+    switch (fd)
+    {
+      case 1:
+        vm.stdout.write(obj.1, obj.2);
+
+      else:
+        switch (vm.files.get(fd))
+        {
+          case Some[file]:
+            file.put(obj.1, obj.2);
+
+          else:
+            return errc::illegal_path_number;
+        }
+    }
+  }
+  catch (std::error err)
+  {
+    return errc::io_error;
+  }
+
+  return ok;
+}
+
+fn close(machine mut &vm) -> result
+{
+  for (vm.ip += 1;;)
+  {
+    switch (*vm.ip)
+    {
+      case 0x60 ..= 0xff:
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+      case op::hash:
+      case op::comma:
+        vm.ip += 1;
+
+      case op::eol:
+        vm.ip += 1;
+        break;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  vm.files.erase(vm.stack.take_back().integer);
+
+  return ok;
+}
+
+fn restore(machine mut &vm) -> result
+{
+  var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8 + cast<usize>(*(vm.ip + 3)) << 16;
+
+  if (offset == 0)
+    offset = vm.frame.first_data_statement;
+
+  vm.frame.dp = vm.frame.text.begin + offset + 4;
+
+  vm.ip += 4;
+
+  return ok;
+}
+
+fn error(machine mut &vm) -> result
+{
+  vm.ip += 1;
+
+  if (var rc = evaluate(&mut vm); !rc)
+    return rc;
+
+  return cast<errc>(vm.stack.take_back.as_integer);
+}
+
+fn on_goto(machine mut &vm) -> result
+{
+  vm.ip += 1;
+
+  switch (*vm.ip)
+  {
+    case op::kw_error:
+      vm.frame.ep = null;
+      if (*(vm.ip + 4) == cast<u8>(op::kw_goto))
+        vm.frame.ep = vm.frame.text.begin + cast<usize>(*(vm.ip + 5)) + cast<usize>(*(vm.ip + 6)) << 8 + cast<usize>(*(vm.ip + 7)) << 16;
+
+      vm.ip += 1 + cast<usize>(*(vm.ip + 2)) + cast<usize>(*(vm.ip + 3)) << 8;
+
+    case 0x60 ..= 0xff:
+      if (var rc = evaluate(&mut vm); !rc)
+        return rc;
+
+      var index = vm.stack.take_back().integer;
+      var target = vm.ip + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+      if (index > 0 && vm.ip + cast<usize>(index) * 5 < target)
+      {
+        var idx = vm.ip + cast<usize>(index) * 5 - 2;
+
+        if (*(vm.ip + 3) == cast(op::kw_gosub))
+          vm.substack.push_back(target);
+
+        target = vm.frame.text.begin + cast<usize>(*(idx + 1)) + cast<usize>(*(idx + 2)) << 8 + cast<usize>(*(idx + 3)) << 16;
+      }
+
+      vm.ip = target;
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn step(machine mut &vm) -> result
+{
+  switch (*vm.ip)
+  {
+    case op::label:
+      vm.ip += 1;
+      vm.ip += 2;
+
+    case op::kw_rem:
+      vm.ip += 1;
+      vm.ip += 1 + cast<usize>(*vm.ip) + 1;
+
+    case op::kw_dim:
+    case op::kw_type:
+    case op::kw_param:
+      skip(&mut vm);
+
+    case op::kw_let:
+    case op::kw_if:
+    case op::kw_then:
+    case op::kw_endif:
+    case op::kw_while:
+    case op::kw_do:
+    case op::kw_repeat:
+    case op::kw_until:
+    case op::kw_loop:
+    case op::kw_exitif:
+      vm.ip += 1;
+
+    case op::kw_print:
+      if (var rc = print(&mut vm); !rc)
+        return rc;
+
+    case op::kw_input:
+      if (var rc = input(&mut vm); !rc)
+        return rc;
+
+    case op::kw_for:
+    case op::kw_to:
+    case op::kw_step:
+    case op::kw_next:
+      if (var rc = for_next(&mut vm); !rc)
+        return rc;
+
+    case op::kw_run:
+      if (var rc = run(&mut vm); !rc)
+        return rc;
+
+    case op::kw_open:
+      if (var rc = open(&mut vm); !rc)
+        return rc;
+
+    case op::kw_create:
+      if (var rc = create(&mut vm); !rc)
+        return rc;
+
+    case op::kw_read:
+      if (var rc = read(&mut vm); !rc)
+        return rc;
+
+    case op::kw_write:
+      if (var rc = write(&mut vm); !rc)
+        return rc;
+
+    case op::kw_seek:
+      if (var rc = seek(&mut vm); !rc)
+        return rc;
+
+    case op::kw_get:
+      if (var rc = get(&mut vm); !rc)
+        return rc;
+
+    case op::kw_put:
+      if (var rc = put(&mut vm); !rc)
+        return rc;
+
+    case op::kw_close:
+      if (var rc = close(&mut vm); !rc)
+        return rc;
+
+    case op::kw_restore:
+      if (var rc = restore(&mut vm); !rc)
+        return rc;
+
+    case op::kw_error:
+      if (var rc = error(&mut vm); !rc)
+        return rc;
+
+    case op::kw_on:
+      if (var rc = on_goto(&mut vm); !rc)
+        return rc;
+
+    case op::jmp_fwd_ne:
+      if (vm.stack.take_back.integer == 0)
+        vm.ip += cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+      vm.ip += 3;
+
+    case op::jmp_bck_ne:
+      if (vm.stack.take_back.integer == 0)
+        vm.ip -= cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+      vm.ip += 3;
+
+    case op::kw_else:
+    case op::kw_endexit:
+      vm.ip += cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+    case op::kw_endwhile:
+    case op::kw_endloop:
+      vm.ip -= cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+
+    case op::lref:
+    case op::kw_goto:
+    case op::kw_data:
+      vm.ip = vm.frame.text.begin + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8 + cast<usize>(*(vm.ip + 3)) << 16;
+
+    case op::kw_gosub:
+      vm.substack.push_back(vm.ip + 4);
+      vm.ip = vm.frame.text.begin + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8 + cast<usize>(*(vm.ip + 3)) << 16;
+
+    case op::kw_return:
+      if (vm.substack.len <= vm.frame.bp)
+        return errc::subroutine_stack_underflow;
+      vm.ip = vm.substack.take_back();
+
+    case 0x60 ..= 0xff:
+      if (var rc = evaluate(&mut vm); !rc)
+        return rc;
+
+    case op::symbol:
+      vm.ip += 3;
+
+    case op::nop:
+    case op::eoi:
+    case op::eol:
+      vm.ip += 1;
+
+    case op::kw_stop:
+      return stop;
+
+    case op::end:
+      if (vm.frames.len <= 1)
+        return stop;
+
+      vm.pop_frame();
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn trap(machine mut &vm, result err) -> result
+{
+  vm.errno = -cast<int>(err);
+
+  if (!vm.frame.ep)
+    return err;
+
+  vm.ip = vm.frame.ep;
+
+  return ok;
+}
+
+fn execute(machine mut &vm) -> result
+{
+  for (;;)
+  {
+    switch (step(&mut vm))
+    {
+      case ok:
+        ;
+
+      case stop:
+        return ok;
+
+      else[rc]:
+        if (var rc = trap(&mut vm, rc); !rc)
+          return rc;
+    }
+  }
+}
+
+#[lifetime(launder(vm), poison(vm))]
+fn reset(machine mut &vm) -> void
+{
+  vm.stack.clear();
+  vm.substack.clear();
+  vm.files.clear();
+  vm.linebuf.clear();
+  vm.frames.clear();
+}
+
+#[lifetime(poison(vm))]
+pub fn clear(machine mut &vm) -> void
+{
+  vm.procedures.clear();
+}
+
+pub fn register(machine mut &vm, String &&name, fn (*dispatch)(machine mut &, std::string_view, usize) -> result) -> void
+{
+  vm.modules.insert(&&name, dispatch);
+}
+
+pub fn load(machine mut &vm, procedure &&procedure) -> void
+{
+  vm.procedures.insert_or_assign(procedure.name, &&procedure);
+}
+
+pub fn run(machine mut &vm, procedure &procedure) -> result
+{
+  vm.push_frame(procedure, 0);
+
+  if (var rc = execute(&mut vm); !rc)
+  {
+    vm.reset();
+
+    return rc;
+  }
+
+  vm.reset();
+
+  return ok;
+}
+
+pub fn run(machine mut &vm, String &name) -> result
+{
+  switch (vm.procedures.get(name))
+  {
+    case Some[procedure]:
+      if (var rc = run(&mut vm, procedure); !rc)
+        return rc;
+
+    case None:
+      return errc::unknown_procedure;
+  }
+
+  return ok;
+}

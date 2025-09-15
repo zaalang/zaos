@@ -364,11 +364,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
   process.id = mainthread.id;
   process.uuid = make_uuid(cpu::system_time / 1_000_000, mainthread.id);
 
-  process.pagetable.new(fn() -> platform::physaddr_t {
-    var allocation = vm::allocate_physical_pages(PAGE_SIZE);
-    std::assert(!allocation.empty);
-    return allocation.addr;
-  });
+  vm::init_pagetable(&mut process.pagetable);
 
   var userstack = vm::virtrange(vm::virtaddr(platform::USER_STACK_BASE), platform::USER_STACK_SIZE);
 
@@ -602,9 +598,7 @@ pub fn teardown(process mut *process) -> void
     vm::munmap(process, region.range);
   });
 
-  process.pagetable.dispose(null, fn (void mut *, platform::physaddr_t phys) {
-    vm::release_physical_pages(vm::physrange(phys, PAGE_SIZE));
-  });
+  vm::dispose_pagetable(&mut process.pagetable);
 
   {
     var guard = std::lock_guard(&mut process.lock);

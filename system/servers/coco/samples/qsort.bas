@@ -1,0 +1,82 @@
+PROCEDURE qsort1
+  REM quicksort, by T.F. Ritter
+  PARAM bot,top,d(1000):INTEGER
+  DIM n,m:INTEGER; btemp:BOOLEAN
+
+  n:=bot
+  m:=top
+
+  LOOP \REM each element gets the once over
+    REPEAT \REM this is a postinc instruction
+      btemp:=d(n)<d(top)
+      n:=n+1
+    UNTIL NOT (btemp)
+    n:=n-1 \REM point at the tested element
+    EXITIF n=m THEN
+    ENDEXIT
+
+    REPEAT \REM this is a postdec instruction
+      m:=m-1
+    UNTIL d(m)<=d(top) OR m=n
+    EXITIF n=m THEN
+    ENDEXIT
+
+    RUN exchange(d(m),d(n))
+    n:=n+1 \REM prepare for postinc
+    EXITIF n=m THEN
+    ENDEXIT
+  ENDLOOP
+
+  IF n<>top THEN
+    IF d(n)<>d(top) THEN
+      RUN exchange(d(n),d(top))
+    ENDIF
+  ENDIF
+
+  IF bot<n-1 THEN
+    RUN qsort1(bot,n-1,d)
+  ENDIF
+  IF n+1<top THEN
+    RUN qsort1(n+1,top,d)
+  ENDIF
+
+  END
+
+PROCEDURE exchange
+  PARAM a,b:INTEGER
+  DIM temp:INTEGER
+
+  temp:=a
+  a:=b
+  b:=temp
+
+  END
+
+PROCEDURE prin
+  PARAM n,m,d(1000):INTEGER
+  DIM i:INTEGER
+
+  FOR i=n TO m
+    PRINT d(i);
+  NEXT i
+  PRINT
+
+  END
+
+PROCEDURE main
+  REM This procedure is used to test Quicksort
+  REM It fills the array "d" with randomly generated
+  REM numbers and sorts them.
+  DIM i,d(1000):INTEGER
+
+  FOR i=0 TO 999
+    d(i):=INT(RND(100))
+  NEXT i
+
+  RUN prin(0,999,d)
+
+  RUN qsort1(0,999,d)
+
+  RUN prin(0,999,d)
+
+  END

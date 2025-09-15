@@ -200,7 +200,7 @@ pub struct io_ring
 
   vfs::node node;
 
-  u8[48] reserved;
+  u8[40] reserved;
 
   fn allocator()
   {
@@ -243,7 +243,7 @@ pub struct io_ring
     return not_supported;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &ring = *cast<io_ring mut *>(cast<uintptr>(node) - offsetof(io_ring::node));
 
@@ -252,14 +252,14 @@ pub struct io_ring
     return ok;
   }
 
-  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
+  pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
 
   pub io_ring()
   {
-    vfs::node::init(&node, vfs::node::type::ioring, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::ioring, vfs::node::ops::stream(&impl node));
 
     io::initiate(&mut readable.cb, 1);
   }

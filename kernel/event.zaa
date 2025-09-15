@@ -34,7 +34,7 @@ pub struct event
 
   pub event()
   {
-    vfs::node::init(&node, vfs::node::type::event, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::event, vfs::node::ops::stream(&impl node));
   }
 
   pub fn ref(this mut &) -> void
@@ -74,12 +74,12 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return ok;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   return ok;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }

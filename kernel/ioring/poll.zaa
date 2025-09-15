@@ -101,19 +101,19 @@ pub struct pollset
     return not_supported;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
 
-  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
+  pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
   {
     return not_supported;
   }
 
   pub pollset()
   {
-    vfs::node::init(&node, vfs::node::type::pollset, vfs::node_stream_operations());
+    vfs::node::init(&node, vfs::node::type::pollset, vfs::node::ops::stream(&impl node));
 
     io::initiate(&mut readable.cb, 1);
   }

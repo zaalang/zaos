@@ -526,7 +526,7 @@ fn reflow(textbuffer mut &this, bool force = false) -> void
 
   this.margin_width = 0;
   if (this.margin_enabled)
-    this.margin_width = cast<int>(std::log10(cast<f64>(this.logical_lines))) + 4;
+    this.margin_width = cast<int>(std::floor_log10(this.logical_lines)) + 4;
 
   var text_width = this.width - this.margin_width;
 
@@ -2128,8 +2128,6 @@ pub fn save_into(textbuffer &this, std::string mut &text) -> void
 pub fn save_to_file(textbuffer &this, String &path) throws (std::error) -> void
 {
   var file = std::file::create(path);
-
-  file.puts("\xEF\xBB\xBF");
 
   for (var offset = 0; offset < this.text_length; )
   {

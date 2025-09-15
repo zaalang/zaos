@@ -1,0 +1,415 @@
+PROCEDURE DumpFile
+  (* DumpFlie - Color File Dump Utility
+  (*
+  (* (c) 1993 by Wayne Campbell - All Rights Reserved
+  (*
+  (* To use: 059: dumpfile <pathname>
+  (* <pathname> may include a complete path up to 80 characters
+  (* Requires the SysCall and Inkey sub-routines
+
+  (* Pathname parameter string
+  PARAM PathName:STRING[80]
+
+  (* Sector buffer
+  DIM Sector(258):BYTE
+
+  (* Path identifier
+  DIM FilePath:BYTE
+
+  (* input key variable
+  DIM key:STRING[1]
+
+  (* Version number string
+  DIM Version:STRING[8]
+
+  (* FileSize and Current Decimal Count strings
+  DIM CurrentCount:STRING[11]
+
+  (* Character string to display character values
+  DIM CharacterLine:STRING[16]
+
+  (* SpaceMark = display marker for spacing
+  (* DisplayCnt = displayed byte count (1-16)
+  (* LastByte = points to last byte in file
+  (* Index = sector-byte marker
+  (* BytePos = sector-byte location (1-16)
+  (* ByteAdr = increment value for bytes read from file
+  DIM SpaceMark,DisplayCnt,LastByte:INTEGER
+  DIM Index,BytePos,ByteAdr:INTEGER
+
+  (* File Size and File Pointer Position
+  DIM FileSize,FilePos:INTEGER
+
+  (* Open Path and Abort detection
+  DIM PathOpened,Abort:BOOLEAN
+
+  (* Beginning of program
+
+  (* Initialize version number
+  Version := "01.00.00"
+
+  (* Path isn't open yet, so set to FALSE
+  PathOpened := FALSE
+
+  (* Set Abort flag to FALSE
+  Abort := FALSE
+
+  (* Error Trap in case PathName not passed
+  ON ERROR GOTO 40
+
+  (* It PathName is passed as a null string, same as no parameter
+  IF PathName="" THEN 40
+
+  RUN Sys.TMode("raw")
+
+  (* Display PathName being dumped
+  RUN Colors(15) \PRINT " Dump of";
+  RUN Colors(14) \PRINT ": ";
+  RUN Colors(13) \PRINT PathName;
+  PRINT "\r\n";
+
+  (* Set ForeGround color to White
+  RUN Colors(8)
+
+  (* initialize variables
+  CharacterLine := ""
+  SpaceMark := 0
+  DisplayCnt := 0
+
+  (* Set LastByte to 1 to prevent premature exit
+  LastByte := 1
+  BytePos := 0
+  ByteAdr := 0
+  FilePos := 0
+  FileSize := 0
+
+  (* Setup for bad pathname error
+  ON ERROR GOTO 10
+
+  (* Open path to PathName
+  OPEN #FilePath,PathName:READ
+  PathOpened := TRUE
+
+  (* Get FileSize
+  RUN FileSize(FilePath,FileSize)
+
+  (* Display FileSize of file being dumped
+  RUN Colors(15) \PRINT " File Size";
+  RUN Colors(14) \PRINT ": ";
+  RUN Colors(13) \PRINT STR$(FileSize);
+  RUN Colors(15) \PRINT " Bytes";
+  PRINT "\r\n\r\n";
+
+  (* Display pause/quit key selection
+  PRINT " Press ";
+  RUN Colors(13) \PRINT "[";
+  RUN Colors(8) \PRINT "Q";
+  RUN Colors(13) \PRINT "]";
+  RUN Colors(15) \PRINT " to Quit";
+  RUN Colors(14) \PRINT ",";
+  RUN Colors(13) \PRINT " [";
+  RUN Colors(8) \PRINT "P";
+  RUN Colors(13) \PRINT "]";
+  RUN Colors(15) \PRINT " to Pause";
+  PRINT "\r\n";
+
+  (* OK, here's the main loop
+
+  WHILE NOT(EOF(#FilePath)) DO
+    (* Check for key press
+    RUN Sys.Inkey(key)
+
+    (* Quit Key
+    EXITIF key="Q" OR key="q" THEN
+    ENDEXIT
+
+    (* Pause Key
+    IF key="P" OR key="p" THEN
+      GOSUB 30
+    ENDIF
+
+    (* Get next file sector
+    GET #FilePath,Sector
+
+    (* Print header
+    GOSUB 20
+
+    (* Now go through the sector one byte at a time
+    FOR Index := 0 TO 255
+
+      (* FilePos keeps track of how many bytes have been read from
+      (* the file. This way, it can be compared to FileSize for eof
+      (* detection and may be used in the display for a decinal
+      (* printout.
+      IF FilePos < FileSize THEN
+        (* Check for beginning of display line, and print current
+        (* decimal count if It is.
+        IF DisplayCnt = 0 THEN
+          PRINT " ";
+
+          (* Set FilePos Into CurrentCount string
+          CurrentCount := STR$(FilePos)
+
+          (* Format output to add leading zeros. The number
+          (* displayed represents the number of bytes counted up to
+          (* this point. The first line displayed shows zero,
+          (* because no bytes have been counted yet. Therefore, the
+          (* second line will show 16 bytes counted, and the second
+          (* lines byte count starts with 17.
+          RUN Colors(11) \PRINT LEFT$("0000000000",10-LEN(CurrentCount)); CurrentCount; " ";
+
+          (* Increment ByteAdr
+          ByteAdr := ByteAdr + 16
+
+          (* Format output for hex display
+          RUN Colors(13) \PRINT USING "H8", ByteAdr;
+          PRINT " ";
+        ENDIF
+
+        (* Increment displayed bytes count to keep it in a range of 1 to 16
+        DisplayCnt := DisplayCnt + 1
+
+        (* if displayed byte count=16 then time to start again
+        IF DisplayCnt = 16 THEN
+          DisplayCnt := 0
+        ENDIF
+
+        (* Print hex value of current byte
+        RUN Colors(8) \PRINT USING "H2",Sector(Index);
+      ELSE
+        (* if FilePos is greater than or equal to FilSize we are
+        (* at the last byte of the file, so print spaces to fill in
+        (* the line up to the 16th byte position.
+        PRINT "  ";
+
+        (* Since we are at the point of the last byte of the file,
+        (* the value of FilePos will either be equal to or greater
+        (* than FileSize. So, in order to make sure that the
+        (* CharacterCount string gets printed, we have to count
+        (* down from the current position in the line to the 16th
+        (* position of the line, thus ensuring that the
+        (* CharacterCount string gets printed.
+        IF FilePos = FileSize THEN
+          (* Since FliePos is equal to FILSize, set LastByte to
+          (* 16 minus the current line position plus one. This
+          (* makes the value of LastByte equal to the number of
+          (* byte positions left in the current kne.
+          LastByte = 16 - (BytePos+1)
+        ELSE
+          (* Since FilePos is greater than FileSize, decrement
+          (* LastByte by one.
+          LastByte := LastByte - 1
+        ENDIF
+      ENDIF
+
+      (* Set CharacterLine for displayable characters
+      IF FilePos < FileSize THEN
+        (* if the value of Sector(index) became less than 32 (a
+        (* space character), use a period to denote the character.
+        IF Sector(Index) > 31 AND Sector(Index) < 127 THEN
+          CharacterLine := CharacterLine + CHR$(Sector(Index))
+        ELSE
+          CharacterLine := CharacterLine + "."
+        ENDIF
+      ENDIF
+
+      (* Time to place a space between bytes?
+      SpaceMark := SpaceMark + 1
+      IF SpaceMark = 2 THEN
+        PRINT " ";
+        SpaceMark := 0
+      ENDIF
+
+      (* Increment BytePos and FilePos
+      BytePos := BytePos + 1
+      FilePos := FilePos + 1
+
+      (* Print CharacterLine
+      IF BytePos = 16 THEN
+        (* Set ForeGround color to Cyan
+        RUN Colors(15) \ PRINT " "; CharacterLine;
+        PRINT "\r\n";
+
+        (* Reset CharacterLine and BytePos
+        CharacterLine := ""
+        BytePos := 0
+      ENDIF
+
+      (* Check for end of file, and if so exit the loop
+      EXITIF LastByte = 0 THEN
+        Abort := TRUE
+      ENDEXIT
+    NEXT Index
+
+    (* Exit the outer loop if Abort is TRUE
+    EXITIF Abort THEN \ENDEXIT
+  ENDWHILE
+
+  (* if path is open, close it
+  10 IF PathOpened THEN
+    CLOSE #FilePath
+  ENDIF
+  RUN Colors(8)
+  RUN Sys.TMode("cooked")
+  END
+
+  (* Display Header
+  20 PRINT
+  RUN Colors(15)
+  PRINT " Byte Count Address   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0123456789ABCDEF\r\n";
+  RUN Colors(12)
+  PRINT " -----------------------------------------------------------------------------\r\n";
+  RUN Colors(8)
+  RETURN
+
+  (* Pause Display
+  30 REPEAT
+    RUN Sys.Inkey(key)
+  UNTIL key <> ""
+  key := ""
+  RETURN
+
+  (* Error Handling Routine
+  40 PRINT
+  PRINT "DunpFile - Version "; Version; " (c) 1993 by Wayne Campbell"
+  PRINT
+  PRINT "Usage: DumpFile <PathName>"
+  END
+
+PROCEDURE FileSize
+  (* FileSize He Size Function
+  (* (c) 1993 by Wayne Campbell - All Rights Reserved
+  (* Register Type
+
+  (* Parameters
+  (* FilePath = Path to file
+  (* FileSize = Size of file
+  PARAM FilePath:BYTE; FileSize:INTEGER
+
+  FileSize := EXT(#FilePath)
+  10 END
+
+PROCEDURE Colors
+  (* Colors - Color Code Function
+  (* (c) 1993 by Wayne Campbell - All Rights Reserved
+  (* To call, pass COLOR CODE: CCode (1-16)
+  (* Color Codes are as follows:
+  (*
+  (* BackGround ForeGround
+  (* Code Color Code Color
+  (* ---- ----- ---- -----
+  (*  0   White    8 White
+  (*  1   Blue     9 Blue
+  (*  2   Black   10 Black
+  (*  3   Red     11 Red
+  (*  4   Green   12 Green
+  (*  5   Yellow  13 Yellow
+  (*  6   Magenta 14 Magenta
+  (*  7   Cyan    15 Cyan
+  (*
+  (* 16 Reset ForeGround and BackGround to White on Black
+
+  (* Parameter
+  (* ColorCode = Color Code to use
+  PARAM ColorCode:INTEGER
+
+  (* Set up for parameter error
+  ON ERROR GOTO 10
+
+  (* Code greater than 16 equals no parameter
+  IF ColorCode>16 THEN 10
+
+  (* BackGround Colors
+  IF ColorCode >= 0 AND ColorCode <= 7 THEN
+    (* Background White
+    IF ColorCode = 0 THEN
+      PRINT "\x1b[0;49m";
+    ENDIF
+
+    (* Background Blue
+    IF ColorCode = 1 THEN
+      PRINT "\x1b[0;44m";
+    ENDIF
+
+    (* Background Black
+    IF ColorCode = 2 THEN
+      PRINT "\x1b[0;40m";
+    ENDIF
+
+    (* Background Green
+    IF ColorCode = 3 THEN
+      PRINT "\x1b[0;42m";
+    ENDIF
+
+    (* Background Red
+    IF ColorCode = 4 THEN
+      PRINT "\x1b[0;41m";
+    ENDIF
+
+    (* Background Yellow
+    IF ColorCode = 5 THEN
+      PRINT "\x1b[0;43m";
+    ENDIF
+
+    (* Background Magenta
+    IF ColorCode = 6 THEN
+      PRINT "\x1b[0;45m";
+    ENDIF
+
+    (* Background Cyan
+    IF ColorCode = 7 THEN
+      PRINT "\x1b[0;46m";
+    ENDIF
+  ENDIF
+
+  (* ForeGround Colors
+  IF ColorCode >= 8 AND ColorCode <= 15 THEN
+    (* Foreground White
+    IF ColorCode = 8 THEN
+      PRINT "\x1b[0;39m";
+    ENDIF
+
+    (* Foreground Blue
+    IF ColorCode = 9 THEN
+      PRINT "\x1b[0;34m";
+    ENDIF
+
+    (* Foreground Black
+    IF ColorCode = 10 THEN
+      PRINT "\x1b[0;30m";
+    ENDIF
+
+    (* Foreground Green
+    IF ColorCode = 11 THEN
+      PRINT "\x1b[0;32m";
+    ENDIF
+
+    (* Foreground Red
+    IF ColorCode = 12 THEN
+      PRINT "\x1b[0;31m";
+    ENDIF
+
+    (* Foreground Yellow
+    IF ColorCode = 13 THEN
+      PRINT "\x1b[0;33m";
+    ENDIF
+
+    (* Foreground Magenta
+    IF ColorCode = 14 THEN
+      PRINT "\x1b[0;35m";
+    ENDIF
+
+    (* Foreground Cyan
+    IF ColorCode = 15 THEN
+      PRINT "\x1b[0;36m";
+    ENDIF
+  ENDIF
+
+  (* Reset
+  (* Default ForeGround = White
+  (* Default BackGround = Black
+  IF ColorCode = 18 THEN
+    PRINT "\x1b[0m";
+  ENDIF
+
+  10 END

@@ -5,6 +5,9 @@
 import std.stdio;
 import display;
 import terminal;
+import basic.machine;
+import basic.sys as sys;
+import basic.gfx as gfx;
 import seat;
 import env;
 import tab;
@@ -30,6 +33,13 @@ fn main()
   terminal.render();
 
   var env = env::create();
+
+  var vm = basic::machine();
+  vm.stdin = std::input_stream(&mut terminal.termin);
+  vm.stdout = std::output_stream(&mut terminal.termout);
+
+  sys::initialise(&mut vm, &mut terminal);
+  gfx::initialise(&mut vm, &mut terminal);
 
   while (true)
   {
@@ -68,82 +78,78 @@ fn main()
         {
           var result = -2;
 
-          if (args.front == "ls")
+          switch (args.front)
           {
-            import ls : *;
-            result = ls(&mut terminal, &mut env, cmdline);
-          }
+            case "ls":
+              import cmds.ls : *;
+              result = ls(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "cd")
-          {
-            import cd : *;
-            result = cd(&mut terminal, &mut env, cmdline);
-          }
+            case "cd":
+              import cmds.cd : *;
+              result = cd(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "cat")
-          {
-            import cat : *;
-            result = cat(&mut terminal, &mut env, cmdline);
-          }
+            case "cat":
+              import cmds.cat : *;
+              result = cat(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "cp")
-          {
-            import cp : *;
-            result = cp(&mut terminal, &mut env, cmdline);
-          }
+            case "cp":
+              import cmds.cp : *;
+              result = cp(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "pwd")
-          {
-            import pwd : *;
-            result = pwd(&mut terminal, &mut env, cmdline);
-          }
+            case "pwd":
+              import cmds.pwd : *;
+              result = pwd(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "stat")
-          {
-            import stat : *;
-            result = stat(&mut terminal, &mut env, cmdline);
-          }
+            case "stat":
+              import cmds.stat : *;
+              result = stat(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "mkdir")
-          {
-            import mkdir : *;
-            result = mkdir(&mut terminal, &mut env, cmdline);
-          }
+            case "mkdir":
+              import cmds.mkdir : *;
+              result = mkdir(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "rm")
-          {
-            import rm : *;
-            result = rm(&mut terminal, &mut env, cmdline);
-          }
+            case "rm":
+              import cmds.rm : *;
+              result = rm(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "rename")
-          {
-            import rename : *;
-            result = rename(&mut terminal, &mut env, cmdline);
-          }
+            case "rename":
+              import cmds.rename : *;
+              result = rename(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "symlink")
-          {
-            import symlink : *;
-            result = symlink(&mut terminal, &mut env, cmdline);
-          }
+            case "symlink":
+              import cmds.symlink : *;
+              result = symlink(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "ps")
-          {
-            import ps : *;
-            result = ps(&mut terminal, &mut env, cmdline);
-          }
+            case "ps":
+              import cmds.ps : *;
+              result = ps(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "start")
-          {
-            import start : *;
-            result = start(&mut terminal, &mut env, cmdline);
-          }
+            case "cls":
+              import cmds.cls: *;
+              result = cls(&mut terminal, &mut env, cmdline);
 
-          if (args.front == "test")
-          {
-            import test : *;
-            result = test(&mut terminal, &mut env, cmdline);
+            case "reset":
+              import cmds.reset : *;
+              result = reset(&mut terminal, &mut vm, &mut env, cmdline);
+
+            case "load":
+              import cmds.load : *;
+              result = load(&mut terminal, &mut vm, &mut env, cmdline);
+
+            case "list":
+              import cmds.list : *;
+              result = list(&mut terminal, &mut vm, &mut env, cmdline);
+
+            case "run":
+            case "RUN":
+            case "print":
+            case "PRINT":
+              import cmds.eval : *;
+              result = eval(&mut terminal, &mut vm, &mut env, cmdline);
+
+            else:
+              import cmds.start : *;
+              result = start(&mut terminal, &mut env, cmdline);
           }
 
           terminal.flush();

@@ -40,7 +40,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var process = process::find(cast<proc_pid_node mut &>(*node).pid);
 
@@ -156,7 +156,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -218,7 +218,7 @@ pub struct proc_auxv_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -289,7 +289,7 @@ pub struct proc_environ_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -361,7 +361,7 @@ pub struct proc_cmdline_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -437,7 +437,7 @@ pub struct proc_mounts_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -478,7 +478,7 @@ pub struct proc_self_node : pub sysfs::sysfs_symlink_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -517,7 +517,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }
@@ -615,7 +615,7 @@ pub struct proc_list_node : pub sysfs::sysfs_file_node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     return ok;
   }

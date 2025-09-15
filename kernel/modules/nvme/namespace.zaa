@@ -16,7 +16,7 @@ pub struct namespace : pub blk::blkdev
       controller(&controller),
       nsid(nsid)
   {
-    var buffer = vm::allocate_physical_pages(4096);
+    var buffer = vm::allocate_physical(4096);
 
     if (controller.identify(nsid, buffer.addr))
     {

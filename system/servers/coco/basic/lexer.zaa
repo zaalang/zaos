@@ -1,0 +1,1014 @@
+//
+// lexer
+//
+
+import basic;
+import std.io : InputReader;
+import std.strconv;
+
+pub struct mark
+{
+  pub int line;
+  pub int column;
+  pub usize position;
+
+  pub mark() = default;
+  pub mark(mark&) = default;
+  pub fn =(mark mut &, mark &&) -> mark mut & = default;
+  pub ~mark() = default;
+}
+
+pub enum scalar_style
+{
+  invalid = 0,
+  plain,
+  numeric,
+  singlequoted,
+  doublequoted,
+}
+
+pub struct token
+{
+  pub enum type
+  {
+    invalid = 0,
+    stream_end,
+    end_of_line,
+    hash,
+    plus,
+    minus,
+    star,
+    starstar,
+    slash,
+    backslash,
+    percent,
+    caret,
+    less,
+    lessequal,
+    lessgreater,
+    greater,
+    greaterequal,
+    equal,
+    colonequal,
+    l_square,
+    r_square,
+    l_paren,
+    r_paren,
+    l_brace,
+    r_brace,
+    period,
+    colon,
+    comma,
+    semi,
+
+    kw_abs,
+    kw_acs,
+    kw_addr,
+    kw_and,
+    kw_asc,
+    kw_asn,
+    kw_atn,
+    kw_base,
+    kw_boolean,
+    kw_bye,
+    kw_byte,
+    kw_chain,
+    kw_chd,
+    kw_chr$,
+    kw_chx,
+    kw_close,
+    kw_cos,
+    kw_create,
+    kw_data,
+    kw_date$,
+    kw_deg,
+    kw_delete,
+    kw_dim,
+    kw_dir,
+    kw_do,
+    kw_else,
+    kw_end,
+    kw_endexit,
+    kw_endif,
+    kw_endloop,
+    kw_endwhile,
+    kw_eof,
+    kw_err,
+    kw_error,
+    kw_exec,
+    kw_exitif,
+    kw_exp,
+    kw_ext,
+    kw_false,
+    kw_fix,
+    kw_float,
+    kw_for,
+    kw_get,
+    kw_gosub,
+    kw_goto,
+    kw_if,
+    kw_input,
+    kw_int,
+    kw_integer,
+    kw_kill,
+    kw_land,
+    kw_left$,
+    kw_len,
+    kw_let,
+    kw_lnot,
+    kw_log,
+    kw_log10,
+    kw_loop,
+    kw_lor,
+    kw_lxor,
+    kw_mid$,
+    kw_mod,
+    kw_next,
+    kw_not,
+    kw_on,
+    kw_open,
+    kw_or,
+    kw_param,
+    kw_pause,
+    kw_peek,
+    kw_pi,
+    kw_poke,
+    kw_pos,
+    kw_print,
+    kw_procedure,
+    kw_put,
+    kw_rad,
+    kw_read,
+    kw_real,
+    kw_rem,
+    kw_repeat,
+    kw_restore,
+    kw_return,
+    kw_right$,
+    kw_rnd,
+    kw_run,
+    kw_seek,
+    kw_sgn,
+    kw_shell,
+    kw_sin,
+    kw_size,
+    kw_sq,
+    kw_sqr,
+    kw_sqrt,
+    kw_step,
+    kw_stop,
+    kw_str$,
+    kw_string,
+    kw_substr,
+    kw_tab,
+    kw_tan,
+    kw_then,
+    kw_to,
+    kw_trim$,
+    kw_troff,
+    kw_tron,
+    kw_true,
+    kw_type,
+    kw_until,
+    kw_update,
+    kw_using,
+    kw_val,
+    kw_while,
+    kw_write,
+    kw_xor,
+
+    scalar,
+
+    unknown,
+    unexpected_end_of_line,
+    unexpected_end_of_stream,
+    bad_escape,
+  }
+
+  pub type type;
+  pub std::string value;
+  pub scalar_style style;
+  pub mark loc;
+
+  pub token() = default;
+  pub token(token&&) = default;
+  pub fn =(token mut &, token &&) -> token mut & = default;
+  pub ~token() = default;
+}
+
+fn make_token(token::type type, mark loc) -> token
+{
+  var tok = token();
+  tok.type = type;
+  tok.loc = loc;
+
+  return tok;
+}
+
+fn make_token(token::type type, std::string value, mark loc) -> token
+{
+  var tok = token();
+  tok.type = type;
+  tok.value = &move value;
+  tok.loc = loc;
+
+  return tok;
+}
+
+fn make_token(token::type type, scalar_style style, std::string value, mark loc) -> token
+{
+  var tok = token();
+  tok.type = type;
+  tok.value = &move value;
+  tok.style = style;
+  tok.loc = loc;
+
+  return tok;
+}
+
+pub struct lexer
+{
+  mark loc;
+
+  fn peek(this mut &, InputReader mut &is) throws(std::error) -> u8
+  {
+    if (var buffer = is.fetch(); buffer.len != 0)
+      return buffer[0];
+
+    return 0;
+  }
+
+  fn prefix(this mut &, InputReader mut &is, usize len) throws(std::error) -> std::string_view
+  {
+    if (is.buffer.len < len)
+      is.pack_and_fetch();
+
+    return std::string_view(is.buffer.data, std::min(is.buffer.len, len));
+  }
+
+  fn eat(lexer mut &this, InputReader mut &is) -> void
+  {
+    this.loc.column += 1;
+
+    if (is.buffer[0] == cast('\n'))
+    {
+      this.loc.line += 1;
+      this.loc.column = 0;
+    }
+
+    this.loc.position += 1;
+
+    is.discard(1);
+  }
+
+  pub lexer()
+  {
+  }
+
+  pub ~lexer() = default;
+}
+
+fn is_z(u8 ch) -> bool
+{
+  return ch == cast('\0');
+}
+
+fn is_alpha(u8 ch) -> bool
+{
+  return cast('0') <= ch && ch <= cast('9') || cast('a') <= ch && ch <= cast('z') || cast('A') <= ch && ch <= cast('Z') || ch == cast('_');
+}
+
+fn is_digit(u8 ch) -> bool
+{
+  return cast('0') <= ch && ch <= cast('9');
+}
+
+fn is_whitespace(u8 ch) -> bool
+{
+  return ch == cast('\0') || ch == cast(' ') || ch == cast('\t') || ch == cast('\r') || ch == cast('\n');
+}
+
+fn is_blank(u8 ch) -> bool
+{
+  return ch == cast(' ') || ch == cast('\t');
+}
+
+fn is_break(u8 ch) -> bool
+{
+  return ch == cast('\r') || ch == cast('\n');
+}
+
+fn is_breakz(u8 ch) -> bool
+{
+  return ch == cast('\0') || ch == cast('\r') || ch == cast('\n');
+}
+
+fn skip_blank(lexer mut &this, InputReader mut &is) throws(std::error) -> void
+{
+  while (is_blank(this.peek(&mut is)))
+    this.eat(&mut is);
+}
+
+fn skip_break(lexer mut &this, InputReader mut &is) throws(std::error) -> void
+{
+  if (is_break(this.peek(&mut is)))
+  {
+    if (this.prefix(&mut is, 2) == "\r\n")
+      this.eat(&mut is);
+
+    this.eat(&mut is);
+  }
+}
+
+fn lex_token(lexer mut &this, InputReader mut &is, token::type type) throws(std::error) -> token
+{
+  var loc = this.loc;
+
+  this.eat(&mut is);
+
+  switch (type)
+  {
+    case token::type::lessequal:
+    case token::type::lessgreater:
+    case token::type::greaterequal:
+    case token::type::colonequal:
+    case token::type::starstar:
+      this.eat(&mut is);
+  }
+
+  return make_token(type, loc);
+}
+
+fn lex_remark(lexer mut &this, InputReader mut &is) throws(std::error) -> token
+{
+  var loc = this.loc;
+  var value = std::string();
+
+  if (is_blank(this.peek(&mut is)))
+    this.eat(&mut is);
+
+  for (var ch = this.peek(&mut is); !is_breakz(ch); ch = this.peek(&mut is))
+  {
+    value += ch;
+    this.eat(&mut is);
+  }
+
+  value.trim_right!();
+
+  return make_token(token::type::kw_rem, &move value, loc);
+}
+
+fn lex_string_scalar(lexer mut &this, InputReader mut &is, scalar_style style) throws(std::error) -> token
+{
+  var loc = this.loc;
+  var value = std::string();
+
+  this.eat(&mut is);
+
+  for (;;)
+  {
+    switch (var ch = this.peek(&mut is))
+    {
+      case '\r':
+      case '\n':
+        return make_token(token::type::unexpected_end_of_line, this.loc);
+
+      case '\0':
+        return make_token(token::type::unexpected_end_of_stream, this.loc);
+
+      case '\'':
+        if (style == scalar_style::singlequoted)
+          break;
+
+        value += ch;
+        this.eat(&mut is);
+
+      case '"':
+        if (style == scalar_style::doublequoted)
+          break;
+
+        value += ch;
+        this.eat(&mut is);
+
+      case '\\':
+        if (style == scalar_style::doublequoted)
+        {
+          this.eat(&mut is);
+
+          switch (this.peek(&mut is))
+          {
+            case 'b': value += cast<u8>('\x08');
+            case 't': value += cast<u8>('\t');
+            case 'n': value += cast<u8>('\n');
+            case 'f': value += cast<u8>('\x0c');
+            case 'r': value += cast<u8>('\x0d');
+            case '"': value += cast<u8>('"');
+            case '/': value += cast<u8>('/');
+            case '\'': value += cast<u8>('\'');
+            case '\\': value += cast<u8>('\\');
+
+            case 'x':
+              var length = 2;
+              var buffer = this.prefix(&mut is, length + 1);
+
+              var cc = u8(0);
+              if (std::atoi(buffer.data + 1, buffer.end, &mut cc, 16).len != length)
+                return make_token(token::type::bad_escape, this.loc);
+
+              for (var i = 0; i < buffer.len - 1; ++i)
+                this.eat(&mut is);
+
+              value += cc;
+
+            case 'u':
+              var length = 4;
+              var buffer = this.prefix(&mut is, length + 1);
+
+              var codepoint = ' ';
+              if (std::atoi(buffer.data + 1, buffer.end, &mut codepoint, 16).len != length)
+                return make_token(token::type::bad_escape, this.loc);
+
+              for (var i = 0; i < buffer.len - 1; ++i)
+                this.eat(&mut is);
+
+              value += codepoint;
+
+            else:
+              return make_token(token::type::bad_escape, this.loc);
+          }
+
+          this.eat(&mut is);
+        }
+        else
+        {
+          value += ch;
+          this.eat(&mut is);
+        }
+
+      else:
+        value += ch;
+        this.eat(&mut is);
+    }
+  }
+
+  this.eat(&mut is);
+
+  return make_token(token::type::scalar, style, &move value, loc);
+}
+
+fn lex_numeric_scalar(lexer mut &this, InputReader mut &is) throws(std::error) -> token
+{
+  var loc = this.loc;
+  var value = std::string();
+
+  var ch = this.peek(&mut is);
+
+  value += ch;
+  this.eat(&mut is);
+  ch = this.peek(&mut is);
+
+  for (;;)
+  {
+    switch (ch)
+    {
+      case ' ':
+      case '\t':
+      case '\r':
+      case '\n':
+      case '\0':
+        break;
+
+      case 0x21 ..= 0x7f:
+        if (!is_alpha(ch) && !is_digit(ch) && ch != cast('.'))
+          break;
+    }
+
+    value += ch;
+    this.eat(&mut is);
+    ch = this.peek(&mut is);
+  }
+
+  return make_token(token::type::scalar, scalar_style::numeric, &move value, loc);
+}
+
+fn lex_plain_scalar(lexer mut &this, InputReader mut &is) throws(std::error) -> token
+{
+  var loc = this.loc;
+  var value = std::string();
+
+  var ch = this.peek(&mut is);
+
+  for (;;)
+  {
+    switch (ch)
+    {
+      case ' ':
+      case '\t':
+      case '\r':
+      case '\n':
+      case '\0':
+        break;
+
+      case 0x21 ..= 0x7f:
+        if (!is_alpha(ch) && !is_digit(ch) && ch != cast('_') && ch != cast('$'))
+          break;
+    }
+
+    value += ch;
+    this.eat(&mut is);
+    ch = this.peek(&mut is);
+  }
+
+  if (std::to_lowercase(value) == "rem")
+    return lex_remark(&mut this, &mut is);
+
+  switch (std::to_lowercase(value[0]))
+  {
+    case 'a':
+      if (std::to_lowercase(value) == "abs")
+        return make_token(token::type::kw_abs, loc);
+
+      if (std::to_lowercase(value) == "acs")
+        return make_token(token::type::kw_acs, loc);
+
+      if (std::to_lowercase(value) == "addr")
+        return make_token(token::type::kw_addr, loc);
+
+      if (std::to_lowercase(value) == "and")
+        return make_token(token::type::kw_and, loc);
+
+      if (std::to_lowercase(value) == "asc")
+        return make_token(token::type::kw_asc, loc);
+
+      if (std::to_lowercase(value) == "asn")
+        return make_token(token::type::kw_asn, loc);
+
+      if (std::to_lowercase(value) == "atn")
+        return make_token(token::type::kw_atn, loc);
+
+    case 'b':
+      if (std::to_lowercase(value) == "base")
+        return make_token(token::type::kw_base, loc);
+
+      if (std::to_lowercase(value) == "boolean")
+        return make_token(token::type::kw_boolean, loc);
+
+      if (std::to_lowercase(value) == "bye")
+        return make_token(token::type::kw_bye, loc);
+
+      if (std::to_lowercase(value) == "byte")
+        return make_token(token::type::kw_byte, loc);
+
+    case 'c':
+      if (std::to_lowercase(value) == "chain")
+        return make_token(token::type::kw_chain, loc);
+
+      if (std::to_lowercase(value) == "chd")
+        return make_token(token::type::kw_chd, loc);
+
+      if (std::to_lowercase(value) == "chr$")
+        return make_token(token::type::kw_chr$, loc);
+
+      if (std::to_lowercase(value) == "chx")
+        return make_token(token::type::kw_chx, loc);
+
+      if (std::to_lowercase(value) == "close")
+        return make_token(token::type::kw_close, loc);
+
+      if (std::to_lowercase(value) == "cos")
+        return make_token(token::type::kw_cos, loc);
+
+      if (std::to_lowercase(value) == "create")
+        return make_token(token::type::kw_create, loc);
+
+    case 'd':
+      if (std::to_lowercase(value) == "data")
+        return make_token(token::type::kw_data, loc);
+
+      if (std::to_lowercase(value) == "date$")
+        return make_token(token::type::kw_date$, loc);
+
+      if (std::to_lowercase(value) == "deg")
+        return make_token(token::type::kw_deg, loc);
+
+      if (std::to_lowercase(value) == "delete")
+        return make_token(token::type::kw_delete, loc);
+
+      if (std::to_lowercase(value) == "dim")
+        return make_token(token::type::kw_dim, loc);
+
+      if (std::to_lowercase(value) == "dir")
+        return make_token(token::type::kw_dir, loc);
+
+      if (std::to_lowercase(value) == "do")
+        return make_token(token::type::kw_do, loc);
+
+    case 'e':
+      if (std::to_lowercase(value) == "else")
+        return make_token(token::type::kw_else, loc);
+
+      if (std::to_lowercase(value) == "end")
+        return make_token(token::type::kw_end, loc);
+
+      if (std::to_lowercase(value) == "endexit")
+        return make_token(token::type::kw_endexit, loc);
+
+      if (std::to_lowercase(value) == "endif")
+        return make_token(token::type::kw_endif, loc);
+
+      if (std::to_lowercase(value) == "endloop")
+        return make_token(token::type::kw_endloop, loc);
+
+      if (std::to_lowercase(value) == "endwhile")
+        return make_token(token::type::kw_endwhile, loc);
+
+      if (std::to_lowercase(value) == "eof")
+        return make_token(token::type::kw_eof, loc);
+
+      if (std::to_lowercase(value) == "err")
+        return make_token(token::type::kw_err, loc);
+
+      if (std::to_lowercase(value) == "error")
+        return make_token(token::type::kw_error, loc);
+
+      if (std::to_lowercase(value) == "exec")
+        return make_token(token::type::kw_exec, loc);
+
+      if (std::to_lowercase(value) == "exitif")
+        return make_token(token::type::kw_exitif, loc);
+
+      if (std::to_lowercase(value) == "exp")
+        return make_token(token::type::kw_exp, loc);
+
+      if (std::to_lowercase(value) == "ext")
+        return make_token(token::type::kw_ext, loc);
+
+    case 'f':
+      if (std::to_lowercase(value) == "false")
+        return make_token(token::type::kw_false, loc);
+
+      if (std::to_lowercase(value) == "fix")
+        return make_token(token::type::kw_fix, loc);
+
+      if (std::to_lowercase(value) == "float")
+        return make_token(token::type::kw_float, loc);
+
+      if (std::to_lowercase(value) == "for")
+        return make_token(token::type::kw_for, loc);
+
+    case 'g':
+      if (std::to_lowercase(value) == "get")
+        return make_token(token::type::kw_get, loc);
+
+      if (std::to_lowercase(value) == "gosub")
+        return make_token(token::type::kw_gosub, loc);
+
+      if (std::to_lowercase(value) == "goto")
+        return make_token(token::type::kw_goto, loc);
+
+    case 'i':
+      if (std::to_lowercase(value) == "if")
+        return make_token(token::type::kw_if, loc);
+
+      if (std::to_lowercase(value) == "input")
+        return make_token(token::type::kw_input, loc);
+
+      if (std::to_lowercase(value) == "int")
+        return make_token(token::type::kw_int, loc);
+
+      if (std::to_lowercase(value) == "integer")
+        return make_token(token::type::kw_integer, loc);
+
+    case 'k':
+      if (std::to_lowercase(value) == "kill")
+        return make_token(token::type::kw_kill, loc);
+
+    case 'l':
+      if (std::to_lowercase(value) == "land")
+        return make_token(token::type::kw_land, loc);
+
+      if (std::to_lowercase(value) == "left$")
+        return make_token(token::type::kw_left$, loc);
+
+      if (std::to_lowercase(value) == "len")
+        return make_token(token::type::kw_len, loc);
+
+      if (std::to_lowercase(value) == "let")
+        return make_token(token::type::kw_let, loc);
+
+      if (std::to_lowercase(value) == "lnot")
+        return make_token(token::type::kw_lnot, loc);
+
+      if (std::to_lowercase(value) == "log")
+        return make_token(token::type::kw_log, loc);
+
+      if (std::to_lowercase(value) == "log10")
+        return make_token(token::type::kw_log10, loc);
+
+      if (std::to_lowercase(value) == "loop")
+        return make_token(token::type::kw_loop, loc);
+
+      if (std::to_lowercase(value) == "lor")
+        return make_token(token::type::kw_lor, loc);
+
+      if (std::to_lowercase(value) == "lxor")
+        return make_token(token::type::kw_lxor, loc);
+
+    case 'm':
+      if (std::to_lowercase(value) == "mid$")
+        return make_token(token::type::kw_mid$, loc);
+
+      if (std::to_lowercase(value) == "mod")
+        return make_token(token::type::kw_mod, loc);
+
+    case 'n':
+      if (std::to_lowercase(value) == "next")
+        return make_token(token::type::kw_next, loc);
+
+      if (std::to_lowercase(value) == "not")
+        return make_token(token::type::kw_not, loc);
+
+    case 'o':
+      if (std::to_lowercase(value) == "on")
+        return make_token(token::type::kw_on, loc);
+
+      if (std::to_lowercase(value) == "open")
+        return make_token(token::type::kw_open, loc);
+
+      if (std::to_lowercase(value) == "or")
+        return make_token(token::type::kw_or, loc);
+
+    case 'p':
+      if (std::to_lowercase(value) == "param")
+        return make_token(token::type::kw_param, loc);
+
+      if (std::to_lowercase(value) == "pause")
+        return make_token(token::type::kw_pause, loc);
+
+      if (std::to_lowercase(value) == "peek")
+        return make_token(token::type::kw_peek, loc);
+
+      if (std::to_lowercase(value) == "pi")
+        return make_token(token::type::kw_pi, loc);
+
+      if (std::to_lowercase(value) == "poke")
+        return make_token(token::type::kw_poke, loc);
+
+      if (std::to_lowercase(value) == "pos")
+        return make_token(token::type::kw_pos, loc);
+
+      if (std::to_lowercase(value) == "print")
+        return make_token(token::type::kw_print, loc);
+
+      if (std::to_lowercase(value) == "procedure")
+        return make_token(token::type::kw_procedure, loc);
+
+      if (std::to_lowercase(value) == "put")
+        return make_token(token::type::kw_put, loc);
+
+    case 'r':
+      if (std::to_lowercase(value) == "rad")
+        return make_token(token::type::kw_rad, loc);
+
+      if (std::to_lowercase(value) == "read")
+        return make_token(token::type::kw_read, loc);
+
+      if (std::to_lowercase(value) == "real")
+        return make_token(token::type::kw_real, loc);
+
+      if (std::to_lowercase(value) == "rem")
+        return make_token(token::type::kw_rem, loc);
+
+      if (std::to_lowercase(value) == "repeat")
+        return make_token(token::type::kw_repeat, loc);
+
+      if (std::to_lowercase(value) == "restore")
+        return make_token(token::type::kw_restore, loc);
+
+      if (std::to_lowercase(value) == "return")
+        return make_token(token::type::kw_return, loc);
+
+      if (std::to_lowercase(value) == "right$")
+        return make_token(token::type::kw_right$, loc);
+
+      if (std::to_lowercase(value) == "rnd")
+        return make_token(token::type::kw_rnd, loc);
+
+      if (std::to_lowercase(value) == "run")
+        return make_token(token::type::kw_run, loc);
+
+    case 's':
+      if (std::to_lowercase(value) == "seek")
+        return make_token(token::type::kw_seek, loc);
+
+      if (std::to_lowercase(value) == "sgn")
+        return make_token(token::type::kw_sgn, loc);
+
+      if (std::to_lowercase(value) == "shell")
+        return make_token(token::type::kw_shell, loc);
+
+      if (std::to_lowercase(value) == "sin")
+        return make_token(token::type::kw_sin, loc);
+
+      if (std::to_lowercase(value) == "size")
+        return make_token(token::type::kw_size, loc);
+
+      if (std::to_lowercase(value) == "sq")
+        return make_token(token::type::kw_sq, loc);
+
+      if (std::to_lowercase(value) == "sqr")
+        return make_token(token::type::kw_sqr, loc);
+
+      if (std::to_lowercase(value) == "sqrt")
+        return make_token(token::type::kw_sqrt, loc);
+
+      if (std::to_lowercase(value) == "step")
+        return make_token(token::type::kw_step, loc);
+
+      if (std::to_lowercase(value) == "stop")
+        return make_token(token::type::kw_stop, loc);
+
+      if (std::to_lowercase(value) == "str$")
+        return make_token(token::type::kw_str$, loc);
+
+      if (std::to_lowercase(value) == "string")
+        return make_token(token::type::kw_string, loc);
+
+      if (std::to_lowercase(value) == "substr")
+        return make_token(token::type::kw_substr, loc);
+
+    case 't':
+      if (std::to_lowercase(value) == "tab")
+        return make_token(token::type::kw_tab, loc);
+
+      if (std::to_lowercase(value) == "tan")
+        return make_token(token::type::kw_tan, loc);
+
+      if (std::to_lowercase(value) == "then")
+        return make_token(token::type::kw_then, loc);
+
+      if (std::to_lowercase(value) == "to")
+        return make_token(token::type::kw_to, loc);
+
+      if (std::to_lowercase(value) == "trim$")
+        return make_token(token::type::kw_trim$, loc);
+
+      if (std::to_lowercase(value) == "troff")
+        return make_token(token::type::kw_troff, loc);
+
+      if (std::to_lowercase(value) == "tron")
+        return make_token(token::type::kw_tron, loc);
+
+      if (std::to_lowercase(value) == "true")
+        return make_token(token::type::kw_true, loc);
+
+      if (std::to_lowercase(value) == "type")
+        return make_token(token::type::kw_type, loc);
+
+    case 'u':
+      if (std::to_lowercase(value) == "until")
+        return make_token(token::type::kw_until, loc);
+
+      if (std::to_lowercase(value) == "update")
+        return make_token(token::type::kw_update, loc);
+
+      if (std::to_lowercase(value) == "using")
+        return make_token(token::type::kw_using, loc);
+
+    case 'v':
+      if (std::to_lowercase(value) == "val")
+        return make_token(token::type::kw_val, loc);
+
+    case 'w':
+      if (std::to_lowercase(value) == "while")
+        return make_token(token::type::kw_while, loc);
+
+      if (std::to_lowercase(value) == "write")
+        return make_token(token::type::kw_write, loc);
+
+    case 'x':
+      if (std::to_lowercase(value) == "xor")
+        return make_token(token::type::kw_xor, loc);
+  }
+
+  return make_token(token::type::scalar, scalar_style::plain, &move value, loc);
+}
+
+pub fn fetch(lexer mut &this, InputReader mut &is) throws(std::error) -> token
+{
+  for (;;)
+  {
+    var loc = this.loc;
+
+    switch (this.peek(&mut is))
+    {
+      case ' ':
+      case '\t':
+        this.eat(&mut is);
+
+      case '\r':
+      case '\n':
+        skip_break(&mut this, &mut is);
+        return make_token(token::type::end_of_line, loc);
+
+      case 0:
+        return make_token(token::type::stream_end, loc);
+
+      case '#':
+        return lex_token(&mut this, &mut is, token::type::hash);
+
+      case '[':
+        return lex_token(&mut this, &mut is, token::type::l_square);
+
+      case ']':
+        return lex_token(&mut this, &mut is, token::type::r_square);
+
+      case '(':
+        if (this.prefix(&mut is, 2) == "(*")
+          return lex_remark(&mut this, &mut is);
+        else
+          return lex_token(&mut this, &mut is, token::type::l_paren);
+
+      case ')':
+        return lex_token(&mut this, &mut is, token::type::r_paren);
+
+      case '{':
+        return lex_token(&mut this, &mut is, token::type::l_brace);
+
+      case '}':
+        return lex_token(&mut this, &mut is, token::type::r_brace);
+
+      case ':':
+        if (this.prefix(&mut is, 2) == ":=")
+          return lex_token(&mut this, &mut is, token::type::colonequal);
+        else
+          return lex_token(&mut this, &mut is, token::type::colon);
+
+      case '=':
+        return lex_token(&mut this, &mut is, token::type::equal);
+
+      case '.':
+        return lex_token(&mut this, &mut is, token::type::period);
+
+      case ',':
+        return lex_token(&mut this, &mut is, token::type::comma);
+
+      case ';':
+        return lex_token(&mut this, &mut is, token::type::semi);
+
+      case '+':
+        return lex_token(&mut this, &mut is, token::type::plus);
+
+      case '-':
+        return lex_token(&mut this, &mut is, token::type::minus);
+
+      case '^':
+        return lex_token(&mut this, &mut is, token::type::caret);
+
+      case '*':
+        if (this.prefix(&mut is, 2) == "**")
+          return lex_token(&mut this, &mut is, token::type::starstar);
+        else
+          return lex_token(&mut this, &mut is, token::type::star);
+
+      case '<':
+        if (this.prefix(&mut is, 2) == "<=")
+          return lex_token(&mut this, &mut is, token::type::lessequal);
+        else if (this.prefix(&mut is, 2) == "<>")
+          return lex_token(&mut this, &mut is, token::type::lessgreater);
+        else
+          return lex_token(&mut this, &mut is, token::type::less);
+
+      case '>':
+        if (this.prefix(&mut is, 2) == ">=")
+          return lex_token(&mut this, &mut is, token::type::greaterequal);
+        else
+          return lex_token(&mut this, &mut is, token::type::greater);
+
+      case '/':
+        return lex_token(&mut this, &mut is, token::type::slash);
+
+      case '\\':
+        return lex_token(&mut this, &mut is, token::type::backslash);
+
+      case '\'':
+        return lex_string_scalar(&mut this, &mut is, scalar_style::singlequoted);
+
+      case '\"':
+        return lex_string_scalar(&mut this, &mut is, scalar_style::doublequoted);
+
+      case '$':
+      case '0' ..= '9':
+        return lex_numeric_scalar(&mut this, &mut is);
+
+      case 'a' ..= 'z':
+      case 'A' ..= 'Z':
+      case 0xc0 ..= 0xff:
+        return lex_plain_scalar(&mut this, &mut is);
+
+      else:
+        this.eat(&mut is);
+        return make_token(token::type::unknown, loc);
+    }
+  }
+}

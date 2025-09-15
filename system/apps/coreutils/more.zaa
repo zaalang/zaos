@@ -67,10 +67,13 @@ fn draw(std::buffered_reader mut &fin, state mut &state) throws(std::error) -> i
 
 fn more(std::string &path, state mut &state, opts &opts) throws(std::error) -> i32
 {
-  var fin = || throws {
+  var infile = std::file();
+
+  var mut &fin = || throws {
     if (path == "-")
-      return std::stdin_raw;
-    return std::file::open(path);
+      return &std::stdin_raw;
+    infile = std::file::open(path);
+    return &infile;
   }();
 
   var reader = std::buffered_reader(&mut fin);

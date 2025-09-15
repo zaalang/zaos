@@ -19,6 +19,7 @@ import video;
 import console;
 import thread as _ : thread, spawn_undertaker;
 import process as _ : process, create_kernel_process;
+import vm.reaper as _ : spawn_reaper;
 import platform : BootInfo;
 import support.rc : Rc;
 import syscalls;
@@ -58,7 +59,7 @@ fn bootstrap_filesystem() -> void
 
 fn launch_init() -> void
 {
-  var srv = sys::cmdline("init", default: "/zaos/srv/init");
+  var srv = sys::cmdline("init", default: "/zaos/srv/coco");
 
   var init = create_process(process::current, vfs::basename(srv));
 
@@ -74,6 +75,7 @@ fn launch_init() -> void
 
 fn kernel_main(void*) -> void
 {
+  spawn_reaper();
   spawn_undertaker();
 
   blk::initialise();

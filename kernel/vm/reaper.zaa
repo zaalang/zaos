@@ -1,0 +1,68 @@
+//
+// vm
+//
+
+import std.stdio;
+import vm;
+import blk;
+import sys;
+import thread as _ : thread;
+import process as _ : process;
+import semaphore as _ : semaphore;
+import scheduler;
+import platform;
+
+struct reaper
+{
+  thread mut *reaper;
+  semaphore doorbell;
+  semaphore ringtone;
+
+  fn instance()
+  {
+    static instance = #reaper();
+
+    return &instance;
+  }
+
+  reaper() = default;
+  reaper(#reaper&) = default;
+  ~reaper() = default;
+}
+
+fn reaper(void *) -> void
+{
+  var mut &reaper = reaper::instance;
+
+  for (;;)
+  {
+    reaper.doorbell.wait();
+
+    std::print("reap begin - ", vm::available_physical_memory);
+
+    blk::reap();
+
+    vm::reap();
+
+    std::print("reap finish - ", vm::available_physical_memory);
+
+    reaper.ringtone.release();
+  }
+}
+
+pub fn wake_and_wait() -> void
+{
+  var mut &reaper = reaper::instance;
+
+  reaper.doorbell.release();
+  reaper.ringtone.wait();
+}
+
+pub fn spawn_reaper() -> void
+{
+  var mut &reaper = reaper::instance;
+
+  reaper.reaper = create_thread(process::current, &cast<(void mut *) -> void>(reaper), null);
+
+  scheduler::enqueue(reaper.reaper, thread::priority::high);
+}

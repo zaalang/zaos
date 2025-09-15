@@ -39,6 +39,7 @@ vm/page.zaa\
 vm/space.zaa\
 vm/region.zaa\
 vm/iovec.zaa\
+vm/reaper.zaa\
 vm/result.zaa\
 mutex.zaa\
 semaphore.zaa\
@@ -127,6 +128,7 @@ syscalls/ioring.zaa\
 syscalls/time.zaa\
 syscalls/sched.zaa\
 syscalls/kill.zaa\
+syscalls/random.zaa\
 syscalls/unknown.zaa\
 ioring/ioring.zaa\
 ioring/workman.zaa\

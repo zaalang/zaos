@@ -1,0 +1,69 @@
+//
+// load
+//
+
+import std.stdio;
+import terminal;
+import basic.machine;
+import basic.compiler;
+import basic.parser;
+import diag;
+import env;
+
+pub fn load(terminal::terminal mut &terminal, basic::machine mut &vm, env::env mut &env, std::string &cmdline) -> i32
+{
+  var path = std::string();
+
+  for (var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    path = arg;
+  }
+
+  if (path.empty)
+  {
+    terminal.write("usage: load <filepath>\n");
+    return -22;
+  }
+
+  try
+  {
+    var parse = basic::parse_from_file(path);
+
+    if (!parse)
+    {
+      var diagnostic = diag::diagnostic();
+
+      diagnostic.loc = std::format("{}:{}", parse.fail.line, parse.fail.column);
+      diagnostic.message = std::meta::enumerator_name(parse.error);
+      diagnostic.source = diag::source_file(path);
+      diagnostic.add_label(parse.pass.position, parse.fail.position - parse.pass.position, diagnostic.message);
+
+      terminal.write(std::format("{}", diagnostic));
+
+      return 0;
+    }
+
+    for (var &procedure : parse.procedures)
+    {
+      var compile = basic::compile(procedure);
+
+      if (!compile)
+      {
+        terminal.write(std::format("load: {}: {}", procedure.name, compile.error));
+
+        continue;
+      }
+
+      vm.load(&move compile.procedure);
+    }
+  }
+  catch (std::error err)
+  {
+    terminal.write(std::format("load: error on read src - {}\n", err));
+  }
+
+  return 0;
+}

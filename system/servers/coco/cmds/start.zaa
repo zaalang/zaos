@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import sys.path;
 import os.zaos.sched;
 import terminal;
 import chrono;
@@ -10,9 +11,44 @@ import env;
 
 extern fn thread_ring() -> os::ioring mut &;
 
+fn exists(std::string &path) -> bool
+{
+  using os;
+
+  var fd = open(&mut thread_ring, os::string(path.data, path.len), O_NOFOLLOW, 0);
+
+  if (fd < 0)
+    return false;
+
+  close(&mut thread_ring, fd);
+
+  return true;
+}
+
 pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdline) -> i32
 {
   using os;
+
+  var path = std::string();
+
+  if (var name = cmdline.words.front; !name.contains(sys::sep_byte))
+  {
+    if (var test = sys::path::join("/zaos/bin", name); exists(test))
+      path = test;
+
+    if (path.empty)
+      return -2;
+  }
+  else
+  {
+    path = name;
+
+    if (sys::path::is_relative(path))
+      path = sys::path::normalise(sys::path::join(env.working_directory, path));
+
+    if (!exists(path))
+      return -2;
+  }
 
   var user = std::format("USER={}", env.username);
   var cwd = std::format("CWD={}", env.working_directory);
@@ -20,6 +56,8 @@ pub fn start(terminal::terminal mut &terminal, env::env mut &env, std::string &c
   var argv = std::vector<os::arg>();
   var envp = std::vector<os::arg>();
   var attrs = std::vector<os::attr>();
+
+  argv.push_back(os::arg(path.data, path.len));
 
   for (var arg : cmdline.words.drop_n(1))
   {

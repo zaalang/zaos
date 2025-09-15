@@ -1,0 +1,3522 @@
+//
+// parser
+//
+
+import basic;
+import basic.lexer;
+import std.box;
+import std.arc;
+import std.vector;
+import std.io : InputReader;
+
+using basic::mark;
+using basic::token;
+using basic::lexer;
+using basic::scalar_style;
+using basic::errc;
+
+enum state
+{
+  stream_start = 0,
+  procedure,
+  statement,
+  end,
+}
+
+pub struct Procedure
+{
+  pub std::string name;
+  pub std::vector<Statement> statements;
+
+  pub Procedure(std::string &&name)
+    : name(&&name)
+  {
+  }
+
+  pub Procedure() = default;
+  pub Procedure(Procedure &&) = default;
+  pub fn =(Procedure mut &, Procedure &&) -> Procedure mut & = default;
+  pub ~procedure() = default;
+}
+
+pub union Type
+{
+  pub Real,
+  pub Byte,
+  pub Integer,
+  pub Boolean,
+  pub String(usize),
+  pub Record(std::string),
+  pub Array((std::vector<usize>, std::arc<Type>)),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn is_real(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Real;
+  }
+
+  pub fn is_byte(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Byte;
+  }
+
+  pub fn is_integer(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Integer;
+  }
+
+  pub fn is_boolean(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Boolean;
+  }
+
+  pub fn is_string(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::String;
+  }
+
+  pub fn is_record(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Record;
+  }
+
+  pub fn is_array(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Array;
+  }
+
+  pub fn is_integral(this &) -> bool
+  {
+    return this.is_byte || this.is_integer;
+  }
+
+  pub fn is_numeric(this &) -> bool
+  {
+    return this.is_byte || this.is_integer || this.is_real;
+  }
+
+  pub fn ==(Type &lhs, Type &rhs) -> bool
+  {
+    if (lhs.kind != rhs.kind)
+      return false;
+
+    switch (lhs)
+    {
+      case Record:
+        if (lhs.Record != rhs.Record)
+          return false;
+
+      case Array:
+        if (lhs.Array != rhs.Array)
+          return false;
+    }
+
+    return true;
+  }
+
+  pub Type() = default;
+  pub Type(Type &&) = default;
+  pub fn =(Type mut &, Type &&) -> Type mut & = default;
+  pub ~Type() = default;
+}
+
+pub union Statement
+{
+  pub NoOp,
+  pub Label(int),
+  pub Remark(std::string),
+  pub Print(Print),
+  pub Input(Input),
+  pub Param(std::vector<VarDecl>),
+  pub Record(Record),
+  pub Dim(std::vector<VarDecl>),
+  pub Let(VarDecl),
+  pub Expr(Expression),
+  pub IfGoto(IfGoto),
+  pub IfThen(IfThen),
+  pub IfElse(IfElse),
+  pub WhileDo(WhileDo),
+  pub RepeatUntil(RepeatUntil),
+  pub ForNext(ForNext),
+  pub Loop(Loop),
+  pub ExitIf(ExitIf),
+  pub Run(Run),
+  pub Data(std::vector<Expression>),
+  pub Open(Open),
+  pub Create(Open),
+  pub Read(Read),
+  pub Write(Write),
+  pub Seek(Seek),
+  pub Get(Get),
+  pub Put(Put),
+  pub Close(Expression),
+  pub Restore(int),
+  pub Error(Expression),
+  pub Goto(int),
+  pub Gosub(int),
+  pub OnGoto(OnGoto),
+  pub Return,
+  pub Stop,
+  pub End,
+
+  pub Statement(Statement &&) = default;
+  pub fn =(Statement mut &, Statement &&) -> Statement mut & = default;
+  pub ~Statement() = default;
+}
+
+pub union Expression
+{
+  pub Real(float),
+  pub Integer(int),
+  pub Boolean(bool),
+  pub String(std::string),
+  pub Hexadecimal(u32),
+  pub DeclRef(DeclRef),
+  pub Subscript(Subscript),
+  pub Field(Field),
+  pub UnaryOp(UnaryOp),
+  pub BinaryOp(BinaryOp),
+  pub FunctionOp(FunctionOp),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn type(this &) -> Type
+  {
+    switch (this)
+    {
+      case Real:
+        return Type::Real;
+
+      case Integer:
+        return Type::Integer;
+
+      case Boolean:
+        return Type::Boolean;
+
+      case String[string]:
+        return String(string.len);
+
+      case Hexadecimal:
+        return Type::Integer;
+
+      case DeclRef[declref]:
+        return declref.ty;
+
+      case Subscript[subscript]:
+        return subscript.ty;
+
+      case Field[field]:
+        return field.ty;
+
+      case UnaryOp[unaryop]:
+        return unaryop.ty;
+
+      case BinaryOp[binaryop]:
+        return binaryop.ty;
+
+      case FunctionOp[functionop]:
+        return functionop.ty;
+
+      else:
+        std::panic("unhandled");
+    }
+  }
+
+  pub Expression() = default;
+  pub Expression(Expression &&) = default;
+  pub fn =(Expression mut &, Expression &&) -> Expression mut & = default;
+  pub ~Expression() = default;
+}
+
+pub struct DeclRef
+{
+  pub std::string decl;
+
+  pub Type ty;
+
+  pub DeclRef(std::string &&decl)
+    : decl(&&decl)
+  {
+  }
+
+  pub DeclRef(DeclRef &&) = default;
+  pub ~DeclRef() = default;
+}
+
+pub struct Subscript
+{
+  pub std::box<Expression> decl;
+  pub std::vector<Expression> indices;
+
+  pub Type ty;
+
+  pub Subscript(Expression &&decl, std::vector<Expression> &&indices)
+    : decl(&&decl), indices(&&indices)
+  {
+  }
+
+  pub Subscript(Subscript &&) = default;
+  pub ~Subscript() = default;
+}
+
+pub struct Field
+{
+  pub std::box<Expression> base;
+  pub std::box<Expression> decl;
+
+  pub Type ty;
+
+  pub Field(Expression &&base, Expression &&decl)
+    : base(&&base), decl(&&decl)
+  {
+  }
+
+  pub Field(Field &&) = default;
+  pub ~Field() = default;
+}
+
+pub struct UnaryOp
+{
+  pub enum Kind
+  {
+    Plus,
+    Minus,
+    Not,
+  }
+
+  pub Kind op;
+  pub std::box<Expression> subexpr;
+
+  pub Type ty;
+
+  pub UnaryOp(Kind op, Expression &&subexpr)
+    : op(op), subexpr(&&subexpr)
+  {
+  }
+
+  pub UnaryOp(UnaryOp &&) = default;
+  pub ~UnaryOp() = default;
+}
+
+pub struct BinaryOp
+{
+  pub enum Kind
+  {
+    Add,
+    Sub,
+    Div,
+    Mul,
+    Pow,
+    And,
+    Xor,
+    Or,
+    LT,
+    GT,
+    LE,
+    GE,
+    EQ,
+    NE,
+    Assign,
+  }
+
+  pub Kind op;
+  pub std::box<Expression> lhs;
+  pub std::box<Expression> rhs;
+
+  pub Type ty;
+
+  pub BinaryOp(Kind op, Expression &&lhs, Expression &&rhs)
+    : op(op), lhs(&&lhs), rhs(&&rhs)
+  {
+  }
+
+  pub BinaryOp(BinaryOp &&) = default;
+  pub ~BinaryOp() = default;
+}
+
+pub struct FunctionOp
+{
+  pub enum Kind
+  {
+    Abs,
+    Asc,
+    Cos,
+    ACos,
+    Chr$,
+    Date$,
+    Err,
+    Eof,
+    Ext,
+    Exp,
+    Fix,
+    Float,
+    Int,
+    LNot,
+    LAnd,
+    LXor,
+    LOr,
+    Log,
+    Log10,
+    Len,
+    Left$,
+    Mid$,
+    Mod,
+    PI,
+    Right$,
+    Rnd,
+    Sin,
+    ASin,
+    Size,
+    Str$,
+    Sgn,
+    Sq,
+    Sqrt,
+    Substr,
+    Tan,
+    ATan,
+    Trim$,
+    Val,
+  }
+
+  pub Kind op;
+  pub std::vector<Expression> args;
+
+  pub Type ty;
+
+  pub FunctionOp<Args>(Kind op, Args && ...args)
+    : op(op)
+  {
+    #for (var &&arg : &&args)
+      this.args.push_back(&&arg);
+  }
+
+  pub FunctionOp(FunctionOp &&) = default;
+  pub ~FunctionOp() = default;
+}
+
+pub struct VarDecl
+{
+  pub struct Decl
+  {
+    pub std::string name;
+    pub std::vector<usize> extents;
+
+    pub Decl() = default;
+    pub Decl(Decl &&) = default;
+    pub fn =(Decl mut &, Decl &&) -> Decl mut & = default;
+    pub ~Decl() = default;
+  }
+
+  pub Type type;
+  pub std::vector<Decl> decls;
+
+  pub VarDecl()
+  {
+  }
+
+  pub VarDecl(VarDecl &&) = default;
+  pub fn =(VarDecl mut &, VarDecl &&) -> VarDecl mut & = default;
+  pub ~VarDecl() = default;
+}
+
+pub struct Record
+{
+  pub std::string name;
+  pub std::vector<VarDecl> vardecls;
+
+  pub Record(std::string &&name, std::vector<VarDecl> &&vardecls)
+    : name(&&name), vardecls(&&vardecls)
+  {
+  }
+
+  pub Record(Record &&) = default;
+  pub fn =(Record mut &, Record &&) -> Record mut & = default;
+  pub ~Record() = default;
+}
+
+pub struct Print
+{
+  pub struct Item
+  {
+    pub Expression expr;
+    pub u8 separator;
+
+    pub Item() = default;
+    pub Item(Item &&) = default;
+    pub fn =(Item mut &, Item &&) -> Item mut & = default;
+    pub ~Item() = default;
+  }
+
+  pub Expression fd;
+  pub std::string format;
+  pub std::vector<Item> items;
+
+  pub Print()
+  {
+  }
+
+  pub Print(Print &&) = default;
+  pub fn =(Print mut &, Print &&) -> Print mut & = default;
+  pub ~Print() = default;
+}
+
+pub struct Input
+{
+  pub std::string prompt;
+  pub std::vector<Expression> items;
+
+  pub Input()
+  {
+  }
+
+  pub Input(Input &&) = default;
+  pub fn =(Input mut &, Input &&) -> Input mut & = default;
+  pub ~Input() = default;
+}
+
+pub struct IfGoto
+{
+  pub Expression cond;
+  pub int label;
+
+  pub IfGoto(Expression &&cond, int label)
+    : cond(&&cond), label(label)
+  {
+  }
+
+  pub IfGoto(IfGoto &&) = default;
+  pub fn =(IfGoto mut &, IfGoto &&) -> IfGoto mut & = default;
+  pub ~IfGoto() = default;
+}
+
+pub struct IfThen
+{
+  pub Expression cond;
+  pub std::vector<Statement> stmts;
+
+  pub IfThen(Expression &&cond)
+    : cond(&&cond)
+  {
+  }
+
+  pub IfThen(IfThen &&) = default;
+  pub fn =(IfThen mut &, IfThen &&) -> IfThen mut & = default;
+  pub ~IfThen() = default;
+}
+
+pub struct IfElse
+{
+  pub std::vector<Statement> stmts;
+
+  pub IfElse()
+  {
+  }
+
+  pub IfElse(IfElse &&) = default;
+  pub fn =(IfElse mut &, IfElse &&) -> IfElse mut & = default;
+  pub ~IfElse() = default;
+}
+
+pub struct WhileDo
+{
+  pub Expression cond;
+  pub std::vector<Statement> stmts;
+
+  pub WhileDo(Expression &&cond)
+    : cond(&&cond)
+  {
+  }
+
+  pub WhileDo(WhileDo &&) = default;
+  pub fn =(WhileDo mut &, WhileDo &&) -> WhileDo mut & = default;
+  pub ~WhileDo() = default;
+}
+
+pub struct RepeatUntil
+{
+  pub Expression cond;
+  pub std::vector<Statement> stmts;
+
+  pub RepeatUntil()
+  {
+  }
+
+  pub RepeatUntil(RepeatUntil &&) = default;
+  pub fn =(RepeatUntil mut &, RepeatUntil &&) -> RepeatUntil mut & = default;
+  pub ~RepeatUntil() = default;
+}
+
+pub struct ForNext
+{
+  pub Expression decl;
+  pub Expression start;
+  pub Expression finish;
+  pub Expression step;
+  pub std::vector<Statement> stmts;
+
+  pub ForNext(Expression &&decl, Expression &&start, Expression &&finish, Expression &&step)
+    : decl(&&decl), start(&&start), finish(&&finish), step(&&step)
+  {
+  }
+
+  pub ForNext(ForNext &&) = default;
+  pub fn =(ForNext mut &, ForNext &&) -> ForNext mut & = default;
+  pub ~ForNext() = default;
+}
+
+pub struct Loop
+{
+  pub std::vector<Statement> stmts;
+
+  pub Loop()
+  {
+  }
+
+  pub Loop(Loop &&) = default;
+  pub fn =(Loop mut &, Loop &&) -> Loop mut & = default;
+  pub ~Loop() = default;
+}
+
+pub struct ExitIf
+{
+  pub Expression cond;
+  pub std::vector<Statement> stmts;
+
+  pub ExitIf(Expression &&cond)
+    : cond(&&cond)
+  {
+  }
+
+  pub ExitIf(ExitIf &&) = default;
+  pub fn =(ExitIf mut &, ExitIf &&) -> ExitIf mut & = default;
+  pub ~ExitIf() = default;
+}
+
+pub struct Run
+{
+  pub std::string name;
+  pub std::vector<Expression> args;
+
+  pub Run()
+  {
+  }
+
+  pub Run(Run &&) = default;
+  pub fn =(Run mut &, Run &&) -> Run mut & = default;
+  pub ~Run() = default;
+}
+
+pub struct OnGoto
+{
+  pub enum Op
+  {
+    Goto,
+    Gosub,
+    Error,
+  }
+
+  pub Op op;
+  pub Expression cond;
+  pub std::vector<int> targets;
+
+  pub OnGoto()
+  {
+  }
+
+  pub OnGoto(OnGoto &&) = default;
+  pub fn =(OnGoto mut &, OnGoto &&) -> OnGoto mut & = default;
+  pub ~OnGoto() = default;
+}
+
+pub struct Open
+{
+  pub enum Mode
+  {
+    Read = 0x1,
+    Write = 0x2,
+    Update = 0x3,
+    Dir = 0x4,
+
+    fn |(Mode lhs, Mode rhs) -> Mode { return cast<Mode>(cast<isize>(lhs) | cast<isize>(rhs)); }
+  }
+
+  pub Expression fd;
+  pub Expression path;
+  pub Mode mode;
+
+  pub Open()
+  {
+  }
+
+  pub Open(Open &&) = default;
+  pub fn =(Open mut &, Open &&) -> Open mut & = default;
+  pub ~Open() = default;
+}
+
+pub struct Read
+{
+  pub Expression fd;
+  pub std::vector<Expression> items;
+
+  pub Read()
+  {
+  }
+
+  pub Read(Read &&) = default;
+  pub fn =(Read mut &, Read &&) -> Read mut & = default;
+  pub ~Read() = default;
+}
+
+pub struct Write
+{
+  pub Expression fd;
+  pub std::vector<Expression> items;
+
+  pub Write()
+  {
+  }
+
+  pub Write(Write &&) = default;
+  pub fn =(Write mut &, Write &&) -> Write mut & = default;
+  pub ~Write() = default;
+}
+
+pub struct Seek
+{
+  pub Expression fd;
+  pub Expression loc;
+
+  pub Seek()
+  {
+  }
+
+  pub Seek(Seek &&) = default;
+  pub fn =(Seek mut &, Seek &&) -> Seek mut & = default;
+  pub ~Seek() = default;
+}
+
+pub struct Get
+{
+  pub Expression fd;
+  pub Expression item;
+
+  pub Get()
+  {
+  }
+
+  pub Get(Get &&) = default;
+  pub fn =(Get mut &, Get &&) -> Get mut & = default;
+  pub ~Get() = default;
+}
+
+pub struct Put
+{
+  pub Expression fd;
+  pub Expression item;
+
+  pub Put()
+  {
+  }
+
+  pub Put(Put &&) = default;
+  pub fn =(Put mut &, Put &&) -> Put mut & = default;
+  pub ~Put() = default;
+}
+
+enum result : i32
+{
+  ok = 0,
+
+  fn bool(this &) -> bool
+  {
+    return cast<i32>(this) >= 0;
+  }
+
+  result(errc error)
+    : this(cast<result>(-cast<i32>(error)))
+  {
+  }
+}
+
+pub struct parse_result
+{
+  pub errc error;
+  pub mark pass;
+  pub mark fail;
+  pub std::vector<Procedure> procedures;
+
+  pub fn bool(this &) -> bool
+  {
+    return !this.error;
+  }
+
+  pub parse_result() = default;
+  pub parse_result(parse_result&) = default;
+  pub fn =(parse_result mut &, parse_result&) -> parse_result mut & = default;
+  pub ~parse_result() = default;
+}
+
+struct parse_context
+{
+  token tok;
+  state state;
+  lexer lexer;
+  mark pass;
+
+  std::vector<Procedure> procedures;
+
+  std::vector<std::vector<Statement>> blocks;
+
+  std::flat_hash_map<std::string, Type> symbols;
+
+  std::flat_hash_map<int, void> labels;
+  std::flat_hash_map<std::string, void> variables;
+  std::flat_hash_map<std::string, std::vector<std::string>> records;
+
+  #[lifetime(launder(this.tok))]
+  fn consume_token(this mut &, var mut &is) throws(std::error) -> void
+  {
+    this.tok = this.lexer.fetch(&mut is);
+  }
+
+  parse_context() = default;
+  ~parse_context() = default;
+}
+
+enum PrecLevel
+{
+  Zero            = 0,
+  Assignment      = 1,    // =
+  LogicalOr       = 2,    // or, xor
+  LogicalAnd      = 3,    // and
+  Equality        = 4,    // ==, !=
+  Relational      = 5,    // >=, <=, >, <
+  Additive        = 6,    // -, +
+  Shift           = 7,    // <<, >>
+  Multiplicative  = 8,    // *, /, //, %
+  Exponential     = 9,    // **, ^
+  One             = 10,
+}
+
+fn precedence(token &tok) -> PrecLevel
+{
+  switch (tok.type)
+  {
+    case kw_or:
+    case kw_xor:
+      return PrecLevel::LogicalOr;
+
+    case kw_and:
+      return PrecLevel::LogicalAnd;
+
+    case equal:
+    case lessgreater:
+      return PrecLevel::Equality;
+
+    case lessequal:
+    case less:
+    case greaterequal:
+    case greater:
+      return PrecLevel::Relational;
+
+    case plus:
+    case minus:
+      return PrecLevel::Additive;
+
+    case star:
+    case slash:
+    case percent:
+      return PrecLevel::Multiplicative;
+
+    case caret:
+    case starstar:
+      return PrecLevel::Exponential;
+
+    else:
+      return PrecLevel::Zero;
+  }
+}
+
+fn unaryop(token &tok) -> UnaryOp::Kind
+{
+  switch (tok.type)
+  {
+    case plus:
+      return Plus;
+
+    case minus:
+      return Minus;
+
+    case kw_not:
+      return Not;
+
+    else:
+      std::panic("invalid unary op");
+  }
+}
+
+fn binaryop(token &tok) -> BinaryOp::Kind
+{
+  switch (tok.type)
+  {
+    case plus:
+      return Add;
+
+    case minus:
+      return Sub;
+
+    case star:
+      return Mul;
+
+    case slash:
+      return Div;
+
+    case caret:
+    case starstar:
+      return Pow;
+
+    case less:
+      return LT;
+
+    case greater:
+      return GT;
+
+    case lessequal:
+      return LE;
+
+    case greaterequal:
+      return GE;
+
+    case equal:
+      return EQ;
+
+    case lessgreater:
+      return NE;
+
+    case kw_and:
+      return And;
+
+    case kw_or:
+      return Or;
+
+    case kw_xor:
+      return Xor;
+
+    else:
+      std::panic("invalid binary op");
+  }
+}
+
+fn functionop(token &tok) -> FunctionOp::Kind
+{
+  switch (tok.type)
+  {
+    case kw_abs:
+      return Abs;
+
+    case kw_asc:
+      return Asc;
+
+    case kw_cos:
+      return Cos;
+
+    case kw_acs:
+      return ACos;
+
+    case kw_chr$:
+      return Chr$;
+
+    case kw_date$:
+      return Date$;
+
+    case kw_eof:
+      return Eof;
+
+    case kw_ext:
+      return Ext;
+
+    case kw_err:
+      return Err;
+
+    case kw_exp:
+      return Exp;
+
+    case kw_fix:
+      return Fix;
+
+    case kw_float:
+      return Float;
+
+    case kw_int:
+      return Int;
+
+    case kw_lnot:
+      return LNot;
+
+    case kw_land:
+      return LAnd;
+
+    case kw_lor:
+      return LOr;
+
+    case kw_lxor:
+      return LXor;
+
+    case kw_log:
+      return Log;
+
+    case kw_log10:
+      return Log10;
+
+    case kw_len:
+      return Len;
+
+    case kw_left$:
+      return Left$;
+
+    case kw_mid$:
+      return Mid$;
+
+    case kw_mod:
+      return Mod;
+
+    case kw_pi:
+      return PI;
+
+    case kw_right$:
+      return Right$;
+
+    case kw_rnd:
+      return Rnd;
+
+    case kw_sin:
+      return Sin;
+
+    case kw_asn:
+      return ASin;
+
+    case kw_size:
+      return Size;
+
+    case kw_str$:
+      return Str$;
+
+    case kw_sgn:
+      return Sgn;
+
+    case kw_sq:
+      return Sq;
+
+    case kw_sqrt:
+      return Sqrt;
+
+    case kw_substr:
+      return Substr;
+
+    case kw_tan:
+      return Tan;
+
+    case kw_atn:
+      return ATan;
+
+    case kw_trim$:
+      return Trim$;
+
+    case kw_val:
+      return Val;
+
+    else:
+      std::panic("invalid function op");
+  }
+}
+
+fn parse_bool_literal(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  switch (ctx.tok.type)
+  {
+    case kw_true:
+      expr = Expression::Boolean(true);
+
+    else:
+      expr = Expression::Boolean(false);
+  }
+
+  ctx.consume_token(&mut is);
+
+  return ok;
+}
+
+fn parse_declref_left(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  expr = Expression::DeclRef(&move ctx.tok.value);
+
+  ctx.consume_token(&mut is);
+
+  switch (ctx.tok.type)
+  {
+    case l_paren:
+      ctx.consume_token(&mut is);
+
+      var indices = std::vector<Expression>();
+
+      for (;;)
+      {
+        var mut &index = indices.push_back();
+
+        if (var rc = parse_expression(&mut ctx, &mut index, &mut is); !rc)
+          return rc;
+
+        if (!index.type.is_numeric)
+          return errc::operand_type_mismatch;
+
+        if (ctx.tok.type != token::type::comma)
+          break;
+
+        ctx.consume_token(&mut is);
+      }
+
+      if (ctx.tok.type != token::type::r_paren)
+        return errc::missing_right_parenthesis;
+
+      ctx.consume_token(&mut is);
+
+      expr = Expression::Subscript(&move expr, &move indices);
+  }
+
+  return ok;
+}
+
+fn parse_declref(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var base = ctx.tok.value;
+
+  if (!ctx.variables.contains(ctx.tok.value))
+    return errc::undefined_variable;
+
+  if (var rc = parse_declref_left(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  for (;;)
+  {
+    switch (ctx.tok.type)
+    {
+      case period:
+        ctx.consume_token(&mut is);
+
+        if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+          return errc::illegal_statement;
+
+        switch (ctx.symbols.get(base))
+        {
+          case Some[type]:
+            var ty = type;
+            if (type.is_array)
+              ty = *type.Array.1;
+
+            switch (ty)
+            {
+              case Record[record]:
+                if (var &fields = ctx.records[record]; fields.find(ctx.tok.value) == fields.end)
+                  return errc::illegal_record_field;
+
+                base = ctx.tok.value;
+
+              else:
+                return errc::illegal_record_type;
+            }
+
+          else:
+            return errc::illegal_record_type;
+        }
+
+        var rhs = Expression();
+        if (var rc = parse_declref_left(&mut ctx, &mut rhs, &mut is); !rc)
+          return rc;
+
+        expr = Expression::Field(&move expr, &move rhs);
+
+      else:
+        break;
+    }
+  }
+
+  return ok;
+}
+
+fn parse_string_literal(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  expr = Expression::String(&move ctx.tok.value);
+
+  ctx.consume_token(&mut is);
+
+  return ok;
+}
+
+fn parse_numeric_literal(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws (std::error) -> result
+{
+  if (ctx.tok.value.starts_with("$"))
+  {
+    var integer = u32();
+    if (std::atoi(ctx.tok.value.begin + 1, ctx.tok.value.end, &mut integer, 16).len != ctx.tok.value.len - 1)
+      return errc::illegal_number;
+
+    expr = Expression::Hexadecimal(integer);
+  }
+
+  else if (ctx.tok.value.contains("."))
+  {
+    var number = float();
+    if (std::atof(ctx.tok.value.begin, ctx.tok.value.end, &mut number).len != ctx.tok.value.len)
+      return errc::illegal_number;
+
+    expr = Expression::Real(number);
+  }
+
+  else
+  {
+    var integer = int();
+    if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut integer, 10).len != ctx.tok.value.len)
+      return errc::illegal_number;
+
+    expr = Expression::Integer(integer);
+  }
+
+  ctx.consume_token(&mut is);
+
+  return ok;
+}
+
+fn parse_unary_plus(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression_left(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  expr = Expression::UnaryOp(UnaryOp::Kind::Plus, &move expr);
+
+  return ok;
+}
+
+fn parse_unary_minus(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression_left(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  expr = Expression::UnaryOp(UnaryOp::Kind::Minus, &move expr);
+
+  return ok;
+}
+
+fn parse_unary_not(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression_left(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  expr = Expression::UnaryOp(UnaryOp::Kind::Not, &move expr);
+
+  return ok;
+}
+
+fn parse_unary_size(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_declref(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(FunctionOp::Kind::Size, &move expr);
+
+  return ok;
+}
+
+fn parse_unary_eof(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = fd(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(FunctionOp::Kind::Eof, &move expr);
+
+  return ok;
+}
+
+fn parse_unary_ext(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = fd(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(FunctionOp::Kind::Ext, &move expr);
+
+  return ok;
+}
+
+fn parse_nullary_function(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var op = ctx.tok;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(functionop(op));
+
+  return ok;
+}
+
+fn parse_unary_function(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var op = ctx.tok;
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(functionop(op), &move expr);
+
+  return ok;
+}
+
+fn parse_binary_function(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var op = ctx.tok;
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  var arg0 = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut arg0, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  var arg1 = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut arg1, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(functionop(op), &move arg0, &move arg1);
+
+  return ok;
+}
+
+fn parse_ternary_function(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var op = ctx.tok;
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::l_paren)
+    return errc::missing_left_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  var arg0 = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut arg0, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  var arg1 = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut arg1, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  var arg2 = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut arg2, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  expr = Expression::FunctionOp(functionop(op), &move arg0, &move arg1, &move arg2);
+
+  return ok;
+}
+
+fn parse_group_expression(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::r_paren)
+    return errc::missing_right_parenthesis;
+
+  ctx.consume_token(&mut is);
+
+  return ok;
+}
+
+fn parse_expression_left(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  switch (ctx.tok.type)
+  {
+    case stream_end:
+    case end_of_line:
+    case backslash:
+      return errc::unexpected_end_of_line;
+
+    case kw_true:
+    case kw_false:
+      if (var rc = parse_bool_literal(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case plus:
+      if (var rc = parse_unary_plus(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case minus:
+      if (var rc = parse_unary_minus(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_not:
+      if (var rc = parse_unary_not(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_size:
+      if (var rc = parse_unary_size(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_eof:
+      if (var rc = parse_unary_eof(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_ext:
+      if (var rc = parse_unary_ext(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_pi:
+    case kw_date$:
+    case kw_err:
+      if (var rc = parse_nullary_function(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_abs:
+    case kw_asc:
+    case kw_cos:
+    case kw_acs:
+    case kw_chr$:
+    case kw_exp:
+    case kw_fix:
+    case kw_float:
+    case kw_int:
+    case kw_lnot:
+    case kw_log:
+    case kw_log10:
+    case kw_len:
+    case kw_rnd:
+    case kw_sin:
+    case kw_asn:
+    case kw_str$:
+    case kw_sgn:
+    case kw_sq:
+    case kw_sqrt:
+    case kw_tan:
+    case kw_atn:
+    case kw_trim$:
+    case kw_val:
+      if (var rc = parse_unary_function(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_lor:
+    case kw_lxor:
+    case kw_land:
+    case kw_left$:
+    case kw_mod:
+    case kw_right$:
+    case kw_substr:
+      if (var rc = parse_binary_function(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case kw_mid$:
+      if (var rc = parse_ternary_function(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    case scalar:
+      switch (ctx.tok.style)
+      {
+        case plain:
+          if (var rc = parse_declref(&mut ctx, &mut expr, &mut is); !rc)
+            return rc;
+
+        case numeric:
+          if (var rc = parse_numeric_literal(&mut ctx, &mut expr, &mut is); !rc)
+            return rc;
+
+        case singlequoted:
+        case doublequoted:
+          if (var rc = parse_string_literal(&mut ctx, &mut expr, &mut is); !rc)
+            return rc;
+      }
+
+    case l_paren:
+      if (var rc = parse_group_expression(&mut ctx, &mut expr, &mut is); !rc)
+        return rc;
+
+    else:
+      return errc::illegal_statement;
+  }
+
+  if (var rc = typecheck(&mut ctx, &mut expr); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn parse_expression_right(parse_context mut &ctx, Expression mut &expr, InputReader mut &is, PrecLevel minprec) throws(std::error) -> result
+{
+  for (;;)
+  {
+    var op = ctx.tok;
+    var prec = precedence(op);
+
+    if (prec < minprec)
+      return ok;
+
+    ctx.consume_token(&mut is);
+
+    var rhs = Expression();
+    if (var rc = parse_expression_left(&mut ctx, &mut rhs, &mut is); !rc)
+      return rc;
+
+    var nextprec = precedence(ctx.tok);
+    var rightassoc = (prec == PrecLevel::Exponential || prec == PrecLevel::Assignment);
+
+    if (prec < nextprec || (prec == nextprec && rightassoc))
+    {
+      if (var rc = parse_expression_right(&mut ctx, &mut rhs, &mut is, cast<PrecLevel>(cast<int>(prec) + cast<int>(!rightassoc))); !rc)
+        return rc;
+    }
+
+    expr = Expression::BinaryOp(binaryop(op), &move expr, &move rhs);
+
+    if (var rc = typecheck(&mut ctx, &mut expr); !rc)
+      return rc;
+  }
+
+  return ok;
+}
+
+fn parse_expression(parse_context mut &ctx, Expression mut &expr, InputReader mut &is) throws(std::error) -> result
+{
+  var last = ctx.pass;
+  ctx.pass = ctx.tok.loc;
+
+  if (var rc = parse_expression_left(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (var rc = parse_expression_right(&mut ctx, &mut expr, &mut is, PrecLevel::Assignment); !rc)
+    return rc;
+
+  ctx.pass = last;
+
+  return ok;
+}
+
+fn typecheck(parse_context mut &ctx, Expression mut &expr) -> result
+{
+  switch (expr)
+  {
+    case Real:
+    case Integer:
+    case Boolean:
+    case String:
+    case Hexadecimal:
+      ;
+
+    case DeclRef[declref]:
+      switch (ctx.symbols.get(declref.decl))
+      {
+        case Some[type]:
+          declref.ty = type;
+
+        else:
+          return errc::undefined_variable;
+      }
+
+    case Subscript[subscript]:
+      if (var rc = typecheck(&mut ctx, &mut *subscript.decl); !rc)
+        return rc;
+
+      switch (subscript.decl.type)
+      {
+        case Array[array]:
+          if (array.0.len < subscript.indices.len)
+            return errc::illegal_subscript;
+
+          if (array.0.len > subscript.indices.len)
+            subscript.ty = Type::Array((std::vector::from(array.0[0 .. array.0.len - subscript.indices.len]), *array.1));
+          else
+            subscript.ty = *array.1;
+
+        else:
+          return errc::illegal_subscript;
+      }
+
+    case Field[field]:
+      if (var rc = typecheck(&mut ctx, &mut *field.base); !rc)
+        return rc;
+
+      if (var rc = typecheck(&mut ctx, &mut *field.decl); !rc)
+        return rc;
+
+      field.ty = field.decl.type;
+
+    case UnaryOp[unaryop]:
+      var subexpr = unaryop.subexpr.type;
+
+      switch (unaryop.op)
+      {
+        case Plus:
+        case Minus:
+          if (subexpr.is_numeric)
+            unaryop.ty = subexpr;
+
+        case Not:
+          if (subexpr.is_boolean)
+            unaryop.ty = Type::Boolean;
+
+        else:
+          std::panic("unhandled");
+      }
+
+      if (!unaryop.ty)
+      {
+        return errc::illegal_argument;
+      }
+
+    case BinaryOp[binaryop]:
+      var lhs = binaryop.lhs.type;
+      var rhs = binaryop.rhs.type;
+
+      switch (binaryop.op)
+      {
+        case Add:
+          if (lhs.is_integral && rhs.is_integral)
+            binaryop.ty = Type::Integer;
+          else if (lhs.is_numeric && rhs.is_numeric)
+            binaryop.ty = Type::Real;
+          else if (lhs.is_string && rhs.is_string)
+            binaryop.ty = Type::String(lhs.String + rhs.String);
+
+        case Sub:
+        case Div:
+        case Mul:
+        case Pow:
+          if (lhs.is_integral && rhs.is_integral)
+            binaryop.ty = Type::Integer;
+          else if (lhs.is_numeric && rhs.is_numeric)
+            binaryop.ty = Type::Real;
+
+        case And:
+        case Xor:
+        case Or:
+          if (lhs.is_boolean && rhs.is_boolean)
+            binaryop.ty = Type::Boolean;
+
+        case LT:
+        case GT:
+        case LE:
+        case GE:
+          if (lhs.is_numeric && rhs.is_numeric)
+            binaryop.ty = Type::Boolean;
+          else if (lhs.is_string && rhs.is_string)
+            binaryop.ty = Type::Boolean;
+
+        case EQ:
+        case NE:
+          if (lhs.is_boolean && rhs.is_boolean)
+            binaryop.ty = Type::Boolean;
+          else if (lhs.is_numeric && rhs.is_numeric)
+            binaryop.ty = Type::Boolean;
+          else if (lhs.is_string && rhs.is_string)
+            binaryop.ty = Type::Boolean;
+
+        else:
+          std::panic("unhandled");
+      }
+
+      if (!binaryop.ty)
+      {
+        return errc::illegal_argument;
+      }
+
+    case FunctionOp[functionop]:
+      var &args = functionop.args;
+
+      switch (functionop.op)
+      {
+        case Abs:
+          if (args[0].type.is_integral)
+            functionop.ty = Type::Integer;
+          else if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Asc:
+          if (args[0].type.is_string)
+            functionop.ty = Type::Integer;
+
+        case Cos:
+        case ACos:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Chr$:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::String(4);
+
+        case Date$:
+          functionop.ty = Type::String(32);
+
+        case Eof:
+          functionop.ty = Type::Boolean;
+
+        case Ext:
+          functionop.ty = Type::Integer;
+
+        case Err:
+          functionop.ty = Type::Integer;
+
+        case Exp:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Fix:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Integer;
+
+        case Float:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Int:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case LNot:
+          if (args[0].type.is_integral)
+            functionop.ty = Type::Integer;
+
+        case LAnd:
+        case LXor:
+        case LOr:
+          if (args[0].type.is_integral && args[1].type.is_integral)
+            functionop.ty = Type::Integer;
+
+        case Log:
+        case Log10:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Len:
+          if (args[0].type.is_string)
+            functionop.ty = Type::Integer;
+
+        case Left$:
+          if (args[0].type.is_string && args[1].type.is_numeric)
+            functionop.ty = Type::String(args[0].type.String);
+
+        case Mid$:
+          if (args[0].type.is_string && args[1].type.is_numeric && args[2].type.is_numeric)
+            functionop.ty = Type::String(args[0].type.String);
+
+        case Mod:
+          if (args[0].type.is_integral && args[1].type.is_integral)
+            functionop.ty = Type::Integer;
+          else if (args[0].type.is_numeric && args[1].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case PI:
+          functionop.ty = Type::Real;
+
+        case Right$:
+          if (args[0].type.is_string && args[1].type.is_numeric)
+            functionop.ty = Type::String(args[0].type.String);
+
+        case Rnd:
+          functionop.ty = Type::Real;
+
+        case Sin:
+        case ASin:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Size:
+          functionop.ty = Type::Integer;
+
+        case Str$:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::String(32);
+
+        case Sgn:
+          if (args[0].type.is_integral)
+            functionop.ty = Type::Integer;
+          else if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Sq:
+          if (args[0].type.is_integral)
+            functionop.ty = Type::Integer;
+          else if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Sqrt:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Substr:
+          if (args[0].type.is_string && args[1].type.is_string)
+            functionop.ty = Type::Integer;
+
+        case Tan:
+        case ATan:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::Real;
+
+        case Trim$:
+          if (args[0].type.is_string)
+            functionop.ty = Type::String(args[0].type.String);
+
+        case Val:
+          if (args[0].type.is_string)
+            functionop.ty = Type::Real;
+
+        else:
+          std::panic("unhandled");
+      }
+
+      if (!functionop.ty)
+      {
+        return errc::illegal_argument;
+      }
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn stream_start(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.state = state::procedure;
+
+  return ok;
+}
+
+fn procedure(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  switch (ctx.tok.type)
+  {
+    case stream_end:
+      ctx.state = state::end;
+      return ok;
+
+    case end_of_line:
+      ctx.consume_token(&mut is);
+      return ok;
+
+    case kw_procedure:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::unknown_procedure;
+  }
+
+  switch (ctx.tok.type)
+  {
+    case scalar:
+      if (ctx.tok.style != scalar_style::plain)
+        return errc::illegal_literal;
+
+    else:
+      return errc::unknown_procedure;
+  }
+
+  ctx.procedures.push_back(&move ctx.tok.value);
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::end_of_line && ctx.tok.type != token::type::backslash)
+    return errc::unknown_procedure;
+
+  ctx.consume_token(&mut is);
+
+  ctx.symbols.clear();
+  ctx.labels.clear();
+  ctx.variables.clear();
+  ctx.records.clear();
+
+  ctx.blocks.push_back();
+
+  ctx.state = state::statement;
+
+  return ok;
+}
+
+fn label(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var label = int();
+  if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut label, 10).len != ctx.tok.value.len)
+    return errc::illegal_number;
+
+  ctx.consume_token(&mut is);
+
+  if (!ctx.labels.insert(label).1)
+    return errc::redefined_line_number;
+
+  ctx.blocks.back.push_back(Statement::Label(label));
+
+  return ok;
+}
+
+fn kw_rem(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var remark = &move ctx.tok.value;
+
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Remark(&move remark));
+
+  return ok;
+}
+
+fn fd(parse_context mut &ctx, Expression mut &fd, InputReader mut &is) throws(std::error) -> result
+{
+  if (ctx.tok.type != token::type::hash)
+    return errc::illegal_expression_type;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression(&mut ctx, &mut fd, &mut is); !rc)
+    return rc;
+
+  if (!fd.type.is_integral)
+    return errc::illegal_expression_type;
+
+  return ok;
+}
+
+fn kw_print(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var print = Print();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type == token::type::hash)
+  {
+    if (var rc = fd(&mut ctx, &mut print.fd, &mut is); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      return errc::missing_comma;
+
+    ctx.consume_token(&mut is);
+  }
+
+  if (ctx.tok.type == token::type::kw_using)
+  {
+    ctx.consume_token(&mut is);
+
+    if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::doublequoted)
+      return errc::illegal_expression_type;
+
+    print.format = &move ctx.tok.value;
+
+    ctx.consume_token(&mut is);
+
+    if (ctx.tok.type != token::type::comma)
+      return errc::illegal_expression_type;
+
+    ctx.consume_token(&mut is);
+  }
+
+  for (; ctx.tok.type != token::type::end_of_line && ctx.tok.type != token::type::backslash; )
+  {
+    var mut &item = print.items.push_back();
+
+    if (var rc = parse_expression(&mut ctx, &mut item.expr, &mut is); !rc)
+      return rc;
+
+    switch (ctx.tok.type)
+    {
+      case comma:
+        item.separator = cast(',');
+
+      case semi:
+        item.separator = cast(';');
+    }
+
+    if (ctx.tok.type != token::type::comma && ctx.tok.type != token::type::semi)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Print(&move print));
+
+  return ok;
+}
+
+fn kw_input(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var input = Input();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type == token::type::scalar && ctx.tok.style == scalar_style::doublequoted)
+  {
+    input.prompt = &move ctx.tok.value;
+
+    ctx.consume_token(&mut is);
+
+    if (ctx.tok.type != token::type::comma)
+      return errc::missing_comma;
+
+    ctx.consume_token(&mut is);
+  }
+
+  for (;;)
+  {
+    ctx.pass = ctx.tok.loc;
+
+    var mut &item = input.items.push_back();
+
+    if (var rc = parse_declref(&mut ctx, &mut item, &mut is); !rc)
+      return rc;
+
+    if (var rc = typecheck(&mut ctx, &mut item); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Input(&move input));
+
+  return ok;
+}
+
+fn decllist(parse_context mut &ctx, std::vector<VarDecl> mut &decllist, InputReader mut &is) throws(std::error) -> result
+{
+  for (;;)
+  {
+    var mut &vardecl = decllist.push_back();
+
+    for (;;)
+    {
+      var mut &decl = vardecl.decls.push_back();
+
+      switch (ctx.tok.type)
+      {
+        case scalar:
+          if (ctx.tok.style != scalar_style::plain)
+            return errc::illegal_statement;
+
+          if (ctx.symbols.contains(ctx.tok.value))
+            return errc::redefined_variable;
+
+          decl.name = &move ctx.tok.value;
+
+          ctx.consume_token(&mut is);
+
+        else:
+          return errc::illegal_statement;
+      }
+
+      switch (ctx.tok.type)
+      {
+        case l_paren:
+          ctx.consume_token(&mut is);
+
+          for (var i = 0; i < 3; ++i)
+          {
+            if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::numeric)
+              return errc::illegal_literal;
+
+            var extent = usize();
+            if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut extent).len != ctx.tok.value.len)
+              return errc::illegal_number;
+
+            if (extent == 0)
+              return errc::illegal_number;
+
+            decl.extents.push_back(extent);
+
+            ctx.consume_token(&mut is);
+
+            if (ctx.tok.type != token::type::comma)
+              break;
+
+            ctx.consume_token(&mut is);
+          }
+
+          if (ctx.tok.type != token::type::r_paren)
+            return errc::missing_right_parenthesis;
+
+          ctx.consume_token(&mut is);
+      }
+
+      if (ctx.tok.type != token::type::comma)
+        break;
+
+      ctx.consume_token(&mut is);
+    }
+
+    if (ctx.tok.type != token::type::colon)
+      return errc::illegal_statement;
+
+    ctx.consume_token(&mut is);
+
+    switch (ctx.tok.type)
+    {
+      case kw_real:
+        vardecl.type = Type::Real;
+
+        ctx.consume_token(&mut is);
+
+      case kw_byte:
+        vardecl.type = Type::Byte;
+
+        ctx.consume_token(&mut is);
+
+      case kw_integer:
+        vardecl.type = Type::Integer;
+
+        ctx.consume_token(&mut is);
+
+      case kw_boolean:
+        vardecl.type = Type::Boolean;
+
+        ctx.consume_token(&mut is);
+
+      case kw_string:
+        vardecl.type = Type::String(32);
+
+        ctx.consume_token(&mut is);
+
+      case scalar:
+        if (ctx.tok.style != scalar_style::plain)
+          return errc::illegal_statement;
+
+        vardecl.type = Type::Record(&move ctx.tok.value);
+
+        ctx.consume_token(&mut is);
+
+      else:
+        return errc::illegal_statement;
+    }
+
+    switch (ctx.tok.type)
+    {
+      case l_square:
+        ctx.consume_token(&mut is);
+
+        if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::numeric)
+          return errc::illegal_literal;
+
+        var capacity = usize();
+        if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut capacity).len != ctx.tok.value.len)
+          return errc::illegal_number;
+
+        switch (vardecl.type)
+        {
+          case String:
+            vardecl.type = Type::String(capacity);
+
+          else:
+            return errc::illegal_type_suffix;
+        }
+
+        ctx.consume_token(&mut is);
+
+        if (ctx.tok.type != token::type::r_square)
+          return errc::illegal_type_suffix;
+
+        ctx.consume_token(&mut is);
+    }
+
+    for (var &decl : vardecl.decls)
+    {
+      var ty = vardecl.type;
+
+      if (!decl.extents.empty)
+        ty = Type::Array((decl.extents, ty));
+
+      ctx.symbols.insert(decl.name, &move ty);
+    }
+
+    if (ctx.tok.type != token::type::semi)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  return ok;
+}
+
+fn kw_param(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var vardecls = std::vector<VarDecl>();
+
+  if (var rc = decllist(&mut ctx, &mut vardecls, &mut is); !rc)
+    return rc;
+
+  for (var &vardecl : vardecls)
+  {
+    for (var &decl : vardecl.decls)
+    {
+      ctx.variables.insert(decl.name);
+    }
+  }
+
+  ctx.blocks.back.push_back(Statement::Param(&move vardecls));
+
+  return ok;
+}
+
+fn kw_type(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+    return errc::illegal_statement;
+
+  if (ctx.records.contains(ctx.tok.value))
+    return errc::redefined_variable;
+
+  var name = &move ctx.tok.value;
+
+  ctx.consume_token(&mut is);
+
+  switch (ctx.tok.type)
+  {
+    case token::type::equal:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_assignment;
+  }
+
+  var vardecls = std::vector<VarDecl>();
+
+  if (var rc = decllist(&mut ctx, &mut vardecls, &mut is); !rc)
+    return rc;
+
+  var fields = std::vector<std::string>();
+
+  for (var &vardecl : vardecls)
+  {
+    for (var &decl : vardecl.decls)
+    {
+      fields.push_back(decl.name);
+    }
+  }
+
+  ctx.records.insert(name, &move fields);
+
+  ctx.blocks.back.push_back(Statement::Record(&move name, &move vardecls));
+
+  return ok;
+}
+
+fn kw_dim(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var vardecls = std::vector<VarDecl>();
+
+  if (var rc = decllist(&mut ctx, &mut vardecls, &mut is); !rc)
+    return rc;
+
+  for (var &vardecl : vardecls)
+  {
+    for (var &decl : vardecl.decls)
+    {
+      ctx.variables.insert(decl.name);
+    }
+  }
+
+  ctx.blocks.back.push_back(Statement::Dim(&move vardecls));
+
+  return ok;
+}
+
+fn kw_let(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var vardecl = VarDecl();
+  var mut &decl = vardecl.decls.push_back();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+    return errc::illegal_statement;
+
+  decl.name = ctx.tok.value;
+
+  if (ctx.symbols.contains(ctx.tok.value))
+    return errc::redefined_variable;
+
+  ctx.variables.insert(ctx.tok.value);
+
+  var lhs = Expression();
+
+  if (var rc = parse_declref(&mut ctx, &mut lhs, &mut is); !rc)
+    return rc;
+
+  if (lhs.kind != typeof(Expression::kind)::DeclRef)
+    return errc::illegal_statement;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::equal:
+    case token::type::colonequal:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_assignment;
+  }
+
+  var rhs = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut rhs, &mut is); !rc)
+    return rc;
+
+  if (rhs.type.is_array)
+    return errc::illegal_expression_type;
+
+  vardecl.type = rhs.type;
+
+  if (vardecl.type.is_string)
+    vardecl.type = Type::String(std::max(vardecl.type.String, 32));
+
+  ctx.symbols.insert(decl.name, vardecl.type);
+
+  ctx.blocks.back.push_back(Statement::Let(vardecl));
+  ctx.blocks.back.push_back(Statement::Expr(Expression::BinaryOp(BinaryOp::Kind::Assign, &move lhs, &move rhs)));
+
+  return ok;
+}
+
+fn assign(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var lhs = Expression();
+  if (var rc = parse_expression_left(&mut ctx, &mut lhs, &mut is); !rc)
+    return rc;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::equal:
+    case token::type::colonequal:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_assignment;
+  }
+
+  var rhs = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut rhs, &mut is); !rc)
+    return rc;
+
+  if (lhs.type.is_string != rhs.type.is_string)
+    return errc::illegal_expression_type;
+
+  if ((lhs.type.is_record || rhs.type.is_record) && lhs.type != rhs.type)
+    return errc::illegal_expression_type;
+
+  if ((lhs.type.is_array || rhs.type.is_array) && lhs.type != rhs.type)
+    return errc::illegal_expression_type;
+
+  ctx.blocks.back.push_back(Statement::Expr(Expression::BinaryOp(BinaryOp::Kind::Assign, &move lhs, &move rhs)));
+
+  return ok;
+}
+
+fn kw_if(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var cond = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut cond, &mut is); !rc)
+    return rc;
+
+  if (!cond.type.is_boolean)
+    return errc::illegal_expression_type;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::kw_then:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_then_statement;
+  }
+
+  if (ctx.tok.type == token::type::scalar && ctx.tok.style == scalar_style::numeric)
+  {
+    var label = int();
+    if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut label, 10).len != ctx.tok.value.len)
+      return errc::illegal_number;
+
+    ctx.consume_token(&mut is);
+
+    ctx.blocks.back.push_back(Statement::IfGoto(&move cond, label));
+
+    return ok;
+  }
+
+  ctx.blocks.back.push_back(Statement::IfThen(&move cond));
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_else(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case IfThen[ifthen]:
+      ifthen.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  ctx.blocks.back.push_back(Statement::IfElse());
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_endif(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case IfThen[ifthen]:
+      ifthen.stmts = &move block;
+
+    case IfElse[ifelse]:
+      ifelse.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_while(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var cond = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut cond, &mut is); !rc)
+    return rc;
+
+  if (!cond.type.is_boolean)
+    return errc::illegal_expression_type;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::kw_do:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_do_statement;
+  }
+
+  ctx.blocks.back.push_back(Statement::WhileDo(&move cond));
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_endwhile(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case WhileDo[whiledo]:
+      whiledo.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_repeat(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::RepeatUntil());
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_until(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var cond = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut cond, &mut is); !rc)
+    return rc;
+
+  if (!cond.type.is_boolean)
+    return errc::illegal_expression_type;
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case RepeatUntil[repeatuntil]:
+      repeatuntil.cond = &move cond;
+      repeatuntil.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_for(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+    return errc::illegal_statement;
+
+  var decl = Expression();
+  if (var rc = parse_expression_left(&mut ctx, &mut decl, &mut is); !rc)
+    return rc;
+
+  if (!decl.type.is_integer && !decl.type.is_real)
+    return errc::illegal_expression_type;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::equal:
+    case token::type::colonequal:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_assignment;
+  }
+
+  var start = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut start, &mut is); !rc)
+    return rc;
+
+  if (!start.type.is_numeric)
+    return errc::illegal_expression_type;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::kw_to:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_to_statement;
+  }
+
+  var finish = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut finish, &mut is); !rc)
+    return rc;
+
+  if (!finish.type.is_numeric)
+    return errc::illegal_expression_type;
+
+  var step = Expression();
+
+  if (ctx.tok.type == token::type::kw_step)
+  {
+    ctx.consume_token(&mut is);
+
+    if (var rc = parse_expression(&mut ctx, &mut step, &mut is); !rc)
+      return rc;
+
+    if (!step.type.is_numeric)
+      return errc::illegal_expression_type;
+  }
+
+  ctx.blocks.back.push_back(Statement::ForNext(&move decl, &move start, &move finish, &move step));
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_next(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+    return errc::illegal_statement;
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case ForNext[fornext]:
+      fornext.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_loop(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Loop());
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_endloop(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case Loop[loop]:
+      loop.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_exitif(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var cond = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut cond, &mut is); !rc)
+    return rc;
+
+  if (!cond.type.is_boolean)
+    return errc::illegal_expression_type;
+
+  switch (ctx.tok.type)
+  {
+    case token::type::kw_then:
+      ctx.consume_token(&mut is);
+
+    else:
+      return errc::missing_then_statement;
+  }
+
+  ctx.blocks.back.push_back(Statement::ExitIf(&move cond));
+
+  ctx.blocks.push_back();
+
+  return ok;
+}
+
+fn kw_endexit(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.blocks.len < 2)
+    return errc::unmatched_control_structure;
+
+  var block = ctx.blocks.take_back();
+
+  switch (ctx.blocks.back.back)
+  {
+    case ExitIf[exitif]:
+      exitif.stmts = &move block;
+
+    else:
+      return errc::unmatched_control_structure;
+  }
+
+  return ok;
+}
+
+fn kw_run(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var run = Run();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+    return errc::illegal_statement;
+
+  run.name = &move ctx.tok.value;
+
+  ctx.consume_token(&mut is);
+
+  while (ctx.tok.type == token::type::period)
+  {
+    run.name += ".";
+
+    ctx.consume_token(&mut is);
+
+    if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::plain)
+      return errc::illegal_statement;
+
+    run.name += ctx.tok.value;
+
+    ctx.consume_token(&mut is);
+  }
+
+  if (ctx.tok.type == token::type::l_paren)
+  {
+    ctx.consume_token(&mut is);
+
+    for (; ctx.tok.type != token::type::r_paren; )
+    {
+      var mut &arg = run.args.push_back();
+
+      if (var rc = parse_expression(&mut ctx, &mut arg, &mut is); !rc)
+        return rc;
+
+      if (ctx.tok.type != token::type::comma)
+        break;
+
+      ctx.consume_token(&mut is);
+    }
+
+    if (ctx.tok.type != token::type::r_paren)
+      return errc::missing_left_parenthesis;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Run(&move run));
+
+  return ok;
+}
+
+fn kw_data(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var data = std::vector<Expression>();
+
+  for (;;)
+  {
+    var mut &expr = data.push_back();
+
+    if (var rc = parse_expression(&mut ctx, &mut expr, &mut is); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Data(&move data));
+
+  return ok;
+}
+
+fn open(parse_context mut &ctx, Open mut &open, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::hash)
+    return errc::illegal_expression_type;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_declref(&mut ctx, &mut open.fd, &mut is); !rc)
+    return rc;
+
+  if (var rc = typecheck(&mut ctx, &mut open.fd); !rc)
+    return rc;
+
+  if (!open.fd.type.is_integral)
+    return errc::illegal_expression_type;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression(&mut ctx, &mut open.path, &mut is); !rc)
+    return rc;
+
+  if (!open.path.type.is_string)
+    return errc::illegal_expression_type;
+
+  open.mode = Open::Mode::Update;
+
+  if (ctx.tok.type == token::type::colon)
+  {
+    ctx.consume_token(&mut is);
+
+    switch (ctx.tok.type)
+    {
+      case kw_read:
+        open.mode = Open::Mode::Read;
+
+      case kw_write:
+        open.mode = Open::Mode::Write;
+
+      case kw_update:
+        open.mode = Open::Mode::Update;
+
+      case kw_dir:
+        open.mode = Open::Mode::Dir;
+
+      else:
+        return errc::illegal_statement;
+    }
+
+    ctx.consume_token(&mut is);
+  }
+
+  return ok;
+}
+
+fn kw_open(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var open = Open();
+
+  if (var rc = open(&mut ctx, &mut open, &mut is); !rc)
+    return rc;
+
+  ctx.blocks.back.push_back(Statement::Open(&move open));
+
+  return ok;
+}
+
+fn kw_create(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var open = Open();
+
+  if (var rc = open(&mut ctx, &mut open, &mut is); !rc)
+    return rc;
+
+  ctx.blocks.back.push_back(Statement::Create(&move open));
+
+  return ok;
+}
+
+fn kw_read(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var read = Read();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type == token::type::hash)
+  {
+    if (var rc = fd(&mut ctx, &mut read.fd, &mut is); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      return errc::missing_comma;
+
+    ctx.consume_token(&mut is);
+  }
+
+  for (;;)
+  {
+    ctx.pass = ctx.tok.loc;
+
+    var mut &expr = read.items.push_back();
+
+    if (var rc = parse_declref(&mut ctx, &mut expr, &mut is); !rc)
+      return rc;
+
+    if (var rc = typecheck(&mut ctx, &mut expr); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Read(&move read));
+
+  return ok;
+}
+
+fn kw_write(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var write = Write();
+
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type == token::type::hash)
+  {
+    if (var rc = fd(&mut ctx, &mut write.fd, &mut is); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      return errc::missing_comma;
+
+    ctx.consume_token(&mut is);
+  }
+
+  for (;;)
+  {
+    var mut &expr = write.items.push_back();
+
+    if (var rc = parse_expression(&mut ctx, &mut expr, &mut is); !rc)
+      return rc;
+
+    if (ctx.tok.type != token::type::comma)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Write(&move write));
+
+  return ok;
+}
+
+fn kw_seek(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var seek = Seek();
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = fd(&mut ctx, &mut seek.fd, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_expression(&mut ctx, &mut seek.loc, &mut is); !rc)
+    return rc;
+
+  if (!seek.loc.type.is_integral)
+    return errc::illegal_expression_type;
+
+  ctx.blocks.back.push_back(Statement::Seek(&move seek));
+
+  return ok;
+}
+
+fn kw_get(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var get = Get();
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = fd(&mut ctx, &mut get.fd, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_declref(&mut ctx, &mut get.item, &mut is); !rc)
+    return rc;
+
+  if (var rc = typecheck(&mut ctx, &mut get.item); !rc)
+    return rc;
+
+  ctx.blocks.back.push_back(Statement::Get(&move get));
+
+  return ok;
+}
+
+fn kw_put(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var put = Put();
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = fd(&mut ctx, &mut put.fd, &mut is); !rc)
+    return rc;
+
+  if (ctx.tok.type != token::type::comma)
+    return errc::missing_comma;
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse_declref(&mut ctx, &mut put.item, &mut is); !rc)
+    return rc;
+
+  if (var rc = typecheck(&mut ctx, &mut put.item); !rc)
+    return rc;
+
+  ctx.blocks.back.push_back(Statement::Put(&move put));
+
+  return ok;
+}
+
+fn kw_close(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var fd = Expression();
+
+  if (var rc = fd(&mut ctx, &mut fd, &mut is); !rc)
+    return rc;
+
+  ctx.blocks.back.push_back(Statement::Close(&move fd));
+
+  return ok;
+}
+
+fn kw_restore(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var label = int();
+
+  switch (ctx.tok.type)
+  {
+    case scalar:
+      if (ctx.tok.style != scalar_style::numeric)
+        return errc::illegal_statement;
+
+      if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut label, 10).len != ctx.tok.value.len)
+        return errc::illegal_number;
+
+      ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::Restore(label));
+
+  return ok;
+}
+
+fn kw_error(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  var expr = Expression();
+  if (var rc = parse_expression(&mut ctx, &mut expr, &mut is); !rc)
+    return rc;
+
+  if (!expr.type.is_numeric)
+    return errc::illegal_expression_type;
+
+  ctx.blocks.back.push_back(Statement::Error(&move expr));
+
+  return ok;
+}
+
+fn kw_goto(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::numeric)
+    return errc::illegal_statement;
+
+  var label = int();
+  if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut label, 10).len != ctx.tok.value.len)
+    return errc::illegal_number;
+
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Goto(label));
+
+  return ok;
+}
+
+fn kw_gosub(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::numeric)
+    return errc::illegal_statement;
+
+  var label = int();
+  if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut label, 10).len != ctx.tok.value.len)
+    return errc::illegal_number;
+
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Gosub(label));
+
+  return ok;
+}
+
+fn kw_on(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  var ongoto = OnGoto();
+
+  ctx.consume_token(&mut is);
+
+  switch (ctx.tok.type)
+  {
+    case kw_error:
+      ctx.consume_token(&mut is);
+
+      ongoto.op = OnGoto::Op::Error;
+
+      switch (ctx.tok.type)
+      {
+        case kw_goto:
+          ctx.consume_token(&mut is);
+      }
+
+    else:
+
+      var cond = Expression();
+      if (var rc = parse_expression(&mut ctx, &mut cond, &mut is); !rc)
+        return rc;
+
+      if (!cond.type.is_integral)
+        return errc::illegal_expression_type;
+
+      switch (ctx.tok.type)
+      {
+        case token::type::kw_goto:
+          ctx.consume_token(&mut is);
+
+          ongoto.op = OnGoto::Op::Goto;
+
+        case token::type::kw_gosub:
+          ctx.consume_token(&mut is);
+
+          ongoto.op = OnGoto::Op::Gosub;
+
+        else:
+          return errc::missing_goto_statement;
+      }
+
+      ongoto.cond = &move cond;
+  }
+
+  for (; ctx.tok.type != token::type::end_of_line && ctx.tok.type != token::type::backslash; )
+  {
+    var mut &target = ongoto.targets.push_back();
+
+    if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::numeric)
+      return errc::illegal_statement;
+
+    if (std::atoi(ctx.tok.value.begin, ctx.tok.value.end, &mut target, 10).len != ctx.tok.value.len)
+      return errc::illegal_number;
+
+    ctx.consume_token(&mut is);
+
+    if (ctx.tok.type != token::type::comma)
+      break;
+
+    ctx.consume_token(&mut is);
+  }
+
+  ctx.blocks.back.push_back(Statement::OnGoto(&move ongoto));
+
+  return ok;
+}
+
+fn kw_return(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Return());
+
+  return ok;
+}
+
+fn kw_stop(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::Stop());
+
+  return ok;
+}
+
+fn kw_end(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::End());
+
+  return ok;
+}
+
+fn statement(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  switch (ctx.tok.type)
+  {
+    case scalar:
+      if (ctx.tok.style == scalar_style::numeric)
+        if (var rc = label(&mut ctx, &mut is); !rc)
+          return rc;
+  }
+
+  ctx.pass = ctx.tok.loc;
+
+  switch (ctx.tok.type)
+  {
+    case stream_end:
+      return errc::unexpected_end_of_stream;
+
+    case kw_rem:
+      if (var rc = kw_rem(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_print:
+      if (var rc = kw_print(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_input:
+      if (var rc = kw_input(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_param:
+      if (var rc = kw_param(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_type:
+      if (var rc = kw_type(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_dim:
+      if (var rc = kw_dim(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_let:
+      if (var rc = kw_let(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_if:
+      if (var rc = kw_if(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_else:
+      if (var rc = kw_else(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_endif:
+      if (var rc = kw_endif(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_while:
+      if (var rc = kw_while(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_endwhile:
+      if (var rc = kw_endwhile(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_repeat:
+      if (var rc = kw_repeat(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_until:
+      if (var rc = kw_until(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_for:
+      if (var rc = kw_for(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_next:
+      if (var rc = kw_next(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_loop:
+      if (var rc = kw_loop(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_endloop:
+      if (var rc = kw_endloop(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_exitif:
+      if (var rc = kw_exitif(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_endexit:
+      if (var rc = kw_endexit(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_run:
+      if (var rc = kw_run(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_data:
+      if (var rc = kw_data(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_open:
+      if (var rc = kw_open(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_create:
+      if (var rc = kw_create(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_read:
+      if (var rc = kw_read(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_write:
+      if (var rc = kw_write(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_seek:
+      if (var rc = kw_seek(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_get:
+      if (var rc = kw_get(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_put:
+      if (var rc = kw_put(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_close:
+      if (var rc = kw_close(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_restore:
+      if (var rc = kw_restore(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_error:
+      if (var rc = kw_error(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_goto:
+      if (var rc = kw_goto(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_gosub:
+      if (var rc = kw_gosub(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_on:
+      if (var rc = kw_on(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_return:
+      if (var rc = kw_return(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_bye:
+    case kw_stop:
+      if (var rc = kw_stop(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_end:
+      if (var rc = kw_end(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case scalar:
+      if (ctx.tok.style != scalar_style::plain)
+        return errc::illegal_statement;
+
+      if (var rc = assign(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case end_of_line:
+      ctx.blocks.back.push_back(Statement::NoOp);
+
+    else:
+      return errc::illegal_statement;
+  }
+
+  ctx.pass = ctx.tok.loc;
+
+  if (ctx.tok.type != token::type::end_of_line && ctx.tok.type != token::type::backslash)
+    return errc::missing_line_reference;
+
+  ctx.consume_token(&mut is);
+
+  switch (ctx.tok.type)
+  {
+    case kw_procedure:
+    case stream_end:
+      if (ctx.blocks.len != 1)
+        return errc::unmatched_control_structure;
+
+      while (ctx.blocks.back.len != 0)
+      {
+        if (ctx.blocks.back.back.kind != typeof(Statement::kind)::NoOp)
+          break;
+
+        ctx.blocks.back.pop_back();
+      }
+
+      ctx.procedures.back.statements = ctx.blocks.take_back();
+
+      ctx.state = state::procedure;
+  }
+
+  return ok;
+}
+
+fn parse(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  while (ctx.state != state::end)
+  {
+    ctx.pass = ctx.tok.loc;
+
+    switch (ctx.state)
+    {
+      case stream_start:
+        if (var rc = stream_start(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case procedure:
+        if (var rc = procedure(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case statement:
+        if (var rc = statement(&mut ctx, &mut is); !rc)
+          return rc;
+
+      else:
+        std::panic("invalid state");
+    }
+  }
+
+  return ok;
+}
+
+pub fn parse(InputReader mut &is) throws(std::error) -> parse_result
+{
+  var result = parse_result();
+
+  var ctx = parse_context();
+
+  ctx.consume_token(&mut is);
+
+  if (var rc = parse(&mut ctx, &mut is); !rc)
+  {
+    result.error = cast<errc>(-cast<i32>(rc));
+    result.pass = ctx.pass;
+    result.fail = ctx.tok.loc;
+    result.fail.position += ctx.tok.value.len;
+  }
+
+  result.procedures = &move ctx.procedures;
+
+  return result;
+}

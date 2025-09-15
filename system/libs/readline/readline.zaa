@@ -27,7 +27,7 @@ pub union result
 pub struct context
 {
   pub int stdin = 0;
-  pub int stdout = 2;
+  pub int stdout = 1;
 
   termin input;
   editor editor;

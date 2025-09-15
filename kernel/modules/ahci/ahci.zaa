@@ -281,7 +281,7 @@ pub struct port
   pub port(controller mut &controller, usize index)
     : controller(&controller), index(index)
   {
-    var memory = vm::allocate_physical_pages(sizeof<ahci_command[32]> + sizeof<fis> + sizeof<ahci_command_table[CLSZ]>);
+    var memory = vm::allocate_physical(sizeof<ahci_command[32]> + sizeof<fis> + sizeof<ahci_command_table[CLSZ]>);
 
     std::memset(memory.addr.ptr, 0, memory.size);
 

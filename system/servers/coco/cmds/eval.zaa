@@ -1,0 +1,49 @@
+//
+// eval
+//
+
+import std.stdio;
+import terminal;
+import basic.machine;
+import basic.compiler;
+import basic.parser;
+import env;
+
+pub fn eval(terminal::terminal mut &terminal, basic::machine mut &vm, env::env mut &env, std::string &cmdline) -> i32
+{
+  var src = std::format("PROCEDURE REPL\n{}\n", cmdline);
+
+  try
+  {
+    var parse = basic::parse_from_string(src);
+
+    if (!parse)
+    {
+      terminal.write(std::format("?{}\n", std::to_uppercase(std::meta::enumerator_name(parse.error))));
+
+      return 0;
+    }
+
+    var compile = basic::compile(parse.procedures[0]);
+
+    if (!compile)
+    {
+      terminal.write(std::format("?{}\n", std::to_uppercase(std::meta::enumerator_name(compile.error))));
+
+      return 0;
+    }
+
+    if (var rc = vm.run(compile.procedure); !rc)
+    {
+      terminal.write(std::format("?{}\n", std::to_uppercase(std::meta::enumerator_name(rc.error))));
+
+      return 0;
+    }
+  }
+  catch (std::error err)
+  {
+    return -5;
+  }
+
+  return 0;
+}

@@ -1,0 +1,302 @@
+//
+// gfx module
+//
+
+import std.stdlib;
+import basic.machine;
+import terminal;
+import gfx;
+import gfx.blit;
+import gfx.path;
+import gfx.stroke;
+
+using basic::errc;
+using basic::result;
+using basic::operand;
+using basic::machine;
+
+struct Gfx
+{
+  float cursor_x = 0.0;
+  float cursor_y = 0.0;
+  gfx::pen foreground = gfx::rgba(0xff000000);
+  gfx::color background = gfx::rgba(0xff009000);
+
+  terminal::terminal mut *terminal;
+
+  fn create_context(this mut &) -> gfx::paint_t
+  {
+    var mut &display = this.terminal.display;
+
+    return gfx::create_context(display.width, display.height, display.stride, display.bits.data);
+  }
+
+  fn instance() -> Gfx mut &
+  {
+    static Gfx = #Gfx();
+
+    return &Gfx;
+  }
+
+  Gfx() = default;
+  Gfx(#Gfx &) = default;
+  ~Gfx() = default;
+}
+
+fn pop_int(machine mut &vm, int mut &value) -> result
+{
+  var operand = operand();
+
+  if (var rc = vm.pop(&mut operand); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut operand); !rc)
+    return rc;
+
+  if (!operand.is_integer)
+    return errc::illegal_argument;
+
+  value = operand.integer;
+
+  return ok;
+}
+
+fn pop_real(machine mut &vm, float mut &value) -> result
+{
+  var operand = operand();
+
+  if (var rc = vm.pop(&mut operand); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut operand); !rc)
+    return rc;
+
+  if (!operand.is_real && !operand.is_integer)
+    return errc::illegal_argument;
+
+  value = operand.as_real;
+
+  return ok;
+}
+
+fn pop_color(machine mut &vm, gfx::color mut &color) -> result
+{
+  var operand = operand();
+
+  if (var rc = vm.pop(&mut operand); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut operand); !rc)
+    return rc;
+
+  if (!operand.is_integer)
+    return errc::illegal_argument;
+
+  color = gfx::rgba(std::bit_cast<u32>(operand.integer));
+
+  return ok;
+}
+
+fn pop_coord(machine mut &vm, float mut &coord) -> result
+{
+  var operand = operand();
+
+  if (var rc = vm.pop(&mut operand); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut operand); !rc)
+    return rc;
+
+  if (!operand.is_real && !operand.is_integer)
+    return errc::illegal_argument;
+
+  coord = operand.as_real + 0.5;
+
+  return ok;
+}
+
+fn clear(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  gfx.cursor_x = 0.0;
+  gfx.cursor_y = 0.0;
+  gfx.foreground = gfx::pen(gfx::rgba(0xff000000));
+  gfx.background = gfx::rgba(0xff009000);
+
+  if (argc == 1)
+  {
+    if (var rc = vm.pop_color(&mut gfx.background); !rc)
+      return rc;
+  }
+
+  var ctx = gfx.create_context();
+
+  gfx::clear(&mut ctx, gfx.background);
+
+  return ok;
+}
+
+fn color(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  if (argc == 1)
+  {
+    if (var rc = vm.pop_color(&mut gfx.foreground.brush); !rc)
+      return rc;
+  }
+
+  if (argc == 3 || argc == 4)
+  {
+    var rgba = (0.0, 0.0, 0.0, 1.0);
+
+    if (argc == 4)
+    {
+      if (var rc = vm.pop_real(&mut rgba.3); !rc)
+        return rc;
+    }
+
+    if (var rc = vm.pop_real(&mut rgba.2); !rc)
+      return rc;
+
+    if (var rc = vm.pop_real(&mut rgba.1); !rc)
+      return rc;
+
+    if (var rc = vm.pop_real(&mut rgba.0); !rc)
+      return rc;
+
+    gfx.foreground.brush = gfx::color(cast(rgba.0), cast(rgba.1), cast(rgba.2), cast(rgba.3));
+  }
+
+  return ok;
+}
+
+fn pen(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  if (var rc = vm.pop_real(&mut gfx.foreground.width); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn move(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  if (var rc = vm.pop_coord(&mut gfx.cursor_y); !rc)
+    return rc;
+
+  if (var rc = vm.pop_coord(&mut gfx.cursor_x); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn line(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  var y1 = gfx.cursor_y;
+  var x1 = gfx.cursor_x;
+
+  if (argc == 3 || argc == 5)
+  {
+    if (var rc = vm.pop_color(&mut gfx.foreground.brush); !rc)
+      return rc;
+  }
+
+  if (var rc = vm.pop_coord(&mut gfx.cursor_y); !rc)
+    return rc;
+
+  if (var rc = vm.pop_coord(&mut gfx.cursor_x); !rc)
+    return rc;
+
+  if (argc == 4 || argc == 5)
+  {
+    if (var rc = vm.pop_coord(&mut y1); !rc)
+      return rc;
+
+    if (var rc = vm.pop_coord(&mut x1); !rc)
+      return rc;
+  }
+
+  var ctx = gfx.create_context();
+
+  var path = gfx::path();
+  path.move_to(x1, y1);
+  path.line_to(gfx.cursor_x, gfx.cursor_y);
+
+  gfx::stroke_path(&mut ctx, path, gfx.foreground);
+
+  return ok;
+}
+
+fn circle(Gfx mut &gfx, machine mut &vm, usize argc) -> result
+{
+  var radius = 0.0;
+
+  if (argc == 2 || argc == 4)
+  {
+    if (var rc = vm.pop_color(&mut gfx.foreground.brush); !rc)
+      return rc;
+  }
+
+  if (var rc = vm.pop_coord(&mut radius); !rc)
+    return rc;
+
+  if (argc == 3 || argc == 4)
+  {
+    if (var rc = vm.pop_coord(&mut gfx.cursor_y); !rc)
+      return rc;
+
+    if (var rc = vm.pop_coord(&mut gfx.cursor_x); !rc)
+      return rc;
+  }
+
+  var ctx = gfx.create_context();
+
+  var path = gfx::path();
+  path.circle_at(gfx::point(gfx.cursor_x, gfx.cursor_y), radius);
+
+  gfx::stroke_path(&mut ctx, path, gfx.foreground);
+
+  return ok;
+}
+
+fn dispatch(machine mut &vm, std::string_view function, usize argc) -> result
+{
+  var mut &gfx = Gfx::instance;
+
+  switch (function)
+  {
+    case "Clear":
+      if (var rc = clear(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    case "Color":
+      if (var rc = color(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    case "Pen":
+      if (var rc = pen(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    case "Move":
+      if (var rc = move(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    case "Line":
+      if (var rc = line(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    case "Circle":
+      if (var rc = circle(&mut gfx, &mut vm, argc); !rc)
+        return rc;
+
+    else:
+      return errc::unknown_procedure;
+  }
+
+  return ok;
+}
+
+pub fn initialise(machine mut &vm, terminal::terminal mut &terminal) -> void
+{
+  var mut &gfx = Gfx::instance;
+  gfx.terminal = &terminal;
+
+  vm.register("Gfx", &cast<(machine mut &, std::string_view, usize) -> result>(dispatch));
+}

@@ -10,4 +10,5 @@ import syscalls.ioring;
 import syscalls.time;
 import syscalls.sched;
 import syscalls.kill;
+import syscalls.random;
 import syscalls.unknown;

@@ -113,6 +113,11 @@ pub struct window : pub gui::window
         cell.width = n;
         cell.attrs = attrs;
 
+        for (var k = 1; k < n; ++k)
+        {
+          this.cells[j*columns + i + k].ch = 0;
+        }
+
         if (cell.width != 0)
         {
           if (i < minx)
@@ -279,6 +284,9 @@ pub struct window : pub gui::window
 
             case Key::Delete:
               post(&mut this, "\x1b[3;2~".data, 6);
+
+            case Key::Tab:
+              post(&mut this, "\x1b[1;2Z".data, 6);
 
             case Key::Enter:
             case Key::NumEnter:

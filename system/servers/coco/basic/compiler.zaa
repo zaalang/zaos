@@ -1,0 +1,2512 @@
+//
+// compiler
+//
+
+import basic;
+import basic.machine;
+import basic.parser;
+import std.vector;
+import std.flat_hash_map;
+
+using basic::op;
+using basic::options;
+using basic::procedure;
+using basic::Procedure;
+using basic::Type;
+using basic::Expression;
+using basic::UnaryOp;
+using basic::BinaryOp;
+using basic::FunctionOp;
+using basic::Statement;
+using basic::Record;
+using basic::VarDecl;
+using basic::Open;
+using basic::Print;
+using basic::Input;
+using basic::Read;
+using basic::Write;
+using basic::Seek;
+using basic::Get;
+using basic::Put;
+using basic::IfGoto;
+using basic::IfThen;
+using basic::IfElse;
+using basic::WhileDo;
+using basic::RepeatUntil;
+using basic::ForNext;
+using basic::Loop;
+using basic::ExitIf;
+using basic::Run;
+using basic::OnGoto;
+using basic::errc;
+
+enum result : i32
+{
+  ok = 0,
+
+  fn bool(this &) -> bool
+  {
+    return cast<i32>(this) >= 0;
+  }
+
+  result(errc error)
+    : this(cast<result>(-cast<i32>(error)))
+  {
+  }
+}
+
+pub struct compile_result
+{
+  pub errc error;
+  pub procedure procedure;
+
+  pub fn bool(this &) -> bool
+  {
+    return !this.error;
+  }
+
+  pub compile_result() = default;
+  pub compile_result(compile_result&) = default;
+  pub fn =(compile_result mut &, compile_result&) -> compile_result mut & = default;
+  pub ~compile_result() = default;
+}
+
+struct symbol
+{
+  op type;
+  usize size;
+  usize address;
+  usize offset;
+
+  symbol() = default;
+  symbol(symbol &&) = default;
+  ~symbol() = default;
+}
+
+struct compile_context
+{
+  options flags;
+  std::vector<u8> text;
+  std::vector<u8> rodata;
+  std::vector<u8> symtab;
+
+  usize data_size;
+  usize text_offset;
+  usize rodata_offset;
+  usize symbol_table_offset;
+  usize link_storage_offset;
+  usize first_data_statement;
+  usize previous_data_statement;
+  usize link_storage_size;
+
+  std::flat_hash_map<int, usize> labels;
+  std::flat_hash_map<std::string, symbol> params;
+  std::flat_hash_map<std::string, symbol> symbols;
+  std::flat_hash_map<std::string, usize> strings;
+
+  std::flat_hash_map<int, std::vector<usize>> unbounds;
+  std::vector<std::vector<usize>> breaks;
+
+  compile_context(options flags)
+    : flags(flags)
+  {
+  }
+
+  ~compile_context() = default;
+}
+
+fn sizeof_type(compile_context &ctx, Type &type) -> usize
+{
+  switch (type)
+  {
+    case Real:
+      return sizeof<float>;
+
+    case Byte:
+      return sizeof<u8>;
+
+    case Integer:
+      return sizeof<int>;
+
+    case Boolean:
+      return sizeof<bool>;
+
+    case String[capacity]:
+      return sizeof<u16> + capacity;
+
+    case Record[name]:
+      return ctx.symbols[name].size;
+
+    else:
+      std::panic("unhandled");
+  }
+}
+
+fn unaryop(UnaryOp::Kind op, Type &subexpr) -> Type
+{
+  switch (op)
+  {
+    case Plus:
+    case Minus:
+      if (subexpr.is_integral)
+        return Type::Integer;
+
+      if (subexpr.is_numeric)
+        return Type::Real;
+
+    case Not:
+      if (subexpr.is_boolean)
+        return Type::Boolean;
+  }
+
+  std::panic("unhandled");
+}
+
+fn binaryop(BinaryOp::Kind op, Type &lhs, Type &rhs) -> Type
+{
+  switch (op)
+  {
+    case Add:
+      if (lhs.is_integral && rhs.is_integral)
+        return Type::Integer;
+
+      if (lhs.is_numeric && rhs.is_numeric)
+        return Type::Real;
+
+      if (lhs.is_string && rhs.is_string)
+        return Type::String;
+
+    case Sub:
+    case Mul:
+    case Div:
+    case Pow:
+      if (lhs.is_integral && rhs.is_integral)
+        return Type::Integer;
+
+      if (lhs.is_numeric && rhs.is_numeric)
+        return Type::Real;
+
+    case And:
+    case Xor:
+    case Or:
+      if (lhs.is_boolean && rhs.is_boolean)
+        return Type::Boolean;
+
+    case LT:
+    case GT:
+    case LE:
+    case GE:
+      if (lhs.is_integral && rhs.is_integral)
+        return Type::Integer;
+
+      if (lhs.is_numeric && rhs.is_numeric)
+        return Type::Real;
+
+      if (lhs.is_string && rhs.is_string)
+        return Type::String;
+
+    case EQ:
+    case NE:
+      if (lhs.is_boolean && rhs.is_boolean)
+        return Type::Boolean;
+
+      if (lhs.is_integral && rhs.is_integral)
+        return Type::Integer;
+
+      if (lhs.is_numeric && rhs.is_numeric)
+        return Type::Real;
+
+      if (lhs.is_string && rhs.is_string)
+        return Type::String;
+  }
+
+  std::panic("unhandled");
+}
+
+fn emit_header(compile_context mut &ctx, std::string &name) -> result
+{
+  ctx.text.resize(sizeof<basic::header>);
+  ctx.text.push_back(cast<u8>(name.len));
+  ctx.text.append(name);
+
+  return ok;
+}
+
+fn patch_header(compile_context mut &ctx) -> result
+{
+  var header = cast<basic::header mut *>(ctx.text.data);
+
+  header.magic = 0x87cd;
+  header.size = cast<u16>(ctx.text.len);
+  header.name_offset = sizeof(*header);
+  header.language = 0x22;
+  header.attributes = 0x81;
+  header.parity = 0;
+  header.data_size = cast<u16>(ctx.data_size);
+  header.text_offset = cast<u32>(ctx.text_offset);
+  header.rodata_offset = cast<u32>(ctx.rodata_offset);
+  header.symbol_table_offset = cast<u32>(ctx.symbol_table_offset);
+  header.link_storage_offset = cast<u32>(ctx.link_storage_offset);
+  header.first_data_statement = cast<u32>(ctx.first_data_statement);
+
+  return ok;
+}
+
+fn emit_label(compile_context mut &ctx, int label) -> result
+{
+  ctx.text.push_back(cast<u8>(op::label));
+  ctx.text.push_back(cast<u8>(label & 0xff));
+  ctx.text.push_back(cast<u8>(label >> 8 & 0xff));
+
+  ctx.labels.insert(label, ctx.text.len - ctx.text_offset);
+
+  for (var &unbound : ctx.unbounds.get(label).unwrap_or_default)
+  {
+    ctx.text[unbound + 0] = cast<u8>((ctx.text.len - ctx.text_offset) & 0xff);
+    ctx.text[unbound + 1] = cast<u8>((ctx.text.len - ctx.text_offset) >> 8 & 0xff);
+    ctx.text[unbound + 2] = cast<u8>((ctx.text.len - ctx.text_offset) >> 16 & 0xff);
+  }
+
+  ctx.unbounds.erase(label);
+
+  return ok;
+}
+
+fn emit_remark(compile_context mut &ctx, std::string &text) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_rem));
+  ctx.text.push_back(cast<u8>(text.len));
+  ctx.text.append(text);
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_string(compile_context mut &ctx, std::string &str) -> result
+{
+  switch (ctx.strings.get(str))
+  {
+    case Some[offset]:
+      ctx.text.push_back(cast<u8>(offset & 0xff));
+      ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+
+    case None:
+      ctx.strings.insert(str, ctx.rodata.len);
+
+      ctx.text.push_back(cast<u8>(ctx.rodata.len & 0xff));
+      ctx.text.push_back(cast<u8>(ctx.rodata.len >> 8 & 0xff));
+
+      ctx.rodata.push_back(cast<u8>(str.len));
+      ctx.rodata.append(str);
+  }
+
+  return ok;
+}
+
+fn emit_expression(compile_context mut &ctx, Expression &expression) -> result
+{
+  switch (expression)
+  {
+    case Real[real]:
+      ctx.text.push_back(cast<u8>(op::literal_real));
+      ctx.text.append(std::span(cast<u8*>(&real), sizeof(real)));
+
+    case Integer[integer]:
+      ctx.text.push_back(cast<u8>(op::literal_integer));
+      ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+
+    case Boolean[boolean]:
+      ctx.text.push_back(cast<u8>((boolean) ? op::literal_true : op::literal_false));
+
+    case String[string]:
+      ctx.text.push_back(cast<u8>(op::literal_string));
+      ctx.text.push_back(cast<u8>(string.len));
+      ctx.text.append(string);
+
+    case Hexadecimal[integer]:
+      ctx.text.push_back(cast<u8>(op::literal_hexadecimal));
+      ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+
+    case DeclRef[declref]:
+      switch (ctx.params.get(declref.decl))
+      {
+        case Some[symbol]:
+          ctx.text.push_back(cast<u8>(op::parameter_unit));
+          ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+          ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+          ctx.text.push_back(cast<u8>(op::symbol));
+          ctx.text.push_back(cast<u8>(symbol.offset & 0xff));
+          ctx.text.push_back(cast<u8>(symbol.offset >> 8 & 0xff));
+
+        else:
+          switch (ctx.symbols.get(declref.decl))
+          {
+            case Some[symbol]:
+              switch (symbol.type)
+              {
+                case type_real:
+                  ctx.text.push_back(cast<u8>(op::variable_real));
+                  ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+                  ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+                case type_byte:
+                  ctx.text.push_back(cast<u8>(op::variable_byte));
+                  ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+                  ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+                case type_integer:
+                  ctx.text.push_back(cast<u8>(op::variable_integer));
+                  ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+                  ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+                case type_boolean:
+                  ctx.text.push_back(cast<u8>(op::variable_byte));
+                  ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+                  ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+                case type_string:
+                case type_record:
+                case type_real_vector:
+                case type_byte_vector:
+                case type_integer_vector:
+                case type_boolean_vector:
+                case type_string_vector:
+                case type_record_vector:
+                case type_real_table:
+                case type_byte_table:
+                case type_integer_table:
+                case type_boolean_table:
+                case type_string_table:
+                case type_record_table:
+                case type_real_matrix:
+                case type_byte_matrix:
+                case type_integer_matrix:
+                case type_boolean_matrix:
+                case type_string_matrix:
+                case type_record_matrix:
+                  ctx.text.push_back(cast<u8>(op::variable_unit));
+                  ctx.text.push_back(cast<u8>(symbol.address & 0xff));
+                  ctx.text.push_back(cast<u8>(symbol.address >> 8 & 0xff));
+
+                else:
+                  std::panic("unhandled");
+              }
+
+              ctx.text.push_back(cast<u8>(op::symbol));
+              ctx.text.push_back(cast<u8>(symbol.offset & 0xff));
+              ctx.text.push_back(cast<u8>(symbol.offset >> 8 & 0xff));
+
+            else:
+              return errc::undefined_variable;
+          }
+      }
+
+    case Subscript[subscript]:
+
+      for (var &expr : subscript.indices)
+      {
+        if (var rc = emit_expression(&mut ctx, expr); !rc)
+          return rc;
+      }
+
+      if (var rc = emit_expression(&mut ctx, *subscript.decl); !rc)
+        return rc;
+
+      ctx.text[ctx.text.len - 6] += cast<u8>(subscript.indices.len);
+
+    case Field[field]:
+
+      if (var rc = emit_expression(&mut ctx, *field.base); !rc)
+        return rc;
+
+      if (var rc = emit_expression(&mut ctx, *field.decl); !rc)
+        return rc;
+
+      ctx.text[ctx.text.len - 6] += 0x8;
+
+    case UnaryOp[unaryop]:
+
+      if (var rc = emit_expression(&mut ctx, *unaryop.subexpr); !rc)
+        return rc;
+
+      switch (unaryop.op)
+      {
+        case Plus:
+          ctx.text.push_back(cast<u8>(op::plus));
+
+        case Minus:
+          switch (unaryop(unaryop.op, unaryop.subexpr.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::negi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::negf));
+          }
+
+        case Not:
+          ctx.text.push_back(cast<u8>(op::not));
+
+        else:
+          std::panic("unhandled");
+      }
+
+    case BinaryOp[binaryop]:
+
+      if (var rc = emit_expression(&mut ctx, *binaryop.lhs); !rc)
+        return rc;
+
+      if (binaryop.op == BinaryOp::Kind::Assign)
+        ctx.text[ctx.text.len - 6] += 0x10;
+
+      if (var rc = emit_expression(&mut ctx, *binaryop.rhs); !rc)
+        return rc;
+
+      switch (binaryop.op)
+      {
+        case Add:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::addi));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::adda));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::addf));
+          }
+
+        case Sub:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::subi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::subf));
+          }
+
+        case Mul:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::muli));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::mulf));
+          }
+
+        case Div:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::divi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::divf));
+          }
+
+        case Pow:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::powi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::powf));
+          }
+
+        case And:
+          ctx.text.push_back(cast<u8>(op::and));
+
+        case Xor:
+          ctx.text.push_back(cast<u8>(op::xor));
+
+        case Or:
+          ctx.text.push_back(cast<u8>(op::or));
+
+        case LT:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::lti));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::lta));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::ltf));
+          }
+
+        case GT:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::gti));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::gta));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::gtf));
+          }
+
+        case LE:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::lei));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::lea));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::lef));
+          }
+
+        case GE:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::gei));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::gea));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::gef));
+          }
+
+        case EQ:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Boolean:
+              ctx.text.push_back(cast<u8>(op::eqi));
+
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::eqi));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::eqa));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::eqf));
+          }
+
+        case NE:
+          switch (binaryop(binaryop.op, binaryop.lhs.type, binaryop.rhs.type))
+          {
+            case Boolean:
+              ctx.text.push_back(cast<u8>(op::nei));
+
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::nei));
+
+            case String:
+              ctx.text.push_back(cast<u8>(op::nea));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::nef));
+          }
+
+        case Assign:
+          ctx.text.push_back(cast<u8>(op::assign));
+
+        else:
+          std::panic("unhandled");
+      }
+
+    case FunctionOp[functionop]:
+
+      for (var &arg : functionop.args)
+      {
+        if (var rc = emit_expression(&mut ctx, arg); !rc)
+          return rc;
+      }
+
+      switch (functionop.op)
+      {
+        case Abs:
+          switch (expression.type)
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::absi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::absf));
+          }
+
+        case Asc:
+          ctx.text.push_back(cast<u8>(op::asc));
+
+        case Cos:
+          ctx.text.push_back(cast<u8>(op::cos));
+
+        case ACos:
+          ctx.text.push_back(cast<u8>(op::acs));
+
+        case Chr$:
+          ctx.text.push_back(cast<u8>(op::chr$));
+
+        case Date$:
+          ctx.text.push_back(cast<u8>(op::date$));
+
+        case Eof:
+          ctx.text.push_back(cast<u8>(op::eof));
+
+        case Ext:
+          ctx.text.push_back(cast<u8>(op::ext));
+
+        case Err:
+          ctx.text.push_back(cast<u8>(op::err));
+
+        case Exp:
+          ctx.text.push_back(cast<u8>(op::exp));
+
+        case Fix:
+          ctx.text.push_back(cast<u8>(op::fix));
+
+        case Float:
+          ctx.text.push_back(cast<u8>(op::float));
+
+        case Int:
+          ctx.text.push_back(cast<u8>(op::int));
+
+        case LNot:
+          ctx.text.push_back(cast<u8>(op::lnot));
+
+        case LAnd:
+          ctx.text.push_back(cast<u8>(op::land));
+
+        case LXor:
+          ctx.text.push_back(cast<u8>(op::lxor));
+
+        case LOr:
+          ctx.text.push_back(cast<u8>(op::lor));
+
+        case Log:
+          ctx.text.push_back(cast<u8>(op::log));
+
+        case Log10:
+          ctx.text.push_back(cast<u8>(op::log10));
+
+        case Len:
+          ctx.text.push_back(cast<u8>(op::len));
+
+        case Left$:
+          ctx.text.push_back(cast<u8>(op::left$));
+
+        case Mid$:
+          ctx.text.push_back(cast<u8>(op::mid$));
+
+        case Mod:
+          switch (expression.type)
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::modi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::modf));
+          }
+
+        case PI:
+          ctx.text.push_back(cast<u8>(op::pi));
+
+        case Right$:
+          ctx.text.push_back(cast<u8>(op::right$));
+
+        case Rnd:
+          ctx.text.push_back(cast<u8>(op::rnd));
+
+        case Sin:
+          ctx.text.push_back(cast<u8>(op::sin));
+
+        case ASin:
+          ctx.text.push_back(cast<u8>(op::asn));
+
+        case Size:
+          ctx.text[ctx.text.len - 6] += 0x10;
+          ctx.text.push_back(cast<u8>(op::size));
+
+        case Str$:
+          ctx.text.push_back(cast<u8>(op::str$));
+
+        case Sgn:
+          switch (expression.type)
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::sgni));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::sgnf));
+          }
+
+        case Sq:
+          switch (expression.type)
+          {
+            case Integer:
+              ctx.text.push_back(cast<u8>(op::sqi));
+
+            case Real:
+              ctx.text.push_back(cast<u8>(op::sqf));
+          }
+
+        case Sqrt:
+          ctx.text.push_back(cast<u8>(op::sqrt));
+
+        case Substr:
+          ctx.text.push_back(cast<u8>(op::substr));
+
+        case Tan:
+          ctx.text.push_back(cast<u8>(op::tan));
+
+        case ATan:
+          ctx.text.push_back(cast<u8>(op::atn));
+
+        case Trim$:
+          ctx.text.push_back(cast<u8>(op::trim$));
+
+        case Val:
+          ctx.text.push_back(cast<u8>(op::val));
+
+        else:
+          std::panic("unhandled");
+      }
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn emit_print(compile_context mut &ctx, Print &print) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_print));
+
+  if (print.fd)
+  {
+    ctx.text.push_back(cast<u8>(op::hash));
+
+    if (var rc = emit_expression(&mut ctx, print.fd); !rc)
+      return rc;
+
+    ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  if (print.format != "")
+  {
+    ctx.text.push_back(cast<u8>(op::kw_using));
+
+    emit_string(&mut ctx, print.format);
+
+    ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  for (var &item : print.items)
+  {
+    if (var rc = emit_expression(&mut ctx, item.expr); !rc)
+      return rc;
+
+    switch (item.separator)
+    {
+      case ',':
+        ctx.text.push_back(cast<u8>(op::comma));
+
+      case ';':
+        ctx.text.push_back(cast<u8>(op::semi));
+    }
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_input(compile_context mut &ctx, Input &input) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_input));
+
+  ctx.text.push_back(cast<u8>(op::literal_string));
+  ctx.text.push_back(cast<u8>(input.prompt.len));
+  ctx.text.append(input.prompt);
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  for (var &item : input.items)
+  {
+    if (var rc = emit_expression(&mut ctx, item); !rc)
+      return rc;
+
+    ctx.text[ctx.text.len - 6] += 0x10;
+
+    if (&item != &input.items.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_param(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_param));
+
+  for (var &vardecl : vardecls)
+  {
+    var type = op();
+
+    switch (vardecl.type)
+    {
+      case Real:
+        type = op::type_real;
+
+      case Byte:
+        type = op::type_byte;
+
+      case Integer:
+        type = op::type_integer;
+
+      case Boolean:
+        type = op::type_boolean;
+
+      case String:
+        type = op::type_string;
+
+      case Record[name]:
+        switch (ctx.symbols.get(name))
+        {
+          case Some[symbol]:
+            type = op::type_record;
+
+          else:
+            return errc::illegal_type_suffix;
+        }
+
+      else:
+        std::panic("unhandled");
+    }
+
+    for (var &decl : vardecl.decls)
+    {
+      var symbol = symbol();
+      symbol.type = cast<op>(cast<usize>(type) + decl.extents.len * 8);
+      symbol.size = std::fold_left(decl.extents, sizeof_type(ctx, vardecl.type), |s, i| s*i);
+
+      switch (symbol.type)
+      {
+        case type_real:
+        case type_byte:
+        case type_integer:
+        case type_boolean:
+        case type_string:
+        case type_record:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+
+        case type_real_vector:
+        case type_byte_vector:
+        case type_integer_vector:
+        case type_boolean_vector:
+        case type_string_vector:
+        case type_record_vector:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_table:
+        case type_byte_table:
+        case type_integer_table:
+        case type_boolean_table:
+        case type_string_table:
+        case type_record_table:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_matrix:
+        case type_byte_matrix:
+        case type_integer_matrix:
+        case type_boolean_matrix:
+        case type_string_matrix:
+        case type_record_matrix:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.params.len >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        else:
+          std::panic("unhandled");
+      }
+
+      ctx.text.push_back(cast<u8>(op::symbol));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len & 0xff));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len >> 8 & 0xff));
+
+      if (!decl.extents.empty)
+      {
+        ctx.text.push_back(cast<u8>(op::l_paren));
+
+        for (var &extent : decl.extents)
+        {
+          var integer = cast<int>(extent);
+          ctx.text.push_back(cast<u8>(op::literal_integer));
+          ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+
+          if (&extent != &decl.extents.back)
+            ctx.text.push_back(cast<u8>(op::comma));
+        }
+
+        ctx.text.push_back(cast<u8>(op::r_paren));
+      }
+
+      symbol.offset = ctx.symtab.len;
+      ctx.symtab.push_back(cast<u8>(decl.name.len));
+      ctx.symtab.append(decl.name);
+
+      ctx.params.insert(decl.name, symbol);
+
+      if (&decl != &vardecl.decls.back)
+        ctx.text.push_back(cast<u8>(op::comma));
+    }
+
+    ctx.text.push_back(cast<u8>(op::colon));
+
+    switch (vardecl.type)
+    {
+      case Real:
+        ctx.text.push_back(cast<u8>(op::type_real));
+
+      case Byte:
+        ctx.text.push_back(cast<u8>(op::type_byte));
+
+      case Integer:
+        ctx.text.push_back(cast<u8>(op::type_integer));
+
+      case Boolean:
+        ctx.text.push_back(cast<u8>(op::type_boolean));
+
+      case String[capacity]:
+        var integer = cast<int>(capacity);
+        ctx.text.push_back(cast<u8>(op::type_string));
+        ctx.text.push_back(cast<u8>(op::l_square));
+        ctx.text.push_back(cast<u8>(op::literal_integer));
+        ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+        ctx.text.push_back(cast<u8>(op::r_square));
+
+      case Record[name]:
+        var offset = ctx.symbols[name].offset;
+        ctx.text.push_back(cast<u8>(op::symbol));
+        ctx.text.push_back(cast<u8>(offset & 0xff));
+        ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+
+      else:
+        std::panic("unhandled");
+    }
+
+    if (&vardecl != &vardecls.back)
+      ctx.text.push_back(cast<u8>(op::semi));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_type(compile_context mut &ctx, Record &rectype) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_type));
+
+  var record = symbol();
+  record.type = op::type_record;
+
+  ctx.text.push_back(cast<u8>(op::symbol));
+  ctx.text.push_back(cast<u8>(ctx.symtab.len & 0xff));
+  ctx.text.push_back(cast<u8>(ctx.symtab.len >> 8 & 0xff));
+
+  record.offset = ctx.symtab.len;
+  ctx.symtab.push_back(cast<u8>(rectype.name.len));
+  ctx.symtab.append(rectype.name);
+
+  ctx.text.push_back(cast<u8>(op::assign));
+
+  for (var &vardecl : rectype.vardecls)
+  {
+    var type = op();
+
+    switch (vardecl.type)
+    {
+      case Real:
+        type = op::type_real;
+
+      case Byte:
+        type = op::type_byte;
+
+      case Integer:
+        type = op::type_integer;
+
+      case Boolean:
+        type = op::type_boolean;
+
+      case String:
+        type = op::type_string;
+
+      case Record[name]:
+        switch (ctx.symbols.get(name))
+        {
+          case Some[symbol]:
+            type = op::type_record;
+
+          else:
+            return errc::illegal_type_suffix;
+        }
+
+      else:
+        std::panic("unhandled");
+    }
+
+    for (var &decl : vardecl.decls)
+    {
+      var symbol = symbol();
+      symbol.type = cast<op>(cast<usize>(type) + decl.extents.len * 8);
+      symbol.size = std::fold_left(decl.extents, sizeof_type(ctx, vardecl.type), |s, i| s*i);
+
+      switch (symbol.type)
+      {
+        case type_real:
+        case type_byte:
+        case type_integer:
+        case type_boolean:
+          symbol.address = record.size;
+
+        case type_string:
+        case type_record:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(record.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(record.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+
+        case type_real_vector:
+        case type_byte_vector:
+        case type_integer_vector:
+        case type_boolean_vector:
+        case type_string_vector:
+        case type_record_vector:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(record.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(record.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_table:
+        case type_byte_table:
+        case type_integer_table:
+        case type_boolean_table:
+        case type_string_table:
+        case type_record_table:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(record.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(record.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_matrix:
+        case type_byte_matrix:
+        case type_integer_matrix:
+        case type_boolean_matrix:
+        case type_string_matrix:
+        case type_record_matrix:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(record.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(record.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        else:
+          std::panic("unhandled");
+      }
+
+      ctx.text.push_back(cast<u8>(op::symbol));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len & 0xff));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len >> 8 & 0xff));
+
+      if (!decl.extents.empty)
+      {
+        ctx.text.push_back(cast<u8>(op::l_paren));
+
+        for (var &extent : decl.extents)
+        {
+          var integer = cast<int>(extent);
+          ctx.text.push_back(cast<u8>(op::literal_integer));
+          ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+
+          if (&extent != &decl.extents.back)
+            ctx.text.push_back(cast<u8>(op::comma));
+        }
+
+        ctx.text.push_back(cast<u8>(op::r_paren));
+      }
+
+      symbol.offset = ctx.symtab.len;
+      ctx.symtab.push_back(cast<u8>(decl.name.len));
+      ctx.symtab.append(decl.name);
+
+      ctx.symbols.insert(decl.name, symbol);
+
+      record.size += symbol.size;
+
+      if (&decl != &vardecl.decls.back)
+        ctx.text.push_back(cast<u8>(op::comma));
+    }
+
+    ctx.text.push_back(cast<u8>(op::colon));
+
+    switch (vardecl.type)
+    {
+      case Real:
+        ctx.text.push_back(cast<u8>(op::type_real));
+
+      case Byte:
+        ctx.text.push_back(cast<u8>(op::type_byte));
+
+      case Integer:
+        ctx.text.push_back(cast<u8>(op::type_integer));
+
+      case Boolean:
+        ctx.text.push_back(cast<u8>(op::type_boolean));
+
+      case String[capacity]:
+        var integer = cast<int>(capacity);
+        ctx.text.push_back(cast<u8>(op::type_string));
+        ctx.text.push_back(cast<u8>(op::l_square));
+        ctx.text.push_back(cast<u8>(op::literal_integer));
+        ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+        ctx.text.push_back(cast<u8>(op::r_square));
+
+      case Record[name]:
+        var offset = ctx.symbols[name].offset;
+        ctx.text.push_back(cast<u8>(op::symbol));
+        ctx.text.push_back(cast<u8>(offset & 0xff));
+        ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+
+      else:
+        std::panic("unhandled");
+    }
+
+    if (&vardecl != &rectype.vardecls.back)
+      ctx.text.push_back(cast<u8>(op::semi));
+  }
+
+  record.address = ctx.rodata.len;
+  ctx.rodata.push_back(cast<u8>(record.type));
+  ctx.rodata.push_back(cast<u8>(record.size & 0xff));
+  ctx.rodata.push_back(cast<u8>(record.size >> 8 & 0xff));
+
+  ctx.symbols.insert(rectype.name, record);
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_dim(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_dim));
+
+  for (var &vardecl : vardecls)
+  {
+    var type = op();
+
+    switch (vardecl.type)
+    {
+      case Real:
+        type = op::type_real;
+
+      case Byte:
+        type = op::type_byte;
+
+      case Integer:
+        type = op::type_integer;
+
+      case Boolean:
+        type = op::type_boolean;
+
+      case String:
+        type = op::type_string;
+
+      case Record[name]:
+        switch (ctx.symbols.get(name))
+        {
+          case Some[symbol]:
+            type = op::type_record;
+
+          else:
+            return errc::illegal_type_suffix;
+        }
+
+      else:
+        std::panic("unhandled");
+    }
+
+    for (var &decl : vardecl.decls)
+    {
+      var symbol = symbol();
+      symbol.type = cast<op>(cast<usize>(type) + decl.extents.len * 8);
+      symbol.size = std::fold_left(decl.extents, sizeof_type(ctx, vardecl.type), |s, i| s*i);
+
+      switch (symbol.type)
+      {
+        case type_real:
+        case type_byte:
+        case type_integer:
+        case type_boolean:
+          symbol.address = ctx.data_size;
+
+        case type_string:
+        case type_record:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+
+        case type_real_vector:
+        case type_byte_vector:
+        case type_integer_vector:
+        case type_boolean_vector:
+        case type_string_vector:
+        case type_record_vector:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_table:
+        case type_byte_table:
+        case type_integer_table:
+        case type_boolean_table:
+        case type_string_table:
+        case type_record_table:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        case type_real_matrix:
+        case type_byte_matrix:
+        case type_integer_matrix:
+        case type_boolean_matrix:
+        case type_string_matrix:
+        case type_record_matrix:
+          symbol.address = ctx.rodata.len;
+          ctx.rodata.push_back(cast<u8>(symbol.type));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size & 0xff));
+          ctx.rodata.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+          ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[2] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[1] >> 8 & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] & 0xff));
+          ctx.rodata.push_back(cast<u8>(decl.extents[0] >> 8 & 0xff));
+
+        else:
+          std::panic("unhandled");
+      }
+
+      ctx.text.push_back(cast<u8>(op::symbol));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len & 0xff));
+      ctx.text.push_back(cast<u8>(ctx.symtab.len >> 8 & 0xff));
+
+      if (!decl.extents.empty)
+      {
+        ctx.text.push_back(cast<u8>(op::l_paren));
+
+        for (var &extent : decl.extents)
+        {
+          var integer = cast<int>(extent);
+          ctx.text.push_back(cast<u8>(op::literal_integer));
+          ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+
+          if (&extent != &decl.extents.back)
+            ctx.text.push_back(cast<u8>(op::comma));
+        }
+
+        ctx.text.push_back(cast<u8>(op::r_paren));
+      }
+
+      symbol.offset = ctx.symtab.len;
+      ctx.symtab.push_back(cast<u8>(decl.name.len));
+      ctx.symtab.append(decl.name);
+
+      ctx.symbols.insert(decl.name, symbol);
+
+      ctx.data_size += symbol.size;
+
+      if (&decl != &vardecl.decls.back)
+        ctx.text.push_back(cast<u8>(op::comma));
+    }
+
+    ctx.text.push_back(cast<u8>(op::colon));
+
+    switch (vardecl.type)
+    {
+      case Real:
+        ctx.text.push_back(cast<u8>(op::type_real));
+
+      case Byte:
+        ctx.text.push_back(cast<u8>(op::type_byte));
+
+      case Integer:
+        ctx.text.push_back(cast<u8>(op::type_integer));
+
+      case Boolean:
+        ctx.text.push_back(cast<u8>(op::type_boolean));
+
+      case String[capacity]:
+        var integer = cast<int>(capacity);
+        ctx.text.push_back(cast<u8>(op::type_string));
+        ctx.text.push_back(cast<u8>(op::l_square));
+        ctx.text.push_back(cast<u8>(op::literal_integer));
+        ctx.text.append(std::span(cast<u8*>(&integer), sizeof(integer)));
+        ctx.text.push_back(cast<u8>(op::r_square));
+
+      case Record[name]:
+        var offset = ctx.symbols[name].offset;
+        ctx.text.push_back(cast<u8>(op::symbol));
+        ctx.text.push_back(cast<u8>(offset & 0xff));
+        ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+
+      else:
+        std::panic("unhandled");
+    }
+
+    if (&vardecl != &vardecls.back)
+      ctx.text.push_back(cast<u8>(op::semi));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_let(compile_context mut &ctx, VarDecl &vardecl) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_let));
+
+  for (var &decl : vardecl.decls)
+  {
+    var type = op();
+
+    switch (vardecl.type)
+    {
+      case Real:
+        type = op::type_real;
+
+      case Byte:
+        type = op::type_byte;
+
+      case Integer:
+        type = op::type_integer;
+
+      case Boolean:
+        type = op::type_boolean;
+
+      case String:
+        type = op::type_string;
+
+      case Record[name]:
+        switch (ctx.symbols.get(name))
+        {
+          case Some[symbol]:
+            type = op::type_record;
+
+          else:
+            return errc::illegal_type_suffix;
+        }
+
+      else:
+        std::panic("unhandled");
+    }
+
+    var symbol = symbol();
+    symbol.type = cast<op>(cast<usize>(type) + decl.extents.len * 8);
+    symbol.size = std::fold_left(decl.extents, sizeof_type(ctx, vardecl.type), |s, i| s*i);
+
+    switch (symbol.type)
+    {
+      case type_real:
+      case type_byte:
+      case type_integer:
+      case type_boolean:
+        symbol.address = ctx.data_size;
+
+      case type_string:
+      case type_record:
+        symbol.address = ctx.rodata.len;
+        ctx.rodata.push_back(cast<u8>(symbol.type));
+        ctx.rodata.push_back(cast<u8>(ctx.data_size & 0xff));
+        ctx.rodata.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+        ctx.rodata.push_back(cast<u8>(symbol.size & 0xff));
+        ctx.rodata.push_back(cast<u8>(symbol.size >> 8 & 0xff));
+
+      else:
+        std::panic("unhandled");
+    }
+
+    symbol.offset = ctx.symtab.len;
+    ctx.symtab.push_back(cast<u8>(decl.name.len));
+    ctx.symtab.append(decl.name);
+
+    ctx.symbols.insert(decl.name, symbol);
+
+    ctx.data_size += symbol.size;
+  }
+
+  return ok;
+}
+
+fn emit_expr(compile_context mut &ctx, Expression &expression) -> result
+{
+  if (var rc = emit_expression(&mut ctx, expression); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_target(compile_context mut &ctx, op op, int label) -> result
+{
+  ctx.text.push_back(cast<u8>(op));
+
+  switch (ctx.labels.get(label))
+  {
+    case Some[offset]:
+      ctx.text.push_back(cast<u8>(offset & 0xff));
+      ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+      ctx.text.push_back(cast<u8>(offset >> 16 & 0xff));
+
+    case None:
+      ctx.unbounds.emplace(label).push_back(ctx.text.len);
+      ctx.text.resize(ctx.text.len + 3);
+  }
+
+  return ok;
+}
+
+fn emit_if_goto(compile_context mut &ctx, IfGoto &ifgoto) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_if));
+
+  if (var rc = emit_expression(&mut ctx, ifgoto.cond); !rc)
+    return rc;
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  ctx.text.push_back(cast<u8>(op::kw_then));
+
+  emit_target(&mut ctx, op::lref, ifgoto.label);
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp - 3) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp - 3) >> 8 & 0xff);
+
+  return ok;
+}
+
+fn emit_if_then(compile_context mut &ctx, IfThen &ifthen) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_if));
+
+  if (var rc = emit_expression(&mut ctx, ifthen.cond); !rc)
+    return rc;
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  ctx.text.push_back(cast<u8>(op::kw_then));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &statement : ifthen.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  ctx.text.push_back(cast<u8>(op::kw_endif));
+  ctx.text.push_back(cast<u8>(op::eol));
+  ctx.text.push_back(cast<u8>(op::nop));
+
+  if (ctx.text.len - endjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp - 3) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp - 3) >> 8 & 0xff);
+
+  return ok;
+}
+
+fn emit_if_else(compile_context mut &ctx, IfElse &ifelse) -> result
+{
+  var endjmp = ctx.text.len - 3;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &statement : ifelse.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  ctx.text.push_back(cast<u8>(op::kw_endif));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  if (ctx.text.len - endjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text[endjmp + 0] = cast<u8>(op::kw_else);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
+
+  return ok;
+}
+
+fn emit_while_do(compile_context mut &ctx, WhileDo &whiledo) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_while));
+
+  ctx.breaks.push_back();
+  var begjmp = ctx.text.len;
+
+  if (var rc = emit_expression(&mut ctx, whiledo.cond); !rc)
+    return rc;
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  ctx.text.push_back(cast<u8>(op::kw_do));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &statement : whiledo.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  if (ctx.text.len - begjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text.push_back(cast<u8>(op::kw_endwhile));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp) & 0xff));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp) >> 8 & 0xff));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp - 3) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp - 3) >> 8 & 0xff);
+
+  for (var &brkjmp : ctx.breaks.back)
+  {
+    ctx.text[brkjmp + 0] = cast<u8>((ctx.text.len - brkjmp) & 0xff);
+    ctx.text[brkjmp + 1] = cast<u8>((ctx.text.len - brkjmp) >> 8 & 0xff);
+  }
+
+  ctx.breaks.pop_back();
+
+  return ok;
+}
+
+fn emit_repeat_until(compile_context mut &ctx, RepeatUntil &repeatuntil) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_repeat));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.breaks.push_back();
+  var begjmp = ctx.text.len;
+
+  for (var &statement : repeatuntil.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  ctx.text.push_back(cast<u8>(op::kw_until));
+
+  if (var rc = emit_expression(&mut ctx, repeatuntil.cond); !rc)
+    return rc;
+
+  if (ctx.text.len - begjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text.push_back(cast<u8>(op::jmp_bck_ne));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp + 3) & 0xff));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp + 2) >> 8 & 0xff));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &brkjmp : ctx.breaks.back)
+  {
+    ctx.text[brkjmp + 0] = cast<u8>((ctx.text.len - brkjmp) & 0xff);
+    ctx.text[brkjmp + 1] = cast<u8>((ctx.text.len - brkjmp) >> 8 & 0xff);
+  }
+
+  ctx.breaks.pop_back();
+
+  return ok;
+}
+
+fn emit_for_next(compile_context mut &ctx, ForNext &fornext) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_for));
+
+  if (var rc = emit_expression(&mut ctx, fornext.decl); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  if (var rc = emit_expression(&mut ctx, fornext.start); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::assign));
+
+  var to_addr = ctx.data_size;
+
+  ctx.text.push_back(cast<u8>(op::kw_to));
+  ctx.text.push_back(cast<u8>(ctx.data_size & 0xff));
+  ctx.text.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+  ctx.data_size += sizeof_type(ctx, fornext.decl.type);
+
+  if (var rc = emit_expression(&mut ctx, fornext.finish); !rc)
+    return rc;
+
+  var step_addr = ctx.data_size;
+
+  if (fornext.step)
+  {
+    ctx.text.push_back(cast<u8>(op::kw_step));
+    ctx.text.push_back(cast<u8>(ctx.data_size & 0xff));
+    ctx.text.push_back(cast<u8>(ctx.data_size >> 8 & 0xff));
+    ctx.data_size += sizeof_type(ctx, fornext.decl.type);
+
+    if (var rc = emit_expression(&mut ctx, fornext.step); !rc)
+      return rc;
+  }
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.breaks.push_back();
+  var begjmp = ctx.text.len;
+
+  for (var &statement : fornext.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  if (ctx.text.len - begjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text.push_back(cast<u8>(op::kw_next));
+  ctx.text.push_back(cast<u8>(!!fornext.step));
+  ctx.text.push_back(cast<u8>(to_addr & 0xff));
+  ctx.text.push_back(cast<u8>(to_addr >> 8 & 0xff));
+  ctx.text.push_back(cast<u8>(step_addr & 0xff));
+  ctx.text.push_back(cast<u8>(step_addr >> 8 & 0xff));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp - 6) & 0xff));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp - 7) >> 8 & 0xff));
+
+  if (var rc = emit_expression(&mut ctx, fornext.decl); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp - 3) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp - 3) >> 8 & 0xff);
+
+  for (var &brkjmp : ctx.breaks.back)
+  {
+    ctx.text[brkjmp + 0] = cast<u8>((ctx.text.len - brkjmp) & 0xff);
+    ctx.text[brkjmp + 1] = cast<u8>((ctx.text.len - brkjmp) >> 8 & 0xff);
+  }
+
+  ctx.breaks.pop_back();
+
+  return ok;
+}
+
+fn emit_loop(compile_context mut &ctx, Loop &loop) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_loop));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.breaks.push_back();
+  var begjmp = ctx.text.len;
+
+  for (var &statement : loop.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  if (ctx.text.len - begjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text.push_back(cast<u8>(op::kw_endloop));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp) & 0xff));
+  ctx.text.push_back(cast<u8>((ctx.text.len - begjmp) >> 8 & 0xff));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &brkjmp : ctx.breaks.back)
+  {
+    ctx.text[brkjmp + 0] = cast<u8>((ctx.text.len - brkjmp) & 0xff);
+    ctx.text[brkjmp + 1] = cast<u8>((ctx.text.len - brkjmp) >> 8 & 0xff);
+  }
+
+  ctx.breaks.pop_back();
+
+  return ok;
+}
+
+fn emit_exitif(compile_context mut &ctx, ExitIf &exitif) -> result
+{
+  if (ctx.breaks.empty)
+    return errc::unmatched_control_structure;
+
+  ctx.text.push_back(cast<u8>(op::kw_exitif));
+
+  if (var rc = emit_expression(&mut ctx, exitif.cond); !rc)
+    return rc;
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  ctx.text.push_back(cast<u8>(op::kw_then));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  for (var &statement : exitif.stmts)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  ctx.text.push_back(cast<u8>(op::kw_endexit));
+  ctx.breaks.back.push_back(ctx.text.len);
+  ctx.text.resize(ctx.text.len + 2);
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  if (ctx.text.len - endjmp > 0xffff)
+    return errc::icode_overflow;
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp - 3) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp - 3) >> 8 & 0xff);
+
+  return ok;
+}
+
+fn emit_run(compile_context mut &ctx, Run &run) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_run));
+
+  emit_string(&mut ctx, run.name);
+
+  var link_storage_size = 0;
+
+  ctx.text.push_back(cast<u8>(op::l_paren));
+
+  for (var &arg : run.args)
+  {
+    if (var rc = emit_expression(&mut ctx, arg); !rc)
+      return rc;
+
+    switch (arg)
+    {
+      case DeclRef:
+      case Subscript:
+      case Field:
+        ctx.text[ctx.text.len - 6] += 0x10;
+
+      else:
+        link_storage_size += sizeof_type(ctx, arg.type);
+    }
+
+    if (&arg != &run.args.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  ctx.text.push_back(cast<u8>(op::r_paren));
+
+  if (ctx.link_storage_size < link_storage_size)
+    ctx.link_storage_size = link_storage_size;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_data(compile_context mut &ctx, std::vector<Expression> &exprs) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_data));
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  for (var &expr : exprs)
+  {
+    if (var rc = emit_expression(&mut ctx, expr); !rc)
+      return rc;
+
+    if (&expr != &exprs.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  if (ctx.first_data_statement == 0)
+  {
+    ctx.first_data_statement = endjmp - 1;
+  }
+
+  if (ctx.previous_data_statement != 0)
+  {
+    if (endjmp + 3 - ctx.previous_data_statement > 0xffff)
+      return errc::icode_overflow;
+
+    ctx.text[ctx.previous_data_statement + 1] = cast<u8>((endjmp + 3 - ctx.previous_data_statement) & 0xff);
+    ctx.text[ctx.previous_data_statement + 2] = cast<u8>((endjmp + 3 - ctx.previous_data_statement) >> 8 & 0xff);
+  }
+
+  ctx.previous_data_statement = ctx.text.len;
+
+  ctx.text.push_back(cast<u8>(op::jmp_fwd_ne));
+  ctx.text.push_back(cast<u8>(0));
+  ctx.text.push_back(cast<u8>(0));
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - ctx.text_offset) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - ctx.text_offset) >> 8 & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - ctx.text_offset) >> 16 & 0xff);
+
+  return ok;
+}
+
+fn emit_open(compile_context mut &ctx, Open &open) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_open));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, open.fd); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  if (var rc = emit_expression(&mut ctx, open.path); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::mode));
+
+  switch (open.mode)
+  {
+    case Read:
+      ctx.text.push_back(cast<u8>(op::mode_read));
+
+    case Write:
+      ctx.text.push_back(cast<u8>(op::mode_write));
+
+    case Update:
+      ctx.text.push_back(cast<u8>(op::mode_update));
+
+    case Dir:
+      ctx.text.push_back(cast<u8>(op::mode_dir));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_create(compile_context mut &ctx, Open &open) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_create));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, open.fd); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  if (var rc = emit_expression(&mut ctx, open.path); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::mode));
+
+  switch (open.mode)
+  {
+    case Read:
+      ctx.text.push_back(cast<u8>(op::mode_read));
+
+    case Write:
+      ctx.text.push_back(cast<u8>(op::mode_write));
+
+    case Update:
+      ctx.text.push_back(cast<u8>(op::mode_update));
+
+    case Dir:
+      ctx.text.push_back(cast<u8>(op::mode_dir));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_read(compile_context mut &ctx, Read &read) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_read));
+
+  if (read.fd)
+  {
+    ctx.text.push_back(cast<u8>(op::hash));
+
+    if (var rc = emit_expression(&mut ctx, read.fd); !rc)
+      return rc;
+
+    ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  for (var &item : read.items)
+  {
+    if (var rc = emit_expression(&mut ctx, item); !rc)
+      return rc;
+
+    ctx.text[ctx.text.len - 6] += 0x10;
+
+    if (&item != &read.items.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_write(compile_context mut &ctx, Write &write) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_write));
+
+  if (write.fd)
+  {
+    ctx.text.push_back(cast<u8>(op::hash));
+
+    if (var rc = emit_expression(&mut ctx, write.fd); !rc)
+      return rc;
+
+    ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  for (var &item : write.items)
+  {
+    if (var rc = emit_expression(&mut ctx, item); !rc)
+      return rc;
+
+    if (&item != &write.items.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_seek(compile_context mut &ctx, Seek &seek) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_seek));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, seek.fd); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  if (var rc = emit_expression(&mut ctx, seek.loc); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_get(compile_context mut &ctx, Get &get) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_get));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, get.fd); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  if (var rc = emit_expression(&mut ctx, get.item); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_put(compile_context mut &ctx, Put &put) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_put));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, put.fd); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::comma));
+
+  if (var rc = emit_expression(&mut ctx, put.item); !rc)
+    return rc;
+
+  ctx.text[ctx.text.len - 6] += 0x10;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_close(compile_context mut &ctx, Expression &fd) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_close));
+
+  ctx.text.push_back(cast<u8>(op::hash));
+
+  if (var rc = emit_expression(&mut ctx, fd); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_restore(compile_context mut &ctx, int label) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_restore));
+
+  switch (ctx.labels.get(label))
+  {
+    case Some[offset]:
+      ctx.text.push_back(cast<u8>(offset & 0xff));
+      ctx.text.push_back(cast<u8>(offset >> 8 & 0xff));
+      ctx.text.push_back(cast<u8>(offset >> 16 & 0xff));
+
+    case None:
+      if (label != 0)
+        ctx.unbounds.emplace(label).push_back(ctx.text.len);
+
+      ctx.text.resize(ctx.text.len + 3);
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_error(compile_context mut &ctx, Expression &expr) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_error));
+
+  if (var rc = emit_expression(&mut ctx, expr); !rc)
+    return rc;
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_ongoto(compile_context mut &ctx, OnGoto &ongoto) -> result
+{
+  var op = op();
+
+  ctx.text.push_back(cast<u8>(op::kw_on));
+
+  switch (ongoto.op)
+  {
+    case Goto:
+      op = op::kw_goto;
+
+      if (var rc = emit_expression(&mut ctx, ongoto.cond); !rc)
+        return rc;
+
+    case Gosub:
+      op = op::kw_gosub;
+
+      if (var rc = emit_expression(&mut ctx, ongoto.cond); !rc)
+        return rc;
+
+    case Error:
+      op = op::kw_goto;
+
+      ctx.text.push_back(cast<u8>(op::kw_error));
+
+    else:
+      std::panic("unhandled");
+  }
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(endjmp + 3);
+
+  for (var &target : ongoto.targets)
+  {
+    emit_target(&mut ctx, op, target);
+
+    if (&target != &ongoto.targets.back)
+      ctx.text.push_back(cast<u8>(op::comma));
+
+    op = op::lref;
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>(op::jmp_fwd_ne);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
+
+  return ok;
+}
+
+fn emit_goto(compile_context mut &ctx, int label) -> result
+{
+  emit_target(&mut ctx, op::kw_goto, label);
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_gosub(compile_context mut &ctx, int label) -> result
+{
+  emit_target(&mut ctx, op::kw_gosub, label);
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_return(compile_context mut &ctx) -> result
+{
+  ctx.text.push_back(cast<u8>(op::kw_return));
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
+fn emit_stop(compile_context mut &ctx) -> void
+{
+  ctx.text.push_back(cast<u8>(op::kw_stop));
+  ctx.text.push_back(cast<u8>(op::eol));
+}
+
+fn emit_end(compile_context mut &ctx) -> void
+{
+  ctx.text.push_back(cast<u8>(op::end));
+  ctx.text.push_back(cast<u8>(op::eol));
+}
+
+fn emit_statement(compile_context mut &ctx, Statement &stmt) -> result
+{
+  switch (stmt)
+  {
+    case NoOp:
+      emit_eol(&mut ctx);
+
+    case Label[label]:
+      emit_label(&mut ctx, label);
+
+    case Remark[text]:
+      emit_remark(&mut ctx, text);
+
+    case Print[print]:
+      if (var rc = emit_print(&mut ctx, print); !rc)
+        return rc;
+
+    case Input[input]:
+      if (var rc = emit_input(&mut ctx, input); !rc)
+        return rc;
+
+    case Param[vardecls]:
+      if (var rc = emit_param(&mut ctx, vardecls); !rc)
+        return rc;
+
+    case Record[record]:
+      if (var rc = emit_type(&mut ctx, record); !rc)
+        return rc;
+
+    case Dim[vardecls]:
+      if (var rc = emit_dim(&mut ctx, vardecls); !rc)
+        return rc;
+
+    case Let[vardecl]:
+      if (var rc = emit_let(&mut ctx, vardecl); !rc)
+        return rc;
+
+    case Expr[expression]:
+      if (var rc = emit_expr(&mut ctx, expression); !rc)
+        return rc;
+
+    case IfGoto[ifgoto]:
+      if (var rc = emit_if_goto(&mut ctx, ifgoto); !rc)
+        return rc;
+
+    case IfThen[ifthen]:
+      if (var rc = emit_if_then(&mut ctx, ifthen); !rc)
+        return rc;
+
+    case IfElse[ifelse]:
+      if (var rc = emit_if_else(&mut ctx, ifelse); !rc)
+        return rc;
+
+    case WhileDo[whiledo]:
+      if (var rc = emit_while_do(&mut ctx, whiledo); !rc)
+        return rc;
+
+    case RepeatUntil[repeatuntil]:
+      if (var rc = emit_repeat_until(&mut ctx, repeatuntil); !rc)
+        return rc;
+
+    case ForNext[fornext]:
+      if (var rc = emit_for_next(&mut ctx, fornext); !rc)
+        return rc;
+
+    case Loop[loop]:
+      if (var rc = emit_loop(&mut ctx, loop); !rc)
+        return rc;
+
+    case ExitIf[exitif]:
+      if (var rc = emit_exitif(&mut ctx, exitif); !rc)
+        return rc;
+
+    case OnGoto[ongoto]:
+      if (var rc = emit_ongoto(&mut ctx, ongoto); !rc)
+        return rc;
+
+    case Goto[label]:
+      if (var rc = emit_goto(&mut ctx, label); !rc)
+        return rc;
+
+    case Gosub[label]:
+      if (var rc = emit_gosub(&mut ctx, label); !rc)
+        return rc;
+
+    case Run[run]:
+      if (var rc = emit_run(&mut ctx, run); !rc)
+        return rc;
+
+    case Data[data]:
+      if (var rc = emit_data(&mut ctx, data); !rc)
+        return rc;
+
+    case Open[open]:
+      if (var rc = emit_open(&mut ctx, open); !rc)
+        return rc;
+
+    case Create[open]:
+      if (var rc = emit_create(&mut ctx, open); !rc)
+        return rc;
+
+    case Read[read]:
+      if (var rc = emit_read(&mut ctx, read); !rc)
+        return rc;
+
+    case Write[write]:
+      if (var rc = emit_write(&mut ctx, write); !rc)
+        return rc;
+
+    case Seek[seek]:
+      if (var rc = emit_seek(&mut ctx, seek); !rc)
+        return rc;
+
+    case Get[get]:
+      if (var rc = emit_get(&mut ctx, get); !rc)
+        return rc;
+
+    case Put[put]:
+      if (var rc = emit_put(&mut ctx, put); !rc)
+        return rc;
+
+    case Close[close]:
+      if (var rc = emit_close(&mut ctx, close); !rc)
+        return rc;
+
+    case Restore[label]:
+      if (var rc = emit_restore(&mut ctx, label); !rc)
+        return rc;
+
+    case Error[error]:
+      if (var rc = emit_error(&mut ctx, error); !rc)
+        return rc;
+
+    case Return:
+      if (var rc = emit_return(&mut ctx); !rc)
+        return rc;
+
+    case Stop:
+      emit_stop(&mut ctx);
+
+    case End:
+      emit_end(&mut ctx);
+
+    else:
+      std::panic("unhandled");
+  }
+
+  return ok;
+}
+
+fn emit_rodata(compile_context mut &ctx) -> result
+{
+  ctx.text.append(ctx.rodata);
+
+  return ok;
+}
+
+fn emit_symbol_table(compile_context mut &ctx) -> result
+{
+  ctx.text.append(ctx.symtab);
+
+  return ok;
+}
+
+fn emit_eol(compile_context mut &ctx) -> void
+{
+  ctx.text.push_back(cast<u8>(op::eol));
+}
+
+fn compile(compile_context mut &ctx, Procedure &procedure, options flags) -> result
+{
+  emit_header(&mut ctx, procedure.name);
+
+  ctx.data_size = 16;
+  ctx.text_offset = ctx.text.len;
+
+  for (var &statement : procedure.statements)
+  {
+    if (var rc = emit_statement(&mut ctx, statement); !rc)
+      return rc;
+  }
+
+  if (procedure.statements.empty || procedure.statements.back.kind != typeof(Statement::kind)::End)
+    emit_end(&mut ctx);
+
+  if (!ctx.unbounds.empty)
+    return errc::undefined_line_number;
+
+  if (!ctx.breaks.empty)
+    return errc::unmatched_control_structure;
+
+  ctx.link_storage_offset = ctx.data_size;
+  ctx.data_size += ctx.link_storage_size;
+
+  ctx.rodata_offset = ctx.text.len;
+
+  emit_rodata(&mut ctx);
+
+  ctx.symbol_table_offset = ctx.text.len;
+
+  emit_symbol_table(&mut ctx);
+
+  patch_header(&mut ctx);
+
+  return ok;
+}
+
+pub fn compile(Procedure &procedure, options flags = cast(0)) -> compile_result
+{
+  var result = compile_result();
+
+  var ctx = compile_context(flags);
+
+  if (var rc = compile(&mut ctx, procedure, flags); !rc)
+  {
+    result.error = cast<errc>(-cast<i32>(rc));
+  }
+
+  result.procedure = procedure(&move ctx.text);
+
+  return result;
+}

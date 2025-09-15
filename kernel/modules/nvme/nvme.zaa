@@ -288,17 +288,17 @@ pub struct queue
 
     var doorbells = cast<u32 mut *>(controller.regs + 1);
 
-    this.sq = vm::allocate_physical_pages(sizeof<nvme_sqe> * cast(entries)).addr;
+    this.sq = vm::allocate_physical(sizeof<nvme_sqe> * cast(entries)).addr;
     this.sq_mask = entries - 1;
     this.sq_bell = doorbells + (2*index + 0) * controller.doorbell_stride;
 
-    this.cq = vm::allocate_physical_pages(sizeof<nvme_cqe> * cast(entries)).addr;
+    this.cq = vm::allocate_physical(sizeof<nvme_cqe> * cast(entries)).addr;
     this.cq_mask = entries - 1;
     this.cq_bell = doorbells + (2*index + 1) * controller.doorbell_stride;
 
     std::memset(this.cq.ptr, 0, sizeof<nvme_cqe> * cast(entries));
 
-    this.prp = vm::allocate_physical_pages(sizeof<nvme_prpt> * cast(entries)).addr;
+    this.prp = vm::allocate_physical(sizeof<nvme_prpt> * cast(entries)).addr;
     this.prp_mask = entries - 1;
 
     std::memset(this.prp.ptr, 0, sizeof<nvme_prpt> * cast(entries));
@@ -464,7 +464,7 @@ fn initialise(controller mut &controller) -> result
 
   var queue_entries = std::min(cast<u32>((cap >> cap::mqes_shift) & cap::mqes_mask + 1), 1024);
 
-  var identbuf = vm::allocate_physical_pages(4096);
+  var identbuf = vm::allocate_physical(4096);
 
   if (controller.identify_controller(identbuf.addr))
   {
@@ -668,7 +668,7 @@ fn create_submission_queue(controller mut &controller, usize id, u32 size, vm::p
 
 fn detect(controller mut &controller) -> result
 {
-  var buffer = vm::allocate_physical_pages(4096);
+  var buffer = vm::allocate_physical(4096);
 
   if (controller.identify_active_namespace_list(buffer.addr))
   {

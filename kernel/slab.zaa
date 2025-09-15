@@ -13,7 +13,11 @@ pub struct slab_allocator<T>
 
   pub fn allocate(this mut &) -> T mut *
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
+    var irqs = std::lock_guard(&mut cpu::irqlock);
+
+    vm::reservation(2*SLAB_SIZE);
+
+    var guard = std::lock_guard(&mut this.lock);
 
     if (!this.slabs || !this.slabs.firstfree)
       kmem_cache_grow(&mut this);
@@ -163,9 +167,7 @@ pub fn reap<T>(slab_allocator<T> mut &this) -> void
   using kmem_slab = slab_allocator<T>::kmem_slab;
   using kmem_slab_entry = slab_allocator<T>::kmem_slab_entry;
 
-  std::assert(cpu::interrupts_disabled);
-
-  var guard = std::lock_guard(&mut this.lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut this.lock);
 
   if (!this.slabs)
     return;

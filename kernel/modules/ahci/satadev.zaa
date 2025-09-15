@@ -15,7 +15,7 @@ pub struct satadev : pub blk::blkdev
     : super(&impl this),
       port(&port)
   {
-    var buffer = vm::allocate_physical_pages(512);
+    var buffer = vm::allocate_physical(512);
 
     if (port.identify(buffer.addr))
     {

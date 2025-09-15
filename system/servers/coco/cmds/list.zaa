@@ -1,0 +1,73 @@
+//
+// list
+//
+
+import std.stdio;
+import terminal;
+import basic.machine;
+import basic.formatter;
+import env;
+
+pub fn list(terminal::terminal mut &terminal, basic::machine mut &vm, env::env mut &env, std::string &cmdline) -> i32
+{
+  var names = std::vector<std::string_view>();
+
+  for (var arg : cmdline.words.drop_n(1))
+  {
+    if (arg.starts_with("-"))
+      continue;
+
+    names.push_back(arg);
+  }
+
+  if (names.empty)
+  {
+    terminal.write(std::format("  {:12} {}   {}\n", "Name", "Proc-Size", "Data-Size"));
+
+    for (var &[name, proc] : vm.procedures)
+    {
+      terminal.write(std::format("  {:12}    {:6}      {:6}\n", name, proc.text.len, proc.data_size));
+    }
+
+    if (vm.procedures.empty)
+    {
+      terminal.write("no procedures\n");
+    }
+
+    return 0;
+  }
+
+  terminal.write("\x1b[?25l");
+
+  try
+  {
+    if (names.find("*") != names.end)
+    {
+      for (var &[name, proc] : vm.procedures)
+      {
+        basic::format_to(&mut terminal.termout, proc.icode);
+      }
+
+      names.clear();
+    }
+
+    for (var &name : names)
+    {
+      switch (vm.procedures.get(name))
+      {
+        case Some[proc]:
+          basic::format_to(&mut terminal.termout, proc.icode);
+
+        case None:
+          terminal.write(std::format("{} - not loaded\n", name));
+      }
+    }
+  }
+  catch(std::error e)
+  {
+  }
+
+  terminal.write("\x1b[?25h");
+
+  return 0;
+}

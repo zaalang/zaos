@@ -1,0 +1,19 @@
+//
+// reset
+//
+
+import std.stdio;
+import terminal;
+import basic.machine;
+import diag;
+import env;
+
+pub fn reset(terminal::terminal mut &terminal, basic::machine mut &vm, env::env mut &env, std::string &cmdline) -> i32
+{
+  vm.clear();
+
+  terminal.pty.restore_cooked_mode();
+  terminal.clear();
+
+  return 0;
+}

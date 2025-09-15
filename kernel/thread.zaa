@@ -346,7 +346,7 @@ fn destroy(thread mut *thread) -> void
   threadman.put(thread);
 }
 
-fn undertaker(void*) -> void
+fn undertaker(void *) -> void
 {
   for (;;)
   {

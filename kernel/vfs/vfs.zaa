@@ -153,7 +153,7 @@ fn lookup(virtual_file_system mut &vfs, process mut *process, Rc<vfs::node> mut 
 
     base = null;
 
-    if (!dentry.is_directory)
+    if (dentry.type != vfs::node::type::directory)
       return null;
 
     if (dentry.covers && std::string_view(beg, ch) == "..")
@@ -204,7 +204,7 @@ fn resolve(virtual_file_system mut &vfs, process mut *process, Rc<vfs::node> mut
   var depth = 0;
   var buffer = std::string();
 
-  while (node.is_symlink)
+  while (node.type == vfs::node::type::symlink)
   {
     if (++depth == 8)
       return too_many_links;
@@ -259,7 +259,7 @@ pub fn mount(Rc<vfs::node> &root, String &path, file_system mut *fs) -> vfs::res
     if (!dentry)
       return invalid_argument;
 
-    if (!dentry.is_directory)
+    if (dentry.type != vfs::node::type::directory)
       return invalid_argument;
 
     if (dentry.covered)
@@ -332,12 +332,12 @@ pub fn open(Rc<vfs::node> &node, vfs::fd mut &fd, process mut *process, u64 flag
 
 pub fn stat(Rc<vfs::node> &node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
-  return node.node_operations.getattr(node, &mut stat, mask);
+  return node.node_operations.getstat(node, &mut stat, mask);
 }
 
-pub fn setattr(Rc<vfs::node> &node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(Rc<vfs::node> &node, vfs::stat &stat, u64 mask) -> vfs::result
 {
-  return node.node_operations.setattr(node, stat, mask);
+  return node.node_operations.putstat(node, stat, mask);
 }
 
 pub fn read(Rc<vfs::node> &node, u64 position, void mut *buffer, usize length) -> vfs::result

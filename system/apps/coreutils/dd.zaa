@@ -77,13 +77,15 @@ fn parse_bytes(std::string_view str, usize mut &bytes) -> bool
 
 pub fn main() -> i32
 {
-  var fin = std::stdin_raw;
-  var fout = std::stdout_raw;
-
   var bs = 512;
   var count = 0;
   var iseek = 0;
   var oseek = 0;
+  var infile = std::file();
+  var outfile = std::file();
+
+  var &&fin = std::stdin_raw;
+  var &&fout = std::stdout_raw;
 
   try
   {
@@ -94,10 +96,12 @@ pub fn main() -> i32
       switch (name)
       {
         case "if":
-          fin = std::file::open(value);
+          infile = std::file::open(value);
+          &fin = &infile;
 
         case "of":
-          fout = std::file::create(value);
+          outfile = std::file::create(value);
+          &fout = &outfile;
 
         case "bs":
           if (!parse_bytes(value, &mut bs))

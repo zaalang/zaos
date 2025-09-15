@@ -39,7 +39,7 @@ fn main() -> int
 {
   var history = readline::default_history();
 
-  while (true)
+  for (;;)
   {
     var input = readline::create();
     var prompt = readline::default_prompt("> ");

@@ -26,7 +26,7 @@ pub fn sys_chstat(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr st
   if (var result = vm::read_process_memory(process, statbuf, &stat, sizeof(stat)); !result)
     return result;
 
-  if (var result = vfs::setattr(file.node, stat, flags & 0xfff); !result)
+  if (var result = vfs::putstat(file.node, stat, flags & 0xfff); !result)
     return result;
 
   return 0;

@@ -1,0 +1,94 @@
+//
+// basic
+//
+
+import std.stdlib;
+import std.io : InputReader;
+import std.string : String;
+import basic.parser;
+
+pub enum errc : u32
+{
+  internal_error = 1,
+  illegal_statement = 12,
+  icode_overflow = 13,
+  illegal_number = 16,
+  illegal_operand = 18,
+  illegal_record_field = 20,
+  illegal_literal = 22,
+  illegal_reference = 23,
+  illegal_type_suffix = 24,
+  missing_assignment = 27,
+  missing_comma = 29,
+  missing_do_statement = 31,
+  missing_goto_statement = 33,
+  missing_left_parenthesis = 34,
+  missing_line_reference = 35,
+  missing_right_parenthesis = 37,
+  missing_then_statement = 38,
+  missing_to_statement = 39,
+  too_many_subscripts = 42,
+  unknown_procedure = 43,
+  divide_by_zero = 45,
+  operand_type_mismatch = 46,
+  undefined_variable = 49,
+  overflow = 50,
+  subroutine_stack_underflow = 54,
+  subscript_out_of_range = 55,
+  parameter_error = 56,
+  format_syntax_error = 63,
+  illegal_path_number = 64,
+  illegal_subscript = 65,
+  illegal_record_type = 66,
+  illegal_argument = 67,
+  unmatched_control_structure = 69,
+  illegal_expression_type = 71,
+  undefined_line_number = 74,
+  redefined_line_number = 75,
+  redefined_variable = 76,
+  illegal_input_variable = 77,
+  missing_data_statement = 79,
+  io_error = 80,
+  file_not_found = 81,
+  end_of_file = 82,
+  unexpected_end_of_line = 91,
+  unexpected_end_of_stream = 92,
+
+  pub fn bool(errc code) -> bool
+  {
+    return cast<u32>(code) != 0;
+  }
+}
+
+pub enum options
+{
+  pack = 0x1,
+
+  pub const fn bool(options lhs) -> bool { return cast<isize>(lhs) != 0; }
+
+  pub const fn ~(options lhs) -> options { return cast<options>(~cast<isize>(lhs)); }
+  pub const fn &(options lhs, options rhs) -> options { return cast<options>(cast<isize>(lhs) & cast<isize>(rhs)); }
+  pub const fn |(options lhs, options rhs) -> options { return cast<options>(cast<isize>(lhs) | cast<isize>(rhs)); }
+}
+
+pub fn parse_from_string(String &src) -> parse_result
+{
+  try
+  {
+    return parse_from(&mut std::string_stream(src));
+  }
+  catch(std::error)
+  {
+    std::panic();
+  }
+}
+
+pub fn parse_from_file(String &path) throws(std::error) -> parse_result
+{
+  return parse_from(&mut std::buffered_reader(&mut std::file::open(path)));
+}
+
+pub fn parse_from(InputReader mut &is) throws(std::error) -> parse_result
+{
+  return parse(&mut is);
+}

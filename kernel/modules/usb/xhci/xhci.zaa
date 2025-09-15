@@ -1089,7 +1089,7 @@ fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhc
 
   // Input Context
 
-  var input_context = vm::allocate_physical_pages(33 << controller.context_shift);
+  var input_context = vm::allocate_physical(33 << controller.context_shift);
 
   std::memset(input_context.addr.ptr, 0, input_context.size);
 
@@ -1142,7 +1142,7 @@ fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhc
 
   // Default Input Endpoint Context
 
-  var transfer_ring = vm::allocate_physical_pages(device.transfers.len * sizeof<xhci_trb>);
+  var transfer_ring = vm::allocate_physical(device.transfers.len * sizeof<xhci_trb>);
 
   device.endpoints[0].ring.run = 1;
   device.endpoints[0].ring.ccs = 1;
@@ -1168,7 +1168,7 @@ fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhc
 
   // Device Output Context
 
-  var output_context = vm::allocate_physical_pages(32 << controller.context_shift);
+  var output_context = vm::allocate_physical(32 << controller.context_shift);
 
   std::memset(output_context.addr.ptr, 0, output_context.size);
 
@@ -1605,7 +1605,7 @@ fn allocate_streams(controller mut &controller, xhcidev mut *device, std::span<u
 
   var max_p_streams = std::ceil_log2(std::array_len<typeof(xhci_dpsca::streams)> + 1) - 1;
 
-  var dpsca = vm::allocate_physical_pages(descriptors.len * sizeof<xhci_dpsca>);
+  var dpsca = vm::allocate_physical(descriptors.len * sizeof<xhci_dpsca>);
 
   std::memset(dpsca.addr.ptr, 0, dpsca.size);
 
@@ -2079,7 +2079,7 @@ fn initialise(controller mut &controller) -> usb::result
 
   // Device Context Base Address Array
 
-  var dcba = vm::allocate_physical_pages(sizeof<xhci_dcbaa> + scratchpad_count * 4096);
+  var dcba = vm::allocate_physical(sizeof<xhci_dcbaa> + scratchpad_count * 4096);
 
   var dcbap = cast<xhci_dcbaa mut *>(dcba.addr.ptr);
 
@@ -2100,7 +2100,7 @@ fn initialise(controller mut &controller) -> usb::result
 
   // Event Ring Segment Table
 
-  var erst = vm::allocate_physical_pages(sizeof<xhci_erst>);
+  var erst = vm::allocate_physical(sizeof<xhci_erst>);
 
   var erstp = cast<xhci_erst mut *>(erst.addr.ptr);
 

@@ -33,7 +33,7 @@ import gfx.blend;
 
 #end
 
-pub fn clear(gfx::paint_t &&ctx, u32 color) -> void
+pub fn clear(gfx::paint_t mut &ctx, u32 color) -> void
 {
   var row = ctx.data;
   var color = gfx::premultiply(color);
@@ -46,12 +46,12 @@ pub fn clear(gfx::paint_t &&ctx, u32 color) -> void
   }
 }
 
-pub fn clear(gfx::paint_t &&ctx, gfx::color &color) -> void
+pub fn clear(gfx::paint_t mut &ctx, gfx::color &color) -> void
 {
-  clear(ctx, color.rgba);
+  clear(&mut ctx, color.rgba);
 }
 
-pub fn fill_rect(gfx::paint_t &&ctx, int x, int y, int width, int height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_rect(gfx::paint_t mut &ctx, int x, int y, int width, int height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var x0 = cast<usize>(std::max(x, 0));
   var y0 = cast<usize>(std::max(y, 0));
@@ -140,22 +140,22 @@ pub fn fill_rect(gfx::paint_t &&ctx, int x, int y, int width, int height, gfx::c
   }
 }
 
-pub fn draw_rect(gfx::paint_t &&ctx, int x, int y, int width, int height, gfx::color &color, int thickness = 1, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_rect(gfx::paint_t mut &ctx, int x, int y, int width, int height, gfx::color &color, int thickness = 1, gfx::blend mode = gfx::blend::source_over) -> void
 {
   if (width <= 2*thickness || height <= 2*thickness)
   {
-    fill_rect(ctx, x, y, width, height, color, mode);
+    fill_rect(&mut ctx, x, y, width, height, color, mode);
 
     return;
   }
 
-  fill_rect(ctx, x, y, width, thickness, color, mode);
-  fill_rect(ctx, x, y + height - thickness, width, thickness, color, mode);
-  fill_rect(ctx, x, y + thickness, thickness, height - 2*thickness, color, mode);
-  fill_rect(ctx, x + width - thickness, y + thickness, thickness, height - 2*thickness, color, mode);
+  fill_rect(&mut ctx, x, y, width, thickness, color, mode);
+  fill_rect(&mut ctx, x, y + height - thickness, width, thickness, color, mode);
+  fill_rect(&mut ctx, x, y + thickness, thickness, height - 2*thickness, color, mode);
+  fill_rect(&mut ctx, x + width - thickness, y + thickness, thickness, height - 2*thickness, color, mode);
 }
 
-pub fn blit_glyph(gfx::paint_t &&ctx, int x, int y, u8 *data, usize width, usize height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn blit_glyph(gfx::paint_t mut &ctx, int x, int y, u8 *data, usize width, usize height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var x0 = cast<usize>(std::max(x, 0));
   var y0 = cast<usize>(std::max(y, 0));

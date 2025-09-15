@@ -98,7 +98,7 @@ pub struct channel
     if (this.lhs.buffer.len == 0)
       io::initiate(&mut this.lhs.readable.cb, 1);
 
-    vfs::node::init(&this.lhs.node, vfs::node::type::channel, vfs::node_stream_operations());
+    vfs::node::init(&this.lhs.node, vfs::node::type::channel, vfs::node::ops::stream(&impl this.lhs));
 
     return &this.lhs.node;
   }
@@ -126,7 +126,7 @@ pub struct channel
     if (this.rhs.buffer.len == 0)
       io::initiate(&mut this.rhs.readable.cb, 1);
 
-    vfs::node::init(&this.rhs.node, vfs::node::type::channel, vfs::node_stream_operations());
+    vfs::node::init(&this.rhs.node, vfs::node::type::channel, vfs::node::ops::stream(&impl this.rhs));
 
     return &this.rhs.node;
   }
@@ -196,7 +196,7 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return ok;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
   var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
@@ -209,7 +209,7 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }

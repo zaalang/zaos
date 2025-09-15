@@ -65,12 +65,12 @@ fn fround(float v) -> coord_t
   return v + (v < 0.0 ? -0.5 : 0.5)*std::pow(2.0, coord_t::exponent);
 }
 
-fn commit(raster_t &&ctx, i32 x, i32 y, var area, var cover) -> void
+fn commit(raster_t mut &ctx, i32 x, i32 y, var area, var cover) -> void
 {
   ctx.cells.push_back(x, y, area_t(area), area_t(cover));
 }
 
-fn hline(raster_t &&ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
+fn hline(raster_t mut &ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -87,7 +87,7 @@ fn hline(raster_t &&ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coor
 
   if (i0 == i1)
   {
-    commit(ctx, i0, j0, d * dy * (fract(x0) + fract(x1)) / 2, d * dy);
+    commit(&mut ctx, i0, j0, d * dy * (fract(x0) + fract(x1)) / 2, d * dy);
 
     return;
   }
@@ -96,15 +96,15 @@ fn hline(raster_t &&ctx, int d, i32 j0, coord_t x0, coord_t y0, coord_t x1, coor
   var dydx = coord_t(1) * (y1 - y0) / (x1 - x0);
   var dy1 = dy - dy0 - cast<i32>(i1 - i0 - 1)*dydx;
 
-  commit(ctx, i0, j0, d * dy0 * (1 + fract(x0)) / 2, d * dy0);
+  commit(&mut ctx, i0, j0, d * dy0 * (1 + fract(x0)) / 2, d * dy0);
 
   for (var i = i0 + 1; i < i1; ++i)
-    commit(ctx, i, j0, d * dydx / 2, d * dydx);
+    commit(&mut ctx, i, j0, d * dydx / 2, d * dydx);
 
-  commit(ctx, i1, j0, d * dy1 * fract(x1) / 2, d * dy1);
+  commit(&mut ctx, i1, j0, d * dy1 * fract(x1) / 2, d * dy1);
 }
 
-fn vline(raster_t &&ctx, int d, i32 j0, i32 j1, coord_t x0, coord_t y0, coord_t y1) -> void
+fn vline(raster_t mut &ctx, int d, i32 j0, i32 j1, coord_t x0, coord_t y0, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -113,17 +113,17 @@ fn vline(raster_t &&ctx, int d, i32 j0, i32 j1, coord_t x0, coord_t y0, coord_t 
 
   var area = fract(x0);
 
-  commit(ctx, i, j0, d * (1 - y0) * area, d * (1 - y0));
+  commit(&mut ctx, i, j0, d * (1 - y0) * area, d * (1 - y0));
 
   for (var j = j0 + 1; j < j1; ++j)
   {
-    commit(ctx, i, j, d * area, d);
+    commit(&mut ctx, i, j, d * area, d);
   }
 
-  commit(ctx, i, j1, d * y1 * area, d * y1);
+  commit(&mut ctx, i, j1, d * y1 * area, d * y1);
 }
 
-fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
+fn edge(raster_t mut &ctx, vec2 v0, vec2 v1) -> void
 {
   using lml;
   using std;
@@ -139,14 +139,14 @@ fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
 
   if (j0 == j1)
   {
-    hline(ctx, d, j0, top.x, fract(top.y), bot.x, fract(bot.y));
+    hline(&mut ctx, d, j0, top.x, fract(top.y), bot.x, fract(bot.y));
 
     return;
   }
 
   if (dx == 0)
   {
-    vline(ctx, d, j0, j1, top.x, fract(top.y), fract(bot.y));
+    vline(&mut ctx, d, j0, j1, top.x, fract(top.y), fract(bot.y));
 
     return;
   }
@@ -163,7 +163,7 @@ fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
     x_bump += dy * coord_t::numeric_traits::smallest;
   }
 
-  hline(ctx, d, j0, top.x, fract(top.y), x, coord_t(1));
+  hline(&mut ctx, d, j0, top.x, fract(top.y), x, coord_t(1));
 
   for (var j = j0 + 1; j < j1; ++j)
   {
@@ -175,12 +175,12 @@ fn edge(raster_t &&ctx, vec2 v0, vec2 v1) -> void
       x_error -= dy * coord_t::numeric_traits::smallest;
     }
 
-    hline(ctx, d, j, x, coord_t(0), x_next, coord_t(1));
+    hline(&mut ctx, d, j, x, coord_t(0), x_next, coord_t(1));
 
     x = x_next;
   }
 
-  hline(ctx, d, j1, x, coord_t(0), bot.x, fract(bot.y));
+  hline(&mut ctx, d, j1, x, coord_t(0), bot.x, fract(bot.y));
 }
 
 fn clip_flags_x(raster_t &ctx, coord_t x) -> u32
@@ -193,7 +193,7 @@ fn clip_flags_y(raster_t &ctx, coord_t y) -> u32
   return cast<u32>(y > ctx.clip_bottom) << 1 | cast<u32>(y < ctx.clip_top) << 3;
 }
 
-pub fn clip(raster_t &&ctx, float left, float top, float right, float bottom) -> void
+pub fn clip(raster_t mut &ctx, float left, float top, float right, float bottom) -> void
 {
   ctx.clip_left = fround(left);
   ctx.clip_top = fround(top);
@@ -201,12 +201,12 @@ pub fn clip(raster_t &&ctx, float left, float top, float right, float bottom) ->
   ctx.clip_bottom = fround(bottom);
 }
 
-pub fn move_to(raster_t &&ctx, vec2 xy) -> void
+pub fn move_to(raster_t mut &ctx, vec2 xy) -> void
 {
   ctx.cursor = xy;
 }
 
-fn line_y(raster_t &&ctx, vec2 v0, vec2 v1) -> void
+fn line_y(raster_t mut &ctx, vec2 v0, vec2 v1) -> void
 {
   var x0 = v0.x;
   var y0 = v0.y;
@@ -223,33 +223,33 @@ fn line_y(raster_t &&ctx, vec2 v0, vec2 v1) -> void
 
     if (srcflags & 0x8 != 0)
     {
-      v0.x = x0 + (ctx.clip_top - y0) * (x1 - x0) / (y1 - y0);
+      v0.x = x0 + (ctx.clip_top - y0) * (coord_t(1) * (x1 - x0) / (y1 - y0));
       v0.y = ctx.clip_top;
     }
 
     if (srcflags & 0x2 != 0)
     {
-      v0.x = x0 + (ctx.clip_bottom - y0) * (x1 - x0) / (y1 - y0);
+      v0.x = x0 + (ctx.clip_bottom - y0) * (coord_t(1) * (x1 - x0) / (y1 - y0));
       v0.y = ctx.clip_bottom;
     }
 
     if (dstflags & 0x8 != 0)
     {
-      v1.x = x0 + (ctx.clip_top - y0) * (x1 - x0) / (y1 - y0);
+      v1.x = x0 + (ctx.clip_top - y0) * (coord_t(1) * (x1 - x0) / (y1 - y0));
       v1.y = ctx.clip_top;
     }
 
     if (dstflags & 0x2 != 0)
     {
-      v1.x = x0 + (ctx.clip_bottom - y0) * (x1 - x0) / (y1 - y0);
+      v1.x = x0 + (ctx.clip_bottom - y0) * (coord_t(1) * (x1 - x0) / (y1 - y0));
       v1.y = ctx.clip_bottom;
     }
   }
 
-  edge(ctx, v0, v1);
+  edge(&mut ctx, v0, v1);
 }
 
-pub fn line_to(raster_t &&ctx, vec2 xy) -> void
+pub fn line_to(raster_t mut &ctx, vec2 xy) -> void
 {
   var x0 = ctx.cursor.x;
   var y0 = ctx.cursor.y;
@@ -262,63 +262,63 @@ pub fn line_to(raster_t &&ctx, vec2 xy) -> void
   switch (srcflags << 1 | dstflags << 0)
   {
     case 0:
-      line_y(ctx, vec2(x0, y0), vec2(x1, y1));
+      line_y(&mut ctx, vec2(x0, y0), vec2(x1, y1));
 
     case 1:
       var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(x0, y0), vec2(ctx.clip_right, yi));
-      line_y(ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_right, y1));
+      line_y(&mut ctx, vec2(x0, y0), vec2(ctx.clip_right, yi));
+      line_y(&mut ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_right, y1));
 
     case 2:
       var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
-      line_y(ctx, vec2(ctx.clip_right, yi), vec2(x1, y1));
+      line_y(&mut ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
+      line_y(&mut ctx, vec2(ctx.clip_right, yi), vec2(x1, y1));
 
     case 3:
-      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, y1));
+      line_y(&mut ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, y1));
 
     case 4:
       var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(x0, y0), vec2(ctx.clip_left, yi));
-      line_y(ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_left, y1));
+      line_y(&mut ctx, vec2(x0, y0), vec2(ctx.clip_left, yi));
+      line_y(&mut ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_left, y1));
 
     case 6:
       var yi = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
       var yj = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
-      line_y(ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_left, yj));
-      line_y(ctx, vec2(ctx.clip_left, yj), vec2(ctx.clip_left, y1));
+      line_y(&mut ctx, vec2(ctx.clip_right, y0), vec2(ctx.clip_right, yi));
+      line_y(&mut ctx, vec2(ctx.clip_right, yi), vec2(ctx.clip_left, yj));
+      line_y(&mut ctx, vec2(ctx.clip_left, yj), vec2(ctx.clip_left, y1));
 
     case 8:
       var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
-      line_y(ctx, vec2(ctx.clip_left, yi), vec2(x1, y1));
+      line_y(&mut ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
+      line_y(&mut ctx, vec2(ctx.clip_left, yi), vec2(x1, y1));
 
     case 9:
       var yi = y0 + (ctx.clip_left - x0) * (y1 - y0) / (x1 - x0);
       var yj = y0 + (ctx.clip_right - x0) * (y1 - y0) / (x1 - x0);
-      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
-      line_y(ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_right, yj));
-      line_y(ctx, vec2(ctx.clip_right, yj), vec2(ctx.clip_right, y1));
+      line_y(&mut ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, yi));
+      line_y(&mut ctx, vec2(ctx.clip_left, yi), vec2(ctx.clip_right, yj));
+      line_y(&mut ctx, vec2(ctx.clip_right, yj), vec2(ctx.clip_right, y1));
 
     case 12:
-      line_y(ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, y1));
+      line_y(&mut ctx, vec2(ctx.clip_left, y0), vec2(ctx.clip_left, y1));
   }
 
-  move_to(ctx, xy);
+  move_to(&mut ctx, xy);
 }
 
-pub fn move_to(raster_t &&ctx, float x, float y) -> void
+pub fn move_to(raster_t mut &ctx, float x, float y) -> void
 {
-  move_to(ctx, vec2(fround(x), fround(y)));
+  move_to(&mut ctx, vec2(fround(x), fround(y)));
 }
 
-pub fn line_to(raster_t &&ctx, float x, float y) -> void
+pub fn line_to(raster_t mut &ctx, float x, float y) -> void
 {
-  line_to(ctx, vec2(fround(x), fround(y)));
+  line_to(&mut ctx, vec2(fround(x), fround(y)));
 }
 
-pub fn quad_to(raster_t &&ctx, float x1, float y1, float x2, float y2) -> void
+pub fn quad_to(raster_t mut &ctx, float x1, float y1, float x2, float y2) -> void
 {
   using lml;
   using std;
@@ -346,13 +346,13 @@ pub fn quad_to(raster_t &&ctx, float x1, float y1, float x2, float y2) -> void
     dxdu += ddx;
     dydu += ddy;
 
-    line_to(ctx, x, y);
+    line_to(&mut ctx, x, y);
   }
 
-  line_to(ctx, x2, y2);
+  line_to(&mut ctx, x2, y2);
 }
 
-pub fn cubic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float x3, float y3) -> void
+pub fn cubic_to(raster_t mut &ctx, float x1, float y1, float x2, float y2, float x3, float y3) -> void
 {
   using lml;
   using std;
@@ -386,13 +386,13 @@ pub fn cubic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float x3
     ddx += dddx;
     ddy += dddy;
 
-    line_to(ctx, x, y);
+    line_to(&mut ctx, x, y);
   }
 
-  line_to(ctx, x3, y3);
+  line_to(&mut ctx, x3, y3);
 }
 
-pub fn conic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float w) -> void
+pub fn conic_to(raster_t mut &ctx, float x1, float y1, float x2, float y2, float w) -> void
 {
   using lml;
   using std;
@@ -413,7 +413,7 @@ pub fn conic_to(raster_t &&ctx, float x1, float y1, float x2, float y2, float w)
   {
     if (n <= 0)
     {
-      quad_to(ctx, x1, y1, x2, y2);
+      quad_to(&mut ctx, x1, y1, x2, y2);
 
       return;
     }
@@ -542,12 +542,12 @@ struct scanline
   ~scanline() = default;
 }
 
-pub fn reset(raster_t &&ctx) -> void
+pub fn reset(raster_t mut &ctx) -> void
 {
   ctx.cells.clear();
 }
 
-pub fn accumulate<Callback>(raster_t &&ctx, Callback &&render) -> void
+pub fn accumulate<Callback>(raster_t mut &ctx, Callback &&render) -> void
 {
   std::sort(&mut ctx.cells);
 

@@ -36,7 +36,7 @@ extern fn sys_ioring_enter(i32 fd, u32 to_submit, u32 min_complete, u64 flags) -
   if (!file)
     return vfs::result::bad_descriptor;
 
-  if (!file.node.is_ioring)
+  if (file.node.type != vfs::node::type::ioring)
     return vfs::result::bad_descriptor;
 
   if (to_submit != 0)
@@ -61,7 +61,7 @@ extern fn sys_ioring_destroy(i32 fd) -> result
   if (!file)
     return vfs::result::bad_descriptor;
 
-  if (!file.node.is_ioring)
+  if (file.node.type != vfs::node::type::ioring)
     return vfs::result::bad_descriptor;
 
   if (var result = destroy_ioring(file.node); !result)

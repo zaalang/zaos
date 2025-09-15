@@ -31,8 +31,8 @@ struct inode : pub vfs::node
   devfs mut *fs;
   Rc<vfs::node> parent;
 
-  inode(devfs mut *fs, vfs::node::type type, vfs::node_operations &ops, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
-    : super(type, ops), fs(fs), parent(parent), uid(uid), gid(gid), mode(mode)
+  inode(devfs mut *fs, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
+    : fs(fs), parent(parent), uid(uid), gid(gid), mode(mode)
   {
     this.btime = chrono::system_clock::now.time_since_epoch.count;
   }
@@ -56,8 +56,9 @@ struct directory : pub inode
 
   #[lifetime(depend())]
   directory(devfs mut *fs, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
-    : super(fs, vfs::node::type::directory, vfs::node_directory_operations(), parent, uid, gid, mode)
+    : super(fs, parent, uid, gid, mode)
   {
+    vfs::node::init(&this, vfs::node::type::directory, vfs::node::ops::directory(&impl this));
   }
 
   ~directory() = default;
@@ -79,9 +80,10 @@ struct symlink : pub inode
 
   #[lifetime(depend())]
   symlink(devfs mut *fs, vfs::node mut *parent, std::string_view target, u32 uid, u32 gid, u32 mode)
-    : super(fs, vfs::node::type::symlink, vfs::node_symlink_operations(), parent, uid, gid, mode),
+    : super(fs, parent, uid, gid, mode),
       target(target)
   {
+    vfs::node::init(&this, vfs::node::type::symlink, vfs::node::ops::symlink(&impl this));
   }
 
   ~symlink() = default;
@@ -93,12 +95,12 @@ struct device : pub inode
 
   fn create_blkdev(devfs mut *fs, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode) -> Rc<vfs::node>
   {
-    return std::allocator::new<device>(fs, vfs::node::type::volume, vfs::node_volume_operations(), parent, id, uid, gid, mode);
+    return std::allocator::new<device>(fs, vfs::node::type::volume, parent, id, uid, gid, mode);
   }
 
   fn create_chrdev(devfs mut *fs, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode) -> Rc<vfs::node>
   {
-    return std::allocator::new<device>(fs, vfs::node::type::device, vfs::node_device_operations(), parent, id, uid, gid, mode);
+    return std::allocator::new<device>(fs, vfs::node::type::device, parent, id, uid, gid, mode);
   }
 
   fn destroy(vfs::node mut *node) -> void
@@ -107,10 +109,18 @@ struct device : pub inode
   }
 
   #[lifetime(depend())]
-  device(devfs mut *fs, vfs::node::type type, vfs::node_operations &ops, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode)
-    : super(fs, type, ops, parent, uid, gid, mode),
+  device(devfs mut *fs, vfs::node::type type, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode)
+    : super(fs, parent, uid, gid, mode),
       id(id)
   {
+    switch (type)
+    {
+      case device:
+        vfs::node::init(&this, vfs::node::type::device, vfs::node::ops::device(&impl this));
+
+      case volume:
+        vfs::node::init(&this, vfs::node::type::volume, vfs::node::ops::volume(&impl this));
+    }
   }
 
   ~device() = default;
@@ -203,7 +213,7 @@ fn mkpath(devfs mut &devfs, Rc<vfs::node> base, String &path) -> Rc<vfs::node>
     if (!j)
       j = devfs.insert(base, std::string_view(beg, ch), directory::create(&devfs, base, 0, 0, 0o40755));
 
-    if (!j.is_directory)
+    if (j.type != vfs::node::type::directory)
       return null;
 
     base = &move j;
@@ -230,7 +240,7 @@ pub fn publish(dev::dev_t id, dev::device &device) -> void
 
       var parent = devfs.mkpath(devfs.root, devpath);
 
-      if (!parent.is_directory)
+      if (parent.type != vfs::node::type::directory)
         return;
 
       devfs.insert(parent, std::string_view(devname), device::create_blkdev(devfs, parent, id, 0, 0, 0o60600));
@@ -248,7 +258,7 @@ pub fn publish(dev::dev_t id, dev::device &device) -> void
         devname = devname.substr(j + 1, devname.len);
       }
 
-      if (!parent.is_directory)
+      if (parent.type != vfs::node::type::directory)
         return;
 
       devfs.insert(parent, std::string_view(devname), device::create_chrdev(devfs, parent, id, 0, 0, 0o20600));
@@ -273,7 +283,7 @@ pub fn remove(dev::dev_t id, dev::device &device) -> void
 
       var parent = devfs.mkpath(devfs.root, devpath);
 
-      if (!parent.is_directory)
+      if (parent.type != vfs::node::type::directory)
         return;
 
       devfs.remove(parent, std::string_view(devname));
@@ -291,7 +301,7 @@ pub fn remove(dev::dev_t id, dev::device &device) -> void
         devname = devname.substr(j + 1, devname.len);
       }
 
-      if (!parent.is_directory)
+      if (parent.type != vfs::node::type::directory)
         return;
 
       devfs.remove(parent, std::string_view(devname));
@@ -422,7 +432,7 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return not_supported;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -464,7 +474,7 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return ok;
 }
@@ -557,6 +567,14 @@ pub fn read(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   if (!device)
     return no_such_device;
 
+  var size = device.blkdev.block_count << device.blkdev.block_shift;
+
+  if (position > size)
+    return invalid_argument;
+
+  if (position + cast(length) > size)
+    length = cast<usize>(size - position);
+
   io::initiate(&mut cb, 1);
 
   blk::read(device.blkdev, &mut cb, position, iovec, offset, length);
@@ -572,6 +590,11 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
 
   if (!device)
     return no_such_device;
+
+  var size = device.blkdev.block_count << device.blkdev.block_shift;
+
+  if (position + cast(length) > size)
+    return invalid_argument;
 
   io::initiate(&mut cb, 1);
 

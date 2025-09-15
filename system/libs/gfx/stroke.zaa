@@ -79,7 +79,7 @@ struct state
   ~state() = default;
 }
 
-fn stroke_line(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
+fn stroke_line(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
 {
   using lml;
   using std;
@@ -107,7 +107,7 @@ fn stroke_line(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2,
   state.forward = vec(v1, v2);
 }
 
-fn stroke_quad(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float width) -> void
+fn stroke_quad(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float width) -> void
 {
   using lml;
   using std;
@@ -118,14 +118,14 @@ fn stroke_quad(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2,
 
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_line(state, Q, v2, v3, width);
+      stroke_line(&mut state, Q, v2, v3, width);
 
       return;
     }
 
     if (v2.x == v3.x && v2.y == v3.y)
     {
-      stroke_line(state, Q, v1, v2, width);
+      stroke_line(&mut state, Q, v1, v2, width);
 
       return;
     }
@@ -171,7 +171,7 @@ fn stroke_quad(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2,
   state.forward = vec(v2, v3);
 }
 
-fn stroke_cubic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, float width) -> void
+fn stroke_cubic(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, gfx::point &v4, float width) -> void
 {
   using lml;
   using std;
@@ -182,14 +182,14 @@ fn stroke_cubic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2
 
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_quad(state, Q, v2, v3, v4, width);
+      stroke_quad(&mut state, Q, v2, v3, v4, width);
 
       return;
     }
 
     if (v3.x == v4.x && v3.y == v4.y)
     {
-      stroke_quad(state, Q, v1, v2, v3, width);
+      stroke_quad(&mut state, Q, v1, v2, v3, width);
 
       return;
     }
@@ -242,7 +242,7 @@ fn stroke_cubic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2
   state.forward = vec(v3, v4);
 }
 
-fn stroke_conic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, float width) -> void
+fn stroke_conic(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, gfx::point &v3, float w, float width) -> void
 {
   using lml;
   using std;
@@ -251,14 +251,14 @@ fn stroke_conic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2
   {
     if (v1.x == v2.x && v1.y == v2.y)
     {
-      stroke_line(state, Q, v2, v3, width);
+      stroke_line(&mut state, Q, v2, v3, width);
 
       return;
     }
 
     if (v2.x == v3.x && v2.y == v3.y)
     {
-      stroke_line(state, Q, v1, v2, width);
+      stroke_line(&mut state, Q, v1, v2, width);
 
       return;
     }
@@ -308,7 +308,7 @@ fn stroke_conic(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2
   state.forward = vec(v2, v3);
 }
 
-fn stroke_join(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &left, gfx::point &right, lml::vector<f64, 2> &forward, float width) -> void
+fn stroke_join(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &left, gfx::point &right, lml::vector<f64, 2> &forward, float width) -> void
 {
   using lml;
   using std;
@@ -372,7 +372,7 @@ fn stroke_join(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &lef
   state.forward = forward;
 }
 
-fn stroke_cap(state &&state, gfx::transform &Q, gfx::point &a1, gfx::point &a2) -> void
+fn stroke_cap(state mut &state, gfx::transform &Q, gfx::point &a1, gfx::point &a2) -> void
 {
   using lml;
   using std;
@@ -381,7 +381,7 @@ fn stroke_cap(state &&state, gfx::transform &Q, gfx::point &a1, gfx::point &a2) 
   state.raster.line_to(a2.x, a2.y);
 }
 
-fn stroke_to(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
+fn stroke_to(state mut &state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, float width) -> void
 {
   using lml;
   using std;
@@ -404,80 +404,80 @@ fn stroke_to(state &&state, gfx::transform &Q, gfx::point &v1, gfx::point &v2, f
       state.first_forward = state.forward = vec(v1, v2);
 
     case draw_to:
-      stroke_join(state, Q, state.cursor, a1, a2, vec(v1, v2), width);
+      stroke_join(&mut state, Q, state.cursor, a1, a2, vec(v1, v2), width);
   }
 }
 
-fn move_to(state &&state, gfx::transform &Q, float x, float y) -> void
+fn move_to(state mut &state, gfx::transform &Q, float x, float y) -> void
 {
   switch (state.status)
   {
     case draw_to:
-      stroke_cap(state, Q, state.left, state.right);
-      stroke_cap(state, Q, state.first_right, state.first_left);
+      stroke_cap(&mut state, Q, state.left, state.right);
+      stroke_cap(&mut state, Q, state.first_right, state.first_left);
   }
 
   state.cursor = state.start = gfx::point(x, y);
   state.status = state::status::move_to;
 }
 
-fn line_to(state &&state, gfx::transform &Q, float x, float y, float width) -> void
+fn line_to(state mut &state, gfx::transform &Q, float x, float y, float width) -> void
 {
-  stroke_to(state, Q, state.cursor, gfx::point(x, y), width);
+  stroke_to(&mut state, Q, state.cursor, gfx::point(x, y), width);
 
-  stroke_line(state, Q, state.cursor, gfx::point(x, y), width);
+  stroke_line(&mut state, Q, state.cursor, gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
   state.status = state::status::draw_to;
 }
 
-fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float width) -> void
+fn quad_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y, float width) -> void
 {
-  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+  stroke_to(&mut state, Q, state.cursor, gfx::point(x1, y1), width);
 
-  stroke_quad(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), width);
+  stroke_quad(&mut state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
   state.status = state::status::draw_to;
 }
 
-fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y, float width) -> void
+fn cubic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y, float width) -> void
 {
-  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+  stroke_to(&mut state, Q, state.cursor, gfx::point(x1, y1), width);
 
-  stroke_cubic(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x2, y2), gfx::point(x, y), width);
+  stroke_cubic(&mut state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x2, y2), gfx::point(x, y), width);
 
   state.cursor = gfx::point(x, y);
   state.status = state::status::draw_to;
 }
 
-fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float w, float width) -> void
+fn conic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y, float w, float width) -> void
 {
-  stroke_to(state, Q, state.cursor, gfx::point(x1, y1), width);
+  stroke_to(&mut state, Q, state.cursor, gfx::point(x1, y1), width);
 
-  stroke_conic(state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), w, width);
+  stroke_conic(&mut state, Q, state.cursor, gfx::point(x1, y1), gfx::point(x, y), w, width);
 
   state.cursor = gfx::point(x, y);
   state.status = state::status::draw_to;
 }
 
-fn close(state &&state, gfx::transform &Q, float width) -> void
+fn close(state mut &state, gfx::transform &Q, float width) -> void
 {
   switch (state.status)
   {
     case draw_to:
       if (state.cursor != state.start)
-        line_to(state, Q, state.start.x, state.start.y, width);
+        line_to(&mut state, Q, state.start.x, state.start.y, width);
 
       if (state.left != state.first_left || state.right != state.first_right)
-        stroke_join(state, Q, state.cursor, state.first_left, state.first_right, state.first_forward, width);
+        stroke_join(&mut state, Q, state.cursor, state.first_left, state.first_right, state.first_forward, width);
   }
 
   state.cursor = state.start;
   state.status = state::status::closed;
 }
 
-pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn stroke_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var state = state();
 
@@ -492,26 +492,26 @@ pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::
     switch (vertex)
     {
       case move_to[pt]:
-        move_to(state, Q, pt.x, pt.y);
+        move_to(&mut state, Q, pt.x, pt.y);
 
       case line_to[pt]:
-        line_to(state, Q, pt.x, pt.y, pen.width);
+        line_to(&mut state, Q, pt.x, pt.y, pen.width);
 
       case quad_to[pt]:
-        quad_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pen.width);
+        quad_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y, pen.width);
 
       case cubic_to[pt]:
-        cubic_to(state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y, pen.width);
+        cubic_to(&mut state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y, pen.width);
 
       case conic_to[pt]:
-        conic_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w, pen.width);
+        conic_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w, pen.width);
 
       case close:
-        close(state, Q, pen.width);
+        close(&mut state, Q, pen.width);
     }
   }
 
-  move_to(state, Q, state.start.x, state.start.y);
+  move_to(&mut state, Q, state.start.x, state.start.y);
 
   var color = gfx::premultiply(pen.brush.rgba);
 
@@ -534,12 +534,12 @@ pub fn stroke_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::
   });
 }
 
-pub fn stroke_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn stroke_path(gfx::paint_t mut &ctx, gfx::transform &Q, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  stroke_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, pen, mode);
+  stroke_path(&mut ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, pen, mode);
 }
 
-pub fn stroke_path(gfx::paint_t &&ctx, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn stroke_path(gfx::paint_t mut &ctx, gfx::path &path, gfx::pen &pen, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  stroke_path(ctx, gfx::transform::identity, path, pen, mode);
+  stroke_path(&mut ctx, gfx::transform::identity, path, pen, mode);
 }

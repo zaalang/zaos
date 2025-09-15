@@ -53,13 +53,60 @@ enum modifiers
   const alt = 0x4;
 }
 
+pub struct termin
+{
+  terminal mut *terminal;
+
+  pub fn read(this mut &, u8 mut *data, usize len) throws(std::error) -> usize
+  {
+    var rc = this.terminal.read(std::mutable_span(data, len));
+
+    if (rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    return cast<usize>(rc);
+  }
+
+  pub termin(terminal mut *terminal)
+    : terminal(terminal)
+  {
+  }
+
+  pub ~termin() = default;
+}
+
+pub struct termout
+{
+  terminal mut *terminal;
+
+  pub fn write(this mut &, u8 *data, usize len) throws(std::error) -> usize
+  {
+    if (len == 0)
+      return 0;
+
+    if (var rc = this.terminal.write(std::span(data, len)); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    this.terminal.flush();
+
+    return len;
+  }
+
+  pub termout(terminal mut *terminal)
+    : terminal(terminal)
+  {
+  }
+
+  pub ~termout() = default;
+}
+
 pub struct terminal
 {
   seat::seat mut &seat;
   display::display mut &display;
 
   terminal(seat::seat mut &seat, display::display mut &display)
-    : seat(&seat), display(&display)
+    : seat(&seat), display(&display), termin(&this), termout(&this)
   {
   }
 
@@ -77,13 +124,29 @@ pub struct terminal
 
   readline::default_history history;
 
+  struct cell
+  {
+    char ch;
+    vt::attrs attrs;
+
+    cell() = default;
+    cell(cell&&) = default;
+    ~cell() = default;
+  }
+
+  std::vector<cell> cells;
+
+  pub termin termin;
+  pub termout termout;
+
   pub fn x(this &) { return this.screen.cursor.0; }
   pub fn y(this &) { return this.screen.cursor.1; }
 
   pub fn rows(this &) { return this.screen.rows; }
   pub fn columns(this &) { return this.screen.columns; }
 
-  pub fn pty(this &) { return this.pty; }
+  pub fn pty(this &&) { return &this.pty; }
+  pub fn display(this &&) { return &this.display; }
 
   pub ~terminal() = default;
 }
@@ -134,7 +197,15 @@ pub fn set_font(terminal mut &terminal, String &path) -> i32
 
 pub fn clear(terminal mut &this) -> void
 {
+  this.display.fill(0, 0, this.display.width, this.top, 0xff222222);
+  this.display.fill(0, this.bottom, this.display.width, this.display.height, 0xff222222);
+  this.display.fill(0, this.top, this.left, this.display.height, 0xff222222);
+  this.display.fill(this.right, this.top, this.display.width, this.display.height, 0xff222222);
+
+  this.flush();
   this.screen.erase_screen();
+  this.screen.move_to(0, 0);
+  this.cells.clear();
 }
 
 pub fn print(terminal mut &this, String &str) -> void
@@ -144,31 +215,34 @@ pub fn print(terminal mut &this, String &str) -> void
 
 pub fn render(terminal mut &this) -> void
 {
-  this.screen.draw(fn [this](usize i, usize j, char ch, usize n, var attrs) {
-    var x = this.left + cast<int>(i) * 8;
-    var y = this.top + cast<int>(j) * 16;
+  var rows = this.screen.rows;
+  var columns = this.screen.columns;
 
-    var foreground = attrs.foreground_color;
-    var background = attrs.background_color;
+  this.cells.resize(rows * columns + 1);
 
-    if (attrs.flags & vt::attrs::inverse != 0)
-      std::swap(&mut foreground, &mut background);
+  this.screen.draw(|i, j, ch, n, attrs| {
+    var mut &cell = this.cells[j*columns + i];
 
-    this.display.blit(x, y, this.font.lookup(ch), foreground, background);
+    if (cell.ch != ch || cell.attrs != attrs)
+    {
+      var x = this.left + cast<int>(i) * 8;
+      var y = this.top + cast<int>(j) * 16;
+
+      var foreground = attrs.foreground_color;
+      var background = attrs.background_color;
+
+      if (attrs.flags & vt::attrs::inverse != 0)
+        std::swap(&mut foreground, &mut background);
+
+      this.display.blit(x, y, this.font.lookup(ch), foreground, background);
+
+      cell.ch = ch;
+      cell.attrs = attrs;
+
+      for (var k = 1; k < n; ++k)
+        this.cells[j*columns + i + k].ch = 0;
+    }
   });
-
-  if (this.screen.cursor_visible)
-  {
-    var cx = this.left + cast<int>(this.screen.cursor.0) * 8;
-    var cy = this.top + cast<int>(this.screen.cursor.1) * 16;
-
-    if (this.left <= cx && cx < this.right && this.top <= cy && cy < this.bottom)
-      this.display.fill(cx, cy, cx + 8, cy + 16, cursor_palette[this.cursor_color]);
-
-    this.cursor_color += 1;
-    if (this.cursor_color == cursor_palette.len)
-      this.cursor_color = 0;
-  }
 }
 
 pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanoseconds(-1)) -> i32
@@ -313,6 +387,9 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
                   case Delete:
                     pty.write_master("\x1b[3;2~".data, 6);
 
+                  case Tab:
+                    pty.write_master("\x1b[1;2Z".data, 6);
+
                   case Enter:
                   case NumEnter:
                     pty.write_master("\x1b[13;2u".data, 7);
@@ -437,7 +514,24 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
       events += 1;
     }
 
-    terminal.render();
+    if (bytes > 0)
+      terminal.render();
+
+    if (terminal.screen.cursor_visible)
+    {
+      var cx = terminal.left + cast<int>(terminal.screen.cursor.0) * 8;
+      var cy = terminal.top + cast<int>(terminal.screen.cursor.1) * 16;
+
+      if (terminal.left <= cx && cx < terminal.right && terminal.top <= cy && cy < terminal.bottom)
+        terminal.display.fill(cx, cy, cx + 8, cy + 16, cursor_palette[terminal.cursor_color]);
+
+      if (terminal.screen.cursor.1*terminal.screen.columns + terminal.screen.cursor.0 < terminal.cells.len)
+        terminal.cells[terminal.screen.cursor.1*terminal.screen.columns + terminal.screen.cursor.0].ch = 0;
+
+      terminal.cursor_color += 1;
+      if (terminal.cursor_color == cursor_palette.len)
+        terminal.cursor_color = 0;
+    }
 
     if (events != 0)
       return events;
@@ -499,6 +593,8 @@ pub fn write(terminal mut &terminal, Span<u8> &buffer) -> i32
 
 pub fn read(terminal mut &terminal, Span<u8> mut &buffer) -> i32
 {
+  terminal.pump(0.nanoseconds);
+
   while (true)
   {
     var bytes = terminal.pty.read_slave(buffer.data, buffer.len);

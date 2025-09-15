@@ -12,7 +12,6 @@ import io;
 import vm;
 import mutex as _ : mutex;
 import process as _ : process;
-import slab : slab_allocator;
 import support.rc : Rc;
 
 pub struct node
@@ -33,6 +32,21 @@ pub struct node
     //socket,
   }
 
+  pub union ops
+  {
+    pub file(node_file_operations *),
+    pub directory(node_directory_operations *),
+    pub symlink(node_symlink_operations *),
+    pub volume(node_volume_operations *),
+    pub stream(node_stream_operations *),
+    pub device(node_device_operations *),
+
+    pub ops() = default;
+    pub ops(ops &) = default;
+    pub fn =(ops mut &, ops &) ->ops mut & = default;
+    pub ~ops() = default;
+  }
+
   pub type type;
   pub Rc<node> covers;
   pub Rc<node> covered;
@@ -40,106 +54,109 @@ pub struct node
   pub u64 watching;
   pub Rc<vfs::watchlist> watchlist;
 
-  pub fn is_file(this &) -> bool
-  {
-    return this.type == node::type::file;
-  }
-
-  pub fn is_directory(this &) -> bool
-  {
-    return this.type == node::type::directory;
-  }
-
-  pub fn is_symlink(this &) -> bool
-  {
-    return this.type == node::type::symlink;
-  }
-
-  pub fn is_volume(this &) -> bool
-  {
-    return this.type == node::type::volume;
-  }
-
-  pub fn is_device(this &) -> bool
-  {
-    return this.type == node::type::device;
-  }
-
-  pub fn is_watchset(this &) -> bool
-  {
-    return this.type == node::type::watchset;
-  }
-
-  pub fn is_pollset(this &) -> bool
-  {
-    return this.type == node::type::pollset;
-  }
-
-  pub fn is_ioring(this &) -> bool
-  {
-    return this.type == node::type::ioring;
-  }
-
-  pub fn is_event(this &) -> bool
-  {
-    return this.type == node::type::event;
-  }
-
-  pub fn is_buffer(this &) -> bool
-  {
-    return this.type == node::type::buffer;
-  }
-
-  pub fn is_channel(this &) -> bool
-  {
-    return this.type == node::type::channel;
-  }
-
   pub fn node_operations(this &) -> node_operations *
   {
-    return this.ops;
+    switch (this.ops)
+    {
+      case file[ops]:
+        return ops;
+
+      case directory[ops]:
+        return ops;
+
+      case symlink[ops]:
+        return ops;
+
+      case volume[ops]:
+        return ops;
+
+      case stream[ops]:
+        return ops;
+
+      case device[ops]:
+        return ops;
+
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn file_operations(this &) -> node_file_operations *
   {
-    std::assert(is_file(this) || is_volume(this));
+    switch (this.ops)
+    {
+      case file[ops]:
+        return ops;
 
-    return cast<node_file_operations*>(this.ops);
+      case volume[ops]:
+        return ops;
+
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn directory_operations(this &) -> node_directory_operations *
   {
-    std::assert(is_directory(this));
+    switch (this.ops)
+    {
+      case directory[ops]:
+        return ops;
 
-    return cast<node_directory_operations*>(this.ops);
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn symlink_operations(this &) -> node_symlink_operations *
   {
-    std::assert(is_symlink(this));
+    switch (this.ops)
+    {
+      case symlink[ops]:
+        return ops;
 
-    return cast<node_symlink_operations*>(this.ops);
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn volume_operations(this &) -> node_volume_operations *
   {
-    std::assert(is_volume(this));
+    switch (this.ops)
+    {
+      case volume[ops]:
+        return ops;
 
-    return cast<node_volume_operations*>(this.ops);
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn stream_operations(this &) -> node_stream_operations *
   {
-    std::assert(is_event(this) || is_buffer(this) || is_channel(this) || is_device(this) || is_watchset(this) || is_pollset(this) || is_ioring(this));
+    switch (this.ops)
+    {
+      case stream[ops]:
+        return ops;
 
-    return cast<node_stream_operations*>(this.ops);
+      case device[ops]:
+        return ops;
+
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn device_operations(this &) -> node_device_operations *
   {
-    std::assert(is_device(this));
+    switch (this.ops)
+    {
+      case device[ops]:
+        return ops;
 
-    return cast<node_device_operations*>(this.ops);
+      else:
+        std::panic("illegal ops type");
+    }
   }
 
   pub fn ref(this mut &) -> void
@@ -158,25 +175,25 @@ pub struct node
   {
   }
 
-  pub fn init(node mut *this, type type, node_operations &ops) -> void
+  pub fn init(node mut *this, type type, ops &ops) -> void
   {
     this.type = type;
-    this.ops = &ops;
+    this.ops = ops;
   }
 
   pub node() = default;
   pub ~node() = default;
 
   i32 refcnt;
-  node_operations *ops;
+  ops ops;
 }
 
 pub vtable node_operations
 {
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result;
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
-  pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result;
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
+  pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result;
 
   fn destroy(vfs::node mut *node) -> void;
 }
@@ -226,8 +243,7 @@ pub vtable node_device_operations : node_stream_operations
 fn destroy(node mut *node) -> void
 {
   vfs::unwatch(node);
-
   blk::purge(node);
 
-  node.ops.destroy(node);
+  node.node_operations.destroy(node);
 }

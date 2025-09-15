@@ -75,7 +75,7 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
         if (position + cast(bytes) > stat.size)
         {
           stat.size = position + cast(bytes);
-          if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+          if (var result = vfs::putstat(node, stat, vfs::stats::size); !result)
             return result;
         }
 
@@ -88,7 +88,7 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
 
       file.writecursor = position;
 
-      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+      if (var result = vfs::putstat(node, stat, vfs::stats::mtime); !result)
         return result;
 
       vfs::notify(file.parent, file.node, vfs::notify::modify);
@@ -176,7 +176,7 @@ pub fn sys_writev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr io
         if (position + cast(bytes) > stat.size)
         {
           stat.size = position + cast(bytes);
-          if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+          if (var result = vfs::putstat(node, stat, vfs::stats::size); !result)
             return result;
         }
 
@@ -189,7 +189,7 @@ pub fn sys_writev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr io
 
       file.writecursor = position;
 
-      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+      if (var result = vfs::putstat(node, stat, vfs::stats::mtime); !result)
         return result;
 
       vfs::notify(file.parent, file.node, vfs::notify::modify);
@@ -275,7 +275,7 @@ pub fn sys_pwritev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr i
         if (position + cast(bytes) > stat.size)
         {
           stat.size = position + cast(bytes);
-          if (var result = vfs::setattr(node, stat, vfs::stats::size); !result)
+          if (var result = vfs::putstat(node, stat, vfs::stats::size); !result)
             return result;
         }
 
@@ -286,7 +286,7 @@ pub fn sys_pwritev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr i
         count += bytes;
       }
 
-      if (var result = vfs::setattr(node, stat, vfs::stats::mtime); !result)
+      if (var result = vfs::putstat(node, stat, vfs::stats::mtime); !result)
         return result;
 
       vfs::notify(file.parent, file.node, vfs::notify::modify);

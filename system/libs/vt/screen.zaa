@@ -603,6 +603,11 @@ pub fn put(screen mut &screen, char ch, attrs &attrs) -> vt::result
     line.cells[x + i].width = 0;
   }
 
+  if (x + width < line.cells.len && line.cells[x + width].width == 0)
+  {
+    line.cells[x + width].width = 1;
+  }
+
   move_to(&mut screen, x + width, y);
 
   return 0;

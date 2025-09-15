@@ -1,0 +1,47 @@
+//
+// random syscalls
+//
+
+import std.stdlib;
+import vm : virtaddr;
+import result as _ : result;
+import process as _ : process;
+import platform;
+
+extern fn sys_get_random(virtaddr buffer, usize length, u64 flags) -> result
+{
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  if (!vm::is_user_address(buffer))
+    return vm::result::invalid_argument;
+
+  var count = 0;
+  var offset = 0;
+  var remaining = length;
+  var entropy = [<u64>: void; 32];
+
+  for (var i = 0; i < length; ++i)
+  {
+    var bytes = std::min(remaining, sizeof(entropy));
+
+    for (var j = 0; j < (bytes + 7) / 8; ++j)
+    {
+      // TODO: random number system
+
+      if (platform::cpuid(1).2 & 0x40000000 != 0)
+        entropy[j] = cast(__asm("rdrand $0", "=r"));
+      else
+        entropy[j] = __rdtsc();
+    }
+
+    if (var result = vm::write_process_memory(buffer + offset, entropy.data, bytes); !result)
+      return result;
+
+    count += bytes;
+    offset += bytes;
+    remaining -= bytes;
+  }
+
+  return cast(count);
+}

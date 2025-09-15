@@ -25,8 +25,8 @@ struct inode : pub vfs::node
   rootfs mut *fs;
   Rc<vfs::node> parent;
 
-  inode(rootfs mut *fs, vfs::node::type type, vfs::node_operations &ops, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
-    : super(type, ops), fs(fs), parent(parent), uid(uid), gid(gid), mode(mode)
+  inode(rootfs mut *fs, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
+    : fs(fs), parent(parent), uid(uid), gid(gid), mode(mode)
   {
     this.btime = chrono::system_clock::now.time_since_epoch.count;
   }
@@ -50,8 +50,9 @@ struct directory : pub inode
 
   #[lifetime(depend(*fs))]
   directory(rootfs mut *fs, vfs::node mut *parent, u32 uid, u32 gid, u32 mode)
-    : super(fs, vfs::node::type::directory, vfs::node_directory_operations(), parent, uid, gid, mode)
+    : super(fs, parent, uid, gid, mode)
   {
+    vfs::node::init(&this, vfs::node::type::directory, vfs::node::ops::directory(&impl this));
   }
 
   ~directory() = default;
@@ -73,9 +74,10 @@ struct symlink : pub inode
 
   #[lifetime(depend(*fs))]
   symlink(rootfs mut *fs, vfs::node mut *parent, std::string_view target, u32 uid, u32 gid, u32 mode)
-    : super(fs, vfs::node::type::symlink, vfs::node_symlink_operations(), parent, uid, gid, mode),
+    : super(fs, parent, uid, gid, mode),
       target(target)
   {
+    vfs::node::init(&this, vfs::node::type::symlink, vfs::node::ops::symlink(&impl this));
   }
 
   ~symlink() = default;
@@ -236,7 +238,7 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return not_supported;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -262,7 +264,7 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);

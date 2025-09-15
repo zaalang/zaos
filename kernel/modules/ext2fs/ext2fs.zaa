@@ -39,7 +39,7 @@ struct inode : pub vfs::node
 
   bool unlinked;
 
-  u8[16] reserved;
+  u8[8] reserved;
 
   fn allocator()
   {
@@ -151,13 +151,13 @@ fn get_node(ext2fs mut &fs, Rc<vfs::node> mut &node, ext2_ino_t ino) -> vfs::res
   switch (rawinode.ptr.type)
   {
     case regular:
-      vfs::node::init(inode, vfs::node::type::file, vfs::node_file_operations());
+      vfs::node::init(inode, vfs::node::type::file, vfs::node::ops::file(&impl inode));
 
     case directory:
-      vfs::node::init(inode, vfs::node::type::directory, vfs::node_directory_operations());
+      vfs::node::init(inode, vfs::node::type::directory, vfs::node::ops::directory(&impl inode));
 
     case symlink:
-      vfs::node::init(inode, vfs::node::type::symlink, vfs::node_symlink_operations());
+      vfs::node::init(inode, vfs::node::type::symlink, vfs::node::ops::symlink(&impl inode));
 
     else:
       return (inode.status = not_supported);
@@ -526,7 +526,7 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
   return not_supported;
 }
 
-pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);
@@ -545,7 +545,7 @@ pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
   return ok;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   var fs = cast<inode mut &>(*node).fs;
   var mut &this = cast<inode mut &>(*node);

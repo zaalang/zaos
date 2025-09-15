@@ -106,8 +106,6 @@ pub struct pty
   pub i32 master;
   pub i32 slave;
 
-  termios state;
-
   pub pty() = default;
   pub pty(pty&) = default;
   pub fn =(pty mut &, pty &) -> pty mut & = default;
@@ -217,16 +215,16 @@ pub fn echo_on(pty mut &pty) -> i32
 
 pub fn enable_raw_mode(pty mut &pty) -> i32
 {
-  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &pty.state, sizeof<termios>); rc < 0)
+  var state = termios(void);
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); rc < 0)
     return rc;
 
-  var raw = pty.state;
-  raw.c_iflag &= ~(IFLAG::BRKINT | IFLAG::ICRNL | IFLAG::ISTRIP);
-  raw.c_oflag &= ~(OFLAG::OPOST);
-  raw.c_cflag |= (CFLAG::CS8);
-  raw.c_lflag &= ~(LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ISIG);
+  state.c_iflag &= ~(IFLAG::BRKINT | IFLAG::ICRNL | IFLAG::ISTRIP);
+  state.c_oflag &= ~(OFLAG::OPOST);
+  state.c_cflag |= (CFLAG::CS8);
+  state.c_lflag &= ~(LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ISIG);
 
-  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &raw, sizeof<termios>); rc < 0)
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); rc < 0)
     return rc;
 
   return 0;
@@ -234,7 +232,16 @@ pub fn enable_raw_mode(pty mut &pty) -> i32
 
 pub fn restore_cooked_mode(pty mut &pty) -> i32
 {
-  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &pty.state, sizeof<termios>); rc < 0)
+  var state = termios(void);
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::gettermios, &state, sizeof<termios>); rc < 0)
+    return rc;
+
+  state.c_iflag = (IFLAG::ICRNL | IFLAG::IUTF8);
+  state.c_oflag = (OFLAG::OPOST | OFLAG::ONLCR);
+  state.c_cflag = (CFLAG::CREAD | CFLAG::CS8);
+  state.c_lflag = (LFLAG::ECHO | LFLAG::ICANON | LFLAG::IEXTEN | LFLAG::ECHOE | LFLAG::ECHOK | LFLAG::ECHONL);
+
+  if (var rc = os::ioctl(&mut thread_ring, pty.slave, tio::settermios, &state, sizeof<termios>); rc < 0)
     return rc;
 
   return 0;

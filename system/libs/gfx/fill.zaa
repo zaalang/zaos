@@ -58,19 +58,19 @@ struct state
   ~state() = default;
 }
 
-fn move_to(state &&state, gfx::transform &Q, float x, float y) -> void
+fn move_to(state mut &state, gfx::transform &Q, float x, float y) -> void
 {
   var pt = Q * gfx::point(x, y);
 
   if (state.cursor != state.start)
-    close(state);
+    close(&mut state);
 
   state.raster.move_to(pt.x, pt.y);
 
   state.cursor = state.start = pt;
 }
 
-fn line_to(state &&state, gfx::transform &Q, float x, float y) -> void
+fn line_to(state mut &state, gfx::transform &Q, float x, float y) -> void
 {
   var pt = Q * gfx::point(x, y);
 
@@ -79,7 +79,7 @@ fn line_to(state &&state, gfx::transform &Q, float x, float y) -> void
   state.cursor = pt;
 }
 
-fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y) -> void
+fn quad_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y) -> void
 {
   var pt = Q * gfx::point(x, y);
   var cp = Q * gfx::point(x1, y1);
@@ -89,7 +89,7 @@ fn quad_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float 
   state.cursor = pt;
 }
 
-fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y) -> void
+fn cubic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y) -> void
 {
   var pt = Q * gfx::point(x, y);
   var cp1 = Q * gfx::point(x1, y1);
@@ -100,7 +100,7 @@ fn cubic_to(state &&state, gfx::transform &Q, float x1, float y1, float x2, floa
   state.cursor = pt;
 }
 
-fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float y, float w) -> void
+fn conic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y, float w) -> void
 {
   var pt = Q * gfx::point(x, y);
   var cp = Q * gfx::point(x1, y1);
@@ -110,7 +110,7 @@ fn conic_to(state &&state, gfx::transform &Q, float x1, float y1, float x, float
   state.cursor = pt;
 }
 
-fn close(state &&state) -> void
+fn close(state mut &state) -> void
 {
   if (state.cursor != state.start)
     state.raster.line_to(state.start.x, state.start.y);
@@ -118,7 +118,7 @@ fn close(state &&state) -> void
   state.cursor = state.start;
 }
 
-pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var state = state();
 
@@ -129,26 +129,26 @@ pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::pa
     switch (vertex)
     {
       case move_to[pt]:
-        move_to(state, Q, pt.x, pt.y);
+        move_to(&mut state, Q, pt.x, pt.y);
 
       case line_to[pt]:
-        line_to(state, Q, pt.x, pt.y);
+        line_to(&mut state, Q, pt.x, pt.y);
 
       case quad_to[pt]:
-        quad_to(state, Q, pt.x1, pt.y1, pt.x, pt.y);
+        quad_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y);
 
       case cubic_to[pt]:
-        cubic_to(state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y);
+        cubic_to(&mut state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y);
 
       case conic_to[pt]:
-        conic_to(state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w);
+        conic_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w);
 
       case close:
-        close(state);
+        close(&mut state);
     }
   }
 
-  close(state);
+  close(&mut state);
 
   switch (brush)
   {
@@ -260,12 +260,12 @@ pub fn fill_path(gfx::paint_t &&ctx, gfx::rect &clip, gfx::transform &Q, gfx::pa
   }
 }
 
-pub fn fill_path(gfx::paint_t &&ctx, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  fill_path(ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, brush, mode);
+  fill_path(&mut ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, brush, mode);
 }
 
-pub fn fill_path(gfx::paint_t &&ctx, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  fill_path(ctx, gfx::transform::identity, path, brush, mode);
+  fill_path(&mut ctx, gfx::transform::identity, path, brush, mode);
 }

@@ -616,6 +616,9 @@ pub fn process(editor mut &this, event &event) -> status
             case sym[ch]:
               switch (ch)
               {
+                case 'j':
+                  return status::accepted;
+
                 case 'c':
                   return status::canceled(signal::ctrl_c);
 

@@ -18,7 +18,7 @@ import chrono;
 pub vtable sysfs_node_operations
 {
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result;
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result;
   fn destroy(vfs::node mut *node) -> void;
 }
 
@@ -43,8 +43,9 @@ struct sysfs_root_node : pub vfs::node
   sysfs mut *fs;
 
   pub sysfs_root_node(sysfs mut *fs)
-    : super(vfs::node::type::directory, vfs::node_directory_operations()), fs(fs)
+    : fs(fs)
   {
+    vfs::node::init(&this, vfs::node::type::directory, vfs::node::ops::directory(&impl this));
   }
 
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
@@ -52,7 +53,7 @@ struct sysfs_root_node : pub vfs::node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var fs = cast<sysfs_root_node mut &>(*node).fs;
 
@@ -145,11 +146,12 @@ pub struct sysfs_directory_node : pub vfs::node
   sysfs_directory_operations *ops;
 
   pub sysfs_directory_node(sysfs_directory_operations &ops, vfs::node mut *parent)
-    : super(vfs::node::type::directory, vfs::node_directory_operations()),
-      parent(parent),
+    : parent(parent),
       ops(&ops)
   {
     btime = chrono::system_clock::now.time_since_epoch.count;
+
+    vfs::node::init(&this, vfs::node::type::directory, vfs::node::ops::directory(&impl this));
   }
 
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
@@ -162,7 +164,7 @@ pub struct sysfs_directory_node : pub vfs::node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &this = cast<sysfs_directory_node mut &>(*node);
 
@@ -176,7 +178,7 @@ pub struct sysfs_directory_node : pub vfs::node
     stat.device = 0x1016;
     stat.size = 0;
 
-    if (var result = this.ops.getattr(node, &mut stat, mask); !result)
+    if (var result = this.ops.getstat(node, &mut stat, mask); !result)
       return result;
 
     return ok;
@@ -258,10 +260,10 @@ pub struct sysfs_symlink_node : pub vfs::node
   sysfs_symlink_operations *ops;
 
   pub sysfs_symlink_node(sysfs_symlink_operations &ops, vfs::node mut *parent)
-    : super(vfs::node::type::symlink, vfs::node_symlink_operations()),
-      parent(parent),
+    : parent(parent),
       ops(&ops)
   {
+    vfs::node::init(&this, vfs::node::type::symlink, vfs::node::ops::symlink(&impl this));
   }
 
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
@@ -274,7 +276,7 @@ pub struct sysfs_symlink_node : pub vfs::node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &this = cast<sysfs_symlink_node mut &>(*node);
 
@@ -284,7 +286,7 @@ pub struct sysfs_symlink_node : pub vfs::node
     stat.mode = 0o120700;
     stat.inode = cast<uintptr>(&this);
 
-    if (var result = this.ops.getattr(node, &mut stat, mask); !result)
+    if (var result = this.ops.getstat(node, &mut stat, mask); !result)
       return result;
 
     return ok;
@@ -318,10 +320,10 @@ pub struct sysfs_file_node : pub vfs::node
   pub std::string contents;
 
   pub sysfs_file_node(sysfs_file_operations &ops, vfs::node mut *parent)
-    : super(vfs::node::type::file, vfs::node_file_operations()),
-      parent(parent),
+    : parent(parent),
       ops(&ops)
   {
+    vfs::node::init(&this, vfs::node::type::file, vfs::node::ops::file(&impl this));
   }
 
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
@@ -334,7 +336,7 @@ pub struct sysfs_file_node : pub vfs::node
     return ok;
   }
 
-  pub fn getattr(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
     var mut &this = cast<sysfs_file_node mut &>(*node);
 
@@ -345,7 +347,7 @@ pub struct sysfs_file_node : pub vfs::node
     stat.inode = cast<uintptr>(&this);
     stat.size = cast(this.contents.len);
 
-    if (var result = this.ops.getattr(node, &mut stat, mask); !result)
+    if (var result = this.ops.getstat(node, &mut stat, mask); !result)
       return result;
 
     return ok;
@@ -459,7 +461,7 @@ pub fn link(vfs::node mut *oldpath, std::string_view oldname, vfs::node mut *new
   return not_supported;
 }
 
-pub fn setattr(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 {
   return not_supported;
 }

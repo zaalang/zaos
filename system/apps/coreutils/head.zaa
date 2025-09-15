@@ -27,10 +27,13 @@ struct opts
 
 fn head(std::string &path, opts &opts) throws(std::error) -> i32
 {
-  var fin = || throws {
+  var infile = std::file();
+
+  var mut &fin = || throws {
     if (path == "-")
-      return std::stdin_raw;
-    return std::file::open(path);
+      return &std::stdin_raw;
+    infile = std::file::open(path);
+    return &infile;
   }();
 
   if (opts.verbose)

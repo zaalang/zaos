@@ -1,0 +1,962 @@
+//
+// formatter
+//
+
+import std.io;
+import std.span : Span;
+import std.vector;
+import basic.machine;
+
+using basic::op;
+using std::OutputStream;
+
+enum PrecLevel
+{
+  Zero            = 0,
+  Assignment      = 1,    // =
+  LogicalOr       = 2,    // or, xor
+  LogicalAnd      = 3,    // and
+  Equality        = 4,    // ==, !=
+  Relational      = 5,    // >=, <=, >, <
+  Additive        = 6,    // -, +
+  Shift           = 7,    // <<, >>
+  Multiplicative  = 8,    // *, /, //, %
+  Exponential     = 9,    // **, ^
+  One             = 10,
+}
+
+fn precedence(u8 op) -> PrecLevel
+{
+  switch (op)
+  {
+    case op::assign:
+      return PrecLevel::Assignment;
+
+    case op::or:
+    case op::xor:
+      return PrecLevel::LogicalOr;
+
+    case op::and:
+      return PrecLevel::LogicalAnd;
+
+    case op::eqi:
+    case op::eqa:
+    case op::eqf:
+    case op::nei:
+    case op::nea:
+    case op::nef:
+      return PrecLevel::Equality;
+
+    case op::lei:
+    case op::lea:
+    case op::lef:
+    case op::lti:
+    case op::lta:
+    case op::ltf:
+    case op::gei:
+    case op::gea:
+    case op::gef:
+    case op::gti:
+    case op::gta:
+    case op::gtf:
+      return PrecLevel::Relational;
+
+    case op::addi:
+    case op::adda:
+    case op::addf:
+    case op::subi:
+    case op::subf:
+      return PrecLevel::Additive;
+
+    case op::muli:
+    case op::mulf:
+    case op::divi:
+    case op::divf:
+      return PrecLevel::Multiplicative;
+
+    case op::powi:
+    case op::powf:
+      return PrecLevel::Exponential;
+
+    else:
+      return PrecLevel::Zero;
+  }
+}
+
+fn parenthesize(std::string mut &expr) -> void
+{
+  expr.insert(expr.begin, "(");
+  expr.insert(expr.end, ")");
+}
+
+fn expression(OutputStream mut &os, basic::header *header, u8 * mut &ip) throws(std::error) -> void
+{
+  var stack = std::vector<(PrecLevel, std::string)>();
+
+  for (; ip < header.text.end; )
+  {
+    switch (*ip)
+    {
+      case op::literal_true:
+        stack.push_back(PrecLevel::One, std::format("{}", "True"));
+
+        ip += 1;
+
+      case op::literal_false:
+        stack.push_back(PrecLevel::One, std::format("{}", "False"));
+
+        ip += 1;
+
+      case op::literal_real:
+        var number = float();
+        std::memcpy(&number, ip + 1, sizeof(number));
+
+        stack.push_back(PrecLevel::One, std::format("{}", number));
+
+        ip += 1 + sizeof(number);
+
+      case op::literal_integer:
+        var integer = int();
+        std::memcpy(&integer, ip + 1, sizeof(integer));
+
+        stack.push_back(PrecLevel::One, std::format("{}", integer));
+
+        ip += 1 + sizeof(integer);
+
+      case op::literal_string:
+        var len = cast<usize>(*(ip + 1));
+
+        stack.push_back(PrecLevel::One, std::format("{:?}", std::string_view(ip + 2, len)));
+
+        ip += 2 + len;
+
+      case op::literal_hexadecimal:
+        var integer = u32();
+        std::memcpy(&integer, ip + 1, sizeof(integer));
+
+        stack.push_back(PrecLevel::One, std::format("${:x}", integer));
+
+        ip += 1 + sizeof(integer);
+
+      case op::variable_real:
+      case op::variable_byte:
+      case op::variable_integer:
+      case op::variable_unused:
+      case op::variable_unit:
+      case op::parameter_unit:
+      case op::variable_reference_real:
+      case op::variable_reference_byte:
+      case op::variable_reference_integer:
+      case op::variable_reference_unused:
+      case op::variable_reference_unit:
+      case op::parameter_reference_unit:
+
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        stack.push_back(PrecLevel::One, std::format("{}", header.symbol_name(offset)));
+
+        ip += 6;
+
+      case op::variable_vector:
+      case op::parameter_vector:
+      case op::variable_reference_vector:
+      case op::parameter_reference_vector:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}({})", header.symbol_name(offset), i.1));
+
+        ip += 6;
+
+      case op::variable_table:
+      case op::parameter_table:
+      case op::variable_reference_table:
+      case op::parameter_reference_table:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+        var j = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}({}, {})", header.symbol_name(offset), i.1, j.1));
+
+        ip += 6;
+
+      case op::variable_matrix:
+      case op::parameter_matrix:
+      case op::variable_reference_matrix:
+      case op::parameter_reference_matrix:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+        var j = stack.take_back();
+        var k = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}({}, {}, {})", header.symbol_name(offset), i.1, j.1, k.1));
+
+        ip += 6;
+
+      case op::variable_field_real:
+      case op::variable_field_byte:
+      case op::variable_field_integer:
+      case op::variable_field_unused:
+      case op::variable_field_reference_real:
+      case op::variable_field_reference_byte:
+      case op::variable_field_reference_integer:
+      case op::variable_field_reference_unused:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var base = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}.{}", base.1, header.symbol_name(offset)));
+
+        ip += 6;
+
+      case op::variable_field_unit:
+      case op::variable_field_reference_unit:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var base = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}.{}", base.1, header.symbol_name(offset)));
+
+        ip += 6;
+
+      case op::variable_field_vector:
+      case op::variable_field_reference_vector:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+        var base = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}.{}({})", base.1, header.symbol_name(offset), i.1));
+
+        ip += 6;
+
+      case op::variable_field_table:
+      case op::variable_field_reference_table:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+        var j = stack.take_back();
+        var base = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}.{}({}, {})", base.1, header.symbol_name(offset), i.1, j.1));
+
+        ip += 6;
+
+      case op::variable_field_matrix:
+      case op::variable_field_reference_matrix:
+        var offset = cast<usize>(*(ip + 4)) + cast<usize>(*(ip + 5)) << 8;
+
+        var i = stack.take_back();
+        var j = stack.take_back();
+        var k = stack.take_back();
+        var base = stack.take_back();
+
+        stack.push_back(PrecLevel::One, std::format("{}.{}({}, {}, {})", base.1, header.symbol_name(offset), i.1, j.1, k.1));
+
+        ip += 6;
+
+      case op::pi:
+      case op::date$:
+      case op::err:
+        switch (*ip)
+        {
+          case op::pi:
+            stack.push_back(PrecLevel::One, std::string("PI"));
+
+          case op::date$:
+            stack.push_back(PrecLevel::One, std::string("DATE$"));
+
+          case op::err:
+            stack.push_back(PrecLevel::One, std::string("ERR"));
+        }
+
+        ip += 1;
+
+      case op::plus:
+      case op::negi:
+      case op::negf:
+      case op::not:
+        var subexpr = stack.take_back();
+
+        if (subexpr.0 < PrecLevel::One)
+          parenthesize(&mut subexpr.1);
+
+        switch (*ip)
+        {
+          case op::plus:
+            stack.push_back(PrecLevel::One, std::format("+{}", subexpr.1));
+
+          case op::negi:
+          case op::negf:
+            stack.push_back(PrecLevel::One, std::format("-{}", subexpr.1));
+
+          case op::not:
+            stack.push_back(PrecLevel::One, std::format("NOT {}", subexpr.1));
+        }
+
+        ip += 1;
+
+      case op::absi:
+      case op::absf:
+      case op::asc:
+      case op::cos:
+      case op::acs:
+      case op::chr$:
+      case op::eof:
+      case op::exp:
+      case op::ext:
+      case op::fix:
+      case op::float:
+      case op::int:
+      case op::lnot:
+      case op::log:
+      case op::log10:
+      case op::len:
+      case op::rnd:
+      case op::sin:
+      case op::asn:
+      case op::size:
+      case op::str$:
+      case op::sgni:
+      case op::sgnf:
+      case op::sqi:
+      case op::sqf:
+      case op::sqrt:
+      case op::tan:
+      case op::atn:
+      case op::trim$:
+      case op::val:
+        var arg0 = stack.take_back();
+
+        switch (*ip)
+        {
+          case op::absi:
+          case op::absf:
+            stack.push_back(PrecLevel::One, std::format("ABS({})", arg0.1));
+
+          case op::asc:
+            stack.push_back(PrecLevel::One, std::format("ASC({})", arg0.1));
+
+          case op::cos:
+            stack.push_back(PrecLevel::One, std::format("COS({})", arg0.1));
+
+          case op::acs:
+            stack.push_back(PrecLevel::One, std::format("ACS({})", arg0.1));
+
+          case op::chr$:
+            stack.push_back(PrecLevel::One, std::format("CHR$({})", arg0.1));
+
+          case op::eof:
+            stack.push_back(PrecLevel::One, std::format("EOF(#{})", arg0.1));
+
+          case op::ext:
+            stack.push_back(PrecLevel::One, std::format("EXT(#{})", arg0.1));
+
+          case op::exp:
+            stack.push_back(PrecLevel::One, std::format("EXP({})", arg0.1));
+
+          case op::fix:
+            stack.push_back(PrecLevel::One, std::format("FIX({})", arg0.1));
+
+          case op::float:
+            stack.push_back(PrecLevel::One, std::format("FLOAT({})", arg0.1));
+
+          case op::int:
+            stack.push_back(PrecLevel::One, std::format("INT({})", arg0.1));
+
+          case op::lnot:
+            stack.push_back(PrecLevel::One, std::format("LNOT({})", arg0.1));
+
+          case op::log:
+            stack.push_back(PrecLevel::One, std::format("LOG({})", arg0.1));
+
+          case op::log10:
+            stack.push_back(PrecLevel::One, std::format("LOG10({})", arg0.1));
+
+          case op::len:
+            stack.push_back(PrecLevel::One, std::format("LEN({})", arg0.1));
+
+          case op::rnd:
+            stack.push_back(PrecLevel::One, std::format("RND({})", arg0.1));
+
+          case op::sin:
+            stack.push_back(PrecLevel::One, std::format("SIN({})", arg0.1));
+
+          case op::asn:
+            stack.push_back(PrecLevel::One, std::format("ASN({})", arg0.1));
+
+          case op::size:
+            stack.push_back(PrecLevel::One, std::format("SIZE({})", arg0.1));
+
+          case op::str$:
+            stack.push_back(PrecLevel::One, std::format("STR$({})", arg0.1));
+
+          case op::sgni:
+          case op::sgnf:
+            stack.push_back(PrecLevel::One, std::format("SGN({})", arg0.1));
+
+          case op::sqi:
+          case op::sqf:
+            stack.push_back(PrecLevel::One, std::format("SQ({})", arg0.1));
+
+          case op::sqrt:
+            stack.push_back(PrecLevel::One, std::format("SQRT({})", arg0.1));
+
+          case op::tan:
+            stack.push_back(PrecLevel::One, std::format("TAN({})", arg0.1));
+
+          case op::atn:
+            stack.push_back(PrecLevel::One, std::format("ATN({})", arg0.1));
+
+          case op::trim$:
+            stack.push_back(PrecLevel::One, std::format("TRIM$({})", arg0.1));
+
+          case op::val:
+            stack.push_back(PrecLevel::One, std::format("VAL({})", arg0.1));
+        }
+
+        ip += 1;
+
+      case op::addi:
+      case op::adda:
+      case op::addf:
+      case op::subi:
+      case op::subf:
+      case op::muli:
+      case op::mulf:
+      case op::divi:
+      case op::divf:
+      case op::powi:
+      case op::powf:
+      case op::and:
+      case op::xor:
+      case op::or:
+      case op::lti:
+      case op::lta:
+      case op::ltf:
+      case op::gti:
+      case op::gta:
+      case op::gtf:
+      case op::lei:
+      case op::lea:
+      case op::lef:
+      case op::gei:
+      case op::gea:
+      case op::gef:
+      case op::eqi:
+      case op::eqa:
+      case op::eqf:
+      case op::nei:
+      case op::nea:
+      case op::nef:
+      case op::assign:
+        var rhs = stack.take_back();
+        var lhs = stack.take_back();
+
+        var nextprec = precedence(*ip);
+        var rightassoc = (nextprec == PrecLevel::Exponential || nextprec == PrecLevel::Assignment);
+
+        if (lhs.0 < nextprec || (lhs.0 == nextprec && rightassoc))
+          parenthesize(&mut lhs.1);
+
+        if (rhs.0 < nextprec || (rhs.0 == nextprec && !rightassoc))
+          parenthesize(&mut rhs.1);
+
+        switch (*ip)
+        {
+          case op::addi:
+          case op::adda:
+          case op::addf:
+            stack.push_back(nextprec, std::format("{} + {}", lhs.1, rhs.1));
+
+          case op::subi:
+          case op::subf:
+            stack.push_back(nextprec, std::format("{} - {}", lhs.1, rhs.1));
+
+          case op::muli:
+          case op::mulf:
+            stack.push_back(nextprec, std::format("{} * {}", lhs.1, rhs.1));
+
+          case op::divi:
+          case op::divf:
+            stack.push_back(nextprec, std::format("{} / {}", lhs.1, rhs.1));
+
+          case op::powi:
+          case op::powf:
+            stack.push_back(nextprec, std::format("{} ** {}", lhs.1, rhs.1));
+
+          case op::and:
+            stack.push_back(nextprec, std::format("{} AND {}", lhs.1, rhs.1));
+
+          case op::xor:
+            stack.push_back(nextprec, std::format("{} XOR {}", lhs.1, rhs.1));
+
+          case op::or:
+            stack.push_back(nextprec, std::format("{} OR {}", lhs.1, rhs.1));
+
+          case op::lti:
+          case op::lta:
+          case op::ltf:
+            stack.push_back(nextprec, std::format("{} < {}", lhs.1, rhs.1));
+
+          case op::gti:
+          case op::gta:
+          case op::gtf:
+            stack.push_back(nextprec, std::format("{} > {}", lhs.1, rhs.1));
+
+          case op::lei:
+          case op::lea:
+          case op::lef:
+            stack.push_back(nextprec, std::format("{} <= {}", lhs.1, rhs.1));
+
+          case op::gei:
+          case op::gea:
+          case op::gef:
+            stack.push_back(nextprec, std::format("{} >= {}", lhs.1, rhs.1));
+
+          case op::eqi:
+          case op::eqa:
+          case op::eqf:
+            stack.push_back(nextprec, std::format("{} = {}", lhs.1, rhs.1));
+
+          case op::nei:
+          case op::nea:
+          case op::nef:
+            stack.push_back(nextprec, std::format("{} <> {}", lhs.1, rhs.1));
+
+          case op::assign:
+            stack.push_back(nextprec, std::format("{} := {}", lhs.1, rhs.1));
+        }
+
+        ip += 1;
+
+      case op::land:
+      case op::lxor:
+      case op::lor:
+      case op::left$:
+      case op::modi:
+      case op::modf:
+      case op::right$:
+      case op::substr:
+        var arg1 = stack.take_back();
+        var arg0 = stack.take_back();
+
+        switch (*ip)
+        {
+          case op::land:
+            stack.push_back(PrecLevel::One, std::format("LAND({}, {})", arg0.1, arg1.1));
+
+          case op::lxor:
+            stack.push_back(PrecLevel::One, std::format("LXOR({}, {})", arg0.1, arg1.1));
+
+          case op::lor:
+            stack.push_back(PrecLevel::One, std::format("LOR({}, {})", arg0.1, arg1.1));
+
+          case op::left$:
+            stack.push_back(PrecLevel::One, std::format("LEFT$({}, {})", arg0.1, arg1.1));
+
+          case op::modi:
+          case op::modf:
+            stack.push_back(PrecLevel::One, std::format("MOD({}, {})", arg0.1, arg1.1));
+
+          case op::right$:
+            stack.push_back(PrecLevel::One, std::format("RIGHT$({}, {})", arg0.1, arg1.1));
+
+          case op::substr:
+            stack.push_back(PrecLevel::One, std::format("SUBSTR({}, {})", arg0.1, arg1.1));
+        }
+
+        ip += 1;
+
+      case op::mid$:
+        var arg2 = stack.take_back();
+        var arg1 = stack.take_back();
+        var arg0 = stack.take_back();
+
+        switch (*ip)
+        {
+          case op::mid$:
+            stack.push_back(PrecLevel::One, std::format("MID$({}, {}, {})", arg0.1, arg1.1, arg2.1));
+        }
+
+        ip += 1;
+
+      else:
+        break;
+    }
+  }
+
+  std::assert(stack.len == 1);
+
+  std::format_to(&mut os, "{}", stack.take_back.1);
+}
+
+fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> void
+{
+  var os = std::line_writer(&mut os);
+  var header = cast<basic::header *>(icode.data);
+
+  std::format_to(&mut os, "PROCEDURE {}\n", header.name);
+
+  var indent = 1;
+  var text = header.text;
+
+  for (var ip = text.begin; ip != text.end; )
+  {
+    var gutter = 6;
+
+    std::format_to(&mut os, "{:06x} ", ip - text.begin);
+
+    switch (text[ip])
+    {
+      case op::label:
+        std::format_to(&mut os, "{:6}", cast<int>(text[ip + 2]) << 8 + cast<int>(text[ip + 1]));
+
+        gutter -= 6;
+        ip += 3;
+    }
+
+    switch (text[ip])
+    {
+      case op::kw_else:
+      case op::kw_endif:
+      case op::kw_endwhile:
+      case op::kw_until:
+      case op::kw_endloop:
+      case op::kw_next:
+      case op::kw_endexit:
+        indent -= 2;
+    }
+
+    std::format_to(&mut os, "{:*}", gutter + indent, "");
+
+    for (; ip < text.end; )
+    {
+      switch (*ip)
+      {
+        case op::kw_rem:
+          var len = cast<usize>(*(ip + 1));
+          std::format_to(&mut os, "REM {}", std::string_view(ip + 2, len));
+          ip += 2 + len;
+
+        case op::kw_param:
+          std::print_to(&mut os, "PARAM ");
+          ip += 1;
+
+        case op::kw_dim:
+          std::print_to(&mut os, "DIM ");
+          ip += 1;
+
+        case op::kw_let:
+          std::print_to(&mut os, "LET ");
+          ip += 1;
+
+        case op::kw_type:
+          std::print_to(&mut os, "TYPE ");
+          ip += 1;
+
+        case op::type_real:
+          std::print_to(&mut os, "REAL");
+          ip += 1;
+
+        case op::type_byte:
+          std::print_to(&mut os, "BYTE");
+          ip += 1;
+
+        case op::type_integer:
+          std::print_to(&mut os, "INTEGER");
+          ip += 1;
+
+        case op::type_boolean:
+          std::print_to(&mut os, "BOOLEAN");
+          ip += 1;
+
+        case op::type_string:
+          std::print_to(&mut os, "STRING");
+          ip += 1;
+
+        case op::kw_print:
+          std::print_to(&mut os, "PRINT ");
+          ip += 1;
+
+        case op::kw_input:
+          std::print_to(&mut os, "INPUT ");
+          ip += 1;
+
+        case op::kw_data:
+          std::print_to(&mut os, "DATA ");
+          ip += 4;
+
+        case op::kw_if:
+          std::print_to(&mut os, "IF ");
+          ip += 1;
+
+        case op::kw_then:
+          std::print_to(&mut os, "THEN ");
+          ip += 1;
+
+          if (*ip != cast(op::lref))
+            indent += 2;
+
+        case op::kw_else:
+          std::print_to(&mut os, "ELSE ");
+          indent += 2;
+          ip += 3;
+
+        case op::kw_endif:
+          std::print_to(&mut os, "ENDIF ");
+          ip += 1;
+
+        case op::kw_while:
+          std::print_to(&mut os, "WHILE ");
+          indent += 2;
+          ip += 1;
+
+        case op::kw_do:
+          std::print_to(&mut os, "DO ");
+          ip += 1;
+
+        case op::kw_endwhile:
+          std::print_to(&mut os, "ENDWHILE ");
+          ip += 3;
+
+        case op::kw_repeat:
+          std::print_to(&mut os, "REPEAT ");
+          indent += 2;
+          ip += 1;
+
+        case op::kw_until:
+          std::print_to(&mut os, "UNTIL ");
+          ip += 1;
+
+        case op::kw_for:
+          std::print_to(&mut os, "FOR ");
+          indent += 2;
+          ip += 1;
+
+        case op::kw_to:
+          std::print_to(&mut os, "TO ");
+          ip += 3;
+
+        case op::kw_step:
+          std::print_to(&mut os, "STEP ");
+          ip += 3;
+
+        case op::kw_next:
+          std::print_to(&mut os, "NEXT ");
+          ip += 8;
+
+        case op::kw_loop:
+          std::print_to(&mut os, "LOOP ");
+          indent += 2;
+          ip += 1;
+
+        case op::kw_endloop:
+          std::print_to(&mut os, "ENDLOOP ");
+          ip += 3;
+
+        case op::kw_exitif:
+          std::print_to(&mut os, "EXITIF ");
+          ip += 1;
+
+        case op::kw_endexit:
+          std::print_to(&mut os, "ENDEXIT ");
+          ip += 3;
+
+        case op::kw_on:
+          std::print_to(&mut os, "ON ");
+          ip += 1;
+
+        case op::kw_error:
+          std::print_to(&mut os, "ERROR ");
+          ip += 1;
+
+        case op::kw_return:
+          std::print_to(&mut os, "RETURN ");
+          ip += 1;
+
+        case op::kw_create:
+          std::print_to(&mut os, "CREATE ");
+          ip += 1;
+
+        case op::kw_open:
+          std::print_to(&mut os, "OPEN ");
+          ip += 1;
+
+        case op::kw_read:
+          std::print_to(&mut os, "READ ");
+          ip += 1;
+
+        case op::kw_write:
+          std::print_to(&mut os, "WRITE ");
+          ip += 1;
+
+        case op::kw_seek:
+          std::print_to(&mut os, "SEEK ");
+          ip += 1;
+
+        case op::kw_get:
+          std::print_to(&mut os, "GET ");
+          ip += 1;
+
+        case op::kw_put:
+          std::print_to(&mut os, "PUT ");
+          ip += 1;
+
+        case op::kw_close:
+          std::print_to(&mut os, "CLOSE ");
+          ip += 1;
+
+        case op::kw_stop:
+          std::print_to(&mut os, "STOP ");
+          ip += 1;
+
+        case op::end:
+          std::print_to(&mut os, "END ");
+          ip += 1;
+
+        case op::mode:
+          switch (*(ip+1))
+          {
+            case op::mode_read:
+              std::print_to(&mut os, ":READ");
+
+            case op::mode_write:
+              std::print_to(&mut os, ":WRITE");
+
+            case op::mode_update:
+              std::print_to(&mut os, ":UPDATE");
+
+            case op::mode_dir:
+              std::print_to(&mut os, ":DIR");
+          }
+          ip += 2;
+
+        case op::jmp_fwd_ne:
+        case op::jmp_bck_ne:
+          ip += 3;
+
+        case op::lref:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8 + cast<usize>(*(ip + 3)) << 16;
+          var label = cast<usize>(text[offset - 2]) + cast<usize>(text[offset - 1]) << 8;
+          std::format_to(&mut os, "{}", label);
+          ip += 4;
+
+        case op::kw_goto:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8 + cast<usize>(*(ip + 3)) << 16;
+          var label = cast<usize>(text[offset - 2]) + cast<usize>(text[offset - 1]) << 8;
+          std::format_to(&mut os, "GOTO {}", label);
+          ip += 4;
+
+        case op::kw_gosub:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8 + cast<usize>(*(ip + 3)) << 16;
+          var label = cast<usize>(text[offset - 2]) + cast<usize>(text[offset - 1]) << 8;
+          std::format_to(&mut os, "GOSUB {}", label);
+          ip += 4;
+
+        case op::symbol:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
+          std::format_to(&mut os, "{}", header.symbol_name(offset));
+          ip += 3;
+
+          if (*ip != cast(op::comma) && *ip != cast(op::colon) && *ip != cast(op::l_paren))
+            std::print_to(&mut os, " ");
+
+        case op::kw_run:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
+          var name = header.rodata[offset + 1 .. offset + 1 + cast<usize>(header.rodata[offset])];
+          std::format_to(&mut os, "RUN {}", std::string_view(name));
+          ip += 3;
+
+        case op::kw_using:
+          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
+          var name = header.rodata[offset + 1 .. offset + 1 + cast<usize>(header.rodata[offset])];
+          std::format_to(&mut os, "USING \"{}\"", std::string_view(name));
+          ip += 3;
+
+        case op::kw_restore:
+          std::format_to(&mut os, "RESTORE");
+          if (var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8 + cast<usize>(*(ip + 3)) << 16; offset != 0)
+            std::format_to(&mut os, " {}", cast<usize>(text[offset - 2]) + cast<usize>(text[offset - 1]) << 8);
+          ip += 4;
+
+        case 0x60 ..= 0xff:
+          expression(&mut os, header, &mut ip);
+
+          if (*ip != cast(op::comma) && *ip != cast(op::semi) && *ip != cast(op::r_paren) && *ip != cast(op::r_square) && *ip != cast(op::mode))
+            std::print_to(&mut os, " ");
+
+        case op::assign:
+          std::print_to(&mut os, "= ");
+          ip += 1;
+
+        case op::comma:
+          std::print_to(&mut os, ",");
+          ip += 1;
+
+          if (*ip != cast(op::symbol))
+            std::print_to(&mut os, " ");
+
+        case op::semi:
+          std::print_to(&mut os, "; ");
+          ip += 1;
+
+        case op::colon:
+          std::print_to(&mut os, ":");
+          ip += 1;
+
+        case op::l_paren:
+          std::print_to(&mut os, "(");
+          ip += 1;
+
+        case op::r_paren:
+          std::print_to(&mut os, ")");
+          ip += 1;
+
+        case op::l_square:
+          std::print_to(&mut os, "[");
+          ip += 1;
+
+        case op::r_square:
+          std::print_to(&mut os, "]");
+          ip += 1;
+
+        case op::hash:
+          std::print_to(&mut os, "#");
+          ip += 1;
+
+        case op::nop:
+          ip += 1;
+
+        case op::eol:
+          std::print_to(&mut os, "\n");
+          ip += 1;
+          break;
+
+        else:
+          std::panic("unhandled");
+      }
+    }
+  }
+
+  os.flush();
+}
+
+pub fn format_to(OutputStream mut &os, Span<u8> &icode) throws(std::error) -> void
+{
+  format_to(&mut os, std::span(icode));
+}
+
+pub fn list(Span<u8> &icode) -> void
+{
+  try
+  {
+    format_to(&mut std::stdout.lock(), std::span(icode));
+  }
+  catch(std::error e)
+  {
+  }
+}
