@@ -15,7 +15,7 @@ pub struct slab_allocator<T>
   {
     var irqs = std::lock_guard(&mut cpu::irqlock);
 
-    vm::reservation(std::max(2*SLAB_SIZE, 8*PAGE_SIZE));
+    vm::reservation(SLAB_SIZE + 7*PAGE_SIZE);
 
     var guard = std::lock_guard(&mut this.lock);
 

@@ -45,8 +45,14 @@ fn reaper(void *) -> void
 
     vm::reap();
 
-    if (vm::available_physical_memory < 67_108_864 && blk::cache_memory_used < 16_777_216)
+    if (vm::available_physical_memory + blk::cache_memory_used < 67_108_864)
       oomkiller();
+
+    for (var i = reaper.doorbell.value; i != 0; --i)
+    {
+      reaper.doorbell.wait();
+      reaper.ringtone.release();
+    }
 
     reaper.ringtone.release();
   }

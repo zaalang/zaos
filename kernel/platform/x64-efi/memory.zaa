@@ -61,18 +61,25 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
 
           if (max_usable_memory < end)
             max_usable_memory = end;
-         }
-
-      case efi::EFI_MEMORY_TYPE::EfiACPIReclaimMemory:
-      case efi::EFI_MEMORY_TYPE::EfiACPIMemoryNVS:
-        ;
-
-      else:
-        ;
+        }
     }
 
-    if (var page = entry.PhysicalStart/4096 + entry.NumberOfPages; max_physical_pages < page)
-      max_physical_pages = page;
+    switch (entry.Type)
+    {
+      case efi::EFI_MEMORY_TYPE::EfiLoaderCode:
+      case efi::EFI_MEMORY_TYPE::EfiLoaderData:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiBootServicesData:
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesCode:
+      case efi::EFI_MEMORY_TYPE::EfiRuntimeServicesData:
+      case efi::EFI_MEMORY_TYPE::EfiConventionalMemory:
+      case efi::EFI_MEMORY_TYPE::EfiACPIReclaimMemory:
+      case efi::EFI_MEMORY_TYPE::EfiACPIMemoryNVS:
+      case efi::EFI_MEMORY_TYPE::EfiPersistentMemory:
+
+        if (var page = entry.PhysicalStart/4096 + entry.NumberOfPages; max_physical_pages < page)
+          max_physical_pages = page;
+    }
   }
 
   max_physical_pages = (max_physical_pages + 0x3ffff) / 0x40000; // 1Gb pages
@@ -125,29 +132,29 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
     for (var i = 0; i < max_physical_pages; ++i)
       pdp[i] = i*0x40000000 | 0x183; // present, readwrite, global, large
 
-    // 2Mb pages
-
-    var addr = 0;
-
-    for (var k = 0; k < max_physical_pages; ++k)
-    {
-      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[k]) != 0)
-        efi::panic(SystemTable, "bad_pd_alloc");
-
-      var pd = cast<uintptr[512] mut *>(pdp[k]);
-
-      for (var i = 0; i < 512; ++i)
-        pd[i] = 0;
-
-      for (var j = 0; j < 512 && addr < max_physical_pages * 0x40000000; ++j)
-      {
-        pd[j] = addr | 0x183; // present, readwrite, global, large
-
-        addr += 0x200000;
-      }
-
-      pdp[k] |= 0x7; // present, readwrite, user
-    }
+//    // 2Mb pages
+//
+//    var addr = 0;
+//
+//    for (var k = 0; k < max_physical_pages; ++k)
+//    {
+//      if (SystemTable.BootServices.AllocatePages(efi::EFI_ALLOCATE_TYPE::AllocateAnyPages, efi::EFI_MEMORY_TYPE::EfiLoaderData, 1, &pdp[k]) != 0)
+//        efi::panic(SystemTable, "bad_pd_alloc");
+//
+//      var pd = cast<uintptr[512] mut *>(pdp[k]);
+//
+//      for (var i = 0; i < 512; ++i)
+//        pd[i] = 0;
+//
+//      for (var j = 0; j < 512 && addr < max_physical_pages * 0x40000000; ++j)
+//      {
+//        pd[j] = addr | 0x183; // present, readwrite, global, large
+//
+//        addr += 0x200000;
+//      }
+//
+//      pdp[k] |= 0x7; // present, readwrite, user
+//    }
 
     for (var i = max_physical_pages; i < 512; ++i)
       pdp[i] = 0;
