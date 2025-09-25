@@ -9,8 +9,8 @@ PROCEDURE electric
     DIM z,v,r:REAL
     DIM b$:STRING
 
-    let xscale:=50.0/78.0
-    let yscale:=50.0/32.0
+    let xscale := 50.0/78.0
+    let yscale := 50.0/32.0
 
     INPUT "How many charges do you have? ",n
     PRINT "The field of view is 050,050 (x,y)"
@@ -26,11 +26,11 @@ PROCEDURE electric
     NEXT i
 
     REM visit each screen position
-    FOR y=32 TO 0 STEP -1
-      FOR x=0 TO 78
+    FOR y = 32 TO 0 STEP -1
+      FOR x = 0 TO 78
         REM compute field strength into v
         GOSUB 10
-        z:=v*50.0
+        z := v*50.0
         REM map z to valid ASCII in b$
         GOSUB 20
         REM print char (proportional to field)
@@ -40,29 +40,29 @@ PROCEDURE electric
     NEXT y
     END
 
-10  v=1.0
-    FOR i=1 TO n
-      r:=SQRT(SQ(xscale*x-a(i))+SQ(yscale*y-b(i)))
-      EXITIF r=0.0 THEN
-        v:=99999.0
+10  v := 1.0
+    FOR i = 1 TO n
+      r := SQRT(SQ(xscale*x-a(i))+SQ(yscale*y-b(i)))
+      EXITIF r = 0.0 THEN
+        v := 99999.0
       ENDEXIT
-      v:=v+c(i)/r
+      v := v+c(i)/r
     NEXT i
     RETURN
 
-20  IF z<32 THEN
-      b$:=" "
+20  IF z < 32 THEN
+      b$ := " "
     ELSE
-      IF z>57 THEN
-        z:=z+8
+      IF z > 57 THEN
+        z := z+8
       ENDIF
-      IF z>90 THEN
-        b$:="*"
+      IF z > 90 THEN
+        b$ := "*"
       ELSE
-        IF z>INT(z)+0.5 THEN
-          b$:=" "
+        IF z > INT(z)+0.5 THEN
+          b$ := " "
         ELSE
-          b$:=CHR$(z)
+          b$ := CHR$(z)
         ENDIF
       ENDIF
     ENDIF

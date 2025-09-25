@@ -6,11 +6,12 @@ import std.stdio;
 import std.string : String;
 import std.range : Range;
 import std.flat_hash_map;
-import vm : PAGE_SIZE, PAGE_MASK;
+import vm : PAGE_SIZE, PAGE_MASK, PAGE_SHIFT;
 import vm.space;
 import vfs.stat;
 import vfs.fd;
 import cpu;
+import sys;
 import heap;
 import scheduler;
 import ioring : io_ring;
@@ -65,7 +66,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[40] reserved;
+  u8[24] reserved;
 
   pub fn current() -> process mut *
   {
@@ -191,6 +192,27 @@ pub struct process
     this.fds[cast<usize>(fd)] = vfs::fd();
   }
 
+  pub fn vmsz(this mut &) -> usize
+  {
+    return this.userspace.total_virtual_size;
+  }
+
+  pub fn vmrss(this mut &) -> usize
+  {
+    var pgcnt = 0;
+
+    for (var &cpu: sys::cpus)
+    {
+      /* this is racy, but should improve the approximation */
+      if (cpu.current_thread.process == &this)
+        pgcnt += cpu.process_counter_user_allocated_pages;
+    }
+
+    pgcnt += this.userspace.allocated_physical_pages;
+
+    return (pgcnt << PAGE_SHIFT);
+  }
+
   pub fn enumerate_threads(this mut &, var &&callback) -> void
   {
     var guard = std::lock_guard(&mut this.lock);
@@ -248,6 +270,19 @@ pub struct process
     process.lock.unlock();
 
     thread::exit(rval);
+  }
+
+  pub fn reap() -> void
+  {
+    if (procman.lock.try_lock())
+    {
+      for (var mut &[id, process] : procman.processes)
+        vm::reap(&mut process.pagetable, &mut process.userspace);
+
+      procman.lock.unlock();
+    }
+
+    process::allocator.reap();
   }
 
   pub fn ref(this mut &) -> void
@@ -611,5 +646,56 @@ pub fn teardown(process mut *process) -> void
         if (thread.id == child.id)
           thread.detach();
     }
+  }
+}
+
+pub fn flush_process_counters() -> void
+{
+  var current_thread = cpu::current_thread_inline;
+
+  if (cpu::process_counter_user_allocated_pages != 0)
+  {
+    std::atomic_add(&current_thread.process.userspace.allocated_physical_pages, cpu::process_counter_user_allocated_pages);
+
+    cpu::process_counter_user_allocated_pages = 0;
+  }
+}
+
+pub fn oomkiller() -> void
+{
+  if (procman.lock.try_lock())
+  {
+    var bestrss = 0;
+    var best = null<process mut *>();
+
+    for (var mut &[id, process] : procman.processes)
+    {
+      if (id <= 1)
+        continue;
+
+      if (process.children)
+        continue;
+
+      if (var rss = process.vmrss; rss > bestrss)
+      {
+        bestrss = rss;
+        best = process;
+      }
+    }
+
+    if (best != null)
+    {
+      if (best.lock.try_lock())
+      {
+        std::print("oomkiller: force kill process ", *best);
+
+        for (var thread = best.threads; thread; thread = thread.sibling)
+          thread.terminate();
+
+        best.lock.unlock();
+      }
+    }
+
+    procman.lock.unlock();
   }
 }

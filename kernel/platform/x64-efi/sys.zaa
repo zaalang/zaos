@@ -117,8 +117,8 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
   if (cpu::cpuid(7).1 & 0x1 == 0)
     efi::panic(SystemTable, "missing_fsgsbase");
 
-  if (cpu::cpuid(7).1 & 0x100000 == 0)
-    efi::panic(SystemTable, "missing_clac");
+//  if (cpu::cpuid(7).1 & 0x100000 == 0)
+//    efi::panic(SystemTable, "missing_clac");
 
   if (cpu::cpuid(1).2 & 0x4000000 == 0)
     efi::panic(SystemTable, "missing_xsave");
@@ -126,8 +126,8 @@ pub fn detect(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut &boo
   if (cpu::cpuid(0x80000001).3 & 0x800 == 0)
     efi::panic(SystemTable, "missing_syscall");
 
-  if (cpu::cpuid(0x80000001).3 & 0x4000000 == 0)
-    efi::panic(SystemTable, "missing_pdpe1gb");
+//  if (cpu::cpuid(0x80000001).3 & 0x4000000 == 0)
+//    efi::panic(SystemTable, "missing_pdpe1gb");
 
   if (cpu::cpuid(0x80000001).3 & 0x8000000 == 0)
     efi::panic(SystemTable, "missing_rdtscp");
@@ -251,12 +251,12 @@ fn load_idt(idt &idt)
 #[packed]
 struct tss
 {
-  u32 reserved1;
+  u32 _reserved1;
   uintptr[3] rsp;
-  u64 reserved2;
+  u64 _reserved2;
   uintptr[7] ist;
-  u64 reserved3;
-  u16 reserved4;
+  u64 _reserved3;
+  u16 _reserved4;
   u16 io_map_base;
 }
 
@@ -437,7 +437,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
   }
 
   cpu::wrmsr(cpu::msr_index::efer, cpu::rdmsr(cpu::msr_index::efer) | 0x1); // sce
-  cpu::wrmsr(cpu::msr_index::star, 0x001b_0008_0000_0000); // sysret
+  cpu::wrmsr(cpu::msr_index::star, 0x0018_0008_0000_0000); // sysret
   cpu::wrmsr(cpu::msr_index::lstar, cast<u64>(extern(syscall_entry))); // syscall
   cpu::wrmsr(cpu::msr_index::fmask, 0x47fff); // mask syscall flags
 

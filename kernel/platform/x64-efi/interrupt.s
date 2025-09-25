@@ -7,7 +7,7 @@
 
 .macro isr.dispatch irq, name, param = no
             .align 64
-            clac
+            #clac
             .if \param == no
               push rax
             .endif

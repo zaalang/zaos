@@ -311,6 +311,8 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
   {
     if (next_thread.process != current_thread.process)
     {
+      flush_process_counters();
+
       next_thread.process.pagetable.ref();
       current_thread.process.pagetable.unref();
       next_thread.process.pagetable.activate();

@@ -914,6 +914,12 @@ pub fn fetch(lexer mut &this, InputReader mut &is) throws(std::error) -> token
       case 0:
         return make_token(token::type::stream_end, loc);
 
+      case '!':
+        return lex_remark(&mut this, &mut is);
+
+      case '?':
+        return lex_token(&mut this, &mut is, token::type::kw_print);
+
       case '#':
         return lex_token(&mut this, &mut is, token::type::hash);
 

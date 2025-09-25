@@ -199,6 +199,11 @@ pub struct response
     return std::atomic_load(&this.cb.outstanding);
   }
 
+  pub fn refcnt(this &) -> i32
+  {
+    return std::atomic_load(&this.cb.refcnt);
+  }
+
   pub Rc<iocb> cb;
 
   pub response(Rc<iocb> mut &cb)

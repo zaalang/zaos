@@ -10,6 +10,7 @@ import dev;
 import chr.chrdev;
 import vm : physrange;
 import vfs;
+import mutex as _ : mutex;
 import process as _ : process;
 import support.rc : Rc;
 
@@ -107,7 +108,7 @@ pub struct ptty : pub chr::chrdev
   termios termios;
   winsize winsize;
 
-  std::spin_lock lock;
+  mutex lock;
   std::circular_buffer<u8, N:1024> in;
   std::circular_buffer<u8, N:8192> out;
 

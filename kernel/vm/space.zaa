@@ -10,6 +10,9 @@ pub struct address_space
 {
   region mut *root;
 
+  pub usize total_virtual_size;
+  pub usize allocated_physical_pages;
+
   pub std::spin_lock lock;
 
   pub address_space() = default;

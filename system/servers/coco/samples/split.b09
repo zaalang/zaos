@@ -48,7 +48,7 @@ PROCEDURE Split
   ON ERROR GOTO 2
 
 1 (* Read lmum lines from input file
-  FOR count:=0 TO lnum-1
+  FOR count:=1 TO lnum
     READ #path1,line(count)
   NEXT count
   PRINT file2,
@@ -56,7 +56,7 @@ PROCEDURE Split
   CREATE #path2,file2:WRITE
   (* Write lines to output file and
   (* close file
-  FOR count:=0 TO lnum-1
+  FOR count:=1 TO lnum
     WRITE #path2,line(count)
   NEXT count
   CLOSE #path2
@@ -73,7 +73,7 @@ PROCEDURE Split
   lnum:=count
   PRINT file2,
   CREATE #path2,file2:WRITE
-  FOR count:=0 TO lnum-1
+  FOR count:=1 TO lnum
     WRITE #path2,line(count)
   NEXT count
   CLOSE #path2

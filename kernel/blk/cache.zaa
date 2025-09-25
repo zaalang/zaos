@@ -59,7 +59,7 @@ pub struct cache_entry
 
   state state;
   vm::virtrange allocation;
-  vm::iovec iovs;
+  vm::iovec iovec;
   io::response response;
 
   vfs::node mut *node;
@@ -67,9 +67,13 @@ pub struct cache_entry
   u64 dirty;
 
   cache_entry mut *next;
+  cache_entry mut *prev;
+
+  cache_entry mut *next_dirty;
+
+  u8[0] reserved;
 
   i32 refcnt;
-  u8[16] reserved;
 
   fn allocator()
   {
@@ -101,21 +105,22 @@ fn destroy(cache_entry mut *entry) -> void
 {
   std::assert(entry.dirty == 0);
   std::assert(entry.response.outstanding == 0);
+  std::assert(entry.next == null);
+  std::assert(entry.prev == null);
 
-  entry.state = cache_entry::state::allocated;
+  if (entry.state > cache_entry::state::allocated)
+    entry.state = cache_entry::state::allocated;
 
   cache_entry::allocator.free(entry);
 }
 
 fn deallocate(cache_entry mut *entry) -> void
 {
-  vm::unlock(&mut entry.iovs);
+  vm::unlock(&mut entry.iovec);
   heap::munmap(entry.allocation);
   entry.allocation = vm::virtrange();
 
   entry.state = cache_entry::state::uninit;
-
-  cache_entry::allocator.free(entry);
 }
 
 pub struct block_ptr
@@ -192,6 +197,11 @@ struct block_cache
 
   std::flat_hash_map<cache_key, cache_entry mut *> entries;
 
+  cache_entry mut *head;
+  cache_entry mut *tail;
+
+  usize blocks_allocated;
+
   thread mut *plumber;
   semaphore plumber_doorbell;
   cache_entry mut *drain;
@@ -205,22 +215,41 @@ struct block_cache
     if (j == pagecache.entries.end)
       j = pagecache.entries.insert(key, cache_entry::create()).0;
 
+    pagecache.remove(pagecache.entries[j].value);
+    pagecache.insert(pagecache.entries[j].value);
+
     return pagecache.entries[j].value;
   }
 
-  fn purge(block_cache mut &pagecache, vfs::node *node) -> void
+  fn insert(block_cache mut &pagecache, cache_entry mut *entry) -> void
   {
-    var guard = std::lock_guard(&mut pagecache.lock);
+    entry.prev = pagecache.tail;
 
-    for (var mut &entry : pagecache.entries)
-    {
-      if (entry.key.node == node)
-        destroy(entry.value);
-    }
+    if (entry.prev)
+      entry.prev.next = entry;
 
-    std::erase_if(&mut pagecache.entries, fn [node](var &entry) {
-      return entry.key.node == node;
-    });
+    if (!pagecache.head)
+      pagecache.head = entry;
+
+    pagecache.tail = entry;
+  }
+
+  fn remove(block_cache mut &pagecache, cache_entry mut *entry) -> void
+  {
+    if (entry.next)
+      entry.next.prev = entry.prev;
+
+    if (entry.prev)
+      entry.prev.next = entry.next;
+
+    if (pagecache.head == entry)
+      pagecache.head = entry.next;
+
+    if (pagecache.tail == entry)
+      pagecache.tail = entry.prev;
+
+    entry.next = null;
+    entry.prev = null;
   }
 
   fn instance() -> block_cache mut &
@@ -240,6 +269,11 @@ fn pagecache() -> block_cache mut &
   return &block_cache::instance;
 }
 
+pub fn cache_memory_used() -> usize
+{
+  return std::atomic_load(&pagecache.blocks_allocated) * BLOCK_SIZE;
+}
+
 pub fn fetch(Rc<vfs::node> &node, u64 offset) -> block_ptr
 {
   offset &= ~BLOCK_MASK;
@@ -250,8 +284,10 @@ pub fn fetch(Rc<vfs::node> &node, u64 offset) -> block_ptr
   {
     block.entry.allocation = heap::mmap(BLOCK_SIZE);
 
-    if (var result = vm::lock(block.entry.allocation, vm::protection::readwrite, &mut block.entry.iovs); !result)
+    if (var result = vm::lock(block.entry.allocation, vm::protection::readwrite, &mut block.entry.iovec); !result)
       std::panic("unable to lock block");
+
+    std::atomic_add(&pagecache.blocks_allocated, 1);
 
     block.state = cache_entry::state::allocated;
   }
@@ -262,7 +298,7 @@ pub fn fetch(Rc<vfs::node> &node, u64 offset) -> block_ptr
     block.entry.offset = offset;
     block.entry.response = io::response();
 
-    if (var result = node.file_operations.read(node, &mut block.response.cb, offset, block.entry.iovs, 0, block.size); !result)
+    if (var result = node.file_operations.read(node, &mut block.response.cb, offset, block.entry.iovec, 0, block.size); !result)
       io::cancel(&mut block.response.cb, result);
 
     block.state = cache_entry::state::loaded;
@@ -293,9 +329,9 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
 
     for (;;)
     {
-      block.entry.next = std::volatile_load(&pagecache.drain);
+      block.entry.next_dirty = std::volatile_load(&pagecache.drain);
 
-      if (std::atomic_cmpxchg_weak(&pagecache.drain, block.entry.next, &*block.entry))
+      if (std::atomic_cmpxchg_weak(&pagecache.drain, block.entry.next_dirty, &*block.entry))
         break;
     }
 
@@ -305,29 +341,58 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
 
 pub fn purge(vfs::node *node) -> void
 {
-  pagecache.purge(node);
+  var guard = std::lock_guard(&mut pagecache.lock);
+
+  for (var entry = pagecache.head; entry; )
+  {
+    var next = entry.next;
+
+    if (entry.node == node)
+    {
+      pagecache.entries.erase(cache_key(entry.node, entry.offset));
+      pagecache.remove(entry);
+      destroy(entry);
+    }
+
+    entry = next;
+  }
 }
 
 pub fn reap() -> void
 {
-  if (pagecache.lock.try_lock)
+  if (pagecache.lock.try_lock())
   {
     var count = 0;
 
-    for (var mut &entry : pagecache.entries)
+    for (var entry = pagecache.head; entry; )
     {
-      if (entry.value.refcnt == 0)
+      var next = entry.next;
+
+      if (entry.refcnt == 0)
       {
-        deallocate(entry.value);
+        var refcnt = entry.response.refcnt;
 
-        if (++count == 4)
-          break;
+        entry.iovec.foreach_region_in(0, BLOCK_SIZE, |region| {
+          for (var &page : vm::pages_for_range(region))
+            refcnt += page.refcnt;
+        });
+
+        if (refcnt - 2*(BLOCK_SIZE/PAGE_SIZE) - 1 == 0)
+        {
+          pagecache.entries.erase(cache_key(entry.node, entry.offset));
+          pagecache.remove(entry);
+          deallocate(entry);
+          destroy(entry);
+
+          std::atomic_sub(&pagecache.blocks_allocated, 1);
+
+          if (++count == 4)
+            break;
+        }
       }
-    }
 
-    std::erase_if(&mut pagecache.entries, fn (var &entry) {
-      return entry.value.refcnt == 0 && entry.value.state == cache_entry::state::uninit;
-    });
+      entry = next;
+    }
 
     pagecache.lock.unlock();
   }
@@ -343,8 +408,8 @@ fn plumber(void*) -> void
 
     for (var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
     {
-      var next = entry.next;
       var node = entry.node;
+      var next = entry.next_dirty;
       var dirty = std::atomic_xchg(&entry.dirty, 0);
       var response = io::response();
       var position = entry.offset;
@@ -361,7 +426,7 @@ fn plumber(void*) -> void
             bytes += BLOCK_FLUSH_SIZE;
           }
 
-          if (var result = node.file_operations.write(node, &mut response.cb, position, entry.iovs, offset, bytes); !result)
+          if (var result = node.file_operations.write(node, &mut response.cb, position, entry.iovec, offset, bytes); !result)
             std::print("plumber: unable to initiate write back - ", result);
         }
 

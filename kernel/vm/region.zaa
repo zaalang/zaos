@@ -29,12 +29,15 @@ pub struct region
   pub u64 offset;
   pub Rc<vfs::node> backing;
 
+  pub usize allocated_physical_pages;
+
   pub fn is_private(this &) -> bool { return this.usage & usage::private == usage::private; }
   pub fn is_foreign(this &) -> bool { return this.usage & usage::foreign == usage::foreign; }
 
   pub fn is_readable(this &) -> bool { return this.protection != protection::none; }
   pub fn is_writeable(this &) -> bool { return this.protection == protection::readwrite; }
   pub fn is_executable(this &) -> bool { return this.protection == protection::executable; }
+  pub fn is_readonly(this &) -> bool { return this.protection != protection::readwrite; }
 
   pub fn contains(this &, virtaddr address) -> bool
   {
@@ -54,7 +57,7 @@ pub struct region
   pub region mut *right;
   pub int height;
 
-  u8[24] reserved;
+  u8[16] reserved;
 
   pub region() = default;
   pub ~region() = default;

@@ -133,6 +133,8 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
       stream.append("uuid", process.uuid);
       stream.append("name", process.name);
       stream.append("state", std::meta::enumerator_name(process.state));
+      stream.append("vmsz", process.vmsz);
+      stream.append("vmrss", process.vmrss);
 
       stream.begin("threads", '[');
 

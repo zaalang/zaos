@@ -69,14 +69,14 @@ PROCEDURE main
   REM numbers and sorts them.
   DIM i,d(1000):INTEGER
 
-  FOR i=0 TO 999
+  FOR i=1 TO 1000
     d(i):=INT(RND(100))
   NEXT i
 
-  RUN prin(0,999,d)
+  RUN prin(1,1000,d)
 
-  RUN qsort1(0,999,d)
+  RUN qsort1(1,1000,d)
 
-  RUN prin(0,999,d)
+  RUN prin(1,1000,d)
 
   END

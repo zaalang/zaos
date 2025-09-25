@@ -1522,6 +1522,22 @@ fn emit_let(compile_context mut &ctx, VarDecl &vardecl) -> result
   return ok;
 }
 
+fn emit_base(compile_context mut &ctx, int base) -> result
+{
+  switch (base)
+  {
+    case 0:
+      ctx.text.push_back(cast<u8>(op::kw_base0));
+
+    case 1:
+      ctx.text.push_back(cast<u8>(op::kw_base1));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
 fn emit_expr(compile_context mut &ctx, Expression &expression) -> result
 {
   if (var rc = emit_expression(&mut ctx, expression); !rc)
@@ -2323,6 +2339,10 @@ fn emit_statement(compile_context mut &ctx, Statement &stmt) -> result
 
     case Let[vardecl]:
       if (var rc = emit_let(&mut ctx, vardecl); !rc)
+        return rc;
+
+    case Base[base]:
+      if (var rc = emit_base(&mut ctx, base); !rc)
         return rc;
 
     case Expr[expression]:

@@ -3,7 +3,7 @@ PROCEDURE DumpFile
   (*
   (* (c) 1993 by Wayne Campbell - All Rights Reserved
   (*
-  (* To use: 059: dumpfile <pathname>
+  (* To use: O59: dumpfile <pathname>
   (* <pathname> may include a complete path up to 80 characters
   (* Requires the SysCall and Inkey sub-routines
 
@@ -11,7 +11,7 @@ PROCEDURE DumpFile
   PARAM PathName:STRING[80]
 
   (* Sector buffer
-  DIM Sector(258):BYTE
+  DIM Sector(256):BYTE
 
   (* Path identifier
   DIM FilePath:BYTE
@@ -129,13 +129,13 @@ PROCEDURE DumpFile
     ENDIF
 
     (* Get next file sector
-    GET #FilePath,Sector
+    GET #FilePath, Sector
 
     (* Print header
     GOSUB 20
 
     (* Now go through the sector one byte at a time
-    FOR Index := 0 TO 255
+    FOR Index := 1 TO 256
 
       (* FilePos keeps track of how many bytes have been read from
       (* the file. This way, it can be compared to FileSize for eof
@@ -158,9 +158,6 @@ PROCEDURE DumpFile
           (* lines byte count starts with 17.
           RUN Colors(11) \PRINT LEFT$("0000000000",10-LEN(CurrentCount)); CurrentCount; " ";
 
-          (* Increment ByteAdr
-          ByteAdr := ByteAdr + 16
-
           (* Format output for hex display
           RUN Colors(13) \PRINT USING "H8", ByteAdr;
           PRINT " ";
@@ -172,10 +169,11 @@ PROCEDURE DumpFile
         (* if displayed byte count=16 then time to start again
         IF DisplayCnt = 16 THEN
           DisplayCnt := 0
+          ByteAdr := ByteAdr + 16
         ENDIF
 
         (* Print hex value of current byte
-        RUN Colors(8) \PRINT USING "H2",Sector(Index);
+        RUN Colors(8) \PRINT USING "H2", Sector(Index);
       ELSE
         (* if FilePos is greater than or equal to FilSize we are
         (* at the last byte of the file, so print spaces to fill in
@@ -204,7 +202,7 @@ PROCEDURE DumpFile
 
       (* Set CharacterLine for displayable characters
       IF FilePos < FileSize THEN
-        (* if the value of Sector(index) became less than 32 (a
+        (* if the value of Sector(Index) became less than 32 (a
         (* space character), use a period to denote the character.
         IF Sector(Index) > 31 AND Sector(Index) < 127 THEN
           CharacterLine := CharacterLine + CHR$(Sector(Index))
@@ -271,7 +269,7 @@ PROCEDURE DumpFile
 
   (* Error Handling Routine
   40 PRINT
-  PRINT "DunpFile - Version "; Version; " (c) 1993 by Wayne Campbell"
+  PRINT "DumpFile - Version "; Version; " (c) 1993 by Wayne Campbell"
   PRINT
   PRINT "Usage: DumpFile <PathName>"
   END

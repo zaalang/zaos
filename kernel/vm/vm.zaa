@@ -116,6 +116,16 @@ pub fn is_kernel_address(virtaddr addr) -> bool
   return platform::is_kernel_address(addr);
 }
 
+pub fn page_from_address(physaddr page) -> page mut *
+{
+  return mm.pageallocator.page_from_address(page);
+}
+
+pub fn pages_for_range(physrange range) -> std::mutable_span<page>
+{
+  return mm.pageallocator.pages_for_range(range);
+}
+
 pub fn init_pagetable(page_table mut &pagetable) -> void
 {
   pagetable.new(fn() -> platform::physaddr_t {
@@ -345,6 +355,8 @@ pub fn create_anonymous_region(address_space mut &space, virtrange range, protec
   region.protection = prot;
   region.usage = use;
 
+  std::atomic_add(&space.total_virtual_size, region.range.size);
+
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
 
@@ -390,8 +402,13 @@ pub fn create_physical_region(address_space mut &space, virtrange range, std::ve
       map_physical_pages(addr, pages, protection::readonly);
     }
 
+    region.allocated_physical_pages += pages.size >> PAGE_SHIFT;
+
     addr += pages.size;
   }
+
+  std::atomic_add(&space.allocated_physical_pages, region.allocated_physical_pages);
+  std::atomic_add(&space.total_virtual_size, region.range.size);
 
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
@@ -421,6 +438,8 @@ pub fn create_backed_region(address_space mut &space, virtrange range, vfs::node
   region.usage = use;
   region.offset = offset;
   region.backing = node;
+
+  std::atomic_add(&space.total_virtual_size, region.range.size);
 
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut space.lock);
@@ -515,17 +534,28 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
 
   if (!region.is_foreign)
   {
-    var pages = null<page mut *>();
+    struct state
+    {
+      usize pgcnt;
+      page mut *pages;
 
-    pagetable.unmap(region.range, &pages, fn (void mut *pages, platform::virtaddr_t addr, platform::physaddr_t phys) {
-      var mut &pages = *cast<page mut * mut *>(pages);
+      state() = default;
+      ~state() = default;
+    }
+
+    var state = state();
+
+    pagetable.unmap(region.range, &state, fn (void mut *state, platform::virtaddr_t addr, platform::physaddr_t phys) {
+      var state = cast<state mut *>(state);
       var page = mm.pageallocator.page_from_address(phys);
 
       if (page.unref() == 1)
       {
-        page.next = pages;
-        pages = page;
+        page.next = state.pages;
+        state.pages = page;
       }
+
+      state.pgcnt += 1;
     });
 
     if (is_kernel_region || pagetable.cnt > 1)
@@ -533,15 +563,19 @@ fn munmap(page_table mut &pagetable, address_space mut &space, virtrange range) 
       pagetable_shootdown(pagetable, region.range);
     }
 
-    release_physical_pages(pages);
+    release_physical_pages(state.pages);
   }
 
-  region.offset = 0;
-  region.backing = null;
+  std::atomic_sub(&space.allocated_physical_pages, region.allocated_physical_pages);
+  std::atomic_sub(&space.total_virtual_size, region.range.size);
 
   region.unlock();
 
   var guard = std::lock_guard(&mut cpu::irqlock);
+
+  region.offset = 0;
+  region.backing = null;
+  region.allocated_physical_pages = 0;
 
   mm.regioncache.put(region);
 
@@ -808,6 +842,11 @@ fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bo
         fault_region(&mut pagetable, region, addr, mm.zeropage, protection::readonly, mflags::keep);
     }
 
+    region.allocated_physical_pages += 1;
+
+    if (is_user_address(addr))
+      cpu::process_counter_user_allocated_pages_inc();
+
     mapping = pagetable.query(addr);
   }
 
@@ -931,4 +970,34 @@ pub fn reap() -> void
     __relax();
 
   reap(&mut mm.regionallocator);
+}
+
+pub fn reap(page_table mut &pagetable, vm::address_space mut &space) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
+  if (space.lock.try_lock())
+  {
+    space.each(|region| {
+
+      if (region.try_lock())
+      {
+        if (region.backing && region.is_readonly)
+        {
+          pagetable.unmap(region.range, region, fn (void mut *region, platform::virtaddr_t addr, platform::physaddr_t phys) {
+            var page = mm.pageallocator.page_from_address(phys);
+
+            if (page.unref() == 1)
+              std::panic();
+          });
+
+          region.allocated_physical_pages = 0;
+        }
+
+        region.unlock();
+      }
+    });
+
+    space.lock.unlock();
+  }
 }

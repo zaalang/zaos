@@ -4,6 +4,7 @@ PROCEDURE eightqueens
   (* can be placed on a chess board without conflict
   DIM n,k,x(8):INTEGER
   DIM col(8),up(15),down(15):BOOLEAN
+  BASE 0
 
   REM initialize empty board
   n:=0
@@ -16,6 +17,7 @@ PROCEDURE generate
   PARAM n,x(8):INTEGER
   PARAM col(8),up(15),down(15):BOOLEAN
   DIM h,k:INTEGER \h:=0
+  BASE 0
 
   REPEAT
     IF col(h) AND up(n-h+7) AND down(n+h) THEN

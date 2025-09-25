@@ -2,6 +2,7 @@ PROCEDURE mandel
     DIM color(16),tmpint,tmpint2:INTEGER
     DIM i:INTEGER
     DIM px,py,xz,yz,x,y,xy:REAL
+    BASE 0
 
 10  color(0)=41
     color(1)=101

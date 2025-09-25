@@ -23,7 +23,7 @@ PROCEDURE clock
     RUN Gfx.Line(x0-y1, y0+x1, x0-y2, y0+x2)
   NEXT i
 
-  FOR i = 0 TO 2
+  FOR i = 1 TO 3
     time(i) = 0
     xx(i) = x0
     yy(i) = y0
@@ -32,12 +32,12 @@ PROCEDURE clock
   LOOP
     time$ = DATE$
     last = time
-    time(2) = VAL(MID$(time$,18,2))*6
-    time(1) = VAL(MID$(time$,15,2))*6
-    time(0) = MOD(VAL(MID$(time$,12,2))*30+time(1)/12,360)
-    j = last(2)
+    time(3) = VAL(MID$(time$,18,2))*6
+    time(2) = VAL(MID$(time$,15,2))*6
+    time(1) = MOD(VAL(MID$(time$,12,2))*30+time(2)/12,360)
+    j = last(3)
 
-    FOR i = 2 TO 0 STEP -1
+    FOR i = 3 TO 1 STEP -1
       RUN Gfx.Pen(3)
       RUN Gfx.Line(x0, y0, xx(i), yy(i), $ff009000)
       xx(i) = x0 + SIN(time(i)/180.0*PI) * radius * (0.3 + i * 0.2)

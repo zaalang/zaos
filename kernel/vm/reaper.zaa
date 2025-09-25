@@ -38,13 +38,15 @@ fn reaper(void *) -> void
   {
     reaper.doorbell.wait();
 
-    std::print("reap begin - ", vm::available_physical_memory);
+    std::print("reaper: ", vm::available_physical_memory, " ", blk::cache_memory_used);
 
     blk::reap();
+    process::reap();
 
     vm::reap();
 
-    std::print("reap finish - ", vm::available_physical_memory);
+    if (vm::available_physical_memory < 67_108_864 && blk::cache_memory_used < 16_777_216)
+      oomkiller();
 
     reaper.ringtone.release();
   }
@@ -62,7 +64,12 @@ pub fn spawn_reaper() -> void
 {
   var mut &reaper = reaper::instance;
 
+  reaper.doorbell.maxvalue = ~0;
+  reaper.ringtone.maxvalue = ~0;
+
   reaper.reaper = create_thread(process::current, &cast<(void mut *) -> void>(reaper), null);
+
+  reaper.reaper.pinned = true;
 
   scheduler::enqueue(reaper.reaper, thread::priority::high);
 }

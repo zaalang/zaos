@@ -265,8 +265,13 @@ pub struct page
 {
   pub u64 flags;
   pub page mut *next;
-  pub i32 refcnt;
+
   u8[28] reserved;
+
+  pub fn refcnt(this &) -> i32
+  {
+    return std::atomic_load(&this.refcnt);
+  }
 
   pub fn ref(this mut &) -> void
   {
@@ -280,6 +285,8 @@ pub struct page
 
   u8 order;
   page mut * mut *prevfree;
+
+  i32 refcnt;
 
   page() = default;
   ~page() = default;

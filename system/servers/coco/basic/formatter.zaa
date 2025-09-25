@@ -654,6 +654,14 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
           std::print_to(&mut os, "LET ");
           ip += 1;
 
+        case op::kw_base0:
+          std::print_to(&mut os, "BASE 0");
+          ip += 1;
+
+        case op::kw_base1:
+          std::print_to(&mut os, "BASE 1");
+          ip += 1;
+
         case op::kw_type:
           std::print_to(&mut os, "TYPE ");
           ip += 1;

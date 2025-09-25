@@ -268,12 +268,12 @@ pub fn cld() -> void
 
 pub fn enable_memory_protect() -> void
 {
-  __asm("clac", "");
+//  __asm("clac", "");
 }
 
 pub fn disable_memory_protect() -> void
 {
-  __asm("stac", "");
+//  __asm("stac", "");
 }
 
 pub fn enable_interrupts() -> void

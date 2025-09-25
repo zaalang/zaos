@@ -4,6 +4,7 @@ PROCEDURE Patch
   DIM buffer(256):BYTE
   DIM path,offset,modloc:INTEGER; loc:INTEGER
   DIM rewrite:STRING
+  BASE 0
 
   INPUT "pathlist? ",rewrite
   OPEN #path,rewrite:UPDATE
@@ -50,10 +51,10 @@ PROCEDURE DumpBuffer
   WHILE loc>65535 DO
     loc=loc-65536
   ENDWHILE
-  FOR j=0 TO 15
+  FOR j=1 TO 16
     PRINT USING "H4",FIX(INT(loc))+j*16;
     PRINT ":";
-    FOR i=0 TO 15
+    FOR i=1 TO 16
       PRINT USING "X1,H2",line(j).char(i);
     NEXT i
     RUN PrintASCII(line(j))
@@ -65,7 +66,7 @@ PROCEDURE PrintASCII
   PARAM line:buffer
   DIM ascii:STRING; nextchar:BYTE; i:INTEGER
   ascii=""
-  FOR i=0 TO 15
+  FOR i=1 TO 16
     nextchar=line.char(i)
     IF nextchar>127 THEN
       nextchar=nextchar-128

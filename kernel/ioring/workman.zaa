@@ -125,13 +125,14 @@ fn kworkd(worker mut *worker) -> void
     var now = cpu::system_time;
     var activity = std::atomic_load(&workman.activity);
 
+    var waketime = ~0;
     var entries = workman.rings.take();
 
     for (var entry = &entries.0; *entry; )
     {
       var ring = *entry;
 
-      if (ring.lock.try_lock)
+      if (ring.lock.try_lock())
       {
         for (var mut &ctx : ring.pending)
         {
@@ -189,6 +190,12 @@ fn kworkd(worker mut *worker) -> void
         else
         {
           entry = &entry.next;
+
+          for (var mut &ctx : ring.pending)
+          {
+            if (ctx.wake_time != 0)
+              waketime = std::min(waketime, ctx.wake_time);
+          }
         }
 
         ring.lock.unlock();
@@ -196,31 +203,13 @@ fn kworkd(worker mut *worker) -> void
       else
       {
         entry = &entry.next;
+
+        waketime = std::min(waketime, cpu::system_time + 1_000);
       }
     }
 
-    var waketime = ~0;
-
     if (entries.0)
     {
-      for (var ring = entries.0; ring; ring = ring.next)
-      {
-        if (ring.lock.try_lock)
-        {
-          for (var mut &ctx : ring.pending)
-          {
-            if (ctx.wake_time != 0)
-              waketime = std::min(waketime, ctx.wake_time);
-          }
-
-          ring.lock.unlock();
-        }
-        else
-        {
-          waketime = std::min(waketime, cpu::system_time + 1_000);
-        }
-      }
-
       workman.rings.append(&mut entries);
     }
 

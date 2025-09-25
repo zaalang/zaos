@@ -52,6 +52,8 @@ pub enum op
   kw_put = 0x2f,
   kw_close = 0x30,
   kw_restore = 0x31,
+  kw_base0 = 0x35,
+  kw_base1 = 0x36,
   kw_rem = 0x37,
   end = 0x39,
   label = 0x3a,
@@ -441,6 +443,7 @@ struct frame
 
   usize sp;
   usize bp;
+  int base;
   u8 *ip;
 
   frame() = default;
@@ -599,6 +602,7 @@ pub struct machine
     frame.ip = this.ip;
     frame.sp = this.stack.len - nargs;
     frame.bp = this.substack.len;
+    frame.base = 1;
 
     this.ip = frame.text.begin;
   }
@@ -747,7 +751,7 @@ fn gep(machine mut &vm, op mut &type, std::mutable_span<u8> mut &span) -> result
     case op::parameter_vector:
       var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
 
-      var i = vm.stack.take_back.as_integer;
+      var i = vm.stack.take_back.as_integer - vm.frame.base;
 
       var desc = vm.frame.rodata[offset .. offset + 7];
 
@@ -765,8 +769,8 @@ fn gep(machine mut &vm, op mut &type, std::mutable_span<u8> mut &span) -> result
     case op::parameter_table:
       var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
 
-      var j = vm.stack.take_back.as_integer;
-      var i = vm.stack.take_back.as_integer;
+      var j = vm.stack.take_back.as_integer - vm.frame.base;
+      var i = vm.stack.take_back.as_integer - vm.frame.base;
 
       var desc = vm.frame.rodata[offset .. offset + 9];
 
@@ -788,9 +792,9 @@ fn gep(machine mut &vm, op mut &type, std::mutable_span<u8> mut &span) -> result
     case op::parameter_matrix:
       var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
 
-      var k = vm.stack.take_back.as_integer;
-      var j = vm.stack.take_back.as_integer;
-      var i = vm.stack.take_back.as_integer;
+      var k = vm.stack.take_back.as_integer - vm.frame.base;
+      var j = vm.stack.take_back.as_integer - vm.frame.base;
+      var i = vm.stack.take_back.as_integer - vm.frame.base;
 
       var desc = vm.frame.rodata[offset .. offset + 11];
 
@@ -2759,6 +2763,14 @@ fn step(machine mut &vm) -> result
     case op::kw_until:
     case op::kw_loop:
     case op::kw_exitif:
+      vm.ip += 1;
+
+    case op::kw_base0:
+      vm.frame.base = 0;
+      vm.ip += 1;
+
+    case op::kw_base1:
+      vm.frame.base = 1;
       vm.ip += 1;
 
     case op::kw_print:

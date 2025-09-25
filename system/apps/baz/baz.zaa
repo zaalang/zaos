@@ -1,26 +1,26 @@
+//
+// baz
+//
 
 import std.stdio;
 import sys.thread;
 
 fn main
 {
-  for (var k = 0; k < 100; ++k)
+  var total = 0;
+
+  for (var i = 0; i < 25; ++i)
   {
-    var threads = std::vector<sys::thread>();
+    std::printf(".");
+    std::stdout.flush();
+    var data = std::allocator::new<u8[4*1024*1024]>();
 
-    for (var i = 0; i < 50; ++i)
-    {
-      threads.push_back(sys::thread::spawn(|i| {
-        for (;;)
-        {
-          if (__rdtsc() % 100000000 == 0)
-            break;
-        }
-        std::print(i);
-      }, i));
-    }
+    std::printf(".");
+    std::stdout.flush();
+    std::memset(data, 0, sizeof(*data));
 
-    for (var mut &thread : threads)
-      thread.join();
+    total += sizeof(*data);
+
+    std::print(total / 1024 / 1024);
   }
 }

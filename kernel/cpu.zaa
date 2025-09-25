@@ -18,6 +18,8 @@ pub struct cpu_logical_core
 
   pub run_queue runqueue;
 
+  pub usize process_counter_user_allocated_pages;
+
   cpu_logical_core() = default;
   cpu_logical_core(#cpu_logical_core&) = default;
   ~cpu_logical_core() = default;
@@ -99,6 +101,22 @@ pub fn switch_current_thread(thread mut *thread) -> void
   std::assert(platform::interrupts_disabled);
 
   self.current_thread = thread;
+}
+
+pub fn process_counter_user_allocated_pages()
+{
+  std::assert(platform::interrupts_disabled);
+
+  return &self.process_counter_user_allocated_pages;
+}
+
+pub fn process_counter_user_allocated_pages_inc()
+{
+  //var irqs = platform::disable_interrupts();
+  //self.process_counter_user_allocated_pages += 1;
+  //platform::restore_interrupts(irqs);
+
+  __asm("inc qword ptr fs:$0@tpoff + $1", "s,n", &self, offsetof(cpu_logical_core::process_counter_user_allocated_pages));
 }
 
 pub fn tsc() -> u64
