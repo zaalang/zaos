@@ -5,7 +5,7 @@
 import std.stdio;
 import std.function;
 import app.loop;
-import zidl.zaos_sys;
+import zidl.zaos.sys;
 import seat;
 import display;
 import compositor;

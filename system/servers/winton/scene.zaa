@@ -5,7 +5,7 @@
 import std.vector;
 import std.box;
 import math : transform, bound, vec2, vec4;
-import zidl.zaos_winton;
+import zidl.zaos.winton;
 
 pub struct layer
 {

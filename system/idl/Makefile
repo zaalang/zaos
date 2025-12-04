@@ -5,13 +5,13 @@ include ../../mkspec.mk
 BUILD := $(BUILDROOT)/system/generated/zidl
 
 IDLS=\
-$(BUILD)/zaos_sys.zaa\
-$(BUILD)/zaos_winton.zaa\
+$(BUILD)/zaos/sys.zaa\
+$(BUILD)/zaos/winton.zaa\
 
 default: $(IDLS)
 
 .SECONDEXPANSION:
-$(BUILD)/%.zaa: $$(subst _,.,%.zidl)
+$(BUILD)/%.zaa: $$(subst /,.,%.zidl)
 	@echo "ZIDL $<"
 	@mkdir -p $(@D)
 	@$(ZIDLC) -o $@ $^

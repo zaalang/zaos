@@ -1,0 +1,852 @@
+//
+// parser
+//
+
+import std.stdio;
+import std.string : String;
+import source : Source;
+import ast;
+import lexer;
+import diag;
+
+using ast;
+using lexer;
+
+union ParseError
+{
+  struct UnexpectedToken : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Unexpected Token";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "unexpected token");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedScope : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Expected Scope";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "expected scope");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedExperssion : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Expected Expression";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "expected expression");
+    }
+
+    ~this() = default;
+  }
+
+  struct InvalidNumericLiteral : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Invalid Numeric Literal";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "invalid numeric literal");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedIdentifier: pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Expected Identifier";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "expected identifier");
+    }
+
+    ~this() = default;
+  }
+
+  struct ExpectedSemi: pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Expected Semi";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "expected semi");
+    }
+
+    ~this() = default;
+  }
+}
+
+enum PrecLevel
+{
+  Zero            = 0,
+  Assignment      = 1,    // =
+  Conditional     = 2,    // ?
+  LogicalOr       = 3,    // or
+  LogicalAnd      = 4,    // and
+  Equality        = 5,    // ==, !=
+  Relational      = 6,    // >=, <=, >, <
+  Additive        = 7,    // -, +
+  Shift           = 8,    // <<, >>
+  Multiplicative  = 9,    // *, /, //, %
+  One             = 10,
+}
+
+fn precedence(token &tok) -> PrecLevel
+{
+  switch (tok.type)
+  {
+    case equal:
+      return PrecLevel::Assignment;
+
+    case question:
+      return PrecLevel::Conditional;
+
+    case pipepipe:
+      return PrecLevel::LogicalOr;
+
+    case ampamp:
+      return PrecLevel::LogicalAnd;
+
+    case exclaimequal:
+    case equalequal:
+      return PrecLevel::Equality;
+
+    case lessequal:
+    case less:
+    case greaterequal:
+    case greater:
+      return PrecLevel::Relational;
+
+    case plus:
+    case minus:
+      return PrecLevel::Additive;
+
+    case star:
+    case slash:
+    case percent:
+      return PrecLevel::Multiplicative;
+
+    else:
+      return PrecLevel::Zero;
+  }
+}
+
+fn unaryopcode(token &tok) -> UnaryOp::Kind
+{
+  switch (tok.type)
+  {
+    case plus:
+      return Plus;
+
+    case minus:
+      return Minus;
+
+    case exclaim:
+      return LNot;
+
+    else:
+      std::panic("invalid unary op");
+  }
+}
+
+fn binaryopcode(token &tok) -> BinaryOp::Kind
+{
+  switch (tok.type)
+  {
+    case plus:
+      return Add;
+
+    case minus:
+      return Sub;
+
+    case star:
+      return Mul;
+
+    case slash:
+      return Div;
+
+    case percent:
+      return Rem;
+
+    case ampamp:
+      return LAnd;
+
+    case pipepipe:
+      return LOr;
+
+    case less:
+      return LT;
+
+    case greater:
+      return GT;
+
+    case lessequal:
+      return LE;
+
+    case greaterequal:
+      return GE;
+
+    case equalequal:
+      return EQ;
+
+    case exclaimequal:
+      return NE;
+
+    case equal:
+      return Assign;
+
+    else:
+      std::panic("invalid binary op");
+  }
+}
+
+struct parse_context
+{
+  diag::diag diag;
+  Source mut &source;
+
+  diag::diag mut &outdiag;
+
+  parse_context(Source mut &source, diag::diag mut &diag)
+    : source(&source), diag(diag.leader), outdiag(&diag)
+  {
+  }
+
+  ~parse_context()
+  {
+    outdiag << diag;
+  }
+}
+
+fn consume_token(std::span<token> mut &tokens) -> void
+{
+  tokens.drop_front!(1);
+}
+
+fn consume_token(std::span<token> mut &tokens, token::type expected) -> void
+{
+  std::assert(tokens[0] == expected);
+
+  tokens.drop_front!(1);
+}
+
+fn try_consume_token(std::span<token> mut &tokens, token::type expected) -> bool
+{
+  if (tokens[0] == expected)
+  {
+    tokens.drop_front!(1);
+
+    return true;
+  }
+
+  return false;
+}
+
+fn parse_bool_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var span = tokens[0].span;
+
+  switch (tokens[0].type)
+  {
+    case kw_true:
+      consume_token(&mut tokens, token::type::kw_true);
+
+      return Expression::Boolean(true, span);
+
+    else:
+      consume_token(&mut tokens, token::type::kw_false);
+
+      return Expression::Boolean(false, span);
+  }
+}
+
+fn parse_string_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var span = tokens[0].span;
+
+  consume_token(&mut tokens, token::type::string_literal);
+
+  if (span.starts_with("'"))
+  {
+    return Expression::String(span.drop_front(1).drop_back(1), span);
+  }
+
+  if (span.starts_with("\""))
+  {
+    return Expression::String(span.drop_front(1).drop_back(1), span);
+  }
+
+  return Expression::String(span, span);
+}
+
+fn parse_color_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var span = tokens[0].span;
+
+  consume_token(&mut tokens, token::type::hash_constant);
+
+  var color = u32(0);
+
+  if (var result = std::atoi(span.begin + 1, span.end, &mut color, 16); result)
+  {
+    switch (span.len)
+    {
+      case 7:
+        return Expression::Color(0xff000000 | color, span);
+
+      case 9:
+        return Expression::Color(color, span);
+    }
+  }
+
+  ctx.diag.error(ParseError::InvalidNumericLiteral(ctx.source, span));
+
+  return Expression();
+}
+
+fn parse_numeric_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var span = tokens[0].span;
+
+  consume_token(&mut tokens, token::type::numeric_constant);
+
+  var integer = int(0);
+
+  if (var result = std::sscan(span, &mut integer); result.len == span.len)
+  {
+    return Expression::Integer(integer, span);
+  }
+
+  var number = f64(0.0);
+
+  if (var result = std::sscan(span, &mut number); result)
+  {
+    switch (span[result.len .. span.len])
+    {
+      case "px":
+        return Expression::Number(number, Number::Unit::Px, span);
+
+      case "cm":
+        return Expression::Number(number, Number::Unit::Cm, span);
+
+      case "mm":
+        return Expression::Number(number, Number::Unit::Mm, span);
+
+      case "in":
+        return Expression::Number(number, Number::Unit::In, span);
+
+      case "pt":
+        return Expression::Number(number, Number::Unit::Pt, span);
+
+      case "phx":
+        return Expression::Number(number, Number::Unit::Phx, span);
+
+      case "%":
+        return Expression::Number(number, Number::Unit::Percent, span);
+
+      case "":
+        return Expression::Number(number, span);
+    }
+  }
+
+  ctx.diag.error(ParseError::InvalidNumericLiteral(ctx.source, span));
+
+  return Expression();
+}
+
+fn parse_unary_plus(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  consume_token(&mut tokens, token::type::plus);
+
+  return Expression::UnaryOp(UnaryOp::Kind::Plus, parse_expression_left(&mut ctx, &mut tokens));
+}
+
+fn parse_unary_minus(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  consume_token(&mut tokens, token::type::minus);
+
+  return Expression::UnaryOp(UnaryOp::Kind::Minus, parse_expression_left(&mut ctx, &mut tokens));
+}
+
+fn parse_unary_not(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  consume_token(&mut tokens, token::type::exclaim);
+
+  return Expression::UnaryOp(UnaryOp::Kind::LNot, parse_expression_left(&mut ctx, &mut tokens));
+}
+
+fn parse_declref(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var declref = Expression::Ident(tokens[0].span);
+
+  consume_token(&mut tokens, token::type::identifier);
+
+  for (; tokens[0] != token::type::eof; )
+  {
+    switch (tokens[0].type)
+    {
+      case period:
+        consume_token(&mut tokens, token::type::period);
+
+        switch (tokens[0].type)
+        {
+          case identifier:
+            declref = Expression::Field(&move declref, tokens[0].span);
+
+            consume_token(&mut tokens, token::type::identifier);
+
+          else:
+            ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+        }
+
+      case block:
+        switch (tokens[0].span[0])
+        {
+          case '[':
+            var index = parse_expression(&mut ctx, &mut lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span);
+
+            declref = Expression::Subscript(&move declref, &move index);
+
+            consume_token(&mut tokens, token::type::block);
+
+          case '(':
+            var args = std::vector<Expression>();
+
+            for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+            {
+              args.push_back(parse_expression(&mut ctx, &mut tokens));
+
+              try_consume_token(&mut tokens, token::type::comma);
+            }
+
+            declref = Expression::Call(&move declref, &move args);
+
+            consume_token(&mut tokens, token::type::block);
+
+          else:
+            break;
+        }
+
+      else:
+        break;
+    }
+  }
+
+  return declref;
+}
+
+fn parse_functionop(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var op = tokens[0].span;
+
+  var args = std::vector<Expression>();
+
+  for (; tokens[0] != token::type::eof; )
+  {
+    args.push_back(parse_expression(&mut ctx, &mut tokens));
+
+    if (!try_consume_token(&mut tokens, token::type::comma))
+      break;
+  }
+
+  return Expression::FunctionOp(functionopcode(op), op, &move arguments);
+}
+
+fn parse_group_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var expr = parse_expression(&mut ctx, &mut lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span);
+
+  consume_token(&mut tokens, token::type::block);
+
+  return Expression::UnaryOp(UnaryOp::Kind::Group, &move expr);
+}
+
+fn parse_block_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  var args = std::vector<std::string_view>();
+
+  if (try_consume_token(&mut tokens, token::type::pipe))
+  {
+    for (; tokens[0] != token::type::pipe; )
+    {
+      args.push_back(tokens[0].span);
+
+      if (!try_consume_token(&mut tokens, token::type::identifier))
+        ctx.diag.error(ParseError::ExpectedIdentifier(ctx.source, tokens[0].span));
+
+      if (!try_consume_token(&mut tokens, token::type::comma))
+        break;
+    }
+
+    if (!try_consume_token(&mut tokens, token::type::pipe))
+      ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+  }
+
+  var stmts = std::vector<Expression>();
+
+  switch (tokens[0].type)
+  {
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '{':
+          for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+          {
+            stmts.push_back(parse_expression(&mut ctx, &mut tokens));
+
+            if (!try_consume_token(&mut tokens, token::type::semi))
+              ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+            if (ctx.diag.has_errored)
+              break;
+          }
+
+          consume_token(&mut tokens, token::type::block);
+
+        else:
+          ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+      }
+  }
+
+  return Expression::Block(&move args, &move stmts);
+}
+
+fn parse_expression_left(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  switch (tokens[0].type)
+  {
+    case kw_true:
+    case kw_false:
+      return parse_bool_literal(&mut ctx, &mut tokens);
+
+    case hash_constant:
+      return parse_color_literal(&mut ctx, &mut tokens);
+
+    case numeric_constant:
+      return parse_numeric_literal(&mut ctx, &mut tokens);
+
+    case plus:
+      return parse_unary_plus(&mut ctx, &mut tokens);
+
+    case minus:
+      return parse_unary_minus(&mut ctx, &mut tokens);
+
+    case exclaim:
+      return parse_unary_not(&mut ctx, &mut tokens);
+
+    case string_literal:
+      return parse_string_literal(&mut ctx, &mut tokens);
+
+    case identifier:
+      return parse_declref(&mut ctx, &mut tokens);
+
+    case pipe:
+    case pipepipe:
+      return parse_block_expression(&mut ctx, &mut tokens);
+
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '(':
+          return parse_group_expression(&mut ctx, &mut tokens);
+
+        case '{':
+          return parse_block_expression(&mut ctx, &mut tokens);
+      }
+  }
+
+  ctx.diag.error("internal error: unable to parse expression value");
+
+  return Expression();
+}
+
+fn parse_expression_right(parse_context mut &ctx, std::span<token> mut &tokens, PrecLevel minprec, Expression lhs) -> Expression
+{
+  for (;;)
+  {
+    var op = tokens[0];
+    var prec = precedence(op);
+
+    if (prec < minprec)
+      return lhs;
+
+    consume_token(&mut tokens);
+
+    var rhs = parse_expression_left(&mut ctx, &mut tokens);
+
+    var nextprec = precedence(tokens[0]);
+    var rightassoc = (prec == PrecLevel::Conditional || prec == PrecLevel::Assignment);
+
+    if (prec < nextprec || (prec == nextprec && rightassoc))
+    {
+      rhs = parse_expression_right(&mut ctx, &mut tokens, cast<PrecLevel>(cast<int>(prec) + cast<int>(!rightassoc)), &move rhs);
+    }
+
+    lhs = Expression::BinaryOp(binaryopcode(op), &move lhs, &move rhs);
+  }
+
+  return lhs;
+}
+
+fn parse_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
+{
+  return parse_expression_right(&mut ctx, &mut tokens, PrecLevel::Assignment, parse_expression_left(&mut ctx, &mut tokens));
+}
+
+fn parse_id(parse_context mut &ctx, std::span<token> mut &tokens) -> std::string_view
+{
+  consume_token(&mut tokens, token::type::kw_id);
+
+  if (!try_consume_token(&mut tokens, token::type::colon))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  var ident = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.source, tokens[0].span));
+
+  if (!try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return ident;
+}
+
+fn parse_local(parse_context mut &ctx, std::span<token> mut &tokens) -> Local
+{
+  var flags = Local::Flags::Public;
+
+  switch (tokens[0].type)
+  {
+    case kw_public:
+      consume_token(&mut tokens, token::type::kw_public);
+
+    case kw_private:
+      flags &= ~Local::Flags::Public;
+      consume_token(&mut tokens, token::type::kw_private);
+  }
+
+  if (!try_consume_token(&mut tokens, token::type::kw_property))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  var type = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  return Local(type, tokens[0].span, flags);
+}
+
+fn parse_signal(parse_context mut &ctx, std::span<token> mut &tokens) -> Signal
+{
+  var flags = Signal::Flags::Public;
+
+  consume_token(&mut tokens, token::type::kw_signal);
+
+  var name = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  var args = std::vector<Signal::Argument>();
+
+  switch (tokens[0].type)
+  {
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '(':
+          for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+          {
+            var type = tokens[0].span;
+
+            if (!try_consume_token(&mut tokens, token::type::identifier))
+              ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+            var name = tokens[0].span;
+
+            if (!try_consume_token(&mut tokens, token::type::identifier))
+              ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+            try_consume_token(&mut tokens, token::type::comma);
+
+            args.push_back(type, name);
+          }
+
+          consume_token(&mut tokens, token::type::block);
+
+        else:
+          ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+      }
+  }
+
+  if (!try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return Signal(name, &move args, flags);
+}
+
+fn parse_binding(parse_context mut &ctx, std::span<token> mut &tokens) -> Binding
+{
+  var name = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  if (!try_consume_token(&mut tokens, token::type::colon))
+    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+
+  var expression = parse_expression(&mut ctx, &mut tokens);
+
+  if (expression.kind != typeof(Expression::kind)::Block && !try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return Binding(name, &move expression);
+}
+
+fn parse_element(parse_context mut &ctx, std::span<token> mut &tokens) -> Element
+{
+  var element = Element();
+
+  element.type = tokens[0].span;
+
+  consume_token(&mut tokens, token::type::identifier);
+
+  switch (tokens[0].type)
+  {
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '{':
+          for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+          {
+            switch (tokens[0].type)
+            {
+              case kw_id:
+                element.id = parse_id(&mut ctx, &mut tokens);
+
+              case kw_public:
+              case kw_private:
+                switch (tokens[1].type)
+                {
+                  case kw_property:
+                    element.locals.push_back(parse_local(&mut ctx, &mut tokens));
+                    element.bindings.push_back(parse_binding(&mut ctx, &mut tokens));
+
+                  else:
+                    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[1].span));
+                }
+
+              case kw_property:
+                element.locals.push_back(parse_local(&mut ctx, &mut tokens));
+                element.bindings.push_back(parse_binding(&mut ctx, &mut tokens));
+
+              case kw_signal:
+                element.signals.push_back(parse_signal(&mut ctx, &mut tokens));
+
+              case identifier:
+                switch (tokens[1].type)
+                {
+                  case colon:
+                    element.bindings.push_back(parse_binding(&mut ctx, &mut tokens));
+
+                  case block:
+                    element.children.push_back(parse_element(&mut ctx, &mut tokens));
+
+                  else:
+                    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[1].span));
+                }
+
+              else:
+                ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+            }
+
+            if (ctx.diag.has_errored)
+              break;
+          }
+
+          consume_token(&mut tokens, token::type::block);
+
+        else:
+          ctx.diag.error(ParseError::ExpectedScope(ctx.source, tokens[0].span));
+      }
+
+    else:
+      ctx.diag.error(ParseError::ExpectedScope(ctx.source, tokens[0].span));
+  }
+
+  return element;
+}
+
+fn parse_import(parse_context mut &ctx, std::span<token> mut &tokens) -> Import
+{
+  var imprt = Import();
+
+  consume_token(&mut tokens, token::type::kw_import);
+
+  imprt.name = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.source, tokens[0].span));
+
+  for (; tokens[0] == token::type::period || tokens[0] == token::type::minus; )
+  {
+    consume_token(&mut tokens);
+
+    imprt.name = std::string_view(imprt.name.begin, tokens[0].span.end);
+
+    if (!try_consume_token(&mut tokens, token::type::identifier))
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.source, tokens[0].span));
+  }
+
+  if (!try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return imprt;
+}
+
+pub fn parse(std::string &path, Source mut &source, diag::diag mut &diag) throws(std::error) -> Ast
+{
+  var ast = Ast();
+
+  var ctx = parse_context(&mut source, &mut diag);
+  var src = source.add(path, std::readfile(path));
+
+  ast.file = path;
+
+  for (var tokens = lexer::lex(src).span; tokens[0] != token::type::eof; )
+  {
+    switch (tokens[0].type)
+    {
+      case kw_import:
+        ast.decls.push_back(Decl::Import(parse_import(&mut ctx, &mut tokens)));
+
+      case identifier:
+        ast.decls.push_back(Decl::Element(parse_element(&mut ctx, &mut tokens)));
+
+      else:
+        ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+    }
+
+    if (ctx.diag.has_errored)
+      break;
+  }
+
+  return ast;
+}

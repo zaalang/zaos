@@ -11,6 +11,9 @@ default:
 	@cd terminal; $(MAKE)
 	@cd coreutils; $(MAKE)
 	@cd edit; $(MAKE)
+	@cd calc; $(MAKE)
+	@cd gallery; $(MAKE)
+
 clean:
 	cd bar; $(MAKE) clean
 	cd baz; $(MAKE) clean
@@ -22,3 +25,5 @@ clean:
 	cd terminal; $(MAKE) clean
 	cd coreutils; $(MAKE) clean
 	cd edit; $(MAKE) clean
+	cd calc; $(MAKE) clean
+	cd gallery; $(MAKE) clean

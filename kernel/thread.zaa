@@ -199,11 +199,11 @@ struct thread_manager
     return &instance;
   }
 
-  fn threadcache(thread_manager mut &)
+  fn threadcache(thread_manager mut &) -> slab_cache<thread> mut &
   {
-    static thread_local cache = #slab_cache<thread>();
+    extern static thread_local cpu_thread_cache = #slab_cache<thread>();
 
-    return &cache;
+    return cast<slab_cache<thread> mut &>(extern("cpu_thread_cache@tpoff"));
   }
 
   thread_manager() = default;

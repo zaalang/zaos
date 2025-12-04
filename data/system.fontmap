@@ -9,3 +9,4 @@
 "/zaos/data/LiberationMono-Italic.ttf" = { family = [ "Liberation Mono", ], style = [ "Italic", ], stretch = 100, weight = 80, slant = 100 }
 "/zaos/data/LiberationMono-Bold.ttf" = { family = [ "Liberation Mono", ], style = [ "Bold", ], stretch = 100, weight = 200, slant = 0 }
 "/zaos/data/LiberationMono-BoldItalic.ttf" = { family = [ "Liberation Mono", ], style = [ "Bold Italic", ], stretch = 100, weight = 200, slant = 100 }
+"/zaos/data/Codicon.ttf" = { family = [ "Codicon", ], style = [ "Regular", ], stretch = 100, weight = 80, slant = 0 }

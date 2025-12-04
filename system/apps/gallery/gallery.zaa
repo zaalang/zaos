@@ -1,0 +1,106 @@
+//
+// gallery
+//
+
+import std.stdio;
+import gui.application;
+import gui.window;
+import gui.painter;
+import gfx;
+import app.loop;
+import zuic.gallery;
+
+pub struct window : pub gui::window
+{
+  zuic::Gallery view;
+
+  pub fn create(i32 width, i32 height) throws(std::error) -> window
+  {
+    var window = window();
+
+    window.create(width, height);
+
+    return window;
+  }
+
+  pub fn motion_event(this mut &, gui::pointer_event &evt) override -> void
+  {
+    {
+      var evt = evt;
+      evt.position.0 -= this.interior.left;
+      evt.position.1 -= this.interior.top;
+
+      gui::scene_event(&mut this.view.scene, evt);
+
+      this.schedule_redraw(this.geometry);
+    }
+
+    gui::window::motion_event(&mut this, evt);
+  }
+
+  pub fn button_event(this mut &, gui::pointer_event &evt) override -> void
+  {
+    {
+      var evt = evt;
+      evt.position.0 -= this.interior.left;
+      evt.position.1 -= this.interior.top;
+
+      gui::scene_event(&mut this.view.scene, evt);
+
+      this.schedule_redraw(this.geometry);
+    }
+
+    gui::window::button_event(&mut this, evt);
+  }
+
+  pub fn key_event(this mut &, gui::key_event &evt) override -> void
+  {
+    gui::window::key_event(&mut this, evt);
+  }
+
+  pub fn paint_event(this mut &, gui::buffer mut &buffer, gui::rectset &region) override -> void
+  {
+    var painter = gui::painter(&mut buffer, this.interior);
+
+    painter.fill_rect(region.extents, gfx::color(0.94, 0.94, 0.94));
+    painter.clip_rect = gfx::rect(cast(region.extents.left), cast(region.extents.top), cast(region.extents.right), cast(region.extents.bottom));
+
+    gui::scene_render(&mut painter, this.view.scene);
+  }
+
+  pub fn resize_event(this mut &, gui::resize_event &evt) override -> void
+  {
+    this.view.width = cast(this.interior.width);
+    this.view.height = cast(this.interior.height);
+  }
+
+  pub fn close_event(this mut &) override -> void
+  {
+    app::loop::current.quit();
+  }
+
+  pub window()
+    : super(&impl this)
+  {
+  }
+
+  pub ~window() = default;
+}
+
+fn main() -> int
+{
+  try
+  {
+    var app = gui::application::create();
+
+    var window = window::create(480, 240);
+
+    app.run();
+  }
+  catch (std::error e)
+  {
+    std::panic(e);
+  }
+
+  return 0;
+}

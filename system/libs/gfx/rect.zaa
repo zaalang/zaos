@@ -3,10 +3,45 @@
 //
 
 import gfx;
-import gfx.size;
 import gfx.point;
 import gfx.color;
 pub import lml.bound : Bound;
+
+pub struct dim
+{
+  pub f64 width;
+  pub f64 height;
+
+  pub dim(f64 width, f64 height)
+    : width(width), height(height)
+  {
+  }
+
+  pub fn ==(dim &lhs, dim &rhs) -> bool = default;
+
+  pub dim() = default;
+  pub dim(dim &) = default;
+  pub fn =(dim mut &, dim &) -> dim mut & = default;
+  pub ~dim() = default;
+}
+
+pub struct halfdim
+{
+  pub f64 width;
+  pub f64 height;
+
+  pub halfdim(f64 width, f64 height)
+    : width(width), height(height)
+  {
+  }
+
+  pub fn ==(halfdim &lhs, halfdim &rhs) -> bool = default;
+
+  pub halfdim() = default;
+  pub halfdim(halfdim &) = default;
+  pub fn =(halfdim mut &, halfdim &) -> halfdim mut & = default;
+  pub ~halfdim() = default;
+}
 
 pub struct rect
 {
@@ -50,7 +85,7 @@ pub struct rect
     return gfx::dim(this.hi[0] - this.lo[0], this.hi[1] - this.lo[1]);
   }
 
-  pub fn centre(this &) -> gfx::point
+  pub fn center(this &) -> gfx::point
   {
     return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
   }
@@ -75,6 +110,11 @@ pub struct rect
     return this.lo[1];
   }
 
+  pub fn middle(this &) -> float
+  {
+    return 0.5*this.lo[1] + 0.5*this.hi[1];
+  }
+
   pub fn bottom(this &) -> float
   {
     return this.hi[1];
@@ -85,7 +125,7 @@ pub struct rect
     return gfx::point(this.lo[0], this.lo[1]);
   }
 
-  pub fn top_centre(this &) -> gfx::point
+  pub fn top_center(this &) -> gfx::point
   {
     return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], this.lo[1]);
   }
@@ -95,12 +135,12 @@ pub struct rect
     return gfx::point(this.hi[0], this.lo[1]);
   }
 
-  pub fn centre_left(this &) -> gfx::point
+  pub fn middle_left(this &) -> gfx::point
   {
     return gfx::point(this.lo[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
   }
 
-  pub fn centre_right(this &) -> gfx::point
+  pub fn middle_right(this &) -> gfx::point
   {
     return gfx::point(this.hi[0], 0.5*this.lo[1] + 0.5*this.hi[1]);
   }
@@ -110,7 +150,7 @@ pub struct rect
     return gfx::point(this.lo[0], this.hi[1]);
   }
 
-  pub fn bottom_centre(this &) -> gfx::point
+  pub fn bottom_center(this &) -> gfx::point
   {
     return gfx::point(0.5*this.lo[0] + 0.5*this.hi[0], this.hi[1]);
   }
@@ -135,8 +175,8 @@ pub struct rect
   {
   }
 
-  pub rect(gfx::point &centre, gfx::halfdim &size)
-    : lo([centre.x - size.width, centre.y - size.height]), hi([centre.x + size.width, centre.y + size.height])
+  pub rect(gfx::point &center, gfx::halfdim &size)
+    : lo([center.x - size.width, center.y - size.height]), hi([center.x + size.width, center.y + size.height])
   {
   }
 
@@ -183,4 +223,24 @@ pub fn translate!(rect mut &this, float dx, float dy) -> rect mut &
 pub fn translate(rect &this, float dx, float dy) -> rect
 {
   return rect(this).translate!(dx, dy);
+}
+
+pub fn +(gfx::point &lhs, dim &rhs) -> gfx::point
+{
+  return gfx::point(lhs.x + rhs.width, lhs.y + rhs.height);
+}
+
+pub fn -(gfx::point &lhs, dim &rhs) -> gfx::point
+{
+  return gfx::point(lhs.x - rhs.width, lhs.y - rhs.height);
+}
+
+pub fn +(gfx::point &lhs, halfdim &rhs) -> gfx::point
+{
+  return gfx::point(lhs.x + rhs.width, lhs.y + rhs.height);
+}
+
+pub fn -(gfx::point &lhs, halfdim &rhs) -> gfx::point
+{
+  return gfx::point(lhs.x - rhs.width, lhs.y - rhs.height);
 }

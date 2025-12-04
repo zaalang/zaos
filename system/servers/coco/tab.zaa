@@ -12,11 +12,9 @@ pub struct completer : pub readline::completer
 {
   using suggestion = readline::completer::suggestion;
 
-  pub fn complete(readline::completer mut &this, std::string &buffer, usize cursor) -> std::vector<suggestion>
+  pub fn complete(this mut &, std::string &buffer, usize cursor) -> std::vector<suggestion>
   {
     using os;
-
-    var &this = cast<completer&>(this);
 
     var results = std::vector<suggestion>();
 
@@ -56,7 +54,7 @@ pub struct completer : pub readline::completer
 
           if (entry.name != "." && entry.name != ".." && entry.name.starts_with(matcher[base.len .. matcher.len]))
           {
-            var match = std::string(base) + entry.name + " ";
+            var match = std::format("{}{} ", base, entry.name);
 
             if (entry.type == filetype::directory)
               match.back = cast('/');
@@ -72,9 +70,6 @@ pub struct completer : pub readline::completer
     return results;
   }
 
-  pub completer()
-  {
-  }
-
+  pub completer() = default;
   pub ~completer() = default;
 }

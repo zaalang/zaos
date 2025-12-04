@@ -4,6 +4,7 @@
 
 import std.math;
 import gfx.point;
+import gfx.rect;
 pub import lml.matrix : Matrix;
 
 pub struct transform : pub f64[3][3]
@@ -13,6 +14,11 @@ pub struct transform : pub f64[3][3]
   pub fn identity() -> transform
   {
     return [ [<f64>: 1.0, 0.0, 0.0 ], [<f64>: 0.0, 1.0, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+  }
+
+  pub fn scale(f64 sxy) -> transform
+  {
+    return [ [<f64>: sxy, 0.0, 0.0 ], [<f64>: 0.0, sxy, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn scale(f64 sx, f64 sy) -> transform
@@ -62,4 +68,28 @@ pub fn *(transform &transform, gfx::point &pt) -> gfx::point
   var y = transform[1, 0]*pt.x + transform[1, 1]*pt.y + transform[1, 2];
 
   return gfx::point(x, y);
+}
+
+pub fn *(transform &transform, gfx::dim &dim) -> gfx::dim
+{
+  var w = std::abs(transform[0, 0])*dim.width + std::abs(transform[0, 1])*dim.height;
+  var h = std::abs(transform[1, 0])*dim.width + std::abs(transform[1, 1])*dim.height;
+
+  return gfx::dim(w, h);
+}
+
+pub fn *(transform &transform, gfx::halfdim &halfdim) -> gfx::halfdim
+{
+  var w = std::abs(transform[0, 0])*halfdim.width + std::abs(transform[0, 1])*halfdim.height;
+  var h = std::abs(transform[1, 0])*halfdim.width + std::abs(transform[1, 1])*halfdim.height;
+
+  return gfx::halfdim(w, h);
+}
+
+pub fn *(transform &transform, gfx::rect &rect) -> gfx::rect
+{
+  var center = transform * rect.center;
+  var halfdim = transform * rect.halfdim;
+
+  return gfx::rect(center - halfdim, center + halfdim);
 }

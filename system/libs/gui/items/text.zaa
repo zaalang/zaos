@@ -1,0 +1,86 @@
+//
+// text item
+//
+
+import std.stdlib;
+import gui.scene : item;
+import gui.painter;
+import gfx.transform;
+
+pub struct Text : pub item
+{
+  pub std::string text;
+  pub gfx::color color;
+  pub gui::text_horizontal_alignment horizontal_alignment = gui::text_horizontal_alignment::left;
+  pub gui::text_vertical_alignment vertical_alignment = gui::text_vertical_alignment::top;
+  pub std::string font_family;
+  pub float font_size;
+
+  pub Text()
+    : super(&impl this)
+  {
+  }
+
+  pub ~Text() = default;
+}
+
+pub fn pointer_event_filter(Text mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(Text mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(Text mut &this) -> void
+{
+}
+
+pub fn implicit_width(Text &this) -> float
+{
+  var font = gui::font(this.font_family, this.font_size);
+
+  var implicit_width = 0.0;
+
+  for (var line : this.text.lines)
+  {
+    var ids = std::vector<u16>::with_capacity(line.len);
+    var offsets = std::vector<float>::with_capacity(line.len + 1);
+
+    font.layout_text(line.view, &mut ids, &mut offsets);
+
+    implicit_width = std::max(implicit_width, offsets.back);
+  }
+
+  return std::ceil(implicit_width);
+}
+
+pub fn implicit_height(Text &this) -> float
+{
+  var font = gui::font(this.font_family, this.font_size);
+
+  var implicit_height = 0.0;
+
+  if (this.text.empty)
+  {
+    implicit_height = font.line_spacing;
+  }
+
+  for (var line : this.text.lines)
+  {
+    implicit_height += font.line_spacing;
+  }
+
+  return std::ceil(implicit_height);
+}
+
+pub fn render(Text &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+  var font = gui::font(this.font_family, this.font_size);
+
+  var rect = gfx::rect(0.0, 0.0, this.width, this.height);
+
+  painter.draw_text(transform, font, rect, this.text, this.horizontal_alignment, this.vertical_alignment, this.color);
+}

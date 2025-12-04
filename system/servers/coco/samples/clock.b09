@@ -12,8 +12,8 @@ PROCEDURE clock
   RUN Gfx.Circle(x0, y0, radius)
 
   FOR i = 0 to 89 STEP 6
-    x2 = SIN(i/180.0*pi) * radius
-    y2 = COS(i/180.0*pi) * radius
+    x2 = SIN(i) * radius
+    y2 = COS(i) * radius
     x1 = x2 * 0.9
     y1 = y2 * 0.9
     RUN Gfx.Color($ff444444)
@@ -40,8 +40,8 @@ PROCEDURE clock
     FOR i = 3 TO 1 STEP -1
       RUN Gfx.Pen(3)
       RUN Gfx.Line(x0, y0, xx(i), yy(i), $ff009000)
-      xx(i) = x0 + SIN(time(i)/180.0*PI) * radius * (0.3 + i * 0.2)
-      yy(i) = y0 - COS(time(i)/180.0*PI) * radius * (0.3 + i * 0.2)
+      xx(i) = x0 + SIN(time(i)) * radius * (0.3 + i * 0.2)
+      yy(i) = y0 - COS(time(i)) * radius * (0.3 + i * 0.2)
       RUN Gfx.Pen(2)
       RUN Gfx.Line(x0, y0, xx(i), yy(i), $ff000000 + i*$222222)
     NEXT i

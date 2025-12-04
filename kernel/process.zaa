@@ -66,7 +66,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[24] reserved;
+  u8[8] reserved;
 
   pub fn current() -> process mut *
   {
@@ -95,34 +95,17 @@ pub struct process
 
   pub fn find(process::id id) -> Rc<process>
   {
-    var guard = std::lock_guard(&mut procman.lock);
+    if (var thread = thread::find(id))
+      return thread.process;
 
-    var j = procman.processes.find(id);
-
-    if (j == procman.processes.end)
-      return null;
-
-    var process = procman.processes[j].value;
-
-    for (;;)
-    {
-      var refcnt = std::volatile_load(&process.refcnt);
-
-      if (refcnt == 0)
-        return null;
-
-      if (std::atomic_cmpxchg_weak(&process.refcnt, refcnt, refcnt + 1))
-        break;
-    }
-
-    return Rc::adopt(process);
+    return null;
   }
 
   pub fn enumerate(var &&callback) -> void
   {
     var guard = std::lock_guard(&mut procman.lock);
 
-    for (var mut &[id, process] : procman.processes)
+    for (var process = procman.head; process; process = process.next)
     {
       callback(process);
     }
@@ -253,21 +236,16 @@ pub struct process
 
     for (var thread = this.threads; thread; thread = thread.sibling)
       thread.terminate();
+
+    this.state = state::zombie;
   }
 
   #[noreturn]
   pub fn exit(i32 rval) -> void
   {
-    var process = current();
+    platform::disable_interrupts();
 
-    process.lock.lock();
-
-    process.state = state::zombie;
-
-    for (var thread = process.threads; thread; thread = thread.sibling)
-      thread.terminate();
-
-    process.lock.unlock();
+    process::current.terminate();
 
     thread::exit(rval);
   }
@@ -276,7 +254,7 @@ pub struct process
   {
     if (procman.lock.try_lock())
     {
-      for (var mut &[id, process] : procman.processes)
+      for (var process = procman.head; process; process = process.next)
         vm::reap(&mut process.pagetable, &mut process.userspace);
 
       procman.lock.unlock();
@@ -296,6 +274,9 @@ pub struct process
       destroy(&this);
   }
 
+  process mut *next;
+  process mut *prev;
+
   i32 refcnt;
 
   pub process() = default;
@@ -311,22 +292,38 @@ struct process_manager
 {
   mutex lock;
 
+  process mut *head;
+  process mut *tail;
+
   process mut *colonel;
 
-  std::flat_hash_map<process::id, process mut *> processes;
-
-  fn register(process_manager mut &procman, process mut *process) -> void
+  fn insert(process_manager mut &pocman, process mut *process) -> void
   {
     var guard = std::lock_guard(&mut procman.lock);
 
-    procman.processes.insert(process.id, process);
+    process.prev = procman.tail;
+
+    if (process.prev)
+      process.prev.next = process;
+
+    procman.tail = process;
   }
 
-  fn unregister(process_manager mut &procman, process mut *process) -> void
+  fn remove(process_manager mut &pocman, process mut *process) -> void
   {
     var guard = std::lock_guard(&mut procman.lock);
 
-    procman.processes.erase(process.id);
+    if (process.next)
+      process.next.prev = process.prev;
+
+    if (process.prev)
+      process.prev.next = process.next;
+
+    if (procman.tail == process)
+      procman.tail = process.prev;
+
+    process.next = null;
+    process.prev = null;
   }
 
   fn instance()
@@ -372,11 +369,12 @@ pub fn create_kernel_process(fn (*start_routine)(void mut *) -> void, void mut *
 
   process.name = "kernel";
   process.id = kernelmain.id;
-  process.uuid = make_uuid(cpu::system_time / 1_000_000, kernelmain.id);
+  process.uuid = make_uuid(cpu::system_time / 1_000_000, process.id);
   process.threads = kernelmain;
   process.state = process::state::running;
   process.pagetable = platform::pagetable;
-  procman.processes.insert(process.id, process);
+
+  procman.head = procman.tail = process;
 
   std::atomic_store(&colonel, process);
 
@@ -397,7 +395,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
 
   process.name = &&name;
   process.id = mainthread.id;
-  process.uuid = make_uuid(cpu::system_time / 1_000_000, mainthread.id);
+  process.uuid = make_uuid(cpu::system_time / 1_000_000, process.id);
 
   vm::init_pagetable(&mut process.pagetable);
 
@@ -420,7 +418,7 @@ pub fn create_process(process mut *parent, String &&name) -> process mut *
 
   process.state = process::state::starting;
 
-  procman.register(process);
+  procman.insert(process);
 
   return process;
 }
@@ -616,9 +614,9 @@ fn destroy(process mut *process) -> void
   process.envp.clear();
   process.auxv.clear();
 
-  procman.unregister(process);
-
   process.state = process::state::dead;
+
+  procman.remove(process);
 
   process::allocator.free(process);
 }
@@ -635,42 +633,42 @@ pub fn teardown(process mut *process) -> void
 
   vm::dispose_pagetable(&mut process.pagetable);
 
+  process.lock.lock();
+
+  for (var child = process.children; child; child = child.sibling)
   {
-    var guard = std::lock_guard(&mut process.lock);
+    var guard = std::lock_guard(&mut child.lock);
 
-    for (var child = process.children; child; child = child.sibling)
-    {
-      var guard = std::lock_guard(&mut child.lock);
-
-      for (var thread = child.threads; thread; thread = thread.sibling)
-        if (thread.id == child.id)
-          thread.detach();
-    }
+    for (var thread = child.threads; thread; thread = thread.sibling)
+      if (thread.id == child.id)
+        thread.detach();
   }
+
+  process.lock.unlock();
 }
 
 pub fn flush_process_counters() -> void
 {
-  var current_thread = cpu::current_thread_inline;
+  var current_thread = cpu::current_thread;
 
-  if (cpu::process_counter_user_allocated_pages != 0)
+  if (var n = cpu::process_counter_user_allocated_pages; n != 0)
   {
-    std::atomic_add(&current_thread.process.userspace.allocated_physical_pages, cpu::process_counter_user_allocated_pages);
+    std::atomic_add(&current_thread.process.userspace.allocated_physical_pages, n);
 
     cpu::process_counter_user_allocated_pages = 0;
   }
 }
 
-pub fn oomkiller() -> void
+pub fn oom_kill_process() -> void
 {
   if (procman.lock.try_lock())
   {
     var bestrss = 0;
     var best = null<process mut *>();
 
-    for (var mut &[id, process] : procman.processes)
+    for (var process = procman.head; process; process = process.next)
     {
-      if (id <= 1)
+      if (process.id <= 1)
         continue;
 
       if (process.children)
@@ -683,7 +681,7 @@ pub fn oomkiller() -> void
       }
     }
 
-    if (best != null)
+    if (best)
     {
       if (best.lock.try_lock())
       {

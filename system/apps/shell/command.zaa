@@ -66,6 +66,21 @@ pub union Arg
   pub Named(named),
   pub Free(free),
 
+  pub fn is_flags(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::flags;
+  }
+
+  pub fn is_named(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Named;
+  }
+
+  pub fn is_free(this &) -> bool
+  {
+    return this.kind == typeof(this.kind)::Free;
+  }
+
   pub Arg(Arg &&) = default;
   pub ~Arg() = default;
 }
@@ -106,7 +121,7 @@ fn into_glob(Context mut &ctx, std::string_view expr, std::string_view span) thr
 
   if (glob::is_glob(expr))
   {
-    for (var &file : glob::glob(expr).files)
+    for (var &file : glob::glob(expr).files(cwd: ctx.stack.get_cwd()))
     {
       args.push_back(file);
     }
@@ -122,60 +137,79 @@ fn into_glob(Context mut &ctx, std::string_view expr, std::string_view span) thr
   return args;
 }
 
+pub fn cd(Context mut &ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws(std::error) -> void
+{
+  if (args.len != 1 || !args[0].is_free)
+    throw std::system_error(std::errc::invalid_argument);
+
+  var cwd = sys::path::normalise(sys::path::resolve(ctx.stack.get_cwd(), to_arg(&mut ctx, args[0].Free.value, args[0].Free.span)));
+
+  ctx.stack.set_env("CWD", cwd);
+}
+
 pub fn run(Context mut &ctx, Pipeline mut &pipeline, std::string &name, std::vector<Arg> &args) throws(std::error) -> void
 {
-  var path = std::string();
-
-  if (!name.contains(sys::sep_byte))
+  switch (name)
   {
-    for (var &searchpath : std::env::var("PATH").unwrap_or("/zaos/bin").split(":"))
-    {
-      if (var test = sys::path::join(searchpath, name); sys::exists(test))
+    case "cd":
+      cd(&mut ctx, &mut pipeline, name, args);
+
+    else:
+      var path = std::string();
+
+      if (!name.contains(sys::sep_byte))
       {
-        path = test;
-
-        break;
-      }
-    }
-
-    if (path.empty)
-      throw std::system_error(std::errc::not_found);
-  }
-  else
-  {
-    path = name;
-
-    if (sys::path::is_relative(path))
-      path = sys::path::normalise(sys::path::join(sys::cwd, path));
-
-    if (!sys::exists(path))
-      throw std::system_error(std::errc::not_found);
-  }
-
-  var cmd = sys::command(path);
-
-  for (var &arg : args)
-  {
-    switch (arg)
-    {
-      case Flags[flags]:
-        cmd.arguments.push_back(flags.value);
-
-      case Named[named]:
-        cmd.arguments.push_back(std::format("{}={}", named.name, to_arg(&mut ctx, named.value, named.span)));
-
-      case Free[free]:
-        switch (free.value)
+        for (var &searchpath : ctx.stack.get_env("PATH").unwrap_or("/zaos/bin").split(":"))
         {
-          case Literal[literal]:
-            cmd.arguments.append(into_glob(&mut ctx, literal, free.span));
+          if (var test = sys::path::join(searchpath, name); sys::exists(test))
+          {
+            path = test;
 
-          else:
-            cmd.arguments.push_back(to_arg(&mut ctx, free.value, free.span));
+            break;
+          }
         }
 
-    }
-  }
+        if (path.empty)
+          throw std::system_error(std::errc::not_found);
+      }
+      else
+      {
+        path = name;
 
-  pipeline.append(&mut cmd);
+        if (sys::path::is_relative(path))
+          path = sys::path::normalise(sys::path::join(ctx.stack.get_cwd(), path));
+
+        if (!sys::exists(path))
+          throw std::system_error(std::errc::not_found);
+      }
+
+      var cmd = sys::command(path);
+
+      cmd.environment = ctx.stack.collect_env();
+      cmd.working_directory = ctx.stack.get_cwd();
+
+      for (var &arg : args)
+      {
+        switch (arg)
+        {
+          case Flags[flags]:
+            cmd.arguments.push_back(flags.value);
+
+          case Named[named]:
+            cmd.arguments.push_back(std::format("{}={}", named.name, to_arg(&mut ctx, named.value, named.span)));
+
+          case Free[free]:
+            switch (free.value)
+            {
+              case Literal[literal]:
+                cmd.arguments.append(into_glob(&mut ctx, literal, free.span));
+
+              else:
+                cmd.arguments.push_back(to_arg(&mut ctx, free.value, free.span));
+            }
+        }
+      }
+
+      pipeline.append(&mut cmd);
+  }
 }

@@ -140,10 +140,10 @@ pub struct path
     this.vertices.append((&&other).vertices);
   }
 
-  pub fn append(path mut &this, gfx::transform &Q, path &&other) -> void
+  pub fn append(path mut &this, gfx::transform &transform, path &&other) -> void
   {
     for (var &vertex : other.vertices)
-      this.vertices.push_back(Q * vertex);
+      this.vertices.push_back(transform * vertex);
   }
 
   pub path() = default;
@@ -152,24 +152,24 @@ pub struct path
   pub ~path() = default;
 }
 
-pub fn *(gfx::transform &Q, vertex &vertex) -> vertex
+pub fn *(gfx::transform &transform, vertex &vertex) -> vertex
 {
   switch (vertex)
   {
     case move_to[pt]:
-      return vertex::move_to(gfx::point(Q * gfx::point(pt.x, pt.y))...);
+      return vertex::move_to(gfx::point(transform * gfx::point(pt.x, pt.y))...);
 
     case line_to[pt]:
-      return vertex::line_to(gfx::point(Q * gfx::point(pt.x, pt.y))...);
+      return vertex::line_to(gfx::point(transform * gfx::point(pt.x, pt.y))...);
 
     case quad_to[pt]:
-      return vertex::quad_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x, pt.y))...);
+      return vertex::quad_to(gfx::point(transform * gfx::point(pt.x1, pt.y1))..., gfx::point(transform * gfx::point(pt.x, pt.y))...);
 
     case cubic_to[pt]:
-      return vertex::cubic_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x2, pt.y2))..., gfx::point(Q * gfx::point(pt.x, pt.y))...);
+      return vertex::cubic_to(gfx::point(transform * gfx::point(pt.x1, pt.y1))..., gfx::point(transform * gfx::point(pt.x2, pt.y2))..., gfx::point(transform * gfx::point(pt.x, pt.y))...);
 
     case conic_to[pt]:
-      return vertex::conic_to(gfx::point(Q * gfx::point(pt.x1, pt.y1))..., gfx::point(Q * gfx::point(pt.x, pt.y))..., pt.w);
+      return vertex::conic_to(gfx::point(transform * gfx::point(pt.x1, pt.y1))..., gfx::point(transform * gfx::point(pt.x, pt.y))..., pt.w);
 
     case close:
       return vertex::close();
@@ -179,26 +179,26 @@ pub fn *(gfx::transform &Q, vertex &vertex) -> vertex
 }
 
 #[lifetime(depend(this))]
-pub fn transform!(path mut &this, gfx::transform &Q) -> path mut &
+pub fn transform!(path mut &this, gfx::transform &transform) -> path mut &
 {
   for (var mut &vertex : this.vertices)
-    vertex = Q * vertex;
+    vertex = transform * vertex;
 
   return &this;
 }
 
 #[nodiscard]
-pub fn transform(path &&this, gfx::transform &Q) -> path
+pub fn transform(path &&this, gfx::transform &transform) -> path
 {
   #if (__is_rvalue<typeof(this)>)
-    return this.transform!(Q);
+    return this.transform!(transform);
 
-  return path(this).transform!(Q);
+  return path(this).transform!(transform);
 }
 
-pub fn *(gfx::transform &Q, path &&this) -> path
+pub fn *(gfx::transform &transform, path &&this) -> path
 {
-  return (&&this).transform(Q);
+  return (&&this).transform(transform);
 }
 
 #[lifetime(depend(this))]
@@ -229,14 +229,14 @@ pub fn arc_to(path mut &this, gfx::rect &bound, float start_angle, float sweep_a
 {
   using std;
 
-  var centre = bound.centre;
+  var center = bound.center;
   var radius = bound.halfdim;
   var weight = sqrt(2) / 2.0;
 
   start_angle = start_angle % (2.0*PI);
   sweep_angle = clamp(sweep_angle, -2.0*PI, 2.0*PI);
 
-  this.line_to(centre.x + radius.width * cos(start_angle), centre.y + radius.height * sin(start_angle));
+  this.line_to(center.x + radius.width * cos(start_angle), center.y + radius.height * sin(start_angle));
 
   while (!fcmp(sweep_angle, 0.0))
   {
@@ -254,11 +254,11 @@ pub fn arc_to(path mut &this, gfx::rect &bound, float start_angle, float sweep_a
     var x = cos(step / 2.0);
     var y = sin(step / 2.0);
 
-    var x1 = centre.x + radius.width * (x + y * (y / x)) * cos(start_angle + step / 2.0);
-    var y1 = centre.y + radius.height * (x + y * (y / x)) * sin(start_angle + step / 2.0);
+    var x1 = center.x + radius.width * (x + y * (y / x)) * cos(start_angle + step / 2.0);
+    var y1 = center.y + radius.height * (x + y * (y / x)) * sin(start_angle + step / 2.0);
 
-    var x2 = centre.x + radius.width * cos(start_angle + step);
-    var y2 = centre.y + radius.height * sin(start_angle + step);
+    var x2 = center.x + radius.width * cos(start_angle + step);
+    var y2 = center.y + radius.height * sin(start_angle + step);
 
     this.conic_to(x1, y1, x2, y2, weight);
 
@@ -337,31 +337,31 @@ pub fn rect_at(path mut &this, gfx::rect &bound) -> void
 
 pub fn ellipse_at(path mut &this, gfx::rect &bound) -> void
 {
-  var centre = bound.centre;
+  var center = bound.center;
   var weight = std::sqrt(2) / 2.0;
 
-  this.move_to(bound.left, centre.y);
-  this.conic_to(bound.left, bound.bottom, centre.x, bound.bottom, weight);
-  this.conic_to(bound.right, bound.bottom, bound.right, centre.y, weight);
-  this.conic_to(bound.right, bound.top, centre.x, bound.top, weight);
-  this.conic_to(bound.left, bound.top, bound.left, centre.y, weight);
+  this.move_to(bound.left, center.y);
+  this.conic_to(bound.left, bound.bottom, center.x, bound.bottom, weight);
+  this.conic_to(bound.right, bound.bottom, bound.right, center.y, weight);
+  this.conic_to(bound.right, bound.top, center.x, bound.top, weight);
+  this.conic_to(bound.left, bound.top, bound.left, center.y, weight);
   this.close();
 }
 
-pub fn ellipse_at(path mut &this, gfx::point &centre, float radius_x, float radius_y) -> void
+pub fn ellipse_at(path mut &this, gfx::point &center, float radius_x, float radius_y) -> void
 {
   if (radius_x <= 0.0 || radius_y <= 0.0)
     return;
 
-  this.ellipse_at(gfx::rect(centre, gfx::halfdim(radius_x, radius_y)));
+  this.ellipse_at(gfx::rect(center, gfx::halfdim(radius_x, radius_y)));
 }
 
-pub fn circle_at(path mut &this, gfx::point &centre, float radius) -> void
+pub fn circle_at(path mut &this, gfx::point &center, float radius) -> void
 {
   if (radius <= 0.0)
     return;
 
-  this.ellipse_at(gfx::rect(centre, gfx::halfdim(radius, radius)));
+  this.ellipse_at(gfx::rect(center, gfx::halfdim(radius, radius)));
 }
 
 pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float[8] &radii) -> void

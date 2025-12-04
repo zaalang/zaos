@@ -1,0 +1,64 @@
+//
+// zuic
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import source;
+import parser : parse;
+import lower : lower;
+import codegen : codegen;
+import aargh;
+import diag;
+
+struct opts
+{
+  #[arg(free, required, help="source file")]
+  std::string file;
+
+  #[arg(value, short='o', required, help="output file")]
+  std::string outfile;
+
+  #[arg(value, short='I', help="import path")]
+  std::vector<std::string> importpath;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help || opts.file.empty)
+  {
+    aargh::usage<opts>();
+
+    std::exit(1);
+  }
+
+  var diag = diag::diag("zuic");
+
+  var source = source::Source();
+
+  try
+  {
+    var ast = parse(opts.file, &mut source, &mut diag);
+
+    var mir = lower(ast, &mut source, &mut diag, opts.importpath);
+
+    codegen(mir, opts.outfile, &mut source, &mut diag);
+
+    std::fprintf(std::stderr, "{}", diag);
+  }
+  catch (std::error e)
+  {
+    std::panic("zuic: error - ", e);
+  }
+
+  return 0;
+}

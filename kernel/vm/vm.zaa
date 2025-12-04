@@ -48,18 +48,18 @@ fn mm() -> memory_manager mut &
   return &memory_manager::instance;
 }
 
-fn pagecache(memory_manager mut &)
+fn pagecache(memory_manager mut &) -> page_cache mut &
 {
-  static thread_local cache = #page_cache();
+  extern static thread_local cpu_page_cache = #page_cache();
 
-  return &cache;
+  return cast<page_cache mut &>(extern("cpu_page_cache@tpoff"));
 }
 
-fn regioncache(memory_manager mut &)
+fn regioncache(memory_manager mut &) -> slab_cache<region> mut &
 {
-  static thread_local cache = #slab_cache<region>();
+  extern static thread_local cpu_region_cache = #slab_cache<region>();
 
-  return &cache;
+  return cast<slab_cache<region> mut &>(extern("cpu_region_cache@tpoff"));
 }
 
 pub fn bootstrap(platform::BootInfo &bootinfo) -> void
@@ -845,7 +845,7 @@ fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bo
     region.allocated_physical_pages += 1;
 
     if (is_user_address(addr))
-      cpu::process_counter_user_allocated_pages_inc();
+      cpu::process_counter_user_allocated_pages = __add_with_carry(cpu::process_counter_user_allocated_pages, 1).0;
 
     mapping = pagetable.query(addr);
   }
@@ -975,6 +975,9 @@ pub fn reap() -> void
 pub fn reap(page_table mut &pagetable, vm::address_space mut &space) -> void
 {
   var guard = std::lock_guard(&mut cpu::irqlock);
+
+  if (pagetable.cnt != 0)
+    return;
 
   if (space.lock.try_lock())
   {

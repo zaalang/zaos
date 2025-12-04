@@ -150,7 +150,7 @@ pub union Argument
   pub ~Argument() = default;
 }
 
-pub struct Call
+pub struct CallOp
 {
   pub String cmd;
   pub std::vector<Argument> arguments;
@@ -165,18 +165,18 @@ pub struct Call
     return span;
   }
 
-  pub Call(String cmd, std::vector<Argument> arguments)
+  pub CallOp(String cmd, std::vector<Argument> arguments)
     : cmd(&move cmd), arguments(&move arguments)
   {
   }
 
-  pub Call(Call &&) = default;
-  pub ~Call() = default;
+  pub CallOp(CallOp &&) = default;
+  pub ~CallOp() = default;
 }
 
 pub struct UnaryOp
 {
-  pub enum Type
+  pub enum Kind
   {
     Plus,
     Minus,
@@ -184,7 +184,7 @@ pub struct UnaryOp
     Group,
   }
 
-  pub Type op;
+  pub Kind op;
   pub std::box<Expression> subexpr;
 
   pub fn span(this &) -> std::string_view
@@ -192,7 +192,7 @@ pub struct UnaryOp
     return this.subexpr.span;
   }
 
-  pub UnaryOp(Type op, Expression &&subexpr)
+  pub UnaryOp(Kind op, Expression &&subexpr)
     : op(op), subexpr(&&subexpr)
   {
   }
@@ -203,7 +203,7 @@ pub struct UnaryOp
 
 pub struct BinaryOp
 {
-  pub enum Type
+  pub enum Kind
   {
     Add,
     Sub,
@@ -226,7 +226,7 @@ pub struct BinaryOp
     Semi,
   }
 
-  pub Type op;
+  pub Kind op;
   pub std::box<Expression> lhs;
   pub std::box<Expression> rhs;
 
@@ -235,7 +235,7 @@ pub struct BinaryOp
     return std::string_view(this.lhs.span.begin, this.rhs.span.end);
   }
 
-  pub BinaryOp(Type op, Expression &&lhs, Expression &&rhs)
+  pub BinaryOp(Kind op, Expression &&lhs, Expression &&rhs)
     : op(op), lhs(&&lhs), rhs(&&rhs)
   {
   }
@@ -254,7 +254,7 @@ pub union Expression
   pub Literal(Literal),
   pub Duration(Duration),
   pub FileSize(FileSize),
-  pub Call(Call),
+  pub CallOp(CallOp),
   pub UnaryOp(UnaryOp),
   pub BinaryOp(BinaryOp),
 
@@ -286,8 +286,8 @@ pub union Expression
       case FileSize[filesize]:
         return filesize.span;
 
-      case Call[call]:
-        return call.span;
+      case CallOp[callop]:
+        return callop.span;
 
       case UnaryOp[unaryop]:
         return unaryop.span;

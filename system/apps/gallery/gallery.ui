@@ -1,0 +1,63 @@
+//
+// gallery.ui
+//
+
+import std.button;
+import std.checkbox;
+import std.slider;
+
+Gallery {
+
+  VerticalLayout
+  {
+    spacing: 5px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+
+    HorizontalLayout
+    {
+      spacing: 5px;
+      padding-left: 5px;
+      padding-right: 5px;
+
+      Button {
+        text: "Hello World!";
+        preferred-width: 150px;
+
+        clicked: { }
+      }
+
+      CheckBox {
+        text: "Hello World!";
+        preferred-width: 120px;
+
+        toggled: |checked| {
+          this.checked = checked;
+        }
+      }
+
+      Slider {
+        id: slider;
+        min-width: 40px;
+        preferred-width: 120px;
+
+        dragged: |value| {
+          this.value = value;
+        }
+
+        released: {
+        }
+      }
+
+      Text {
+        min-width: 60px;
+        text: STR$(ROUND(slider.value));
+        font-family: "Noto Sans";
+        font-size: 12pt;
+        color: #000000;
+        vertical-alignment: TextVerticalAlignment.Middle;
+        horizontal-alignment: TextHorizontalAlignment.Left;
+      }
+    }
+  }
+}

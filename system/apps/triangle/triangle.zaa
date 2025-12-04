@@ -8,8 +8,8 @@ import chrono;
 import app.loop;
 import os.zaos.mman;
 import os.zaos.fcntl;
-import zidl.zaos_sys;
-import zidl.zaos_winton;
+import zidl.zaos.sys;
+import zidl.zaos.winton;
 
 extern fn thread_ring() -> os::ioring mut &;
 

@@ -561,7 +561,7 @@ fn lex(std::string_view src, usize cursor, token mut &tok) -> usize
     }
   }
 
-  tok = token(token::type::eof, std::string_view());
+  tok = token(token::type::eof, std::string_view(src.end, 0));
 
   return cursor;
 }

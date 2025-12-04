@@ -42,8 +42,34 @@ pub union brush
       this = brush(gradient.stops[0].color);
   }
 
+  pub fn =(this mut &, gfx::color &color) -> brush mut &
+  {
+    this = brush(color);
+
+    return &this;
+  }
+
+  pub fn =(this mut &, gfx::linear_gradient &gradient) -> brush mut &
+  {
+    this = brush(gradient);
+
+    return &this;
+  }
+
+  pub fn =(this mut &, gfx::radial_gradient &gradient) -> brush mut &
+  {
+    this = brush(gradient);
+
+    return &this;
+  }
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
   pub brush() = default;
-  pub brush(brush&) = default;
+  pub brush(brush &) = default;
   pub fn =(brush mut &, brush &) -> brush mut & = default;
   pub ~brush() = default;
 }
@@ -58,9 +84,9 @@ struct state
   ~state() = default;
 }
 
-fn move_to(state mut &state, gfx::transform &Q, float x, float y) -> void
+fn move_to(state mut &state, gfx::transform transform, float x, float y) -> void
 {
-  var pt = Q * gfx::point(x, y);
+  var pt = transform * gfx::point(x, y);
 
   if (state.cursor != state.start)
     close(&mut state);
@@ -70,40 +96,40 @@ fn move_to(state mut &state, gfx::transform &Q, float x, float y) -> void
   state.cursor = state.start = pt;
 }
 
-fn line_to(state mut &state, gfx::transform &Q, float x, float y) -> void
+fn line_to(state mut &state, gfx::transform &transform, float x, float y) -> void
 {
-  var pt = Q * gfx::point(x, y);
+  var pt = transform * gfx::point(x, y);
 
   state.raster.line_to(pt.x, pt.y);
 
   state.cursor = pt;
 }
 
-fn quad_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y) -> void
+fn quad_to(state mut &state, gfx::transform &transform, float x1, float y1, float x, float y) -> void
 {
-  var pt = Q * gfx::point(x, y);
-  var cp = Q * gfx::point(x1, y1);
+  var pt = transform * gfx::point(x, y);
+  var cp = transform * gfx::point(x1, y1);
 
   state.raster.quad_to(cp.x, cp.y, pt.x, pt.y);
 
   state.cursor = pt;
 }
 
-fn cubic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x2, float y2, float x, float y) -> void
+fn cubic_to(state mut &state, gfx::transform &transform, float x1, float y1, float x2, float y2, float x, float y) -> void
 {
-  var pt = Q * gfx::point(x, y);
-  var cp1 = Q * gfx::point(x1, y1);
-  var cp2 = Q * gfx::point(x2, y2);
+  var pt = transform * gfx::point(x, y);
+  var cp1 = transform * gfx::point(x1, y1);
+  var cp2 = transform * gfx::point(x2, y2);
 
   state.raster.cubic_to(cp1.x, cp1.y, cp2.x, cp2.y, pt.x, pt.y);
 
   state.cursor = pt;
 }
 
-fn conic_to(state mut &state, gfx::transform &Q, float x1, float y1, float x, float y, float w) -> void
+fn conic_to(state mut &state, gfx::transform &transform, float x1, float y1, float x, float y, float w) -> void
 {
-  var pt = Q * gfx::point(x, y);
-  var cp = Q * gfx::point(x1, y1);
+  var pt = transform * gfx::point(x, y);
+  var cp = transform * gfx::point(x1, y1);
 
   state.raster.conic_to(cp.x, cp.y, pt.x, pt.y, w);
 
@@ -118,7 +144,7 @@ fn close(state mut &state) -> void
   state.cursor = state.start;
 }
 
-pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &transform, gfx::path &path, gfx::brush &brush, f32 opacity = 1.0, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var state = state();
 
@@ -129,19 +155,19 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
     switch (vertex)
     {
       case move_to[pt]:
-        move_to(&mut state, Q, pt.x, pt.y);
+        move_to(&mut state, transform, pt.x, pt.y);
 
       case line_to[pt]:
-        line_to(&mut state, Q, pt.x, pt.y);
+        line_to(&mut state, transform, pt.x, pt.y);
 
       case quad_to[pt]:
-        quad_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y);
+        quad_to(&mut state, transform, pt.x1, pt.y1, pt.x, pt.y);
 
       case cubic_to[pt]:
-        cubic_to(&mut state, Q, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y);
+        cubic_to(&mut state, transform, pt.x1, pt.y1, pt.x2, pt.y2, pt.x, pt.y);
 
       case conic_to[pt]:
-        conic_to(&mut state, Q, pt.x1, pt.y1, pt.x, pt.y, pt.w);
+        conic_to(&mut state, transform, pt.x1, pt.y1, pt.x, pt.y, pt.w);
 
       case close:
         close(&mut state);
@@ -154,7 +180,7 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
   {
     case color[color]:
 
-      var color = gfx::premultiply(color.rgba);
+      var color = (gfx::premultiply(color) * opacity).rgba;
 
       state.raster.accumulate(|scanline| {
 
@@ -176,7 +202,7 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
 
     case linear_gradient[gradient]:
 
-      var q = (Q * gradient.transform).inverse;
+      var q = (transform * gradient.transform).inverse;
 
       var r = lml::distsqr(gradient.init_point, gradient.fini_point);
       var dx = (gradient.fini_point.x - gradient.init_point.x) / r;
@@ -184,7 +210,7 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
       var offset = -dx * gradient.init_point.x - dy * gradient.init_point.y;
 
       // TODO: cache by hash
-      var table = gfx::generate_color_table(gradient);
+      var table = gfx::generate_color_table(gradient, opacity);
 
       state.raster.accumulate(|scanline| {
 
@@ -217,17 +243,17 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
 
     case radial_gradient[gradient]:
 
-      var q = (Q * gradient.transform).inverse;
+      var q = (transform * gradient.transform).inverse;
 
       var r = gradient.inner_radius;
-      var dx = gradient.centre_point.x - gradient.focal_point.x;
-      var dy = gradient.centre_point.y - gradient.focal_point.y;
+      var dx = gradient.center_point.x - gradient.focal_point.x;
+      var dy = gradient.center_point.y - gradient.focal_point.y;
       var dr = gradient.outer_radius - gradient.inner_radius;
       var d = dr*dr - dx*dx - dy*dy;
       var inv2d = 1.0 / (2.0 * d);
 
       // TODO: cache by hash
-      var table = gfx::generate_color_table(gradient);
+      var table = gfx::generate_color_table(gradient, opacity);
 
       state.raster.accumulate(|scanline| {
 
@@ -260,12 +286,12 @@ pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::transform &Q, gfx:
   }
 }
 
-pub fn fill_path(gfx::paint_t mut &ctx, gfx::transform &Q, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::rect &clip, gfx::path &path, gfx::brush &brush, f32 opacity = 1.0, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  fill_path(&mut ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), Q, path, brush, mode);
+  fill_path(&mut ctx, clip, gfx::transform::identity, path, brush, opacity, mode);
 }
 
-pub fn fill_path(gfx::paint_t mut &ctx, gfx::path &path, gfx::brush &brush, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn fill_path(gfx::paint_t mut &ctx, gfx::path &path, gfx::brush &brush, f32 opacity = 1.0, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  fill_path(&mut ctx, gfx::transform::identity, path, brush, mode);
+  fill_path(&mut ctx, gfx::rect(0.0, 0.0, cast(ctx.width), cast(ctx.height)), gfx::transform::identity, path, brush, opacity, mode);
 }

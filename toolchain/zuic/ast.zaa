@@ -1,0 +1,366 @@
+//
+// ast
+//
+
+import std.box;
+import std.string;
+
+pub struct Ast
+{
+  pub std::string file;
+  pub std::vector<Decl> decls;
+
+  pub Ast() = default;
+  pub Ast(Ast &&) = default;
+  pub ~Ast() = default;
+}
+
+pub union Decl
+{
+  pub Import(Import),
+  pub Element(Element),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub Decl() = default;
+  pub Decl(Decl &&) = default;
+  pub ~Decl() = default;
+}
+
+pub struct Import
+{
+  pub std::string_view name;
+
+  pub Import() = default;
+  pub Import(Import &&) = default;
+  pub ~Import() = default;
+}
+
+pub struct Element
+{
+  pub std::string_view id;
+  pub std::string_view type;
+
+  pub std::vector<Local> locals;
+  pub std::vector<Signal> signals;
+  pub std::vector<Binding> bindings;
+  pub std::vector<Element> children;
+
+  pub Element() = default;
+  pub Element(Element &&) = default;
+  pub ~Element() = default;
+}
+
+pub struct Local
+{
+  pub enum Flags
+  {
+    pub const Public = 0x1;
+  }
+
+  pub u32 flags;
+  pub std::string_view type;
+  pub std::string_view name;
+
+  pub Local(std::string_view type, std::string_view name, u32 flags = 0)
+    : type(type), name(name), flags(flags)
+  {
+  }
+
+  pub Local(Local &&) = default;
+  pub ~Local() = default;
+}
+
+pub struct Signal
+{
+  pub enum Flags
+  {
+    pub const Public = 0x1;
+  }
+
+  pub struct Argument
+  {
+    pub std::string_view type;
+    pub std::string_view name;
+
+    pub Argument(std::string_view type, std::string_view name)
+      : type(type), name(name)
+    {
+    }
+
+    pub Argument(Argument &&) = default;
+    pub ~Argument() = default;
+  }
+
+  pub u32 flags;
+  pub std::string_view name;
+  pub std::vector<Argument> args;
+
+  pub Signal(std::string_view name, std::vector<Argument> &&args, u32 flags = 0)
+    : name(name), args(&&args), flags(flags)
+  {
+  }
+
+  pub Signal(Signal &&) = default;
+  pub ~Signal() = default;
+}
+
+pub struct Binding
+{
+  pub std::string_view name;
+  pub Expression expression;
+
+  pub Binding(std::string_view name, Expression &&expression)
+    : name(name), expression(&&expression)
+  {
+  }
+
+  pub Binding(Binding &&) = default;
+  pub ~Binding() = default;
+}
+
+pub union Expression
+{
+  pub Number(Number),
+  pub Integer(Integer),
+  pub Boolean(Boolean),
+  pub String(String),
+  pub Color(Color),
+  pub Ident(Ident),
+  pub Subscript(Subscript),
+  pub Field(Field),
+  pub Call(Call),
+  pub UnaryOp(UnaryOp),
+  pub BinaryOp(BinaryOp),
+  pub Block(Block),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub Expression() = default;
+  pub Expression(Expression &&) = default;
+  pub fn =(Expression mut &, Expression &&) -> Expression mut & = default;
+  pub ~Expression() = default;
+}
+
+pub struct Number
+{
+  pub enum Unit
+  {
+    None,
+    Px,
+    Cm,
+    Mm,
+    In,
+    Pt,
+    Phx,
+    Percent,
+  }
+
+  pub f64 value;
+  pub Unit unit;
+  pub std::string_view span;
+
+  pub Number(f64 value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Number(f64 value, Unit unit, std::string_view span)
+    : value(value), unit(unit), span(span)
+  {
+  }
+
+  pub Number(Number &&) = default;
+  pub ~Number() = default;
+}
+
+pub struct Integer
+{
+  pub int value;
+  pub std::string_view span;
+
+  pub Integer(int value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Integer(Integer &&) = default;
+  pub ~Integer() = default;
+}
+
+pub struct Boolean
+{
+  pub bool value;
+  pub std::string_view span;
+
+  pub Boolean(bool value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Boolean(Boolean &&) = default;
+  pub ~Boolean() = default;
+}
+
+pub struct String
+{
+  pub std::string value;
+  pub std::string_view span;
+
+  pub String(std::string &&value, std::string_view span)
+    : value(&&value), span(span)
+  {
+  }
+
+  pub String(std::string_view value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub String(String &&) = default;
+  pub ~String() = default;
+}
+
+pub struct Color
+{
+  pub u32 value;
+  pub std::string_view span;
+
+  pub Color(u32 value, std::string_view span)
+    : value(value), span(span)
+  {
+  }
+
+  pub Color(Color &&) = default;
+  pub ~Color() = default;
+}
+
+pub struct Ident
+{
+  pub std::string_view name;
+
+  pub Ident(std::string_view name)
+    : name(name)
+  {
+  }
+
+  pub Ident(Ident &&) = default;
+  pub ~Ident() = default;
+}
+
+pub struct Subscript
+{
+  pub std::box<Expression> decl;
+  pub std::box<Expression> index;
+
+  pub Subscript(Expression &&decl, Expression &&index)
+    : decl(&&decl), index(&&index)
+  {
+  }
+
+  pub Subscript(Subscript &&) = default;
+  pub ~Subscript() = default;
+}
+
+pub struct Field
+{
+  pub std::string_view name;
+  pub std::box<Expression> base;
+
+  pub Field(Expression &&base, std::string_view name)
+    : base(&&base), name(name)
+  {
+  }
+
+  pub Field(Field &&) = default;
+  pub ~Field() = default;
+}
+
+pub struct Call
+{
+  pub std::box<Expression> decl;
+  pub std::vector<Expression> args;
+
+  pub Call(Expression &&decl, std::vector<Expression> &&args)
+    : decl(&&decl), args(&&args)
+  {
+  }
+
+  pub Call(Call &&) = default;
+  pub ~Call() = default;
+}
+
+pub struct UnaryOp
+{
+  pub enum Kind
+  {
+    Plus,
+    Minus,
+    LNot,
+    Group,
+  }
+
+  pub Kind op;
+  pub std::box<Expression> subexpr;
+
+  pub UnaryOp(Kind op, Expression &&subexpr)
+    : op(op), subexpr(&&subexpr)
+  {
+  }
+
+  pub UnaryOp(UnaryOp &&) = default;
+  pub ~UnaryOp() = default;
+}
+
+pub struct BinaryOp
+{
+  pub enum Kind
+  {
+    Add,
+    Sub,
+    Div,
+    Mul,
+    Rem,
+    LAnd,
+    LOr,
+    LT,
+    GT,
+    LE,
+    GE,
+    EQ,
+    NE,
+    Assign,
+  }
+
+  pub Kind op;
+  pub std::box<Expression> lhs;
+  pub std::box<Expression> rhs;
+
+  pub BinaryOp(Kind op, Expression &&lhs, Expression &&rhs)
+    : op(op), lhs(&&lhs), rhs(&&rhs)
+  {
+  }
+
+  pub BinaryOp(BinaryOp &&) = default;
+  pub ~BinaryOp() = default;
+}
+
+pub struct Block
+{
+  pub std::vector<std::string_view> args;
+  pub std::vector<Expression> stmts;
+
+  pub Block(std::vector<std::string_view> &&args, std::vector<Expression> &&stmts)
+    : args(&&args), stmts(&&stmts)
+  {
+  }
+
+  pub Block(Block &&) = default;
+  pub ~Block() = default;
+}

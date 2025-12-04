@@ -1,0 +1,875 @@
+//
+// codegen
+//
+
+import std.stdio;
+import std.string : String;
+import std.flat_hash_map;
+import source : Source;
+import mir;
+import diag;
+
+using mir;
+
+union CodegenError
+{
+}
+
+struct codegen_context
+{
+  Mir &mir;
+  std::file fout;
+  diag::diag diag;
+  Source mut &source;
+
+  std::flat_hash_map<(usize, usize), void> propmap;
+  std::flat_hash_map<usize, std::flat_hash_map<usize, void>> invpropmap;
+
+  diag::diag mut &outdiag;
+
+  codegen_context(Mir &mir, Source mut &source, diag::diag mut &diag)
+    : mir(&mir), source(&source), diag(diag.leader), outdiag(&diag)
+  {
+  }
+
+  ~codegen_context()
+  {
+    outdiag << diag;
+  }
+}
+
+fn codegen_type(codegen_context &ctx, Component &component, usize object_id) -> std::string
+{
+  var &object = component.objects[object_id];
+
+  switch (object.type)
+  {
+    case "GridLayout":
+      return "gui::GridLayout";
+
+    case "HorizontalLayout":
+      return "gui::HorizontalLayout";
+
+    case "VerticalLayout":
+      return "gui::VerticalLayout";
+
+    case "FlexLayout":
+      return "gui::FlexLayout";
+
+    case "Rectangle":
+      for (var propertyid = object.property_index; propertyid < object.property_index + object.property_count; ++propertyid)
+        if (component.properties[propertyid].name.starts_with("border") && component.properties[propertyid].expression)
+          return "gui::FramedRectangle";
+
+      return "gui::Rectangle";
+
+    case "Text":
+      return "gui::Text";
+
+    case "TouchArea":
+      return "gui::TouchArea";
+  }
+
+  return object.type;
+}
+
+fn codegen_type(codegen_context &ctx, Component &component, Type &type) -> std::string
+{
+  switch (type)
+  {
+    case Angle:
+    case Length:
+    case Duration:
+    case Number:
+    case Percent:
+      return "float";
+
+    case Integer:
+      return "int";
+
+    case Boolean:
+      return "bool";
+
+    case String:
+      return "std::string";
+
+    case Color:
+      return "gfx::color";
+
+    case Object[objectid]:
+      return codegen_type(ctx, component, objectid);
+
+    case Enumeration[enumeration]:
+      switch (enumeration)
+      {
+        case "Transform":
+          return "gfx::transform";
+
+        else:
+          return enumeration;
+      }
+
+    case Signal[args]:
+      return std::format("std::delegate<({}) -> void>", args.transform(|arg| codegen_type(ctx, component, arg)).join(", "));
+
+    else:
+      return "#ERR";
+  }
+}
+
+fn codegen_path(codegen_context &ctx, Component &component, usize property_id) -> std::string
+{
+  var &property = component.properties[property_id];
+  var &object = component.objects[property.parent];
+
+  switch (property.name)
+  {
+    case "min-width":
+    case "max-width":
+    case "preferred-width":
+    case "horizontal-stretch":
+    case "min-height":
+    case "max-height":
+    case "preferred-height":
+    case "vertical-stretch":
+      var &layout = component.objects[object.parent];
+
+      return std::format("{}.{}s[{}]", layout.name, property.name.gsub("-", "_"), property.parent - layout.child_index);
+
+    else:
+      switch (property.kind)
+      {
+        case Public:
+        case Private:
+        case Signal:
+          return std::format("{}_{}", object.name, property.name.gsub("-", "_"));
+
+        else:
+          return std::format("{}.{}", object.name, property.name.gsub("-", "_"));
+      }
+  }
+}
+
+fn codegen_expression(codegen_context &ctx, Component &component, BoundExpression &expression) -> std::string
+{
+  switch (expression)
+  {
+    case Number[number]:
+      return std::format("{}", number);
+
+    case LogicalLength[length]:
+      return std::format("{}", length);
+
+    case PhysicalLength[length]:
+      return std::format("{}", length);
+
+    case Percentage[percentage]:
+      return std::format("{}", percentage);
+
+    case Integer[integer]:
+      return std::format("{}", integer);
+
+    case Boolean[boolean]:
+      return std::format("{}", boolean);
+
+    case String[string]:
+      return std::format("std::string(\"{}\")", string);
+
+    case Color[color]:
+      return std::format("gfx::rgba(0x{:08x})", color);
+
+    case ObjectId[objectid]:
+      return std::format("this.{}", component.objects[objectid].name);
+
+    case PropertyId[propertyid]:
+      return std::format("this.{}", codegen_path(ctx, component, propertyid));
+
+    case Enumeration[enumeration]:
+      return enumeration.name;
+
+    case UnaryOp[unaryop]:
+      switch (unaryop.op)
+      {
+        case Plus:
+          return codegen_expression(ctx, component, *unaryop.subexpr);
+
+        case Minus:
+          return std::format("-{}", codegen_expression(ctx, component, *unaryop.subexpr));
+
+        case LNot:
+          return std::format("!{}", codegen_expression(ctx, component, *unaryop.subexpr));
+
+        case Group:
+          return std::format("({})", codegen_expression(ctx, component, *unaryop.subexpr));
+      }
+
+    case BinaryOp[binaryop]:
+      switch (binaryop.op)
+      {
+        case Add:
+          return std::format("{} + {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case Sub:
+          return std::format("{} - {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case Mul:
+          return std::format("{} * {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case Div:
+          return std::format("{} / {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case Rem:
+          return std::format("{} % {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case LAnd:
+          return std::format("{} && {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case LOr:
+          return std::format("{} || {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case LT:
+          return std::format("{} < {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case GT:
+          return std::format("{} > {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case LE:
+          return std::format("{} <= {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case GE:
+          return std::format("{} >= {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case EQ:
+          return std::format("{} == {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case NE:
+          return std::format("{} != {}", codegen_expression(ctx, component, *binaryop.lhs), codegen_expression(ctx, component, *binaryop.rhs));
+
+        case Assign:
+          switch (*binaryop.lhs)
+          {
+            case PropertyId[propertyid]:
+              return codegen_property_update(ctx, component, propertyid, codegen_expression(ctx, component, *binaryop.rhs));
+          }
+      }
+
+    case FunctionOp[functionop]:
+      switch (functionop.op)
+      {
+        case TransformIdentity:
+          return std::format("gfx::transform::identity");
+
+        case TransformScale:
+          return std::format("gfx::transform::scale({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case TransformRotation:
+          return std::format("gfx::transform::rotation({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case TransformTranslation:
+          return std::format("gfx::transform::translation({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Min:
+          return std::format("std::min({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Max:
+          return std::format("std::max({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Clamp:
+          return std::format("std::clamp({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Ceil:
+          return std::format("std::ceil({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Floor:
+          return std::format("std::floor({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Round:
+          return std::format("std::round({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Str$:
+          return std::format("str$({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Left$:
+          return std::format("left$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Right$:
+          return std::format("right$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Mid$:
+          return std::format("mid$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case Trim$:
+          return std::format("trim$({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Debug:
+          return std::format("debug({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+      }
+
+    case CallOp[callop]:
+      return std::format("this.{}({})", codegen_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+    case Block[block]:
+      var stmts = std::string();
+
+      for (var &stmt : block.stmts)
+        stmts.append(codegen_expression(ctx, component, stmt), "; ");
+
+      return std::format("|{}| {{ {} }}", block.args.join(", "), stmts);
+  }
+
+  return "#ERR";
+}
+
+fn codegen_max(codegen_context &ctx, std::vector<std::string> &values) -> std::string
+{
+  if (values.len > 1)
+    return std::format("std::max({})", values.join(", "));
+
+  if (values.len == 1)
+    return values[0];
+
+  return "0.0";
+}
+
+fn codegen_sum(codegen_context &ctx, std::vector<std::string> &values) -> std::string
+{
+  if (values.len > 1)
+    return std::format("std::sum({})", values.join(", "));
+
+  if (values.len == 1)
+    return values[0];
+
+  return "0.0";
+}
+
+fn codegen_implicit_width(codegen_context &ctx, Component &component, usize object_id) -> std::string
+{
+  var widths = std::vector<std::string>();
+
+  var &object = component.objects[object_id];
+
+  switch (object.type)
+  {
+    case "Rectangle":
+    case "TouchArea":
+    case "GridLayout":
+    case "HorizontalLayout":
+    case "VerticalLayout":
+    case "FlexLayout":
+      if (var id = component.find_property(object_id, "min-width"); id && component.properties[id?!].expression)
+        widths.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+
+    else:
+      var ws = std::vector<std::string>();
+
+      if (var id = component.find_property(object_id, "min-width"); id && component.properties[id?!].expression)
+        ws.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+
+      ws.push_back(std::format("this.{}.implicit_width", object.name));
+
+      widths.push_back(codegen_max(ctx, ws));
+  }
+
+  for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+  {
+    if (var width = codegen_implicit_width(ctx, component, childid); width != "0.0")
+      widths.push_back(width);
+  }
+
+  switch (object.type)
+  {
+    case "GridLayout":
+    case "HorizontalLayout":
+      widths.push_back(std::format("this.{}.padding_left", object.name));
+      widths.push_back(std::format("{}.0 * this.{}.spacing", std::max(object.child_count, 1) - 1, object.name));
+      widths.push_back(std::format("this.{}.padding_right", object.name));
+
+    case "VerticalLayout":
+      if (!widths.empty)
+        widths = std::vector::from([codegen_max(ctx, widths)]);
+      widths.push_back(std::format("this.{}.padding_left", object.name));
+      widths.push_back(std::format("this.{}.padding_right", object.name));
+
+    else:
+      widths = std::vector::from([codegen_max(ctx, widths)]);
+  }
+
+  return codegen_sum(ctx, widths);
+}
+
+fn codegen_implicit_height(codegen_context &ctx, Component &component, usize object_id) -> std::string
+{
+  var heights = std::vector<std::string>();
+
+  var &object = component.objects[object_id];
+
+  switch (object.type)
+  {
+    case "Rectangle":
+    case "TouchArea":
+    case "GridLayout":
+    case "HorizontalLayout":
+    case "VerticalLayout":
+    case "FlexLayout":
+      if (var id = component.find_property(object_id, "min-height"); id && component.properties[id?!].expression)
+        heights.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+
+    else:
+      var hs = std::vector<std::string>();
+
+      if (var id = component.find_property(object_id, "min-height"); id && component.properties[id?!].expression)
+        hs.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+
+      hs.push_back(std::format("this.{}.implicit_height", object.name));
+
+      heights.push_back(codegen_max(ctx, hs));
+  }
+
+  for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+  {
+    if (var height = codegen_implicit_height(ctx, component, childid); height != "0.0")
+      heights.push_back(height);
+  }
+
+  switch (object.type)
+  {
+    case "GridLayout":
+    case "VerticalLayout":
+      heights.push_back(std::format("this.{}.padding_top", object.name));
+      heights.push_back(std::format("{}.0 * this.{}.spacing", std::max(object.child_count, 1) - 1, object.name));
+      heights.push_back(std::format("this.{}.padding_bottom", object.name));
+
+    case "HorizontalLayout":
+      if (!heights.empty)
+        heights = std::vector::from([codegen_max(ctx, heights)]);
+      heights.push_back(std::format("this.{}.padding_top", object.name));
+      heights.push_back(std::format("this.{}.padding_bottom", object.name));
+
+    else:
+      heights = std::vector::from([codegen_max(ctx, heights)]);
+  }
+
+  return codegen_sum(ctx, heights);
+}
+
+fn codegen_layout_update(codegen_context &ctx, Component &component, std::vector<usize> &propset) -> std::string
+{
+  var stmts = std::string();
+
+  for (var &propertyid : propset)
+  {
+    var &property = component.properties[propertyid];
+
+    if (property.name == "width" && component.objects[property.parent].type == "HorizontalLayout")
+    {
+      var &layout = component.objects[property.parent];
+
+      for (var childid = layout.child_index; childid < layout.child_index + layout.child_count; ++childid)
+      {
+        if (var id = component.find_property(childid, "min-width"); id && !component.properties[id?!].expression)
+          stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, id?!), codegen_implicit_width(ctx, component, childid));
+      }
+
+      stmts += std::format("this.{}.update(); ", layout.name);
+    }
+
+    if (property.name == "height" && component.objects[property.parent].type == "VerticalLayout")
+    {
+      var &layout = component.objects[property.parent];
+
+      for (var childid = layout.child_index; childid < layout.child_index + layout.child_count; ++childid)
+      {
+        if (var id = component.find_property(childid, "min-height"); id && !component.properties[id?!].expression)
+          stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, id?!), codegen_implicit_height(ctx, component, childid));
+      }
+
+      stmts += std::format("this.{}.update(); ", layout.name);
+    }
+  }
+
+  return stmts;
+}
+
+fn codegen_property_update(codegen_context &ctx, Component &component, usize property_id, String &value) -> std::string
+{
+  var stmts = std::string();
+
+  var &object = component.objects[component.properties[property_id].parent];
+  var &property = component.properties[property_id];
+
+  stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, property_id), value);
+
+  var propset = std::vector<usize>();
+
+  switch (ctx.invpropmap.get(property_id))
+  {
+    case Some[props]:
+      propset.append(props.transform(|kv| kv.key));
+  }
+
+  for (var i = 0; i < propset.len; ++i)
+  {
+    switch (ctx.invpropmap.get(propset[i]))
+    {
+      case Some[props]:
+        for (var prop : props.transform(|kv| kv.key))
+          if (std::find(propset, prop) == propset.end)
+            propset.push_back(prop);
+    }
+  }
+
+  std::bubble_sort(&mut propset, |lhs, rhs| ctx.propmap.contains((rhs, lhs)));
+
+  for (var &propertyid : propset)
+  {
+    var &property = component.properties[propertyid];
+
+    stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, propertyid), codegen_expression(ctx, component, property.expression));
+  }
+
+  propset.push_back(property_id);
+
+  stmts += codegen_layout_update(ctx, component, propset);
+
+  stmts.strip_suffix!("; ");
+
+  return stmts;
+}
+
+fn codegen_propmap(codegen_context mut &ctx, usize property_id, BoundExpression &expression) -> void
+{
+  switch (expression)
+  {
+    case Number:
+    case LogicalLength:
+    case PhysicalLength:
+    case Percentage:
+    case Boolean:
+    case String:
+    case Color:
+      ;
+
+    case ObjectId[objectid]:
+      ;
+
+    case PropertyId[propertyid]:
+      ctx.propmap.insert((property_id, propertyid));
+      ctx.invpropmap.emplace(propertyid).insert(property_id);
+
+    case UnaryOp[unaryop]:
+      codegen_propmap(&mut ctx, property_id, *unaryop.subexpr);
+
+    case BinaryOp[binaryop]:
+      codegen_propmap(&mut ctx, property_id, *binaryop.lhs);
+      codegen_propmap(&mut ctx, property_id, *binaryop.rhs);
+
+    case FunctionOp[functionop]:
+      for (var &arg : functionop.args)
+        codegen_propmap(&mut ctx, property_id, arg);
+  }
+}
+
+fn codegen_propmap(codegen_context mut &ctx, Component &component) -> void
+{
+  for (var property_id = 0; property_id < component.properties.len; ++property_id)
+  {
+    var &property = component.properties[property_id];
+
+    codegen_propmap(&mut ctx, property_id, property.expression);
+  }
+}
+
+fn codegen_objects(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  for (var object_id = 0; object_id < component.objects.len; ++object_id)
+  {
+    var &object = component.objects[object_id];
+
+    std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_type(ctx, component, object_id), object.name);
+  }
+
+  for (var property_id = 0; property_id < component.properties.len; ++property_id)
+  {
+    var &property = component.properties[property_id];
+
+    switch (property.kind)
+    {
+      case Public:
+      case Private:
+      case Signal:
+        std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_type(ctx, component, property.type), codegen_path(ctx, component, property_id));
+    }
+  }
+
+  std::fprintf(&mut ctx.fout, "\n");
+}
+
+fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  var rootobj = component.objects[0];
+
+  for (var propertyid = rootobj.property_index; propertyid < rootobj.property_index + rootobj.property_count; ++propertyid)
+  {
+    var &property = component.properties[propertyid];
+
+    switch (property.kind)
+    {
+      case Signal:
+        std::fprintf(&mut ctx.fout, "  pub fn {}(this &&) {{\n", property.name.gsub("-", "_"));
+        std::fprintf(&mut ctx.fout, "    return &this.{};\n", codegen_path(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "  }}\n\n");
+
+      case Public:
+      case Binding:
+        std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} {{\n", property.name.gsub("-", "_"), codegen_type(ctx, component, property.type));
+        std::fprintf(&mut ctx.fout, "    return this.{};\n", codegen_path(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "  }}\n\n");
+
+        std::fprintf(&mut ctx.fout, "  pub fn {}=(this mut &, {} &&value) -> void {{\n", property.name.gsub("-", "_"), codegen_type(ctx, component, property.type));
+        std::fprintf(&mut ctx.fout, "    {};\n", codegen_property_update(&mut ctx, component, propertyid, "&&value"));
+        std::fprintf(&mut ctx.fout, "  }}\n\n");
+    }
+  }
+
+  std::fprintf(&mut ctx.fout, "  pub fn implicit_width(this &) -> float {{\n");
+  std::fprintf(&mut ctx.fout, "    return {};\n", codegen_implicit_width(ctx, component, 0));
+  std::fprintf(&mut ctx.fout, "  }}\n\n");
+
+  std::fprintf(&mut ctx.fout, "  pub fn implicit_height(this &) -> float {{\n");
+  std::fprintf(&mut ctx.fout, "    return {};\n", codegen_implicit_height(ctx, component, 0));
+  std::fprintf(&mut ctx.fout, "  }}\n\n");
+}
+
+fn codegen_scene(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  struct Item
+  {
+    usize id;
+    usize parent;
+    std::string name;
+
+    Item(usize id, usize parent, std::string &&name)
+      : id(id), parent(parent), name(&&name)
+    {
+    }
+
+    Item(Item &&) = default;
+    fn =(Item mut &, Item &&) -> Item mut & = default;
+    ~Item() = default;
+  }
+
+  var items = std::vector<Item>();
+
+  fn append_items(codegen_context mut &ctx, std::vector<Item> mut &items, usize parent, std::string &base, Mir &scope, Component &component) -> void
+  {
+    var itemmap = std::flat_hash_map<usize, usize>();
+
+    itemmap.insert(0, items.len);
+    items.push_back(items.len, parent, std::format("{}{}", base, component.objects[0].name));
+
+    for (var object_id = 1; object_id < component.objects.len; ++object_id)
+    {
+      var &object = component.objects[object_id];
+
+      switch (object.type)
+      {
+        case "Rectangle":
+        case "Text":
+        case "TouchArea":
+          itemmap.insert(object_id, items.len);
+          items.push_back(items.len, itemmap[object.parent], std::format("{}{}", base, object.name));
+
+        case "GridLayout":
+        case "HorizontalLayout":
+        case "VerticalLayout":
+        case "FlexLayout":
+          itemmap.emplace(object_id) = itemmap[object.parent];
+
+        else:
+          switch (scope.lookup(object.type))
+          {
+            case Some[var &[scope, component]]:
+              append_items(&mut ctx, &mut items, itemmap[object.parent], std::format("{}{}.", base, object.name), scope, component);
+          }
+      }
+    }
+  }
+
+  append_items(&mut ctx, &mut items, 0, std::string("&"), ctx.mir, component);
+
+  std::stable_sort(&mut items, |x, y| x.parent < y.parent);
+
+  for (var &item : items)
+  {
+    var child_count = 0;
+    var child_index = &item - &items.front + 1;
+    var parent_index = items.find_if(|it| it.id == item.parent) - items.begin;
+
+    for (var i = child_index; i < items.len; ++i)
+    {
+      if (items[i].parent == item.id)
+        break;
+
+      child_index += 1;
+    }
+
+    for (var i = child_index; i < items.len; ++i)
+    {
+      if (items[i].parent != item.id)
+        break;
+
+      child_count += 1;
+    }
+
+    std::fprintf(&mut ctx.fout, "    scene.push_back({}, {}, {}, {});\n", item.name, parent_index, child_count, child_index);
+  }
+}
+
+fn codegen_constructor(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "  pub {}() {{\n", component.name);
+
+  for (var object_id = 0; object_id < component.objects.len; ++object_id)
+  {
+    var &object = component.objects[object_id];
+
+    switch (object.type)
+    {
+      case "GridLayout":
+        ;
+
+      case "HorizontalLayout":
+        std::fprintf(&mut ctx.fout, "    {}.min_widths.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.max_widths.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.preferred_widths.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.horizontal_stretchs.resize({});\n", object.name, object.child_count);
+
+        std::fprintf(&mut ctx.fout, "    {}.on_updated = |rects| {{\n", object.name);
+
+        for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+        {
+          if (var id = component.find_property(childid, "x"))
+            std::fprintf(&mut ctx.fout, "      {};\n", codegen_property_update(&mut ctx, component, id?!, std::format("rects[{}].x", childid - object.child_index)));
+
+          if (var id = component.find_property(childid, "width"))
+            std::fprintf(&mut ctx.fout, "      {};\n", codegen_property_update(&mut ctx, component, id?!, std::format("rects[{}].width", childid - object.child_index)));
+        }
+
+        std::fprintf(&mut ctx.fout, "    }};\n");
+        std::fprintf(&mut ctx.fout, "\n");
+
+      case "VerticalLayout":
+        std::fprintf(&mut ctx.fout, "    {}.min_heights.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.max_heights.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.preferred_heights.resize({});\n", object.name, object.child_count);
+        std::fprintf(&mut ctx.fout, "    {}.vertical_stretchs.resize({});\n", object.name, object.child_count);
+
+        std::fprintf(&mut ctx.fout, "    {}.on_updated = |rects| {{\n", object.name);
+
+        for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+        {
+          if (var id = component.find_property(childid, "y"))
+            std::fprintf(&mut ctx.fout, "      {};\n", codegen_property_update(&mut ctx, component, id?!, std::format("rects[{}].y", childid - object.child_index)));
+
+          if (var id = component.find_property(childid, "height"))
+            std::fprintf(&mut ctx.fout, "      {};\n", codegen_property_update(&mut ctx, component, id?!, std::format("rects[{}].height", childid - object.child_index)));
+        }
+
+        std::fprintf(&mut ctx.fout, "    }};\n");
+        std::fprintf(&mut ctx.fout, "\n");
+
+      case "FlexLayout":
+        ;
+    }
+  }
+
+  var propset = std::vector<usize>();
+
+  for (var property_id = 0; property_id < component.properties.len; ++property_id)
+  {
+    var &property = component.properties[property_id];
+
+    if (property.expression)
+      propset.push_back(property_id);
+  }
+
+  std::bubble_sort(&mut propset, |lhs, rhs| ctx.propmap.contains((rhs, lhs)));
+
+  for (var &propertyid : propset)
+  {
+    var &property = component.properties[propertyid];
+
+    std::fprintf(&mut ctx.fout, "    {} = {};\n", codegen_path(ctx, component, propertyid), codegen_expression(ctx, component, property.expression));
+  }
+
+  std::fprintf(&mut ctx.fout, "    {}\n", codegen_layout_update(&mut ctx, component, propset));
+
+  std::fprintf(&mut ctx.fout, "\n");
+
+  codegen_scene(&mut ctx, component);
+
+  std::fprintf(&mut ctx.fout, "  }}\n");
+  std::fprintf(&mut ctx.fout, "\n");
+}
+
+fn codegen_destructor(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "  pub ~{}() = default;\n", component.name);
+}
+
+fn codegen(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "pub struct {} {{\n", component.name);
+  std::fprintf(&mut ctx.fout, "  pub gui::view scene;\n");
+  std::fprintf(&mut ctx.fout, "\n");
+
+  codegen_propmap(&mut ctx, component);
+
+  codegen_objects(&mut ctx, component);
+  codegen_parameters(&mut ctx, component);
+  codegen_constructor(&mut ctx, component);
+  codegen_destructor(&mut ctx, component);
+
+  std::fprintf(&mut ctx.fout, "}}\n");
+  std::fprintf(&mut ctx.fout, "\n");
+
+  ctx.invpropmap.clear();
+  ctx.propmap.clear();
+}
+
+pub fn codegen(Mir &mir, std::string outfile, Source mut &source, diag::diag mut &diag) throws(std::error) -> void
+{
+  var ctx = codegen_context(mir, &mut source, &mut diag);
+
+  ctx.fout = std::file::create(outfile);
+
+  std::fprintf(&mut ctx.fout, "//\n// auto generated - do not modify\n//\n\n");
+  std::fprintf(&mut ctx.fout, "import std.vector;\n");
+  std::fprintf(&mut ctx.fout, "import std.algorithm;\n");
+  std::fprintf(&mut ctx.fout, "import std.function;\n");
+  std::fprintf(&mut ctx.fout, "import gui.scene;\n");
+  std::fprintf(&mut ctx.fout, "import gfx.transform;\n");
+  std::fprintf(&mut ctx.fout, "import gfx.color;\n");
+  std::fprintf(&mut ctx.fout, "import gui.font;\n");
+  std::fprintf(&mut ctx.fout, "\n");
+
+  if (!mir.imports.empty)
+  {
+    for (var &[name, imprt] : mir.imports)
+    {
+      std::fprintf(&mut ctx.fout, "import zuic.{} : {};\n", name, imprt.components.transform(|component| component.name).join(", "));
+    }
+
+    std::fprintf(&mut ctx.fout, "\n");
+  }
+
+  std::fprintf(&mut ctx.fout, "import zuic.builtins : *;\n");
+  std::fprintf(&mut ctx.fout, "\n");
+
+  for (var &component : mir.components)
+  {
+    codegen(&mut ctx, component);
+  }
+
+  std::fprintf(&mut ctx.fout, "\n");
+}

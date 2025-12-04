@@ -275,8 +275,8 @@ fn pick_next(run_queue mut &runqueue) -> thread mut *
 #[noinline]
 fn reschedule(thread::state state, bool adopt_lock = false) -> void
 {
-  var mut &runqueue = cpu::runqueue_inline;
-  var current_thread = cpu::current_thread_inline;
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
 
   let quantum = cpu::clockspeed >> 11 | 0x1fff;
   let quantum_leap = quantum & ~0xfff;
@@ -386,6 +386,7 @@ fn rebalance(run_queue mut &runqueue) -> void
   runqueue.last_balance = cpu::tsc;
 }
 
+#[noinline]
 pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority::normal) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -400,6 +401,7 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
   platform::task_fork(&mut thread.task, extern(thread_main), thread);
 }
 
+#[noinline]
 pub fn set_priority(thread mut *thread, thread::priority priority) -> void
 {
   if (thread.priority == priority)
@@ -428,6 +430,7 @@ pub fn set_priority(thread mut *thread, thread::priority priority) -> void
   }
 }
 
+#[noinline]
 pub fn sleep_yield() -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -440,6 +443,7 @@ pub fn sleep_yield() -> void
   reschedule(thread::state::ready);
 }
 
+#[noinline]
 pub fn sleep_until(u64 abstime) -> void
 {
   var irqs = std::lock_guard(&mut cpu::irqlock);
@@ -454,11 +458,9 @@ pub fn sleep_until(u64 abstime) -> void
   reschedule(thread::state::waiting, adopt_lock: true);
 }
 
-#[noinline]
 pub fn prepare_to_block(bool interruptible = false) -> void
 {
-  var mut &runqueue = cpu::runqueue_inline;
-  var current_thread = cpu::current_thread_inline;
+  var current_thread = cpu::current_thread;
 
   var status = status::ready;
 
@@ -475,8 +477,8 @@ pub fn prepare_to_block(bool interruptible = false) -> void
 #[noinline]
 pub fn block<Lock>(Lock mut &lock) -> i32
 {
-  var mut &runqueue = cpu::runqueue_inline;
-  var current_thread = cpu::current_thread_inline;
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
 
   runqueue.lock.lock();
 
@@ -504,8 +506,8 @@ pub fn block<Lock>(Lock mut &lock) -> i32
 #[noinline]
 pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
 {
-  var mut &runqueue = cpu::runqueue_inline;
-  var current_thread = cpu::current_thread_inline;
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
 
   runqueue.lock.lock();
 
@@ -587,8 +589,8 @@ pub fn interrupt(thread mut *thread, i32 status = 0) -> void
 #[noinline]
 pub fn bury(semaphore mut &undertaker, thread mut * mut &graveyard) -> void
 {
-  var mut &runqueue = cpu::runqueue_inline;
-  var current_thread = cpu::current_thread_inline;
+  var mut &runqueue = cpu::runqueue;
+  var current_thread = cpu::current_thread;
 
   runqueue.lock.lock();
 

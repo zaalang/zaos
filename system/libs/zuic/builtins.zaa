@@ -1,0 +1,36 @@
+//
+// builtins
+//
+
+import std.stdio;
+import std.string : String;
+
+pub fn str$<T>(T &value) -> std::string
+{
+  return std::format("{}", value);
+}
+
+pub fn left$(String &str, int n) -> std::string
+{
+  return str.take(cast<usize>(std::max(n, 0)));
+}
+
+pub fn right$(String &str, int n) -> std::string
+{
+  return std::string::from(str.chars.reverse.take_n(cast<usize>(std::max(n, 0))).reverse);
+}
+
+pub fn mid$(String &str, int index, int count) -> std::string
+{
+  return str.drop(cast<usize>(std::max(n, 0))).take(cast<usize>(std::max(count, 0)));
+}
+
+pub fn trim$(String &str) -> std::string
+{
+  return str.trim();
+}
+
+pub fn debug<Args>(Args & ...args) -> void
+{
+  std::print(args...);
+}

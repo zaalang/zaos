@@ -15,11 +15,11 @@ import gfx.transform;
 import opentype.parser;
 import opentype.raster;
 
-pub fn draw_glyph(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face, opentype::glyphid id, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_glyph(gfx::paint_t mut &ctx, gfx::transform &transform, opentype::face &face, opentype::glyphid id, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var xy = Q.translation();
   var bitmap = opentype::bitmap();
-  var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+  var transform = opentype::transform(transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x));
 
   if (!opentype::render(face, id, transform, &mut bitmap))
     return;
@@ -27,14 +27,14 @@ pub fn draw_glyph(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face
   ctx.blit_glyph(cast<int>(std::floor(xy.x - bitmap.origin.0)), cast<int>(std::round(xy.y - bitmap.origin.1)), bitmap.data.data, bitmap.width, bitmap.height, color, mode);
 }
 
-pub fn draw_glyphs(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face, std::span<opentype::glyphid> ids, std::span<gfx::point> positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_glyphs(gfx::paint_t mut &ctx, gfx::transform &transform, opentype::face &face, std::span<opentype::glyphid> ids, std::span<gfx::point> positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var bitmap = opentype::bitmap();
 
   for (var i = 0, var end = std::min(ids.len, positions.len); i < end; ++i)
   {
     var xy = Q * positions[i];
-    var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+    var transform = opentype::transform(transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x));
 
     if (!opentype::render(face, ids[i], transform, &mut bitmap))
       return;
@@ -43,12 +43,12 @@ pub fn draw_glyphs(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &fac
   }
 }
 
-pub fn draw_glyphs(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face, Span<opentype::glyphid> &ids, Span<gfx::point> &positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_glyphs(gfx::paint_t mut &ctx, gfx::transform &transform, opentype::face &face, Span<opentype::glyphid> &ids, Span<gfx::point> &positions, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  draw_glyphs(&mut ctx, Q, face, std::span(ids), std::span(positions), color, mode);
+  draw_glyphs(&mut ctx, transform, face, std::span(ids), std::span(positions), color, mode);
 }
 
-pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face, std::string_view text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &transform, opentype::face &face, std::string_view text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var bitmap = opentype::bitmap();
   var last_id = opentype::glyphid();
@@ -70,7 +70,7 @@ pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face,
           position.x += cast(layout.x_advance);
 
         var xy = Q * position;
-        var transform = opentype::transform(Q[0, 0], Q[0, 1], Q[1, 0], Q[1, 1], xy.x - std::floor(xy.x));
+        var transform = opentype::transform(transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x));
 
         if (!opentype::render(face, id, transform, &mut bitmap))
           continue;
@@ -84,7 +84,7 @@ pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face,
   }
 }
 
-pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &Q, opentype::face &face, String &text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn draw_text(gfx::paint_t mut &ctx, gfx::transform &transform, opentype::face &face, String &text, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
-  draw_text(&mut ctx, Q, face, std::string_view(text), color, mode);
+  draw_text(&mut ctx, transform, face, std::string_view(text), color, mode);
 }

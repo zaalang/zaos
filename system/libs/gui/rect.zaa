@@ -81,7 +81,7 @@ pub struct rect
     return size(this.hi[0] - this.lo[0], this.hi[1] - this.lo[1]);
   }
 
-  pub fn centre(this &) -> point
+  pub fn center(this &) -> point
   {
     return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
   }
@@ -111,7 +111,7 @@ pub struct rect
     return point(this.lo[0], this.lo[1]);
   }
 
-  pub fn top_centre(this &) -> point
+  pub fn top_center(this &) -> point
   {
     return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, this.lo[1]);
   }
@@ -121,12 +121,12 @@ pub struct rect
     return point(this.hi[0], this.lo[1]);
   }
 
-  pub fn centre_left(this &) -> point
+  pub fn center_left(this &) -> point
   {
     return point(this.lo[0], (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
   }
 
-  pub fn centre_right(this &) -> point
+  pub fn center_right(this &) -> point
   {
     return point(this.hi[0], (cast<i64>(this.lo[1]) + cast<i64>(this.hi[1]))/2);
   }
@@ -136,7 +136,7 @@ pub struct rect
     return point(this.lo[0], this.hi[1]);
   }
 
-  pub fn bottom_centre(this &) -> point
+  pub fn bottom_center(this &) -> point
   {
     return point((cast<i64>(this.lo[0]) + cast<i64>(this.hi[0]))/2, this.hi[1]);
   }

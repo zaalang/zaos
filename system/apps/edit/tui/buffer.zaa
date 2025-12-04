@@ -1586,28 +1586,25 @@ pub fn normalize_newlines(textbuffer mut &this, bool crlf) -> void
     if (chunk.empty)
       break;
 
-    for (var end = offset + chunk.len; offset != end; )
+    if (var end = offset + chunk.len; (offset += std::memchr(chunk.data, cast('\n'), chunk.len)) != end)
     {
-      if ((offset += std::memchr(chunk.data, cast('\n'), chunk.len)) != end)
+      var chunk = this.read_backward(++offset);
+      var chunk_newline_len = chunk.ends_with("\r\n") ? 2 : 1;
+      var chunk_newline = chunk[chunk.len - chunk_newline_len .. chunk.len];
+
+      if (chunk_newline != newline)
       {
-        var chunk = this.read_backward(offset);
-        var chunk_newline_len = chunk.ends_with("\r\n") ? 2 : 1;
-        var chunk_newline = chunk[chunk.len - chunk_newline_len .. chunk.len];
+        var delta = cast<int>(newline.len) - cast<int>(chunk_newline_len);
 
-        if (chunk_newline != newline)
-        {
-          var delta = cast<int>(newline.len) - cast<int>(chunk_newline_len);
+        if (offset <= cursor_offset)
+          cursor_offset = std::saturating_add(cursor_offset, delta);
 
-          if (offset <= cursor_offset)
-            cursor_offset = std::saturating_add(cursor_offset, delta);
+        if (offset <= cursor_for_rendering_offset)
+          cursor_for_rendering_offset = std::saturating_add(cursor_for_rendering_offset, delta);
 
-          if (offset <= cursor_for_rendering_offset)
-            cursor_for_rendering_offset = std::saturating_add(cursor_for_rendering_offset, delta);
-
-          offset -= chunk_newline_len;
-          this.replace(offset, chunk_newline_len, std::string_view(newline));
-          offset += newline.len;
-        }
+        offset -= chunk_newline_len;
+        this.replace(offset, chunk_newline_len, std::string_view(newline));
+        offset += newline.len;
       }
     }
   }

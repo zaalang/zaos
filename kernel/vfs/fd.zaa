@@ -107,6 +107,7 @@ pub struct fd : pub Rc<file_descriptor>
 fn destroy(file_descriptor mut *fd) -> void
 {
   fd.node = null;
+  fd.parent = null;
 
   file_descriptor::allocator.free(fd);
 }

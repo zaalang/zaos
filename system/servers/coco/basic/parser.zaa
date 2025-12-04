@@ -136,6 +136,7 @@ pub union Statement
   pub Dim(std::vector<VarDecl>),
   pub Let(VarDecl),
   pub Base(int),
+  pub DegRad(int),
   pub Expr(Expression),
   pub IfGoto(IfGoto),
   pub IfThen(IfThen),
@@ -456,7 +457,7 @@ pub struct Print
   }
 
   pub Expression fd;
-  pub std::string format;
+  pub Expression format;
   pub std::vector<Item> items;
 
   pub Print()
@@ -1994,12 +1995,11 @@ fn kw_print(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> r
   {
     ctx.consume_token(&mut is);
 
-    if (ctx.tok.type != token::type::scalar || ctx.tok.style != scalar_style::doublequoted)
+    if (var rc = parse_expression(&mut ctx, &mut print.format, &mut is); !rc)
+      return rc;
+
+    if (!print.format.type.is_string)
       return errc::illegal_expression_type;
-
-    print.format = &move ctx.tok.value;
-
-    ctx.consume_token(&mut is);
 
     if (ctx.tok.type != token::type::comma)
       return errc::illegal_expression_type;
@@ -2046,7 +2046,7 @@ fn kw_input(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> r
 
     ctx.consume_token(&mut is);
 
-    if (ctx.tok.type != token::type::comma)
+    if (ctx.tok.type != token::type::comma && ctx.tok.type != token::type::semi)
       return errc::missing_comma;
 
     ctx.consume_token(&mut is);
@@ -2400,6 +2400,24 @@ fn kw_base(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> re
   }
 
   ctx.consume_token(&mut is);
+
+  return ok;
+}
+
+fn kw_deg(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::DegRad(0));
+
+  return ok;
+}
+
+fn kw_rad(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> result
+{
+  ctx.consume_token(&mut is);
+
+  ctx.blocks.back.push_back(Statement::DegRad(1));
 
   return ok;
 }
@@ -3333,6 +3351,14 @@ fn statement(parse_context mut &ctx, InputReader mut &is) throws(std::error) -> 
 
     case kw_base:
       if (var rc = kw_base(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_deg:
+      if (var rc = kw_deg(&mut ctx, &mut is); !rc)
+        return rc;
+
+    case kw_rad:
+      if (var rc = kw_rad(&mut ctx, &mut is); !rc)
         return rc;
 
     case kw_if:

@@ -13,7 +13,7 @@ import lexer;
 import diag;
 
 using ast;
-using lexer::token;
+using lexer;
 
 union ParseError
 {
@@ -123,84 +123,84 @@ fn precedence(token &tok) -> PrecLevel
   }
 }
 
-fn unaryopcode(token &tok) -> UnaryOp::Type
+fn unaryopcode(token &tok) -> UnaryOp::Kind
 {
   switch (tok.type)
   {
     case plus:
-      return UnaryOp::Type::Plus;
+      return Plus;
 
     case minus:
-      return UnaryOp::Type::Minus;
+      return Minus;
 
     case exclaim:
-      return UnaryOp::Type::LNot;
+      return LNot;
 
     else:
       std::panic("invalid unary op");
   }
 }
 
-fn binaryopcode(token &tok) -> BinaryOp::Type
+fn binaryopcode(token &tok) -> BinaryOp::Kind
 {
   switch (tok.type)
   {
     case plus:
-      return BinaryOp::Type::Add;
+      return Add;
 
     case minus:
-      return BinaryOp::Type::Sub;
+      return Sub;
 
     case star:
-      return BinaryOp::Type::Mul;
+      return Mul;
 
     case slash:
-      return BinaryOp::Type::Div;
+      return Div;
 
     case slashslash:
-      return BinaryOp::Type::IDiv;
+      return IDiv;
 
     case percent:
-      return BinaryOp::Type::Rem;
+      return Rem;
 
     case starstar:
-      return BinaryOp::Type::Pow;
+      return Pow;
 
     case kw_and:
-      return BinaryOp::Type::LAnd;
+      return LAnd;
 
     case kw_or:
-      return BinaryOp::Type::LOr;
+      return LOr;
 
     case less:
-      return BinaryOp::Type::LT;
+      return LT;
 
     case greater:
-      return BinaryOp::Type::GT;
+      return GT;
 
     case lessequal:
-      return BinaryOp::Type::LE;
+      return LE;
 
     case greaterequal:
-      return BinaryOp::Type::GE;
+      return GE;
 
     case equalequal:
-      return BinaryOp::Type::EQ;
+      return EQ;
 
     case exclaimequal:
-      return BinaryOp::Type::NE;
+      return NE;
 
     case kw_rescue:
-      return BinaryOp::Type::Rescue;
+      return Rescue;
 
     case equal:
-      return BinaryOp::Type::Assign;
+      return Assign;
 
     case pipe:
-      return BinaryOp::Type::Pipe;
+      return Pipe;
 
     case semi:
-      return BinaryOp::Type::Semi;
+      return Semi;
 
     else:
       std::panic("invalid binary op");
@@ -409,7 +409,7 @@ fn parse_string_literal(parse_context mut &ctx, std::span<token> mut &tokens) ->
     return Expression::String(unescape(span.drop_front(1).drop_back(1)), span);
   }
 
-  return Expression::String(std::string(span), span);
+  return Expression::String(span, span);
 }
 
 fn parse_numeric_literal(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
@@ -547,21 +547,21 @@ fn parse_unary_plus(parse_context mut &ctx, std::span<token> mut &tokens) -> Exp
 {
   consume_token(&mut tokens, token::type::plus);
 
-  return Expression::UnaryOp(UnaryOp::Type::Plus, parse_expression_left(&mut ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Kind::Plus, parse_expression_left(&mut ctx, &mut tokens));
 }
 
 fn parse_unary_minus(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   consume_token(&mut tokens, token::type::minus);
 
-  return Expression::UnaryOp(UnaryOp::Type::Minus, parse_expression_left(&mut ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Kind::Minus, parse_expression_left(&mut ctx, &mut tokens));
 }
 
 fn parse_unary_not(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   consume_token(&mut tokens, token::type::exclaim);
 
-  return Expression::UnaryOp(UnaryOp::Type::LNot, parse_expression_left(&mut ctx, &mut tokens));
+  return Expression::UnaryOp(UnaryOp::Kind::LNot, parse_expression_left(&mut ctx, &mut tokens));
 }
 
 fn parse_declref(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
@@ -658,20 +658,16 @@ fn parse_callee(parse_context mut &ctx, std::span<token> mut &tokens) -> Express
     }
   }
 
-  return Expression::Call(String(unescape(cmd), cmd), &move arguments);
+  return Expression::CallOp(String(unescape(cmd), cmd), &move arguments);
 }
 
 fn parse_group_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
-  var span = tokens[0].span;
+  var expr = parse_expression(&mut ctx, &mut lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span);
 
   consume_token(&mut tokens, token::type::block);
 
-  var inners = lexer::lex(span.drop_front(1).drop_back(1));
-
-  var expr = parse_expression(&mut ctx, &mut std::span(inners));
-
-  return Expression::UnaryOp(UnaryOp::Type::Group, &move expr);
+  return Expression::UnaryOp(UnaryOp::Kind::Group, &move expr);
 }
 
 fn parse_expression_left(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
@@ -778,9 +774,7 @@ pub fn parse(std::string_view &src, diag::diag mut &diag) -> Block
 
   var ctx = parse_context(src, &mut diag);
 
-  var tokens = std::span(lexer::lex(src));
-
-  while (tokens[0] != token::type::eof)
+  for (var tokens = lexer::lex(src).span; tokens[0] != token::type::eof; )
   {
     switch (tokens[0].type)
     {

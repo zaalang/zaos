@@ -1,0 +1,268 @@
+//
+// gallery
+//
+
+import std.stdio;
+import gui.application;
+import gui.window;
+import gui.painter;
+import gfx;
+import app.loop;
+import zuic.calc;
+
+struct Model
+{
+  enum Op
+  {
+    Div,
+    Mul,
+    Add,
+    Sub,
+  }
+
+  enum PrecLevel
+  {
+    Zero            = 0,
+    Additive        = 7,    // -, +
+    Multiplicative  = 9,    // *, /, //, %
+    One             = 10,
+  }
+
+  std::string entry;
+  std::vector<Op> opstack;
+  std::vector<float> operands;
+  std::string outcome;
+
+  fn precedence(Op &op) -> PrecLevel
+  {
+    switch (op)
+    {
+      case Add:
+      case Sub:
+        return PrecLevel::Additive;
+
+      case Div:
+      case Mul:
+        return PrecLevel::Multiplicative;
+
+      else:
+        return PrecLevel::Zero;
+    }
+  }
+
+  fn digit(this mut &, std::string &key) -> void
+  {
+    this.entry += key;
+  }
+
+  fn op(this mut &, Op op) -> void
+  {
+    if (this.entry.empty)
+      this.entry = this.outcome;
+
+    var operand = float(0.0);
+    std::atof(this.entry.begin, this.entry.end, &mut operand);
+
+    this.operands.push_back(operand);
+
+    for (; !this.opstack.empty && op.precedence <= this.opstack.back.precedence; )
+    {
+      var rhs = this.operands.take_back();
+      var lhs = this.operands.take_back();
+
+      switch (this.opstack.take_back())
+      {
+        case Div:
+          this.operands.push_back(lhs / rhs);
+
+        case Mul:
+          this.operands.push_back(lhs * rhs);
+
+        case Add:
+          this.operands.push_back(lhs + rhs);
+
+        case Sub:
+          this.operands.push_back(lhs - rhs);
+      }
+    }
+
+    this.opstack.push_back(op);
+
+    this.entry = "";
+    this.outcome = std::format("{}", this.operands.back);
+  }
+
+  fn eval(this mut &) -> void
+  {
+    var operand = float(0.0);
+    std::atof(this.entry.begin, this.entry.end, &mut operand);
+
+    this.operands.push_back(operand);
+
+    for (; !this.opstack.empty; )
+    {
+      var rhs = this.operands.take_back();
+      var lhs = this.operands.take_back();
+
+      switch (this.opstack.take_back())
+      {
+        case Div:
+          this.operands.push_back(lhs / rhs);
+
+        case Mul:
+          this.operands.push_back(lhs * rhs);
+
+        case Add:
+          this.operands.push_back(lhs + rhs);
+
+        case Sub:
+          this.operands.push_back(lhs - rhs);
+      }
+    }
+
+    this.entry = "";
+    this.outcome = std::format("{}", this.operands.take_back);
+  }
+
+  fn clear(this mut &) -> void
+  {
+    this.entry.clear();
+    this.opstack.clear();
+    this.operands.clear();
+    this.outcome.clear();
+  }
+
+  Model() = default;
+  ~Model() = default;
+}
+
+pub struct window : pub gui::window
+{
+  Model model;
+  zuic::Calculator view;
+
+  pub fn create(i32 width, i32 height) throws(std::error) -> window
+  {
+    var window = window();
+
+    window.view.on_digit = |key| {
+      window.model.digit(key);
+      window.view.text = window.model.entry;
+    };
+
+    window.view.on_div = || {
+      window.model.op(Model::Op::Div);
+      window.view.text = window.model.outcome;
+    };
+
+    window.view.on_mul = || {
+      window.model.op(Model::Op::Mul);
+      window.view.text = window.model.outcome;
+    };
+
+    window.view.on_add = || {
+      window.model.op(Model::Op::Add);
+      window.view.text = window.model.outcome;
+    };
+
+    window.view.on_sub = || {
+      window.model.op(Model::Op::Sub);
+      window.view.text = window.model.outcome;
+    };
+
+    window.view.on_equals = || {
+      window.model.eval();
+      window.view.text = window.model.outcome;
+    };
+
+    window.view.on_clear = || {
+      window.model.clear();
+      window.view.text = window.model.entry;
+    };
+
+    window.create(width, height);
+
+    return window;
+  }
+
+  pub fn motion_event(this mut &, gui::pointer_event &evt) override -> void
+  {
+    {
+      var evt = evt;
+      evt.position.0 -= this.interior.left;
+      evt.position.1 -= this.interior.top;
+
+      gui::scene_event(&mut this.view.scene, evt);
+
+      this.schedule_redraw(this.geometry);
+    }
+
+    gui::window::motion_event(&mut this, evt);
+  }
+
+  pub fn button_event(this mut &, gui::pointer_event &evt) override -> void
+  {
+    {
+      var evt = evt;
+      evt.position.0 -= this.interior.left;
+      evt.position.1 -= this.interior.top;
+
+      gui::scene_event(&mut this.view.scene, evt);
+
+      this.schedule_redraw(this.geometry);
+    }
+
+    gui::window::button_event(&mut this, evt);
+  }
+
+  pub fn key_event(this mut &, gui::key_event &evt) override -> void
+  {
+    gui::window::key_event(&mut this, evt);
+  }
+
+  pub fn paint_event(this mut &, gui::buffer mut &buffer, gui::rectset &region) override -> void
+  {
+    var painter = gui::painter(&mut buffer, this.interior);
+
+    painter.fill_rect(region.extents, gfx::color(0.94, 0.94, 0.94));
+    painter.clip_rect = gfx::rect(cast(region.extents.left), cast(region.extents.top), cast(region.extents.right), cast(region.extents.bottom));
+
+    gui::scene_render(&mut painter, this.view.scene);
+  }
+
+  pub fn resize_event(this mut &, gui::resize_event &evt) override -> void
+  {
+    this.view.width = cast(this.interior.width);
+    this.view.height = cast(this.interior.height);
+  }
+
+  pub fn close_event(this mut &) override -> void
+  {
+    app::loop::current.quit();
+  }
+
+  pub window()
+    : super(&impl this)
+  {
+  }
+
+  pub ~window() = default;
+}
+
+fn main() -> int
+{
+  try
+  {
+    var app = gui::application::create();
+
+    var window = window::create(240, 360);
+
+    app.run();
+  }
+  catch (std::error e)
+  {
+    std::panic(e);
+  }
+
+  return 0;
+}

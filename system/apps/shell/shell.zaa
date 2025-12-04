@@ -5,14 +5,16 @@
 import std.stdio;
 import std.env;
 import readline;
-import engine;
+import engine : Engine;
+import value : Value;
+import stack : Stack;
 import parser;
 import diag;
+import tab;
 
-fn test(std::string &input)
+fn test(Engine mut &engine, Stack mut &stack, std::string &input)
 {
   var diag = diag::diag("");
-  var engine = engine::create();
 
   var src = engine.add_source("repl", input);
   var block = parser::parse(src, &mut diag);
@@ -24,7 +26,9 @@ fn test(std::string &input)
     return;
   }
 
-  var value = engine.evaluate(block, &mut diag);
+  stack.push_scope();
+
+  var value = engine.evaluate(&mut stack, block, &mut diag);
 
   std::fputs(std::stderr, "\x1b]133;L\x07");
 
@@ -33,25 +37,35 @@ fn test(std::string &input)
 
   if (value.is_some)
     std::print(value);
+
+  if (diag.has_errored)
+    stack.pop_scope();
+
+  stack.collapse();
 }
 
 fn main() -> int
 {
+  var engine = engine::create();
+  var stack = stack::create();
+
   var history = readline::default_history();
 
   for (;;)
   {
     var input = readline::create();
     var prompt = readline::default_prompt("> ");
+    var completer = tab::completer(stack.get_cwd());
 
     input.use_history(&history);
+    input.use_completion(&completer);
 
     var line = readline::read_line(&mut input, prompt);
 
     switch (line)
     {
       case enter[input]:
-        test(input);
+        test(&mut engine, &mut stack, input);
 
       case ctrl_d:
         break;

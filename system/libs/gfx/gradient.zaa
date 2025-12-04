@@ -78,35 +78,35 @@ pub struct linear_gradient : pub gradient
 }
 
 #[lifetime(depend(this))]
-pub fn transform!(linear_gradient mut &this, gfx::transform &Q) -> linear_gradient mut &
+pub fn transform!(linear_gradient mut &this, gfx::transform &transform) -> linear_gradient mut &
 {
-  this.transform = Q * this.transform;
+  this.transform = transform * this.transform;
 
   return &this;
 }
 
 #[nodiscard]
-pub fn transform(linear_gradient &&this, gfx::transform &Q) -> linear_gradient
+pub fn transform(linear_gradient &&this, gfx::transform &transform) -> linear_gradient
 {
-  return linear_gradient(this).transform!(Q);
+  return linear_gradient(this).transform!(transform);
 }
 
 pub struct radial_gradient : pub gradient
 {
-  pub gfx::point centre_point;
+  pub gfx::point center_point;
   pub gfx::point focal_point;
   pub float outer_radius;
   pub float inner_radius;
 
   pub gfx::transform transform = gfx::transform::identity;
 
-  pub radial_gradient(gfx::point &centre_point, float outer_radius)
-    : centre_point(centre_point), outer_radius(outer_radius), focal_point(centre_point)
+  pub radial_gradient(gfx::point &center_point, float outer_radius)
+    : center_point(center_point), outer_radius(outer_radius), focal_point(center_point)
   {
   }
 
-  pub radial_gradient(gfx::point &centre_point, float outer_radius, gfx::point &focal_point, float inner_radius = 0.0)
-    : centre_point(centre_point), outer_radius(outer_radius), focal_point(focal_point), inner_radius(inner_radius)
+  pub radial_gradient(gfx::point &center_point, float outer_radius, gfx::point &focal_point, float inner_radius = 0.0)
+    : center_point(center_point), outer_radius(outer_radius), focal_point(focal_point), inner_radius(inner_radius)
   {
   }
 
@@ -117,20 +117,20 @@ pub struct radial_gradient : pub gradient
 }
 
 #[lifetime(depend(this))]
-pub fn transform!(radial_gradient mut &this, gfx::transform &Q) -> radial_gradient mut &
+pub fn transform!(radial_gradient mut &this, gfx::transform &transform) -> radial_gradient mut &
 {
-  this.transform = Q * this.transform;
+  this.transform = transform * this.transform;
 
   return &this;
 }
 
 #[nodiscard]
-pub fn transform(radial_gradient &&this, gfx::transform &Q) -> radial_gradient
+pub fn transform(radial_gradient &&this, gfx::transform &transform) -> radial_gradient
 {
-  return radial_gradient(this).transform!(Q);
+  return radial_gradient(this).transform!(transform);
 }
 
-pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
+pub fn generate_color_table(gradient &gradient, f32 opacity) -> std::vector<u32>
 {
   var &stops = gradient.stops;
 
@@ -147,11 +147,11 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
   var p = 1.5 / cast<f32>(table.len);
   var dp = 1.0 / cast<f32>(table.len);
 
-  table[i++] = gfx::premultiply(color.rgba);
+  table[i++] = (gfx::premultiply(color) * opacity).rgba;
 
   for (; p < next; p += dp)
   {
-    table[i++] = gfx::premultiply(color.rgba);
+    table[i++] = (gfx::premultiply(color) * opacity).rgba;
   }
 
   for (; p < last; )
@@ -169,7 +169,7 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
     {
       color += delta;
 
-      table[i++] = gfx::premultiply(color.rgba);
+      table[i++] = (gfx::premultiply(color) * opacity).rgba;
     }
 
     curr = next;
@@ -177,10 +177,10 @@ pub fn generate_color_table(gradient &gradient) -> std::vector<u32>
 
   for (; i < table.len - 1; ++i)
   {
-    table[i] = gfx::premultiply(color.rgba);
+    table[i] = (gfx::premultiply(color) * opacity).rgba;
   }
 
-  table[table.len - 1] = gfx::premultiply(color.rgba);
+  table[table.len - 1] = (gfx::premultiply(color) * opacity).rgba;
 
   return table;
 }

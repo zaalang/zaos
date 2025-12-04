@@ -638,17 +638,17 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
       switch (*ip)
       {
         case op::kw_rem:
-          var len = cast<usize>(*(ip + 1));
-          std::format_to(&mut os, "REM {}", std::string_view(ip + 2, len));
-          ip += 2 + len;
+          var len = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
+          std::format_to(&mut os, "REM {}", std::string_view(ip + 3, len - 3));
+          ip += len;
 
         case op::kw_param:
           std::print_to(&mut os, "PARAM ");
-          ip += 1;
+          ip += 3;
 
         case op::kw_dim:
           std::print_to(&mut os, "DIM ");
-          ip += 1;
+          ip += 3;
 
         case op::kw_let:
           std::print_to(&mut os, "LET ");
@@ -662,9 +662,17 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
           std::print_to(&mut os, "BASE 1");
           ip += 1;
 
+        case op::kw_deg:
+          std::print_to(&mut os, "DEG");
+          ip += 1;
+
+        case op::kw_rad:
+          std::print_to(&mut os, "RAD");
+          ip += 1;
+
         case op::kw_type:
           std::print_to(&mut os, "TYPE ");
-          ip += 1;
+          ip += 3;
 
         case op::type_real:
           std::print_to(&mut os, "REAL");
@@ -690,13 +698,17 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
           std::print_to(&mut os, "PRINT ");
           ip += 1;
 
+        case op::kw_using:
+          std::format_to(&mut os, "USING ");
+          ip += 1;
+
         case op::kw_input:
           std::print_to(&mut os, "INPUT ");
           ip += 1;
 
         case op::kw_data:
           std::print_to(&mut os, "DATA ");
-          ip += 4;
+          ip += 3;
 
         case op::kw_if:
           std::print_to(&mut os, "IF ");
@@ -847,6 +859,9 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
         case op::jmp_bck_ne:
           ip += 3;
 
+        case op::dref:
+          ip += 4;
+
         case op::lref:
           var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8 + cast<usize>(*(ip + 3)) << 16;
           var label = cast<usize>(text[offset - 2]) + cast<usize>(text[offset - 1]) << 8;
@@ -877,12 +892,6 @@ fn format_to(OutputStream mut &os, std::span<u8> icode) throws(std::error) -> vo
           var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
           var name = header.rodata[offset + 1 .. offset + 1 + cast<usize>(header.rodata[offset])];
           std::format_to(&mut os, "RUN {}", std::string_view(name));
-          ip += 3;
-
-        case op::kw_using:
-          var offset = cast<usize>(*(ip + 1)) + cast<usize>(*(ip + 2)) << 8;
-          var name = header.rodata[offset + 1 .. offset + 1 + cast<usize>(header.rodata[offset])];
-          std::format_to(&mut os, "USING \"{}\"", std::string_view(name));
           ip += 3;
 
         case op::kw_restore:

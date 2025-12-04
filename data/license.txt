@@ -1,2 +1,3 @@
 cursors: https://invent.kde.org/plasma/breeze
+codicon: https://github.com/microsoft/vscode-codicons
 font: https://fonts.google.com/noto

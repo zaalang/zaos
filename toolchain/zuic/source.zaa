@@ -1,0 +1,114 @@
+//
+// souce
+//
+
+import std.vector;
+import std.string : String;
+import diag;
+
+pub struct Source
+{
+  struct Text
+  {
+    std::string id;
+    std::string contents;
+
+    Text(String &&id, String &&contents)
+      : id(&&id), contents(&&contents)
+    {
+    }
+
+    Text(Text &&) = default;
+    ~Text() = default;
+  }
+
+  std::vector<Text> sources;
+
+  pub Source() = default;
+  pub ~Source() = default;
+}
+
+pub fn add(Source mut &source, String &&id, String &&contents) -> std::string_view
+{
+  for (var &source : source.sources)
+  {
+    if (source.id == id && source.contents == contents)
+      return source.contents;
+  }
+
+  return source.sources.push_back(&&id, &&contents).contents;
+}
+
+pub fn source_ident(Source &source, std::string_view span) -> std::string
+{
+  var offset = 0;
+
+  for (var &source : source.sources)
+  {
+    if (source.contents.begin <= span.begin && span.end <= source.contents.end)
+      return source.id;
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source location");
+}
+
+pub fn source_location(Source &source, std::string_view span) -> usize
+{
+  var offset = 0;
+
+  for (var &source : source.sources)
+  {
+    if (source.contents.begin <= span.begin && span.end <= source.contents.end)
+      return offset + (span.data - source.contents.data);
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source location");
+}
+
+pub fn read_span(Source * &source, diag::label &label, usize before, usize after, usize mut &lineno, usize mut &position) throws(std::error) -> std::string
+{
+  var offset = 0;
+
+  for (var &source : source.sources)
+  {
+    if (offset <= label.pos && label.pos < offset + source.contents.len)
+    {
+      var pos = offset;
+
+      lineno = 0;
+      position = pos;
+
+      for (var ch : source.contents)
+      {
+        switch (ch)
+        {
+          case '\n':
+
+            if (pos < label.pos)
+            {
+              position = pos + 1;
+
+              lineno += 1;
+            }
+
+            if (label.pos + label.len <= pos)
+            {
+              break;
+            }
+        }
+
+        pos += 1;
+      }
+
+      return source.contents[(position - offset) .. (pos - offset)];
+    }
+
+    offset += source.contents.len;
+  }
+
+  std::panic("invalid source span");
+}

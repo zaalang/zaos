@@ -59,7 +59,7 @@ fn bootstrap_filesystem() -> void
 
 fn launch_init() -> void
 {
-  var srv = sys::cmdline("init", default: "/zaos/srv/coco");
+  var srv = sys::cmdline("init", default: "/zaos/srv/init");
 
   var init = create_process(process::current, vfs::basename(srv));
 

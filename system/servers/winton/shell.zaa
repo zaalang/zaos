@@ -5,7 +5,7 @@
 import std.stdlib;
 import app.loop;
 import compositor;
-import zidl.zaos_winton;
+import zidl.zaos.winton;
 
 using winton = zidl::zaos_winton;
 

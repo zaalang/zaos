@@ -1,0 +1,232 @@
+//
+// calc.ui
+//
+
+Button {
+  property string text: "";
+  property length font-size: 10pt;
+  property color background: #ffffff;
+
+  signal clicked();
+
+  Rectangle {
+    id: rect;
+    border-width: 1px;
+    border-color: #ffffff;
+    background: root.background;
+
+    Text {
+      text: root.text;
+      font-family: "Noto Sans";
+      font-size: root.font-size;
+      color: #1b1c1d;
+      horizontal-alignment: TextHorizontalAlignment.Center;
+      vertical-alignment: TextVerticalAlignment.Middle;
+    }
+  }
+
+  TouchArea {
+    on_entered: { rect.background = 0.95 * root.background; }
+    on_exited: { rect.background = root.background; }
+    on_pressed: |position| { rect.background = 0.8 * root.background; rect.border-color = #cccccc; }
+    on_released: |position| { rect.background = 0.95 * root.background; rect.border-color = #ffffff; }
+    on_clicked: { root.clicked(); }
+  }
+}
+
+Calculator {
+  property string text: "0";
+
+  signal on_digit(string digit);
+  signal on_div();
+  signal on_mul();
+  signal on_add();
+  signal on_sub();
+  signal on_clear();
+  signal on_equals();
+
+  VerticalLayout {
+
+    Rectangle {
+      preferred-height: 0.375 * parent.height - 10px;
+      border-width: 1px;
+      border-color: #ffffff;
+      background: #46a2da;
+
+      HorizontalLayout {
+        padding: 10px;
+
+        Text {
+          horizontal-stretch: 1.0;
+          vertical-alignment: TextVerticalAlignment.Middle;
+          horizontal-alignment: TextHorizontalAlignment.Right;
+          text: root.text;
+          font-family: "Noto Sans";
+          font-size: 0.125 * root.height;
+          color: #ffffff;
+          // fontSizeMode: Text.Fit
+        }
+      }
+    }
+
+    Rectangle {
+      id: buttons;
+      vertical-stretch: 1.0;
+
+      VerticalLayout {
+
+        HorizontalLayout {
+          preferred-height: 0.20*buttons.height;
+
+          Button {
+            text: "÷";
+            preferred-width: 0.25*buttons.width;
+            background: #80c342;
+            font-size: 16pt;
+            clicked: { root.on_div(); }
+          }
+
+          Button {
+            text: "×";
+            preferred-width: 0.25*buttons.width;
+            background: #80c342;
+            font-size: 16pt;
+            clicked: { root.on_mul(); }
+          }
+
+          Button {
+            text: "+";
+            preferred-width: 0.25*buttons.width;
+            background: #80c342;
+            font-size: 16pt;
+            clicked: { root.on_add(); }
+          }
+
+          Button {
+            text: "-";
+            preferred-width: 0.25*buttons.width;
+            background: #80c342;
+            font-size: 16pt;
+            clicked: { root.on_sub(); }
+          }
+        }
+
+        HorizontalLayout {
+          vertical-stretch: 1.0;
+
+          VerticalLayout {
+            horizontal-stretch: 1.0;
+
+            HorizontalLayout {
+              preferred-height: 0.20*buttons.height;
+
+              Button {
+                text: "7";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "8";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "9";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+            }
+
+            HorizontalLayout {
+              preferred-height: 0.20*buttons.height;
+
+              Button {
+                text: "4";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "5";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "6";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+            }
+
+            HorizontalLayout {
+              preferred-height: 0.20*buttons.height;
+
+              Button {
+                text: "1";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "2";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "3";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+            }
+
+            HorizontalLayout {
+              preferred-height: 0.20*buttons.height;
+
+              Button {
+                text: "0";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: ".";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_digit(this.text); }
+              }
+
+              Button {
+                text: "C";
+                preferred-width: 0.25*buttons.width;
+                background: #eeeeee;
+                clicked: { root.on_clear(); }
+              }
+            }
+          }
+
+          Button {
+            text: "=";
+            preferred-width: 0.25*buttons.width;
+            background: #face20;
+            font-size: 16pt;
+            clicked: { root.on_equals(); }
+          }
+        }
+      }
+    }
+  }
+}

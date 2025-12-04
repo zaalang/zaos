@@ -1,0 +1,178 @@
+//
+// horizontal layout
+//
+
+import std.stdlib;
+import std.function;
+import gui.painter;
+import gfx.transform;
+
+pub enum layout_horizontal_alignment
+{
+  left,
+  center,
+  right,
+  space_between,
+  space_around,
+  space_evenly,
+}
+
+pub struct HorizontalLayout
+{
+  pub float x;
+  pub float y;
+  pub float width;
+  pub float height;
+
+  pub float spacing;
+  pub float padding_left;
+  pub float padding_right;
+  pub float padding_top;
+  pub float padding_bottom;
+  pub layout_horizontal_alignment alignment = layout_horizontal_alignment::left;
+
+  pub std::vector<float> min_widths;
+  pub std::vector<float> max_widths;
+  pub std::vector<float> preferred_widths;
+  pub std::vector<float> horizontal_stretchs;
+
+  pub std::delegate<(std::vector<gfx::rect> &) -> void> on_updated;
+
+  pub fn padding=(this mut &, float padding) -> void
+  {
+    this.padding_left = padding;
+    this.padding_right = padding;
+    this.padding_top = padding;
+    this.padding_bottom = padding;
+  }
+
+  pub HorizontalLayout() = default;
+  pub ~HorizontalLayout() = default;
+}
+
+pub fn update(HorizontalLayout mut &this) -> void
+{
+  var rects = std::vector<gfx::rect>::with_size(this.min_widths.len);
+
+  var y = this.y + this.padding_top;
+  var height = this.height - this.padding_top - this.padding_bottom;
+
+  var remaining = this.width - this.padding_left - this.padding_right - cast(std::max(rects.len, 1) - 1) * this.spacing;
+
+  for (var i = 0; i < rects.len; ++i)
+  {
+    rects[i] = gfx::rect(0.0, 0.0, std::max(this.min_widths[i], this.preferred_widths[i]), height);
+
+    remaining -= rects[i].width;
+  }
+
+  for (; remaining > 0.0; )
+  {
+    var total_stretch = 0.0;
+
+    for (var i = 0; i < rects.len; ++i)
+    {
+      if (this.max_widths[i] > 0.0 && this.max_widths[i] <= rects[i].width)
+        continue;
+
+      total_stretch += this.horizontal_stretchs[i];
+    }
+
+    if (total_stretch <= 0.0)
+      break;
+
+    var consumed = 0.0;
+
+    for (var i = 0; i < rects.len; ++i)
+    {
+      var growth = remaining * this.horizontal_stretchs[i] / total_stretch;
+
+      if (this.max_widths[i] > 0.0 && this.max_widths[i] < rects[i].width + growth)
+        growth = this.max_widths[i] - rects[i].width;
+
+      rects[i] = gfx::rect(0.0, 0.0, rects[i].width + growth, rects[i].height);
+
+      consumed += growth;
+    }
+
+    if (consumed <= 0.0)
+      break;
+
+    remaining -= consumed;
+  }
+
+  for (; remaining < 0.0; )
+  {
+    var shrinkable = 0.0;
+
+    for (var i = 0; i < rects.len; ++i)
+    {
+      if (rects[i].width <= this.min_widths[i])
+        continue;
+
+      shrinkable += 1.0;
+    }
+
+    if (shrinkable <= 0.0)
+      break;
+
+    var consumed = 0.0;
+
+    for (var i = 0; i < rects.len; ++i)
+    {
+      var growth = remaining / shrinkable;
+
+      if (rects[i].width + growth < this.min_widths[i])
+        growth = this.min_widths[i] - rects[i].width;
+
+      rects[i] = gfx::rect(0.0, 0.0, rects[i].width + growth, rects[i].height);
+
+      consumed += growth;
+    }
+
+    if (consumed >= 0.0)
+      break;
+
+    remaining -= consumed;
+  }
+
+  switch (this.alignment)
+  {
+    case left:
+      var x = this.x + this.padding_left;
+
+      for (var i = 0; i < rects.len; ++i)
+      {
+        rects[i] = gfx::rect(x, y, rects[i].width, rects[i].height);
+
+        x += rects[i].width + this.spacing;
+      }
+
+    case right:
+      var x = this.x + this.width - this.padding_right + this.spacing;
+
+      for (var i = 0; i < rects.len; ++i)
+      {
+        x -= rects[i].width + this.spacing;
+
+        rects[i] = gfx::rect(x, y, rects[i].width, rects[i].height);
+      }
+
+    case center:
+      var x = this.x + this.padding_left + (this.width - this.padding_left - this.padding_right + this.spacing) / 2.0;
+
+      for (var i = 0; i < rects.len; ++i)
+      {
+        x -= (rects[i].width + this.spacing) / 2.0;
+      }
+
+      for (var i = 0; i < rects.len; ++i)
+      {
+        rects[i] = gfx::rect(x, y, rects[i].width, rects[i].height);
+
+        x += rects[i].width + this.spacing;
+      }
+  }
+
+  this.on_updated(rects);
+}

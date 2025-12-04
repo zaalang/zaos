@@ -5,7 +5,7 @@
 import std.stdlib;
 import std.box;
 import app.loop;
-import zidl.zaos_winton;
+import zidl.zaos.winton;
 
 using winton = zidl::zaos_winton;
 

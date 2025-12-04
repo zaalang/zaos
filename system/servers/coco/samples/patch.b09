@@ -52,7 +52,7 @@ PROCEDURE DumpBuffer
     loc=loc-65536
   ENDWHILE
   FOR j=1 TO 16
-    PRINT USING "H4",FIX(INT(loc))+j*16;
+    PRINT USING "H4",FIX(INT(loc))+(j-1)*16;
     PRINT ":";
     FOR i=1 TO 16
       PRINT USING "X1,H2",line(j).char(i);

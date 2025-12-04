@@ -1,0 +1,118 @@
+//
+// rectangle item
+//
+
+import std.stdlib;
+import gui.scene : item;
+import gui.painter;
+import gfx.transform;
+import gfx.path;
+
+pub struct Rectangle : pub item
+{
+  pub gfx::brush background;
+
+  pub Rectangle()
+    : super(&impl this)
+  {
+  }
+
+  pub ~Rectangle() = default;
+}
+
+pub fn pointer_event_filter(Rectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(Rectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(Rectangle mut &this) -> void
+{
+}
+
+pub fn render(Rectangle &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+  if (this.background)
+  {
+    var path = gfx::path();
+    path.rect_at(gfx::rect(0.0, 0.0, this.width, this.height));
+
+    painter.fill_path(transform, path, this.background);
+  }
+}
+
+pub struct FramedRectangle : pub item
+{
+  pub float border_width;
+  pub float border_top_left_radius;
+  pub float border_top_right_radius;
+  pub float border_bottom_left_radius;
+  pub float border_bottom_right_radius;
+  pub gfx::color border_color;
+  pub gfx::brush background;
+
+  pub fn border_radius=(this mut &, float radius) -> void
+  {
+    this.border_top_left_radius = radius;
+    this.border_top_right_radius = radius;
+    this.border_bottom_left_radius = radius;
+    this.border_bottom_right_radius = radius;
+  }
+
+  pub FramedRectangle()
+    : super(&impl this)
+  {
+  }
+
+  pub ~FramedRectangle() = default;
+}
+
+pub fn pointer_event_filter(FramedRectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(FramedRectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(FramedRectangle mut &this) -> void
+{
+}
+
+pub fn render(FramedRectangle &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+  var dp = this.border_width / 2.0;
+  var pen = gfx::pen(this.border_color, this.border_width, gfx::cap::flat, gfx::join::round);
+
+  if (this.background)
+  {
+    var rtl = std::max(dp, this.border_top_left_radius);
+    var rtr = std::max(dp, this.border_top_right_radius);
+    var rbr = std::max(dp, this.border_bottom_right_radius);
+    var rbl = std::max(dp, this.border_bottom_left_radius);
+
+    var path = gfx::path();
+    path.rounded_rect_at(gfx::rect(0.5, 0.5, this.width - 1.0, this.height - 1.0), rbl, rbr, rtr, rtl);
+
+    painter.fill_path(transform, path, this.background);
+  }
+
+  if (pen)
+  {
+    var btl = std::max(0.0, this.border_top_left_radius - dp);
+    var btr = std::max(0.0, this.border_top_right_radius - dp);
+    var bbr = std::max(0.0, this.border_bottom_right_radius - dp);
+    var bbl = std::max(0.0, this.border_bottom_left_radius - dp);
+
+    var path = gfx::path();
+    path.rounded_rect_at(gfx::rect(dp, dp, this.width - 2.0*dp, this.height - 2.0*dp), bbl, bbr, btr, btl);
+
+    painter.stroke_path(transform, path, pen);
+  }
+}

@@ -1,0 +1,107 @@
+//
+// stack
+//
+
+import std.vector;
+import std.flat_hash_map;
+import std.string : String;
+import sys.process;
+import value;
+
+using value;
+
+pub struct Stack
+{
+  struct Scope
+  {
+    std::flat_hash_map<std::string, std::optional<std::string>> env;
+
+    Scope() = default;
+    Scope(Scope &&) = default;
+    ~Scope() = default;
+  }
+
+  std::vector<Scope> scopes;
+
+  pub Stack()
+  {
+    scopes.resize(1);
+  }
+
+  pub ~Stack() = default;
+}
+
+pub fn create() -> Stack
+{
+  return Stack();
+}
+
+pub fn push_scope(Stack mut &stack) -> void
+{
+  stack.scopes.push_back();
+}
+
+pub fn pop_scope(Stack mut &stack) -> void
+{
+  stack.scopes.pop_back();
+}
+
+pub fn set_env(Stack mut &stack, String &&name, String &&value) -> void
+{
+  stack.scopes.back.env.insert(&&name, &&value);
+}
+
+pub fn hide_env(Stack mut &stack, String &&name) -> void
+{
+  stack.scopes.back.env.insert(&&name);
+}
+
+pub fn get_env(Stack mut &stack, String &name) -> std::optional<std::string>
+{
+  rof (var &scope : stack.scopes)
+  {
+    switch (scope.env.get(name))
+    {
+      case Some[value]:
+        return value;
+    }
+  }
+
+  return std::env::var(name);
+}
+
+pub fn get_cwd(Stack mut &stack) -> std::string
+{
+  return stack.get_env("CWD").unwrap_or(".");
+}
+
+pub fn collect_env(Stack mut &stack) -> sys::env
+{
+  var environment = sys::env();
+
+  for (var &scope : stack.scopes)
+  {
+    for (var &[name, value] : scope.env)
+    {
+      switch (value)
+      {
+        case Some[value]:
+          environment.set(name, value);
+
+        case None:
+          environment.unset(name);
+      }
+    }
+  }
+
+  return environment;
+}
+
+pub fn collapse(Stack mut &stack) -> void
+{
+  for (var scope : stack.scopes.take(stack.scopes.begin + 1, stack.scopes.end))
+  {
+    for (var mut &env : scope.env)
+      stack.scopes.front.env.insert_or_assign(env.key, &move env.value);
+  }
+}

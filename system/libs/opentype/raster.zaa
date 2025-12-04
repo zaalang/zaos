@@ -27,7 +27,7 @@ struct vec2
   ~vec2() = default;
 }
 
-struct context
+struct raster_context
 {
   usize width;
   usize height;
@@ -35,8 +35,8 @@ struct context
 
   vec2 cursor;
 
-  context() = default;
-  ~context() = default;
+  raster_context() = default;
+  ~raster_context() = default;
 }
 
 fn fround(f64 v) -> coord_t
@@ -44,7 +44,7 @@ fn fround(f64 v) -> coord_t
   return v + (v < 0.0 ? -0.5 : 0.5)*std::pow(2.0, coord_t::exponent);
 }
 
-fn hline(context mut &ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
+fn hline(raster_context mut &ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord_t x1, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -85,7 +85,7 @@ fn hline(context mut &ctx, int d, area_t mut *row, coord_t x0, coord_t y0, coord
   *(row + i1) += d * area1;
 }
 
-fn vline(context mut &ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0, coord_t y1) -> void
+fn vline(raster_context mut &ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t y0, coord_t y1) -> void
 {
   using lml;
   using std;
@@ -108,7 +108,7 @@ fn vline(context mut &ctx, int d, area_t mut *row, usize j1, coord_t x0, coord_t
   *(row + i1) += d * y1 * area;
 }
 
-fn edge(context mut &ctx, vec2 xy0, vec2 xy1) -> void
+fn edge(raster_context mut &ctx, vec2 xy0, vec2 xy1) -> void
 {
   using lml;
   using std;
@@ -171,29 +171,29 @@ fn edge(context mut &ctx, vec2 xy0, vec2 xy1) -> void
   hline(&mut ctx, d, ctx.cells.data + j1*ctx.width, x, coord_t(0), bot.x, fract(bot.y));
 }
 
-fn move_to(context mut &ctx, vec2 xy) -> void
+fn move_to(raster_context mut &ctx, vec2 xy) -> void
 {
   ctx.cursor = xy;
 }
 
-fn move_to(context mut &ctx, (f64, f64) &xy) -> void
+fn move_to(raster_context mut &ctx, (f64, f64) &xy) -> void
 {
   move_to(&mut ctx, vec2(fround(xy.0), fround(xy.1)));
 }
 
-fn line_to(context mut &ctx, vec2 xy) -> void
+fn line_to(raster_context mut &ctx, vec2 xy) -> void
 {
   edge(&mut ctx, ctx.cursor, xy);
 
   move_to(&mut ctx, xy);
 }
 
-fn line_to(context mut &ctx, (f64, f64) &xy) -> void
+fn line_to(raster_context mut &ctx, (f64, f64) &xy) -> void
 {
   line_to(&mut ctx, vec2(fround(xy.0), fround(xy.1)));
 }
 
-fn quad_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
+fn quad_to(raster_context mut &ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
 {
   using lml;
   using std;
@@ -227,7 +227,7 @@ fn quad_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2) -> void
   line_to(&mut ctx, vec2(fround(xy2.0), fround(xy2.1)));
 }
 
-fn cubic_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> void
+fn cubic_to(raster_context mut &ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) -> void
 {
   using lml;
   using std;
@@ -267,7 +267,7 @@ fn cubic_to(context mut &ctx, (f64, f64) xy1, (f64, f64) xy2, (f64, f64) xy3) ->
   line_to(&mut ctx, vec2(fround(xy3.0), fround(xy3.1)));
 }
 
-fn accumulate(context &ctx, std::vector<u8> mut &glyph) -> void
+fn accumulate(raster_context &ctx, std::vector<u8> mut &glyph) -> void
 {
   glyph.clear();
   glyph.reserve(ctx.width * ctx.height);
@@ -378,18 +378,18 @@ pub fn *(transform &tx, (i16, i16) &pt) -> (f64, f64)
 
 pub fn *(transform &tx, rect &bound) -> rect
 {
-  var centre = tx * (cast<f64>(bound.x_min + bound.x_max)/2.0, cast<f64>(bound.y_min + bound.y_max)/2.0);
+  var center = tx * (cast<f64>(bound.x_min + bound.x_max)/2.0, cast<f64>(bound.y_min + bound.y_max)/2.0);
   var halfdim = abs(tx) * (cast<f64>(bound.x_max - bound.x_min)/2.0, cast<f64>(bound.y_max - bound.y_min)/2.0);
 
-  var x_min = cast<i16>(std::floor(centre.0 - halfdim.0));
-  var x_max = cast<i16>(std::ceil(centre.0 + halfdim.0));
-  var y_min = cast<i16>(std::floor(centre.1 - halfdim.1));
-  var y_max = cast<i16>(std::ceil(centre.1 + halfdim.1));
+  var x_min = cast<i16>(std::floor(center.0 - halfdim.0));
+  var x_max = cast<i16>(std::ceil(center.0 + halfdim.0));
+  var y_min = cast<i16>(std::floor(center.1 - halfdim.1));
+  var y_max = cast<i16>(std::ceil(center.1 + halfdim.1));
 
   return rect(x_min, y_min, x_max, y_max);
 }
 
-fn trace(context mut &ctx, face &face, glyph &glyph, transform &tx) -> bool
+fn trace(raster_context mut &ctx, face &face, glyph &glyph, transform &tx) -> bool
 {
   switch (glyph.type)
   {
@@ -426,7 +426,7 @@ pub fn render(face &face, glyphid id, transform &tx, bitmap mut &bitmap) -> bool
   var glyph = face.glyph(id);
   var bound = tx * transform::scale(1.0, -1.0) * glyph.bounding_box;
 
-  var ctx = context();
+  var ctx = raster_context();
   ctx.width = cast<usize>(bound.width);
   ctx.height = cast<usize>(bound.height);
   ctx.cells.resize(ctx.width * ctx.height + ctx.width + 1);

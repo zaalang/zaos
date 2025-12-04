@@ -275,9 +275,16 @@ fn emit_label(compile_context mut &ctx, int label) -> result
 fn emit_remark(compile_context mut &ctx, std::string &text) -> result
 {
   ctx.text.push_back(cast<u8>(op::kw_rem));
-  ctx.text.push_back(cast<u8>(text.len));
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(ctx.text.len + 2);
+
   ctx.text.append(text);
+
   ctx.text.push_back(cast<u8>(op::eol));
+
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
 
   return ok;
 }
@@ -796,11 +803,12 @@ fn emit_print(compile_context mut &ctx, Print &print) -> result
     ctx.text.push_back(cast<u8>(op::comma));
   }
 
-  if (print.format != "")
+  if (print.format)
   {
     ctx.text.push_back(cast<u8>(op::kw_using));
 
-    emit_string(&mut ctx, print.format);
+    if (var rc = emit_expression(&mut ctx, print.format); !rc)
+      return rc;
 
     ctx.text.push_back(cast<u8>(op::comma));
   }
@@ -854,6 +862,9 @@ fn emit_input(compile_context mut &ctx, Input &input) -> result
 fn emit_param(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> result
 {
   ctx.text.push_back(cast<u8>(op::kw_param));
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(ctx.text.len + 2);
 
   for (var &vardecl : vardecls)
   {
@@ -1037,12 +1048,18 @@ fn emit_param(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> resul
 
   ctx.text.push_back(cast<u8>(op::eol));
 
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
+
   return ok;
 }
 
 fn emit_type(compile_context mut &ctx, Record &rectype) -> result
 {
   ctx.text.push_back(cast<u8>(op::kw_type));
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(ctx.text.len + 2);
 
   var record = symbol();
   record.type = op::type_record;
@@ -1250,12 +1267,18 @@ fn emit_type(compile_context mut &ctx, Record &rectype) -> result
 
   ctx.text.push_back(cast<u8>(op::eol));
 
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
+
   return ok;
 }
 
 fn emit_dim(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> result
 {
   ctx.text.push_back(cast<u8>(op::kw_dim));
+
+  var endjmp = ctx.text.len;
+  ctx.text.resize(ctx.text.len + 2);
 
   for (var &vardecl : vardecls)
   {
@@ -1443,6 +1466,9 @@ fn emit_dim(compile_context mut &ctx, std::vector<VarDecl> &vardecls) -> result
 
   ctx.text.push_back(cast<u8>(op::eol));
 
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
+
   return ok;
 }
 
@@ -1538,6 +1564,22 @@ fn emit_base(compile_context mut &ctx, int base) -> result
   return ok;
 }
 
+fn emit_degrad(compile_context mut &ctx, int degrad) -> result
+{
+  switch (degrad)
+  {
+    case 0:
+      ctx.text.push_back(cast<u8>(op::kw_deg));
+
+    case 1:
+      ctx.text.push_back(cast<u8>(op::kw_rad));
+  }
+
+  ctx.text.push_back(cast<u8>(op::eol));
+
+  return ok;
+}
+
 fn emit_expr(compile_context mut &ctx, Expression &expression) -> result
 {
   if (var rc = emit_expression(&mut ctx, expression); !rc)
@@ -1575,7 +1617,7 @@ fn emit_if_goto(compile_context mut &ctx, IfGoto &ifgoto) -> result
     return rc;
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   ctx.text.push_back(cast<u8>(op::kw_then));
 
@@ -1598,7 +1640,7 @@ fn emit_if_then(compile_context mut &ctx, IfThen &ifthen) -> result
     return rc;
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   ctx.text.push_back(cast<u8>(op::kw_then));
   ctx.text.push_back(cast<u8>(op::eol));
@@ -1659,7 +1701,7 @@ fn emit_while_do(compile_context mut &ctx, WhileDo &whiledo) -> result
     return rc;
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   ctx.text.push_back(cast<u8>(op::kw_do));
   ctx.text.push_back(cast<u8>(op::eol));
@@ -1769,7 +1811,7 @@ fn emit_for_next(compile_context mut &ctx, ForNext &fornext) -> result
   }
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   ctx.text.push_back(cast<u8>(op::eol));
 
@@ -1860,7 +1902,7 @@ fn emit_exitif(compile_context mut &ctx, ExitIf &exitif) -> result
     return rc;
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   ctx.text.push_back(cast<u8>(op::kw_then));
   ctx.text.push_back(cast<u8>(op::eol));
@@ -1931,7 +1973,7 @@ fn emit_data(compile_context mut &ctx, std::vector<Expression> &exprs) -> result
   ctx.text.push_back(cast<u8>(op::kw_data));
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 2);
 
   for (var &expr : exprs)
   {
@@ -1944,29 +1986,27 @@ fn emit_data(compile_context mut &ctx, std::vector<Expression> &exprs) -> result
 
   if (ctx.first_data_statement == 0)
   {
-    ctx.first_data_statement = endjmp - 1;
+    ctx.first_data_statement = endjmp - 1 - ctx.text_offset;
   }
 
   if (ctx.previous_data_statement != 0)
   {
-    if (endjmp + 3 - ctx.previous_data_statement > 0xffff)
-      return errc::icode_overflow;
-
-    ctx.text[ctx.previous_data_statement + 1] = cast<u8>((endjmp + 3 - ctx.previous_data_statement) & 0xff);
-    ctx.text[ctx.previous_data_statement + 2] = cast<u8>((endjmp + 3 - ctx.previous_data_statement) >> 8 & 0xff);
+    ctx.text[ctx.previous_data_statement + 1] = cast<u8>((endjmp + 2 - ctx.text_offset) & 0xff);
+    ctx.text[ctx.previous_data_statement + 2] = cast<u8>((endjmp + 2 - ctx.text_offset) >> 8 & 0xff);
+    ctx.text[ctx.previous_data_statement + 3] = cast<u8>((endjmp + 2 - ctx.text_offset) >> 16 & 0xff);
   }
 
   ctx.previous_data_statement = ctx.text.len;
 
-  ctx.text.push_back(cast<u8>(op::jmp_fwd_ne));
+  ctx.text.push_back(cast<u8>(op::dref));
+  ctx.text.push_back(cast<u8>(0));
   ctx.text.push_back(cast<u8>(0));
   ctx.text.push_back(cast<u8>(0));
 
   ctx.text.push_back(cast<u8>(op::eol));
 
-  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - ctx.text_offset) & 0xff);
-  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - ctx.text_offset) >> 8 & 0xff);
-  ctx.text[endjmp + 2] = cast<u8>((ctx.text.len - ctx.text_offset) >> 16 & 0xff);
+  ctx.text[endjmp + 0] = cast<u8>((ctx.text.len - endjmp) & 0xff);
+  ctx.text[endjmp + 1] = cast<u8>((ctx.text.len - endjmp) >> 8 & 0xff);
 
   return ok;
 }
@@ -2217,9 +2257,9 @@ fn emit_error(compile_context mut &ctx, Expression &expr) -> result
 
 fn emit_ongoto(compile_context mut &ctx, OnGoto &ongoto) -> result
 {
-  var op = op();
-
   ctx.text.push_back(cast<u8>(op::kw_on));
+
+  var op = op();
 
   switch (ongoto.op)
   {
@@ -2245,7 +2285,7 @@ fn emit_ongoto(compile_context mut &ctx, OnGoto &ongoto) -> result
   }
 
   var endjmp = ctx.text.len;
-  ctx.text.resize(endjmp + 3);
+  ctx.text.resize(ctx.text.len + 3);
 
   for (var &target : ongoto.targets)
   {
@@ -2343,6 +2383,10 @@ fn emit_statement(compile_context mut &ctx, Statement &stmt) -> result
 
     case Base[base]:
       if (var rc = emit_base(&mut ctx, base); !rc)
+        return rc;
+
+    case DegRad[degrad]:
+      if (var rc = emit_degrad(&mut ctx, degrad); !rc)
         return rc;
 
     case Expr[expression]:
@@ -2498,6 +2542,13 @@ fn compile(compile_context mut &ctx, Procedure &procedure, options flags) -> res
 
   if (!ctx.breaks.empty)
     return errc::unmatched_control_structure;
+
+  if (ctx.previous_data_statement != 0)
+  {
+    ctx.text[ctx.previous_data_statement + 1] = cast<u8>((ctx.first_data_statement + 3) & 0xff);
+    ctx.text[ctx.previous_data_statement + 2] = cast<u8>((ctx.first_data_statement + 3) >> 8 & 0xff);
+    ctx.text[ctx.previous_data_statement + 3] = cast<u8>((ctx.first_data_statement + 3) >> 16 & 0xff);
+  }
 
   ctx.link_storage_offset = ctx.data_size;
   ctx.data_size += ctx.link_storage_size;

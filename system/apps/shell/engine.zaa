@@ -3,18 +3,24 @@
 //
 
 import std.vector;
-import std.string;
+import std.string : String;
 import chrono;
 import ast;
 import value;
+import stack;
 import pipeline;
 import command;
 import diag;
 
-using ast;
 using value;
+using stack;
 using pipeline;
 using command;
+using ast::Block;
+using ast::CallOp;
+using ast::UnaryOp;
+using ast::BinaryOp;
+using ast::Expression;
 
 pub struct Engine
 {
@@ -23,7 +29,7 @@ pub struct Engine
     std::string id;
     std::string contents;
 
-    Source(std::String &&id, std::String &&contents)
+    Source(String &&id, String &&contents)
       : id(&&id), contents(&&contents)
     {
     }
@@ -43,7 +49,7 @@ pub fn create() -> Engine
   return Engine();
 }
 
-pub fn add_source(Engine mut &engine, std::String &&id, std::String &&contents) -> std::string_view
+pub fn add_source(Engine mut &engine, String &&id, String &&contents) -> std::string_view
 {
   for (var &source : engine.sources)
   {
@@ -158,14 +164,14 @@ pub fn engine_error_category() -> engine_error_category *
 pub struct Context
 {
   pub diag::diag diag;
-
   pub Engine mut &engine;
+  pub Stack mut &stack;
 
   diag::diag mut &outdiag;
   std::optional<diag::diagnostic> exception;
 
-  Context(Engine mut &engine, diag::diag mut &diag)
-    : engine(&engine), diag(diag.leader), outdiag(&diag)
+  Context(Engine mut &engine, Stack mut &stack, diag::diag mut &diag)
+    : engine(&engine), stack(&stack), diag(diag.leader), outdiag(&diag)
   {
   }
 
@@ -216,7 +222,7 @@ pub fn read_span(Engine * &engine, diag::label &label, usize before, usize after
       var pos = offset;
 
       lineno = 0;
-      position = 0;
+      position = pos;
 
       for (var ch : source.contents)
       {
@@ -745,7 +751,7 @@ fn rescue(Context mut &ctx, BinaryOp &expr) throws(std::error) -> Value
   }
 }
 
-fn call(Context mut &ctx, Pipeline mut &pipeline, Call &call) throws(std::error) -> void
+fn call(Context mut &ctx, Pipeline mut &pipeline, CallOp &call) throws(std::error) -> void
 {
   var args = std::vector<Arg>();
 
@@ -788,7 +794,7 @@ fn pipe(Context mut &ctx, Expression &expr, bool capture) throws(std::error) -> 
     {
       switch (*expr)
       {
-        case Call[call]:
+        case CallOp[call]:
 
           pipeline.capture_stdout = capture;
 
@@ -811,7 +817,7 @@ fn pipe(Context mut &ctx, Expression &expr, bool capture) throws(std::error) -> 
 
               switch (*binaryop.rhs)
               {
-                case Call[call]:
+                case CallOp[call]:
                   expr = &*binaryop.rhs;
 
                 case BinaryOp[nextop]:
@@ -834,7 +840,7 @@ fn pipe(Context mut &ctx, Expression &expr, bool capture) throws(std::error) -> 
 
               switch (*binaryop.lhs)
               {
-                case Call[call]:
+                case CallOp[call]:
 
                   pipeline.capture_stdout = true;
 
@@ -895,7 +901,7 @@ fn evaluate(Context mut &ctx, Expression &expr) throws(std::error) -> Value
     case FileSize[filesize]:
       return Value::FileSize(filesize.value);
 
-    case Call[call]:
+    case CallOp[call]:
       return pipe(&mut ctx, expr, capture: false);
 
     case UnaryOp[unaryop]:
@@ -915,7 +921,7 @@ fn evaluate(Context mut &ctx, Expression &expr) throws(std::error) -> Value
 
           switch (*unaryop.subexpr)
           {
-            case Call[call]:
+            case CallOp[call]:
               return pipe(&mut ctx, *unaryop.subexpr, capture: true);
 
             case BinaryOp[nextop]:
@@ -995,11 +1001,11 @@ fn evaluate(Context mut &ctx, Expression &expr) throws(std::error) -> Value
   std::panic("unhandled expression");
 }
 
-pub fn evaluate(Engine mut &engine, Block &block, diag::diag mut &diag) -> Value
+pub fn evaluate(Engine mut &engine, Stack mut &stack, Block &block, diag::diag mut &diag) -> Value
 {
   var value = Value();
 
-  var ctx = Context(&mut engine, &mut diag);
+  var ctx = Context(&mut engine, &mut stack, &mut diag);
 
   for (var &expr : block.exprs)
   {

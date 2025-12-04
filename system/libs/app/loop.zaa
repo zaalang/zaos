@@ -9,7 +9,7 @@ import std.box;
 import os.zaos.fcntl;
 import os.zaos.sched;
 import os.zaos.time;
-import zidl.zaos_sys;
+import zidl.zaos.sys;
 
 pub const STDSYS_FILENO = 7;
 

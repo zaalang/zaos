@@ -1,0 +1,1140 @@
+//
+// lower
+//
+
+import std.stdio;
+import std.string : String;
+import source : Source;
+import parser : parse;
+import ast;
+import mir;
+import diag;
+
+using ast;
+using mir;
+
+union LowerError
+{
+  struct UnknownElement : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Unknown Element";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "unknown element");
+    }
+
+    ~this() = default;
+  }
+
+  struct UnknownObject : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Unknown Object";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "unknown object");
+    }
+
+    ~this() = default;
+  }
+
+  struct UnknownProperty : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Unknown Property";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "unknown property");
+    }
+
+    ~this() = default;
+  }
+
+  struct UnknownField : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Unknown Field";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "unknown field");
+    }
+
+    ~this() = default;
+  }
+
+  struct IllegalBinding : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span)
+    {
+      super.source = &source;
+      super.message = "Illegal Binding";
+      super.loc = source.source_ident(span);
+      super.add_label(source.source_location(span), span.len, "illegal binding");
+    }
+
+    ~this() = default;
+  }
+
+  struct BindingLoop : pub diag::diagnostic
+  {
+    this(Source &source, std::string_view span, std::string &&text)
+    {
+      super.source = &source;
+      super.message = "Binding Loop";
+      super.loc = source.source_ident(span);
+      super.text = &&text;
+    }
+
+    ~this() = default;
+  }
+}
+
+struct scope
+{
+  std::vector<std::string_view> vars;
+
+  scope(std::vector<std::string_view> &&vars)
+    : vars(vars)
+  {
+  }
+
+  scope() = default;
+  scope(scope &&) = default;
+  ~scope() = default;
+}
+
+struct lower_context
+{
+  Mir mir;
+  diag::diag diag;
+  Source mut &source;
+
+  std::vector<scope> scopes;
+
+  diag::diag mut &outdiag;
+
+  lower_context(Source mut &source, diag::diag mut &diag)
+    : source(&source), diag(diag.leader), outdiag(&diag)
+  {
+  }
+
+  ~lower_context()
+  {
+    outdiag << diag;
+  }
+}
+
+fn is_layout(lower_context &ctx, Object &object) -> bool
+{
+  switch (object.type)
+  {
+    case "GridLayout":
+    case "HorizontalLayout":
+    case "VerticalLayout":
+    case "FlexLayout":
+      return true;
+  }
+
+  return false;
+}
+
+fn lower_ident(lower_context mut &ctx, usize object_id, Ident &ident) -> BoundExpression
+{
+  var mut &component = ctx.mir.components.back;
+
+  switch (ident.name)
+  {
+    case "this":
+      return BoundExpression::ObjectId(object_id);
+
+    case "parent":
+      return BoundExpression::ObjectId(component.objects[object_id].parent);
+
+    case "root":
+      return BoundExpression::ObjectId(0);
+
+    case "TextHorizontalAlignment":
+    case "TextVerticalAlignment":
+    case "LayoutHorizontalAlignment":
+    case "LayoutVerticalAlignment":
+    case "PointerEventButton":
+    case "PointerEventKind":
+    case "Transform":
+    case "Point":
+    case "Rect":
+    case "MIN":
+    case "MAX":
+    case "CLAMP":
+    case "CEIL":
+    case "FLOOR":
+    case "ROUND":
+    case "STR$":
+    case "LEFT$":
+    case "RIGHT$":
+    case "MID$":
+    case "TRIM$":
+    case "debug":
+      return BoundExpression::Enumeration(ident.name);
+  }
+
+  rof (var &scope : ctx.scopes)
+  {
+    if (scope.vars.find(ident.name) != scope.vars.end)
+      return BoundExpression::Enumeration(ident.name);
+  }
+
+  for (var objectid = 0; objectid != component.objects.len; ++objectid)
+  {
+    if (component.objects[objectid].id == ident.name)
+      return BoundExpression::ObjectId(objectid);
+  }
+
+  ctx.diag.error(LowerError::UnknownObject(ctx.source, ident.name));
+
+  return BoundExpression();
+}
+
+fn lower_field(lower_context mut &ctx, usize object_id, Field &field) -> BoundExpression
+{
+  var mut &component = ctx.mir.components.back;
+
+  switch (lower_expression(&mut ctx, object_id, *field.base))
+  {
+    case ObjectId[objectid]:
+      var mut &object = component.objects[objectid];
+
+      for (var propertyid = object.property_index; propertyid < object.property_index + object.property_count; ++propertyid)
+      {
+        if (component.properties[propertyid].name == field.name)
+          return BoundExpression::PropertyId(propertyid);
+      }
+
+    case Enumeration[enumeration]:
+      switch (enumeration.name)
+      {
+        case "TextHorizontalAlignment":
+          switch (field.name)
+          {
+            case "left":
+            case "Left":
+              return BoundExpression::Enumeration("gui::text_horizontal_alignment::left");
+
+            case "center":
+            case "Center":
+              return BoundExpression::Enumeration("gui::text_horizontal_alignment::center");
+
+            case "right":
+            case "Right":
+              return BoundExpression::Enumeration("gui::text_horizontal_alignment::right");
+          }
+
+        case "TextVerticalAlignment":
+          switch (field.name)
+          {
+            case "top":
+            case "Top":
+              return BoundExpression::Enumeration("gui::text_vertical_alignment::top");
+
+            case "middle":
+            case "Middle":
+              return BoundExpression::Enumeration("gui::text_vertical_alignment::middle");
+
+            case "bottom":
+            case "Bottom":
+              return BoundExpression::Enumeration("gui::text_vertical_alignment::bottom");
+          }
+
+        case "LayoutHorizontalAlignment":
+          switch (field.name)
+          {
+            case "left":
+            case "Left":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::left");
+
+            case "center":
+            case "Center":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::center");
+
+            case "right":
+            case "Right":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::right");
+
+            case "space-between":
+            case "Space-Between":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::space_between");
+
+            case "space-around":
+            case "Space-Around":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::space_around");
+
+            case "space-evenly":
+            case "Space-Evenly":
+              return BoundExpression::Enumeration("gui::layout_horizontal_alignment::space_evenly");
+          }
+
+        case "LayoutVerticalAlignment":
+          switch (field.name)
+          {
+            case "top":
+            case "Top":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::top");
+
+            case "middle":
+            case "Middle":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::middle");
+
+            case "bottom":
+            case "Bottom":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::bottom");
+
+            case "space-between":
+            case "Space-Between":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::space_between");
+
+            case "space-around":
+            case "Space-Around":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::space_around");
+
+            case "space-evenly":
+            case "Space-Evenly":
+              return BoundExpression::Enumeration("gui::layout_vertical_alignment::space_evenly");
+          }
+
+        case "PointerEventButton":
+          switch (field.name)
+          {
+            case "primary":
+            case "Primary":
+              return BoundExpression::Enumeration("gui::button::primary");
+
+            case "secondary":
+            case "Secondary":
+              return BoundExpression::Enumeration("gui::button::secondary");
+          }
+
+        case "PointerEventKind":
+          switch (field.name)
+          {
+            case "pressed":
+            case "Pressed":
+              return BoundExpression::Enumeration("gui::item_pointer_event::kind::pressed");
+
+            case "released":
+            case "Released":
+              return BoundExpression::Enumeration("gui::item_pointer_event::kind::released");
+
+            case "moved":
+            case "Moved":
+              return BoundExpression::Enumeration("gui::item_pointer_event::kind::moved");
+          }
+
+        case "Transform":
+          switch (field.name)
+          {
+            case "identity":
+            case "Identity":
+              return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformIdentity);
+
+            case "translation":
+            case "Translation":
+              return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformTranslation);
+
+            case "rotation":
+            case "Rotation":
+              return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformRotation);
+
+            case "scale":
+            case "Scale":
+              return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformScale);
+          }
+
+        else:
+          return BoundExpression::Enumeration(std::format("{}.{}", enumeration.name, field.name));
+      }
+  }
+
+  ctx.diag.error(LowerError::UnknownField(ctx.source, field.name));
+
+  return BoundExpression();
+}
+
+fn lower_call(lower_context mut &ctx, usize object_id, Call &call) -> BoundExpression
+{
+  var args = std::vector<BoundExpression>();
+
+  for (var &arg : call.args)
+  {
+    args.push_back(lower_expression(&mut ctx, object_id, arg));
+  }
+
+  switch (lower_expression(&mut ctx, object_id, *call.decl))
+  {
+    case Enumeration[enumeration]:
+      switch (enumeration.name)
+      {
+        case "Point":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Point, &move args);
+
+        case "Rect":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Rect, &move args);
+
+        case "MIN":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Min, &move args);
+
+        case "MAX":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Max, &move args);
+
+        case "CLAMP":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Clamp, &move args);
+
+        case "CEIL":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Ceil, &move args);
+
+        case "FLOOR":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Floor, &move args);
+
+        case "ROUND":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Round, &move args);
+
+        case "STR$":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Str$, &move args);
+
+        case "LEFT$":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Left$, &move args);
+
+        case "RIGHT$":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Right$, &move args);
+
+        case "MID$":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Mid$, &move args);
+
+        case "TRIM$":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Mid$, &move args);
+
+        case "debug":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Debug, &move args);
+      }
+
+      case FunctionOp[functionop]:
+        switch (functionop.op)
+        {
+          case TransformTranslation:
+            return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformTranslation, &move args);
+
+          case TransformRotation:
+            return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformRotation, &move args);
+
+          case TransformScale:
+            return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformScale, &move args);
+        }
+
+    case PropertyId[propertyid]:
+      return BoundExpression::CallOp(propertyid, &move args);
+  }
+
+  return BoundExpression();
+}
+
+fn lower_block(lower_context mut &ctx, usize object_id, Block &block) -> BoundExpression
+{
+  ctx.scopes.push_back(block.args);
+
+  var stmts = std::vector<BoundExpression>();
+
+  for (var &stmt : block.stmts)
+    stmts.push_back(lower_expression(&mut ctx, object_id, stmt));
+
+  ctx.scopes.pop_back();
+
+  return BoundExpression::Block(block.args, &move stmts);
+}
+
+fn lower_expression(lower_context mut &ctx, usize object_id, Expression &expression) -> BoundExpression
+{
+  switch (expression)
+  {
+    case Number[number]:
+      switch (number.unit)
+      {
+        case Px:
+          return BoundExpression::LogicalLength(number.value);
+
+        case Cm:
+          return BoundExpression::LogicalLength(number.value * 37.8);
+
+        case Mm:
+          return BoundExpression::LogicalLength(number.value * 3.78);
+
+        case In:
+          return BoundExpression::LogicalLength(number.value * 96.0);
+
+        case Pt:
+          return BoundExpression::LogicalLength(number.value * 96.0 / 72.0);
+
+        case Phx:
+          return BoundExpression::PhysicalLength(number.value);
+
+        case Percent:
+          return BoundExpression::Percentage(number.value);
+
+        case None:
+          return BoundExpression::Number(number.value);
+      }
+
+    case Integer[integer]:
+      return BoundExpression::Integer(integer.value);
+
+    case Boolean[boolean]:
+      return BoundExpression::Boolean(boolean.value);
+
+    case String[string]:
+      return BoundExpression::String(string.value);
+
+    case Color[color]:
+      return BoundExpression::Color(color.value);
+
+    case Ident[ident]:
+      return lower_ident(&mut ctx, object_id, ident);
+
+    case Field[field]:
+      return lower_field(&mut ctx, object_id, field);
+
+    case Call[call]:
+      return lower_call(&mut ctx, object_id, call);
+
+    case UnaryOp[unaryop]:
+      return BoundExpression::UnaryOp(cast<BoundUnaryOp::Kind>(unaryop.op), lower_expression(&mut ctx, object_id, *unaryop.subexpr));
+
+    case BinaryOp[binaryop]:
+      return BoundExpression::BinaryOp(cast<BoundBinaryOp::Kind>(binaryop.op), lower_expression(&mut ctx, object_id, *binaryop.lhs), lower_expression(&mut ctx, object_id, *binaryop.rhs));
+
+    case Block[block]:
+      return lower_block(&mut ctx, object_id, block);
+  }
+
+  return BoundExpression();
+}
+
+fn type_check(lower_context mut &ctx, Component &component, BoundExpression &expression) -> Type
+{
+  switch (expression)
+  {
+    case Number:
+      return Type::Number;
+
+    case LogicalLength:
+      return Type::Length;
+
+    case PhysicalLength:
+      return Type::Length;
+
+    case Percentage:
+      return Type::Percent;
+
+    case Integer:
+      return Type::Integer;
+
+    case Boolean:
+      return Type::Boolean;
+
+    case String:
+      return Type::String;
+
+    case Color:
+      return Type::Color;
+
+    case ObjectId[objectid]:
+      return Type::Object(objectid);
+
+    case PropertyId[propertyid]:
+      return component.properties[propertyid].type;
+
+    case Enumeration[enumeration]:
+      return Type::Enumeration(enumeration.name);
+
+    case UnaryOp[unaryop]:
+      var subexpr = type_check(&mut ctx, component, *unaryop.subexpr);
+
+      switch (unaryop.op)
+      {
+        case Plus:
+        case Minus:
+        case LNot:
+          return subexpr;
+
+        case Group:
+          return subexpr;
+      }
+
+    case BinaryOp[binaryop]:
+      var lhs = type_check(&mut ctx, component, *binaryop.lhs);
+      var rhs = type_check(&mut ctx, component, *binaryop.rhs);
+
+      switch (binaryop.op)
+      {
+        case Add:
+        case Sub:
+        case Mul:
+        case Div:
+        case Rem:
+        case LAnd:
+        case LOr:
+          return lhs;
+
+        case LT:
+        case GT:
+        case LE:
+        case GE:
+        case EQ:
+        case NE:
+          return Type::Boolean;
+
+        case Assign:
+          return lhs;
+      }
+
+    case FunctionOp[functionop]:
+      switch (functionop.op)
+      {
+        case TransformIdentity:
+          return Type::Enumeration("Transform");
+
+        case TransformScale:
+          type_check(&mut ctx, component, functionop.args[0]);
+          return Type::Enumeration("Transform");
+      }
+  }
+
+  return Type();
+}
+
+fn loop_check<Checker>(lower_context mut &ctx, Component &component, BoundExpression &expression, Checker mut &checker) -> void
+{
+  switch (expression)
+  {
+    case PropertyId[propertyid]:
+      if (checker(component, propertyid))
+      {
+        var &property = component.properties[propertyid];
+        var &object = component.objects[property.parent];
+
+        if (property.name == "width" && component.objects[object.parent].type == "HorizontalLayout")
+        {
+          if (var id = component.find_property(property.parent, "min-width"); id)
+            loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+
+          switch (object.type)
+          {
+            case "Text":
+              if (var id = component.find_property(property.parent, "font-size"); id)
+                loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+
+            case "HorizontalLayout":
+              for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+                if (var id = component.find_property(childid, "width"); id)
+                  loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+          }
+        }
+
+        if (property.name == "height" && component.objects[object.parent].type == "VerticalLayout")
+        {
+          if (var id = component.find_property(property.parent, "min-height"); id)
+            loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+
+          switch (object.type)
+          {
+            case "Text":
+              if (var id = component.find_property(property.parent, "font-size"); id)
+                loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+
+            case "VerticalLayout":
+              for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+                if (var id = component.find_property(childid, "height"); id)
+                  loop_check(&mut ctx, component, BoundExpression::PropertyId(id?!), &mut checker);
+          }
+        }
+
+        loop_check(&mut ctx, component, property.expression, &mut checker);
+      }
+
+    case UnaryOp[unaryop]:
+      loop_check(&mut ctx, component, *unaryop.subexpr, &mut checker);
+
+    case BinaryOp[binaryop]:
+      loop_check(&mut ctx, component, *binaryop.lhs, &mut checker);
+      loop_check(&mut ctx, component, *binaryop.rhs, &mut checker);
+
+    case FunctionOp[functionop]:
+      for (var &arg : functionop.args)
+        loop_check(&mut ctx, component, arg, &mut checker);
+  }
+}
+
+fn lower_type(lower_context mut &ctx, std::string_view type) -> Type
+{
+  switch (type)
+  {
+    case "angle":
+      return Type::Angle;
+
+    case "length":
+      return Type::Length;
+
+    case "duration":
+      return Type::Duration;
+
+    case "number":
+      return Type::Number;
+
+    case "percent":
+      return Type::Percent;
+
+    case "int":
+      return Type::Integer;
+
+    case "bool":
+      return Type::Boolean;
+
+    case "string":
+      return Type::String;
+
+    case "color":
+      return Type::Color;
+
+    else:
+      return Type::Enumeration(type);
+  }
+}
+
+fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+  var mut &object = component.objects[object_id];
+  var n = component.properties.len;
+
+  switch (element.type)
+  {
+    case "GridLayout":
+    case "HorizontalLayout":
+    case "VerticalLayout":
+    case "FlexLayout":
+      component.properties.push_back(object_id, Type::Length, "x");
+      component.properties.push_back(object_id, Type::Length, "y");
+      component.properties.push_back(object_id, Type::Length, "width");
+      component.properties.push_back(object_id, Type::Length, "height");
+
+    else:
+      component.properties.push_back(object_id, Type::Length, "x");
+      component.properties.push_back(object_id, Type::Length, "y");
+      component.properties.push_back(object_id, Type::Length, "width");
+      component.properties.push_back(object_id, Type::Length, "height");
+      component.properties.push_back(object_id, Type::Boolean, "visible");
+      component.properties.push_back(object_id, Type::Enumeration("Transform"), "transform");
+  }
+
+  switch (component.objects[component.objects[object_id].parent].type)
+  {
+    case "GridLayout":
+      ;
+
+    case "HorizontalLayout":
+      component.properties.push_back(object_id, Type::Length, "min-width");
+      component.properties.push_back(object_id, Type::Length, "max-width");
+      component.properties.push_back(object_id, Type::Number, "preferred-width");
+      component.properties.push_back(object_id, Type::Number, "horizontal-stretch");
+
+    case "VerticalLayout":
+      component.properties.push_back(object_id, Type::Length, "min-height");
+      component.properties.push_back(object_id, Type::Length, "max-height");
+      component.properties.push_back(object_id, Type::Number, "preferred-height");
+      component.properties.push_back(object_id, Type::Number, "vertical-stretch");
+
+    case "FlexLayout":
+      ;
+  }
+
+  switch (element.type)
+  {
+    case "Rectangle":
+      component.properties.push_back(object_id, Type::Length, "border-width");
+      component.properties.push_back(object_id, Type::Length, "border-top-left-radius");
+      component.properties.push_back(object_id, Type::Length, "border-top-right-radius");
+      component.properties.push_back(object_id, Type::Length, "border-bottom-left-radius");
+      component.properties.push_back(object_id, Type::Length, "border-bottom-right-radius");
+      component.properties.push_back(object_id, Type::Color, "border-color");
+      component.properties.push_back(object_id, Type::Color, "background");
+      component.properties.push_back(object_id, Type::Boolean, "clip");
+
+    case "Text":
+      component.properties.push_back(object_id, Type::String, "font-family");
+      component.properties.push_back(object_id, Type::Length, "font-size");
+      component.properties.push_back(object_id, Type::String, "text");
+      component.properties.push_back(object_id, Type::Color, "color");
+      component.properties.push_back(object_id, Type::Enumeration("TextHorizontalAlignment"), "horizontal-alignment");
+      component.properties.push_back(object_id, Type::Enumeration("TextVerticalAlignment"), "vertical-alignment");
+      component.properties.push_back(object_id, Type::Boolean, "clip");
+
+    case "TouchArea":
+      component.properties.push_back(object_id, Type::Boolean, "enabled");
+      component.properties.push_back(object_id, Type::Signal(), "on_entered");
+      component.properties.push_back(object_id, Type::Signal(), "on_exited");
+      component.properties.push_back(object_id, Type::Signal(), "on_clicked");
+      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_pressed");
+      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_released");
+      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_dragged");
+      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("PointerEvent")])), "pointer_event");
+
+    case "GridLayout":
+    case "HorizontalLayout":
+    case "VerticalLayout":
+    case "FlexLayout":
+      component.properties.push_back(object_id, Type::Length, "spacing");
+      component.properties.push_back(object_id, Type::Length, "padding-left");
+      component.properties.push_back(object_id, Type::Length, "padding-right");
+      component.properties.push_back(object_id, Type::Length, "padding-top");
+      component.properties.push_back(object_id, Type::Length, "padding-bottom");
+
+      switch (element.type)
+      {
+        case "HorizontalLayout":
+          component.properties.push_back(object_id, Type::Enumeration("LayoutHorizontalAlignment"), "alignment");
+
+        case "VerticalLayout":
+          component.properties.push_back(object_id, Type::Enumeration("LayoutVerticalAlignment"), "alignment");
+      }
+
+    else:
+      switch (ctx.mir.lookup(element.type))
+      {
+        case Some[var &[scope, element]]:
+          var &rootobj = element.objects[0];
+
+          for (var propertyid = rootobj.property_index; propertyid < rootobj.property_index + rootobj.property_count; ++propertyid)
+          {
+            var &property = element.properties[propertyid];
+
+            switch (property.kind)
+            {
+              case Public:
+              case Signal:
+                component.properties.push_back(Property(object_id, property.type, property.name));
+            }
+          }
+
+        case None:
+          ctx.diag.error(LowerError::UnknownElement(ctx.source, element.type));
+      }
+  }
+
+  for (var &local : element.locals)
+  {
+    var kind = Property::Kind::Private;
+
+    if (local.flags & Local::Flags::Public != 0)
+      kind = Property::Kind::Public;
+
+    var type = lower_type(&mut ctx, local.type);
+
+    component.properties.push_back(kind, object_id, type, local.name);
+  }
+
+  for (var &signal: element.signals)
+  {
+    var args = std::vector<Type>();
+
+    for (var &arg: signal.args)
+      args.push_back(lower_type(&mut ctx, arg.type));
+
+    component.properties.push_back(Property::Kind::Signal, object_id, Type::Signal(args), signal.name);
+  }
+
+  object.property_index = n;
+  object.property_count = component.properties.len - n;
+}
+
+fn lower_objects(lower_context mut &ctx, usize object_id, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+  var mut &object = component.objects[object_id];
+
+  var child_index = component.objects.len;
+  var child_count = element.children.len;
+
+  object.id = element.id;
+  object.child_index = child_index;
+  object.child_count = child_count;
+
+  for (var &child : element.children)
+  {
+    component.objects.push_back(object_id, std::format("{}_{}", std::to_lowercase(child.type), component.objects.len), child.type);
+  }
+
+  for (var childid = child_index; childid < child_index + child_count; ++childid)
+  {
+    lower_objects(&mut ctx, childid, element.children[childid - child_index]);
+  }
+
+  lower_properties(&mut ctx, object_id, element);
+}
+
+fn lower_objects(lower_context mut &ctx, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+  var mut &object = component.objects.push_back(0, "root_0", "Rectangle");
+
+  lower_objects(&mut ctx, 0, element);
+}
+
+fn lower_bindings(lower_context mut &ctx, usize object_id, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+  var mut &object = component.objects[object_id];
+
+  switch (component.objects[object.parent].type)
+  {
+    case "GridLayout":
+      ;
+
+    case "HorizontalLayout":
+
+      switch (component.find_property(object_id, "y"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          var parent_y = component.find_property(object.parent, "y");
+          var parent_top = component.find_property(object.parent, "padding-top");
+
+          property.expression = BoundExpression::BinaryOp(BoundBinaryOp::Kind::Add, BoundExpression::PropertyId(parent_y?!), BoundExpression::PropertyId(parent_top?!));
+      }
+
+      switch (component.find_property(object_id, "height"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          var parent_height = component.find_property(object.parent, "height");
+          var parent_top = component.find_property(object.parent, "padding-top");
+          var parent_bottom = component.find_property(object.parent, "padding-bottom");
+
+          property.expression = BoundExpression::BinaryOp(BoundBinaryOp::Kind::Sub, BoundExpression::BinaryOp(BoundBinaryOp::Kind::Sub, BoundExpression::PropertyId(parent_height?!), BoundExpression::PropertyId(parent_top?!)), BoundExpression::PropertyId(parent_bottom?!));
+      }
+
+    case "VerticalLayout":
+
+      switch (component.find_property(object_id, "x"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          var parent_x = component.find_property(object.parent, "x");
+          var parent_left = component.find_property(object.parent, "padding-left");
+
+          property.expression = BoundExpression::BinaryOp(BoundBinaryOp::Kind::Add, BoundExpression::PropertyId(parent_x?!), BoundExpression::PropertyId(parent_left?!));
+      }
+
+      switch (component.find_property(object_id, "width"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          var parent_width = component.find_property(object.parent, "width");
+          var parent_left = component.find_property(object.parent, "padding-left");
+          var parent_right = component.find_property(object.parent, "padding-right");
+
+          property.expression = BoundExpression::BinaryOp(BoundBinaryOp::Kind::Sub, BoundExpression::BinaryOp(BoundBinaryOp::Kind::Sub, BoundExpression::PropertyId(parent_width?!), BoundExpression::PropertyId(parent_left?!)), BoundExpression::PropertyId(parent_right?!));
+      }
+
+    case "FlexLayout":
+      ;
+
+    else:
+
+      switch (component.find_property(object_id, "width"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          if (var parent_width = component.find_property(object.parent, "width"))
+            property.expression = BoundExpression::PropertyId(parent_width?!);
+      }
+
+      switch (component.find_property(object_id, "height"))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          if (var parent_height = component.find_property(object.parent, "height"))
+            property.expression = BoundExpression::PropertyId(parent_height?!);
+      }
+  }
+
+  for (var &binding : element.bindings)
+  {
+    switch (binding.name)
+    {
+      case "x":
+      case "y":
+      case "width":
+      case "height":
+        if (is_layout(ctx, object) || is_layout(ctx, component.objects[object.parent]))
+          ctx.diag.error(LowerError::IllegalBinding(ctx.source, binding.name));
+
+      case "min-width":
+      case "max-width":
+      case "preferred-width":
+      case "horizontal-stretch":
+        if (!is_layout(ctx, component.objects[object.parent]))
+          ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+
+      case "min-height":
+      case "max-height":
+      case "preferred-height":
+      case "verticall-stretch":
+        if (!is_layout(ctx, component.objects[object.parent]))
+          ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+    }
+
+    switch (binding.name)
+    {
+      case "padding":
+        for (var name : [ "padding-left", "padding-right", "padding-top", "padding-bottom" ])
+        {
+          switch (component.find_property(object_id, name))
+          {
+            case Some[property_id]:
+              var mut &property = component.properties[property_id];
+
+              property.expression = lower_expression(&mut ctx, object_id, binding.expression);
+
+            case None:
+              ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+          }
+        }
+
+      case "border-radius":
+        for (var name : [ "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius" ])
+        {
+          switch (component.find_property(object_id, name))
+          {
+            case Some[property_id]:
+              var mut &property = component.properties[property_id];
+
+              property.expression = lower_expression(&mut ctx, object_id, binding.expression);
+
+            case None:
+              ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+          }
+        }
+
+      else:
+        switch (component.find_property(object_id, binding.name))
+        {
+          case Some[property_id]:
+            var mut &property = component.properties[property_id];
+
+            property.expression = lower_expression(&mut ctx, object_id, binding.expression);
+
+          case None:
+            ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+        }
+    }
+  }
+
+  for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+  {
+    lower_bindings(&mut ctx, childid, element.children[childid - object.child_index]);
+  }
+}
+
+fn lower_bindings(lower_context mut &ctx, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+  var mut &object = component.objects[0];
+
+  for (var &binding : element.bindings)
+  {
+    switch (component.find_property(0, binding.name))
+    {
+      case Some[property_id]:
+        var mut &property = component.properties[property_id];
+
+        property.expression = lower_expression(&mut ctx, 0, binding.expression);
+
+      case None:
+        ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+    }
+  }
+
+  for (var childid = object.child_index; childid < object.child_index + object.child_count; ++childid)
+  {
+    lower_bindings(&mut ctx, childid, element.children[childid - object.child_index]);
+  }
+
+  for (var mut &property : component.properties)
+  {
+    type_check(&mut ctx, component, property.expression);
+  }
+
+  for (var mut &property : component.properties)
+  {
+    var visited = std::flat_hash_map<usize, void>();
+
+    loop_check(&mut ctx, component, property.expression, |component, propertyid| {
+      if (&component.properties[propertyid] == &property)
+        ctx.diag.error(LowerError::BindingLoop(ctx.source, element.type, std::format("  binding loop detected {}.{} -> {}.{}\n", component.objects[property.parent].name, property.name, component.objects[component.properties[propertyid].parent].name, component.properties[propertyid].name)));
+
+      return visited.insert(propertyid).1;
+    });
+  }
+}
+
+fn lower_import(lower_context mut &ctx, Import &imprt, std::vector<std::string> &importpath) throws(std::error) -> void
+{
+  var file = imprt.name.gsub(".", "/") + ".ui";
+
+  for (var &path : importpath)
+  {
+    try
+    {
+      if (var test = path + "/" + file; std::file::open(test))
+        file = test;
+    }
+    catch (std::error)
+    {
+    }
+  }
+
+  var ast = parse(file, &mut ctx.source, &mut ctx.diag);
+
+  var mir = lower(ast, &mut ctx.source, &mut ctx.diag, importpath);
+
+  ctx.mir.imports.insert(imprt.name, &move mir);
+}
+
+pub fn lower(Ast &ast, Source mut &source, diag::diag mut &diag, std::vector<std::string> &importpath) throws(std::error) -> Mir
+{
+  var ctx = lower_context(&mut source, &mut diag);
+
+  for (var &decl : ast.decls)
+  {
+    switch (decl)
+    {
+      case Import[imprt]:
+        lower_import(&mut ctx, imprt, importpath);
+
+      case Element[element]:
+        ctx.mir.components.push_back(element.type);
+
+        lower_objects(&mut ctx, element);
+        lower_bindings(&mut ctx, element);
+    }
+  }
+
+  return ctx.mir;
+}

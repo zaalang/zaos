@@ -105,6 +105,9 @@ image:
             src: data/LiberationMono-BoldItalic.ttf
             dest: /data/LiberationMono-BoldItalic.ttf
         - cp:
+            src: data/Codicon.ttf
+            dest: /data/Codicon.ttf
+        - cp:
             src: data/system.fontmap
             dest: /data/system.fontmap
         - md:
@@ -124,9 +127,6 @@ image:
         - cp:
             src: build/system/servers/coco/coco
             dest: /srv/coco
-        - cp:
-            src: build/system/servers/test/test
-            dest: /srv/test
         - md:
             dest: /bin
         - cp:
@@ -223,6 +223,9 @@ image:
             src: build/system/apps/edit/edit
             dest: /bin/edit
         - cp:
+            src: build/system/apps/calc/calc
+            dest: /bin/calc
+        - cp:
             src: build/system/apps/bar/bar
             dest: /root/bar
         - cp:
@@ -240,3 +243,14 @@ image:
         - cp:
             src: build/system/apps/mandlebrot/mandlebrot
             dest: /root/mandlebrot
+        - cp:
+            src: build/system/apps/gallery/gallery
+            dest: /root/gallery
+        - cp:
+            src: system/servers/coco/samples/mandel.b09
+            dest: /root/mandel.b09
+        - cp:
+            src: system/servers/coco/samples/clock.b09
+            dest: /root/clock.b09
+
+

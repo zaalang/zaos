@@ -1,0 +1,347 @@
+//
+// mir
+//
+
+import std.box;
+import std.string : String;
+import std.vector;
+import std.flat_hash_map;
+
+pub struct Mir
+{
+  pub std::vector<Component> components;
+
+  pub std::flat_hash_map<std::string, Mir> imports;
+
+  pub Mir() = default;
+  pub Mir(Mir &&) = default;
+  pub ~Mir() = default;
+}
+
+pub struct Component
+{
+  pub std::string name;
+  pub std::vector<Object> objects;
+  pub std::vector<Property> properties;
+
+  pub Component(String &&name)
+    : name(&&name)
+  {
+  }
+
+  pub Component(Component &&) = default;
+  pub ~Component() = default;
+}
+
+pub struct Object
+{
+  pub std::string id;
+
+  pub std::string name;
+  pub std::string type;
+
+  pub usize parent;
+  pub usize child_count;
+  pub usize child_index;
+  pub usize property_count;
+  pub usize property_index;
+
+  pub Object(usize parent, String &&name, String &&type)
+    : name(&&name), type(&&type), parent(parent)
+  {
+  }
+
+  pub Object(Object &&) = default;
+  pub ~Object() = default;
+}
+
+pub struct Property
+{
+  pub enum Kind
+  {
+    Public,
+    Private,
+    Signal,
+    Binding,
+  }
+
+  pub Kind kind;
+  pub usize parent;
+  pub std::string name;
+  pub BoundExpression expression;
+  pub Type type;
+
+  pub Property(usize parent, Type &type, String &&name)
+    : kind(Kind::Binding), name(&&name), parent(parent), type(type)
+  {
+  }
+
+  pub Property(Kind kind, usize parent, Type &type, String &&name)
+    : kind(kind), name(&&name), parent(parent), type(type)
+  {
+  }
+
+  pub Property(Property &&) = default;
+  pub ~Property() = default;
+}
+
+pub fn find_property(Component &component, usize object_id, String &name) -> std::optional<usize>
+{
+  var &object = component.objects[object_id];
+
+  for (var property_id = object.property_index; property_id < object.property_index + object.property_count; ++property_id)
+  {
+    if (component.properties[property_id].name == name)
+      return property_id;
+  }
+
+  return None;
+}
+
+pub union Type
+{
+  pub Angle,
+  pub Length,
+  pub Duration,
+  pub Percent,
+  pub Number,
+  pub Integer,
+  pub Boolean,
+  pub String,
+  pub Color,
+  pub Object(usize),
+  pub Enumeration(std::string),
+  pub Signal(std::vector<Type>),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub Type() = default;
+  pub Type(Type &&) = default;
+  pub fn =(Type mut &, Type &&) -> Type mut & = default;
+  pub ~Type() = default;
+}
+
+pub union BoundExpression
+{
+  pub Number(f64),
+  pub LogicalLength(f64),
+  pub PhysicalLength(f64),
+  pub Percentage(f64),
+  pub Integer(int),
+  pub Boolean(bool),
+  pub String(std::string),
+  pub Color(u32),
+  pub ObjectId(usize),
+  pub PropertyId(usize),
+  pub Enumeration(Enumeration),
+//  pub Subscript(Subscript),
+//  pub Field(Field),
+  pub UnaryOp(BoundUnaryOp),
+  pub BinaryOp(BoundBinaryOp),
+  pub FunctionOp(BoundFunctionOp),
+  pub CallOp(BoundCallOp),
+  pub Block(BoundBlock),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub BoundExpression() = default;
+  pub BoundExpression(BoundExpression &&) = default;
+  pub fn =(BoundExpression mut &, BoundExpression &&) -> BoundExpression mut & = default;
+  pub ~BoundExpression() = default;
+}
+
+pub struct Enumeration
+{
+  pub std::string name;
+
+  pub Enumeration(String &&name)
+    : name(&&name)
+  {
+  }
+
+  pub Enumeration(Enumeration &&) = default;
+  pub ~Enumeration() = default;
+}
+
+//pub struct Subscript
+//{
+//  pub std::box<BoundExpression> decl;
+//  pub std::box<BoundExpression> index;
+//
+//  pub Subscript(BoundExpression &&decl, BoundExpression &&index)
+//    : decl(&&decl), index(&&index)
+//  {
+//  }
+//
+//  pub Subscript(Subscript &&) = default;
+//  pub ~Subscript() = default;
+//}
+
+//pub struct Field
+//{
+//  pub std::string decl;
+//  pub std::box<BoundExpression> base;
+//
+//  pub Field(BoundExpression &&base, String &&decl)
+//    : base(&&base), decl(&&decl)
+//  {
+//  }
+//
+//  pub Field(Field &&) = default;
+//  pub ~Field() = default;
+//}
+
+pub struct BoundUnaryOp
+{
+  pub enum Kind
+  {
+    Plus,
+    Minus,
+    LNot,
+    Group,
+  }
+
+  pub Kind op;
+  pub std::box<BoundExpression> subexpr;
+
+  pub BoundUnaryOp(Kind op, BoundExpression &&subexpr)
+    : op(op), subexpr(&&subexpr)
+  {
+  }
+
+  pub BoundUnaryOp(BoundUnaryOp &&) = default;
+  pub ~BoundUnaryOp() = default;
+}
+
+pub struct BoundBinaryOp
+{
+  pub enum Kind
+  {
+    Add,
+    Sub,
+    Div,
+    Mul,
+    Rem,
+    LAnd,
+    LOr,
+    LT,
+    GT,
+    LE,
+    GE,
+    EQ,
+    NE,
+    Assign,
+  }
+
+  pub Kind op;
+  pub std::box<BoundExpression> lhs;
+  pub std::box<BoundExpression> rhs;
+
+  pub BoundBinaryOp(Kind op, BoundExpression &&lhs, BoundExpression &&rhs)
+    : op(op), lhs(&&lhs), rhs(&&rhs)
+  {
+  }
+
+  pub BoundBinaryOp(BoundBinaryOp &&) = default;
+  pub ~BoundBinaryOp() = default;
+}
+
+pub struct BoundFunctionOp
+{
+  pub enum Kind
+  {
+    Point,
+    Rect,
+    TransformIdentity,
+    TransformTranslation,
+    TransformRotation,
+    TransformScale,
+    Min,
+    Max,
+    Clamp,
+    Ceil,
+    Floor,
+    Round,
+    Str$,
+    Left$,
+    Right$,
+    Mid$,
+    Trim$,
+    Debug,
+  }
+
+  pub Kind op;
+  pub std::vector<BoundExpression> args;
+
+  pub BoundFunctionOp<Args>(Kind op, std::vector<BoundExpression> &&args)
+    : op(op), args(&&args)
+  {
+  }
+
+  pub BoundFunctionOp<Args>(Kind op)
+    : op(op)
+  {
+  }
+
+  pub BoundFunctionOp(BoundFunctionOp &&) = default;
+  pub ~BoundFunctionOp() = default;
+}
+
+pub struct BoundCallOp
+{
+  pub usize id,
+  pub std::vector<BoundExpression> args;
+
+  pub BoundCallOp<Args>(usize id, std::vector<BoundExpression> &&args)
+    : id(id), args(&&args)
+  {
+  }
+
+  pub BoundCallOp<Args>(usize id)
+    : id(id)
+  {
+  }
+
+  pub BoundCallOp(BoundCallOp &&) = default;
+  pub ~BoundCallOp() = default;
+}
+
+pub struct BoundBlock
+{
+  pub std::vector<std::string_view> args;
+  pub std::vector<BoundExpression> stmts;
+
+  pub BoundBlock(std::vector<std::string_view> &&args, std::vector<BoundExpression> &&stmts)
+    : args(&&args), stmts(&&stmts)
+  {
+  }
+
+  pub BoundBlock(BoundBlock &&) = default;
+  pub ~BoundBlock() = default;
+}
+
+pub fn lookup(Mir &mir, String &name) -> std::optional<(Mir &, Component &)>
+{
+  for (var &component : mir.components)
+  {
+    if (component.name == name)
+      return (&mir, &component);
+  }
+
+  for (var &[_, imprt] : mir.imports)
+  {
+    for (var &component : imprt.components)
+    {
+      if (component.name == name)
+        return (&imprt, &component);
+    }
+  }
+
+  return None;
+}

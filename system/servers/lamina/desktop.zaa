@@ -6,8 +6,8 @@ import std.stdio;
 import app.loop;
 import os.zaos.mman;
 import os.zaos.fcntl;
-import zidl.zaos_sys;
-import zidl.zaos_winton;
+import zidl.zaos.sys;
+import zidl.zaos.winton;
 import shell;
 
 using winton = zidl::zaos_winton;

@@ -155,7 +155,7 @@ pub fn draw_rect(gfx::paint_t mut &ctx, int x, int y, int width, int height, gfx
   fill_rect(&mut ctx, x + width - thickness, y + thickness, thickness, height - 2*thickness, color, mode);
 }
 
-pub fn blit_glyph(gfx::paint_t mut &ctx, int x, int y, u8 *data, usize width, usize height, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
+pub fn blit_glyph(gfx::paint_t mut &ctx, int x, int y, int width, int height, u8 *data, usize stride, gfx::color &color, gfx::blend mode = gfx::blend::source_over) -> void
 {
   var x0 = cast<usize>(std::max(x, 0));
   var y0 = cast<usize>(std::max(y, 0));
@@ -181,7 +181,7 @@ pub fn blit_glyph(gfx::paint_t mut &ctx, int x, int y, u8 *data, usize width, us
 
   var luma = cast<usize>(3.5*(0.299*color.r + 0.587*color.g + 0.114*color.b)) & 0x3;
 
-  var srcrow = data + j0 * width;
+  var srcrow = data + j0 * stride;
   var dstrow = ctx.data + y0 * ctx.stride;
   var color = gfx::premultiply(color.rgba);
 
@@ -199,7 +199,7 @@ pub fn blit_glyph(gfx::paint_t mut &ctx, int x, int y, u8 *data, usize width, us
       *dst = gfx::blend(mode, *dst, gfx::premultiply(color, preblend[luma][cast<usize>(*src)]));
     }
 
-    srcrow += width;
+    srcrow += stride;
     dstrow += ctx.stride;
   }
 }

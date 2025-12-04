@@ -14,7 +14,7 @@ import display;
 import math : vec2, vec4, bound, transform;
 import input.driver;
 import os.zaos.mman;
-import zidl.zaos_winton;
+import zidl.zaos.winton;
 
 using winton = zidl::zaos_winton;
 

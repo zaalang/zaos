@@ -1,0 +1,42 @@
+
+Button {
+  property string text: "";
+  property bool enabled: true;
+
+  signal clicked();
+
+  Rectangle {
+    id: rect;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #99000000;
+    background: #05ffffff;
+
+    HorizontalLayout {
+      padding-left: 12px;
+      padding-right: 12px;
+      padding-top: 5px;
+      padding-bottom: 5px;
+
+      Text {
+        id: text;
+        text: root.text;
+        font-family: "Noto Sans";
+        font-size: 12pt;
+        color: #000000;
+        horizontal-alignment: TextHorizontalAlignment.Center;
+        vertical-alignment: TextVerticalAlignment.Middle;
+        horizontal-stretch: 1.0;
+      }
+    }
+  }
+
+  TouchArea {
+    enabled: root.enabled;
+    on_entered: { rect.background = #05000000; }
+    on_exited: { rect.background = #05ffffff; }
+    on_pressed: |position| { rect.background = #0fcde3f1; rect.border-color = #58000000; text.color = #b3000000; }
+    on_released: |position| { rect.background = #05000000; rect.border-color = #000000; text.color = #000000; }
+    on_clicked: { root.clicked(); }
+  }
+}

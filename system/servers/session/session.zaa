@@ -10,7 +10,7 @@ import os.zaos.fcntl : STDCWD_FILENO;
 import os.zaos.sched;
 import os.zaos.time;
 import zidl.types;
-import zidl.zaos_sys;
+import zidl.zaos.sys;
 import app.loop : STDSYS_FILENO;
 
 extern fn thread_ring() -> os::ioring mut &;

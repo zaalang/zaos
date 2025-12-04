@@ -46,7 +46,7 @@ fn reaper(void *) -> void
     vm::reap();
 
     if (vm::available_physical_memory + blk::cache_memory_used < 67_108_864)
-      oomkiller();
+      oom_kill_process();
 
     for (var i = reaper.doorbell.value; i != 0; --i)
     {

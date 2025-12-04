@@ -1,0 +1,59 @@
+//
+// tab completion
+//
+
+import std.string : String;
+import readline.completer;
+import sys.fs;
+
+pub struct completer : pub readline::completer
+{
+  using suggestion = readline::completer::suggestion;
+
+  pub fn complete(this mut &, std::string &buffer, usize cursor) -> std::vector<suggestion>
+  {
+    var results = std::vector<suggestion>();
+
+    var matcher = buffer[0 .. cursor];
+    if (var j = matcher.find_last_of(" "); j != matcher.end)
+      matcher = buffer[j + 1 .. matcher.end];
+
+    if (!buffer.empty)
+    {
+      var base = std::string_view();
+
+      if (var j = matcher.find_last_of("/"); j != matcher.end)
+        base = matcher[matcher.data .. j + 1];
+
+      try
+      {
+        for (var &entry : sys::read_dir(sys::path::resolve(this.cwd, base)))
+        {
+          if (entry.name.starts_with(matcher[base.len .. matcher.len]))
+          {
+            var match = std::format("{}{} ", base, entry.name);
+
+            if (entry.is_directory)
+              match.back = cast('/');
+
+            results.push_back(match, matcher.len);
+          }
+        }
+      }
+      catch (std::error e)
+      {
+      }
+    }
+
+    return results;
+  }
+
+  std::string cwd;
+
+  pub completer(String &&cwd)
+    : cwd(&&cwd)
+  {
+  }
+
+  pub ~completer() = default;
+}

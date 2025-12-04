@@ -35,6 +35,11 @@ pub fn *(color &lhs, color &rhs) -> color
   return hadamard(lhs, rhs);
 }
 
+pub fn *(color &lhs, float opacity) -> color
+{
+  return lhs * cast<f32>(opacity);
+}
+
 #[nodiscard]
 pub const fn gamma(color &color) -> color
 {

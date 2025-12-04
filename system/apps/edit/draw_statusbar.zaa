@@ -31,6 +31,7 @@ pub fn draw_statusbar(tui::context mut &ctx, state mut &state) -> void
     {
       tb.normalize_newlines(!is_crlf);
     }
+
     if (state.wants_statusbar_focus)
     {
       state.wants_statusbar_focus = false;

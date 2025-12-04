@@ -2103,8 +2103,8 @@ pub struct context
     var scroll_x = textarea.scroll_offset.x;
     var scroll_y = textarea.scroll_offset.y;
 
-    scroll_x = std::clamp(scroll_x, 0, tb.visual_width - 10);
-    scroll_y = std::clamp(scroll_y, 0, tb.visual_line_count - 1);
+    scroll_x = std::clamp(scroll_x, 0, std::max(tb.cursor_visual_position.x, tb.visual_width) - 10);
+    scroll_y = std::clamp(scroll_y, 0, std::max(tb.cursor_visual_position.y, tb.visual_line_count) - 1);
 
     if (tb.is_word_wrap_enabled)
       scroll_x = 0;

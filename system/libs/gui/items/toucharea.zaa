@@ -1,0 +1,136 @@
+//
+// toucharea item
+//
+
+import std.stdlib;
+import std.function;
+import gui.scene : item;
+import gui.painter;
+import gfx.transform;
+import gfx.path;
+
+pub struct item_pointer_event
+{
+  pub enum kind
+  {
+    pressed,
+    released,
+    moved,
+  }
+
+  pub u64 time;
+  pub kind kind;
+  pub gui::button button;
+  pub gfx::point position;
+  pub gui::modifiers modifiers;
+
+  item_pointer_event(u64 time, kind kind, gui::button button, gfx::point position, gui::modifiers modifiers)
+    : time(time), kind(kind), button(button), position(position), modifiers(modifiers)
+  {
+  }
+
+  pub item_pointer_event() = default;
+  pub item_pointer_event(item_pointer_event&) = default;
+  pub fn =(item_pointer_event mut &, item_pointer_event &) -> item_pointer_event mut & = default;
+  pub ~item_pointer_event() = default;
+}
+
+pub struct TouchArea : pub item
+{
+  pub bool enabled = true;
+  pub std::delegate<() -> void> on_entered;
+  pub std::delegate<() -> void> on_exited;
+  pub std::delegate<() -> void> on_clicked;
+  pub std::delegate<(gfx::point) -> void> on_pressed;
+  pub std::delegate<(gfx::point) -> void> on_released;
+  pub std::delegate<(gfx::point) -> void> on_dragged;
+  pub std::delegate<(item_pointer_event) -> void> pointer_event;
+
+  bool hovered;
+
+  pub TouchArea()
+    : super(&impl this)
+  {
+  }
+
+  pub ~TouchArea() = default;
+}
+
+pub fn pointer_event_filter(TouchArea mut &this, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  if (this.enabled && gfx::rect(0.0, 0.0, this.width, this.height).contains(xy))
+  {
+    if (!this.hovered)
+    {
+      if (this.on_entered)
+        this.on_entered();
+
+      this.hovered = true;
+    }
+  }
+
+  return forward;
+}
+
+pub fn pointer_event(TouchArea mut &this, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  if (!this.enabled)
+    return ignore;
+
+  if (evt.button == gui::button::primary)
+  {
+    switch (evt.buttons[cast(gui::button::primary)])
+    {
+      case 1:
+        if (this.on_pressed)
+          this.on_pressed(xy);
+
+      case 0:
+        if (this.on_released)
+          this.on_released(xy);
+
+        if (gfx::rect(0.0, 0.0, this.width, this.height).contains(xy))
+        {
+          if (this.on_clicked)
+            this.on_clicked();
+        }
+    }
+  }
+
+  if (evt.buttons[cast(gui::button::primary)] == 1)
+  {
+    if (this.on_dragged)
+      this.on_dragged(xy);
+  }
+
+  if (this.pointer_event)
+  {
+    switch (evt.button)
+    {
+      case primary:
+      case secondary:
+      case middle:
+        this.pointer_event(item_pointer_event(evt.time, (evt.buttons[cast(evt.button)] != 0) ? item_pointer_event::kind::pressed : item_pointer_event::kind::released, evt.button, xy, evt.modifiers));
+
+      else:
+        this.pointer_event(item_pointer_event(evt.time, item_pointer_event::kind::moved, evt.button, xy, evt.modifiers));
+    }
+  }
+
+  return accept;
+}
+
+pub fn pointer_exit(TouchArea mut &this) -> void
+{
+  if (this.hovered)
+  {
+    if (this.on_exited)
+      this.on_exited();
+
+    this.hovered = false;
+  }
+}
+
+pub fn render(TouchArea &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+}

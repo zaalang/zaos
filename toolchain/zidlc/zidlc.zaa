@@ -10,7 +10,23 @@ import std.box;
 import std.env;
 import zidl.types;
 import zidl.parser;
+import aargh;
 import diag;
+
+struct opts
+{
+  #[arg(free, required, help="source file")]
+  std::string file;
+
+  #[arg(value, short='o', required, help="output file")]
+  std::string outfile;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
 
 struct builtin_type
 {
@@ -711,7 +727,7 @@ fn codegen_structure(context mut &ctx, zidl::structure &structure) throws(std::e
   ctx.add_type(type::tag(structure.name, fields));
 }
 
-fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throws(std::error) -> void
+fn codegen(zidl::ast &ast, std::string &outfile, diag::diag mut &diag) throws(std::error) -> void
 {
   var ctx = context();
   ctx.initialise(&diag);
@@ -753,23 +769,22 @@ fn codegen(zidl::ast &ast, std::string_view outfile, diag::diag mut &diag) throw
   std::fprintf(&mut ctx.fout, "}}\n");
 }
 
-fn main
+pub fn main() -> i32
 {
-  var diag = diag::diag("zidlc");
+  var opts = aargh::parse<opts>(std::env::args);
 
-  if (std::env::args.len != 4 || std::env::args[1] != "-o")
+  if (opts.help || opts.file.empty)
   {
-    std::fprint(std::stderr, "useage: zidlc -o <output> <input>");
+    aargh::usage<opts>();
 
     std::exit(1);
   }
 
-  var input = std::env::args[3];
-  var outfile = std::env::args[2];
+  var diag = diag::diag("zidlc");
 
   try
   {
-    var ast = zidl::parse(input, &mut diag);
+    var ast = zidl::parse(opts.file, &mut diag);
 
     if (diag.has_errored)
     {
@@ -778,12 +793,14 @@ fn main
       std::exit(1);
     }
 
-    codegen(ast, outfile, &mut diag);
+    codegen(ast, opts.outfile, &mut diag);
 
     std::fprintf(std::stderr, "{}", diag);
   }
   catch(std::error e)
   {
-    std::panic("compiler error - ", e);
+    std::panic("zidlc: error - ", e);
   }
+
+  return 0;
 }

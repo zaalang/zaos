@@ -21,6 +21,8 @@ pub enum op
   kw_dim = 0x03,
   kw_data = 0x04,
   kw_stop = 0x05,
+  kw_deg = 0x0a,
+  kw_rad = 0x0b,
   kw_return = 0x0c,
   kw_let = 0x0d,
   kw_if = 0x10,
@@ -58,7 +60,8 @@ pub enum op
   end = 0x39,
   label = 0x3a,
   lref = 0x3b,
-  nop = 0x3c,
+  dref = 0x3c,
+  nop = 0x3d,
   eoi = 0x3e,
   eol = 0x3f,
   kw_then = 0x45,
@@ -444,6 +447,7 @@ struct frame
   usize sp;
   usize bp;
   int base;
+  float degrad;
   u8 *ip;
 
   frame() = default;
@@ -592,17 +596,12 @@ pub struct machine
     frame.link_storage_offset = cast<usize>(cast<header*>(procedure.icode.data).link_storage_offset);
     frame.first_data_statement = cast<usize>(cast<header*>(procedure.icode.data).first_data_statement);
 
-    if (frame.first_data_statement != 0)
-    {
-      frame.first_data_statement -= cast<usize>(cast<header*>(procedure.icode.data).text_offset);
-
-      frame.dp = frame.text.begin + frame.first_data_statement + 4;
-    }
-
     frame.ip = this.ip;
     frame.sp = this.stack.len - nargs;
     frame.bp = this.substack.len;
+    frame.dp = frame.text.begin + frame.first_data_statement + 3;
     frame.base = 1;
+    frame.degrad = std::PI/180.0;
 
     this.ip = frame.text.begin;
   }
@@ -1299,10 +1298,10 @@ fn evaluate(machine mut &vm) -> result
               return errc::illegal_argument;
 
           case op::cos:
-            vm.stack.push_back(std::cos(arg0.as_real));
+            vm.stack.push_back(std::cos(arg0.as_real * vm.frame.degrad));
 
           case op::acs:
-            vm.stack.push_back(std::acos(arg0.as_real));
+            vm.stack.push_back(std::acos(arg0.as_real) / vm.frame.degrad);
 
           case op::chr$:
             vm.stack.push_back(std::format("{}", cast<char>(std::clamp(arg0.as_integer, 0, 0x1ffff))));
@@ -1355,10 +1354,10 @@ fn evaluate(machine mut &vm) -> result
             vm.stack.push_back(rand::random<float>() * arg0.as_real);
 
           case op::sin:
-            vm.stack.push_back(std::sin(arg0.as_real));
+            vm.stack.push_back(std::sin(arg0.as_real * vm.frame.degrad));
 
           case op::asn:
-            vm.stack.push_back(std::asin(arg0.as_real));
+            vm.stack.push_back(std::asin(arg0.as_real) / vm.frame.degrad);
 
           case op::size:
             vm.stack.push_back(cast<int>(arg0.reference.2));
@@ -1382,10 +1381,10 @@ fn evaluate(machine mut &vm) -> result
             vm.stack.push_back(std::sqrt(arg0.as_real));
 
           case op::tan:
-            vm.stack.push_back(std::tan(arg0.as_real));
+            vm.stack.push_back(std::tan(arg0.as_real * vm.frame.degrad));
 
           case op::atn:
-            vm.stack.push_back(std::atan(arg0.as_real));
+            vm.stack.push_back(std::atan(arg0.as_real) / vm.frame.degrad);
 
           case op::trim$:
             vm.stack.push_back(arg0.as_string.trim_right!);
@@ -1620,42 +1619,14 @@ fn evaluate(machine mut &vm) -> result
   return ok;
 }
 
-fn skip(machine mut &vm) -> result
-{
-  for (vm.ip += 1; *vm.ip != cast<u8>(op::eol); )
-  {
-    switch (*vm.ip)
-    {
-      case op::symbol:
-        vm.ip += 3;
-
-      case op::literal_integer:
-        vm.ip += 1 + sizeof<int>;
-
-      case 0x01 ..= 0x56:
-        vm.ip += 1;
-
-      case 0x58 ..= 0x75:
-        vm.ip += 1;
-
-      else:
-        std::panic("unhandled");
-    }
-  }
-
-  vm.ip += 1;
-
-  return ok;
-}
-
 fn print(machine mut &vm) -> result
 {
   var fd = 0;
   vm.linebuf.clear();
 
-  var format = std::string_view();
-  var groups = std::vector<u8*>();
-  var fmt = format.end;
+  var format = std::string();
+  var groups = std::vector<u8 mut *>();
+  var fmt = format.begin;
 
   for (vm.ip += 1;;)
   {
@@ -1670,12 +1641,13 @@ fn print(machine mut &vm) -> result
         fd = vm.stack.take_back().integer;
 
       case op::kw_using:
-        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
+        vm.ip += 1;
 
-        format = vm.frame.rodata[offset + 1 .. offset + 1 + cast<usize>(vm.frame.rodata[offset])];
+        if (var rc = evaluate(&mut vm); !rc)
+          return rc;
+
+        format = vm.stack.take_back().as_string;
         fmt = format.begin;
-
-        vm.ip += 4;
 
       case 0x60 ..= 0xff:
         if (var rc = evaluate(&mut vm); !rc)
@@ -2380,11 +2352,8 @@ fn read(machine mut &vm) -> result
               case op::comma:
                 vm.ip += 1;
 
-              case op::jmp_fwd_ne:
-                vm.ip += cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
-
-                if (*vm.ip == cast<u8>(op::jmp_fwd_ne))
-                  vm.ip = vm.frame.text.begin + vm.frame.first_data_statement + 4;
+              case op::dref:
+                vm.ip = vm.frame.text.begin + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8 + cast<usize>(*(vm.ip + 3)) << 16;
 
               else:
                 std::panic("unhandled");
@@ -2680,7 +2649,26 @@ fn restore(machine mut &vm) -> result
   if (offset == 0)
     offset = vm.frame.first_data_statement;
 
-  vm.frame.dp = vm.frame.text.begin + offset + 4;
+  vm.frame.dp = vm.frame.text.begin + offset;
+
+  for (;;)
+  {
+    switch (*vm.frame.dp)
+    {
+      case op::kw_data:
+        vm.frame.dp += 3;
+        break;
+
+      case op::kw_rem:
+        vm.frame.dp += 1 + cast<usize>(*(vm.frame.dp + 1)) + cast<usize>(*(vm.frame.dp + 2)) << 8;
+
+      case op::eol:
+        vm.frame.dp += 1;
+
+      else:
+        return errc::missing_data_statement;
+    }
+  }
 
   vm.ip += 4;
 
@@ -2741,17 +2729,14 @@ fn step(machine mut &vm) -> result
   switch (*vm.ip)
   {
     case op::label:
-      vm.ip += 1;
-      vm.ip += 2;
+      vm.ip += 3;
 
     case op::kw_rem:
-      vm.ip += 1;
-      vm.ip += 1 + cast<usize>(*vm.ip) + 1;
-
     case op::kw_dim:
     case op::kw_type:
     case op::kw_param:
-      skip(&mut vm);
+    case op::kw_data:
+      vm.ip += 1 + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
 
     case op::kw_let:
     case op::kw_if:
@@ -2771,6 +2756,14 @@ fn step(machine mut &vm) -> result
 
     case op::kw_base1:
       vm.frame.base = 1;
+      vm.ip += 1;
+
+    case op::kw_deg:
+      vm.frame.degrad = std::PI/180.0;
+      vm.ip += 1;
+
+    case op::kw_rad:
+      vm.frame.degrad = 1.0;
       vm.ip += 1;
 
     case op::kw_print:
@@ -2856,7 +2849,6 @@ fn step(machine mut &vm) -> result
 
     case op::lref:
     case op::kw_goto:
-    case op::kw_data:
       vm.ip = vm.frame.text.begin + cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8 + cast<usize>(*(vm.ip + 3)) << 16;
 
     case op::kw_gosub:
