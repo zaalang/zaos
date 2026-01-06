@@ -165,6 +165,7 @@ fn lower_ident(lower_context mut &ctx, usize object_id, Ident &ident) -> BoundEx
     case "PointerEventButton":
     case "PointerEventKind":
     case "Transform":
+    case "Easing":
     case "Point":
     case "Rect":
     case "MIN":
@@ -353,6 +354,50 @@ fn lower_field(lower_context mut &ctx, usize object_id, Field &field) -> BoundEx
               return BoundExpression::FunctionOp(BoundFunctionOp::Kind::TransformScale);
           }
 
+        case "Easing":
+          switch (field.name)
+          {
+            case "Linear":
+            case "linear":
+              return BoundExpression::Enumeration("gui::animation_easing::linear");
+
+            case "InQuad":
+              return BoundExpression::Enumeration("gui::animation_easing::in_quad");
+
+            case "OutQuad":
+              return BoundExpression::Enumeration("gui::animation_easing::out_quad");
+
+            case "InOutQuad":
+              return BoundExpression::Enumeration("gui::animation_easing::in_out_quad");
+
+            case "InCubic":
+              return BoundExpression::Enumeration("gui::animation_easing::in_cubic");
+
+            case "OutCubic":
+              return BoundExpression::Enumeration("gui::animation_easing::out_cubic");
+
+            case "InOutCubic":
+              return BoundExpression::Enumeration("gui::animation_easing::in_out_cubic");
+
+            case "InElastic":
+              return BoundExpression::Enumeration("gui::animation_easing::in_elastic");
+
+            case "OutElastic":
+              return BoundExpression::Enumeration("gui::animation_easing::out_elastic");
+
+            case "InOutElastic":
+              return BoundExpression::Enumeration("gui::animation_easing::in_out_elastic");
+
+            case "InBounce":
+              return BoundExpression::Enumeration("gui::animation_easing::in_bounce");
+
+            case "OutBounce":
+              return BoundExpression::Enumeration("gui::animation_easing::out_bounce");
+
+            case "InOutBounce":
+              return BoundExpression::Enumeration("gui::animation_easing::in_out_bounce");
+          }
+
         else:
           return BoundExpression::Enumeration(std::format("{}.{}", enumeration.name, field.name));
       }
@@ -482,6 +527,12 @@ fn lower_expression(lower_context mut &ctx, usize object_id, Expression &express
         case Percent:
           return BoundExpression::Percentage(number.value);
 
+        case S:
+          return BoundExpression::Duration(cast<u64>(number.value * 1e9));
+
+        case Ms:
+          return BoundExpression::Duration(cast<u64>(number.value * 1e6));
+
         case None:
           return BoundExpression::Number(number.value);
       }
@@ -535,6 +586,9 @@ fn type_check(lower_context mut &ctx, Component &component, BoundExpression &exp
 
     case Percentage:
       return Type::Percent;
+
+    case Duration:
+      return Type::Duration;
 
     case Integer:
       return Type::Integer;
@@ -706,6 +760,9 @@ fn lower_type(lower_context mut &ctx, std::string_view type) -> Type
     case "color":
       return Type::Color;
 
+    case "brush":
+      return Type::Brush;
+
     else:
       return Type::Enumeration(type);
   }
@@ -734,6 +791,7 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
       component.properties.push_back(object_id, Type::Length, "width");
       component.properties.push_back(object_id, Type::Length, "height");
       component.properties.push_back(object_id, Type::Boolean, "visible");
+      component.properties.push_back(object_id, Type::Number, "opacity");
       component.properties.push_back(object_id, Type::Enumeration("Transform"), "transform");
   }
 
@@ -767,7 +825,7 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
       component.properties.push_back(object_id, Type::Length, "border-bottom-left-radius");
       component.properties.push_back(object_id, Type::Length, "border-bottom-right-radius");
       component.properties.push_back(object_id, Type::Color, "border-color");
-      component.properties.push_back(object_id, Type::Color, "background");
+      component.properties.push_back(object_id, Type::Brush, "background");
       component.properties.push_back(object_id, Type::Boolean, "clip");
 
     case "Text":
@@ -854,7 +912,52 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
   }
 
   object.property_index = n;
-  object.property_count = component.properties.len - n;
+  object.property_count = component.properties.len - object.property_index;
+}
+
+fn lower_animates(lower_context mut &ctx, usize object_id, Element &element) -> void
+{
+  var mut &component = ctx.mir.components.back;
+
+  for (var &animate : element.animates)
+  {
+    for (var &target : animate.targets)
+    {
+      component.objects.push_back(object_id, std::format("{}_{}", target, component.objects.len), "Animate");
+
+      var animate_id = component.objects.len - 1;
+      component.objects.back.property_index = component.properties.len;
+      component.properties.push_back(animate_id, Type::Duration, "delay");
+      component.properties.push_back(animate_id, Type::Duration, "duration");
+      component.properties.push_back(animate_id, Type::Enumeration("Easing"), "easing");
+      component.objects.back.property_count = component.properties.len - component.objects.back.property_index;
+
+      for (var &binding : animate.bindings)
+      {
+        switch (component.find_property(animate_id, binding.name))
+        {
+          case Some[property_id]:
+            var mut &property = component.properties[property_id];
+
+            property.expression = lower_expression(&mut ctx, animate_id, binding.expression);
+
+          case None:
+            ctx.diag.error(LowerError::UnknownProperty(ctx.source, binding.name));
+        }
+      }
+
+      switch (component.find_property(object_id, target))
+      {
+        case Some[property_id]:
+          var mut &property = component.properties[property_id];
+
+          property.animation = animate_id;
+
+        else:
+          ctx.diag.error(LowerError::UnknownProperty(ctx.source, target));
+      }
+    }
+  }
 }
 
 fn lower_objects(lower_context mut &ctx, usize object_id, Element &element) -> void
@@ -880,6 +983,8 @@ fn lower_objects(lower_context mut &ctx, usize object_id, Element &element) -> v
   }
 
   lower_properties(&mut ctx, object_id, element);
+
+  lower_animates(&mut ctx, object_id, element);
 }
 
 fn lower_objects(lower_context mut &ctx, Element &element) -> void

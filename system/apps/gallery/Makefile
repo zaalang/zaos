@@ -3,7 +3,7 @@
 include ../../../mkspec.mk
 
 BUILD := $(BUILDROOT)/system/apps/gallery
-ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated -I$(BUILD)/generated 
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated -I$(BUILD)/generated 
 LIBS := -lzrt
 
 default: $(BUILD)/gallery

@@ -238,7 +238,7 @@ pub fn initialise(compositor mut &compositor) -> i32
   compositor.pointer.position.y = cast(compositor.display.height / 2);
 
   var now = os::timespec(void);
-  os::clock_time(os::clock::monotonic, &now);
+  os::clock_gettime(os::clock::monotonic, &now);
 
   compositor.redraw_handler.deadline = now;
   compositor.redraw_handler.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(redraw_handler);
@@ -286,26 +286,26 @@ pub fn sprite_destroy(sprite mut &sprite) -> void
   sprite.buffer.size = 0;
 }
 
-pub enum result : i32
+enum result : i32
 {
   ok = 0,
 
-  pub fn bool(result code) -> bool
+  fn bool(result code) -> bool
   {
     return cast<i32>(code) >= 0;
   }
 
-  pub fn ==(result code, winton::errc error) -> bool
+  fn ==(result code, winton::errc error) -> bool
   {
     return cast<i32>(code) == -cast<i32>(error);
   }
 
-  pub fn result(winton::errc error) -> result
+  fn result(winton::errc error) -> result
   {
     return cast(-cast<i32>(error));
   }
 
-  pub fn result(i32 result) -> result
+  fn result(i32 result) -> result
   {
     return cast(result);
   }
@@ -344,6 +344,9 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
 
       case buffer_destroy[msg]:
         result = buffer_destroy(client, msg.buffer_id);
+
+      case create_desktop[msg]:
+        result = create_desktop(client, msg.surface_id);
 
       case create_window[msg]:
         result = create_window(client, msg.surface_id);
@@ -427,7 +430,7 @@ fn create_surface(client mut *client, u32 id) -> result
   surface.client = client;
 
   var now = os::timespec(void);
-  os::clock_time(os::clock::monotonic, &now);
+  os::clock_gettime(os::clock::monotonic, &now);
 
   surface.uuid.data1 = cast(now & 0xffffffff);
   surface.uuid.data2 = cast((now >> 32) & 0xffff);
@@ -436,7 +439,7 @@ fn create_surface(client mut *client, u32 id) -> result
 
   zidl::send<winton::compositor::surface_response>(client.channel, surface.id, surface.uuid);
 
-  return 0;
+  return ok;
 }
 
 fn create_buffer(client mut *client, u32 id, zidl::buffer handle, u32 offset, i32 width, i32 height, i32 stride, winton::format format) -> result
@@ -475,7 +478,7 @@ fn create_buffer(client mut *client, u32 id, zidl::buffer handle, u32 offset, i3
   buffer.size = mmvec.length;
   buffer.data = addr;
 
-  return 0;
+  return ok;
 }
 
 fn surface_attach(client mut *client, u32 surface_id, u32 buffer_id) -> result
@@ -490,7 +493,7 @@ fn surface_attach(client mut *client, u32 surface_id, u32 buffer_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn surface_damage(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
@@ -505,7 +508,7 @@ fn surface_damage(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
@@ -534,7 +537,7 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
       }
 
       if (!surface.node)
-        return 0;
+        return ok;
 
       switch (*surface.node)
       {
@@ -609,7 +612,7 @@ fn surface_commit(client mut *client, u32 surface_id, bool callback) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn surface_destroy(client mut *client, u32 surface_id) -> result
@@ -621,7 +624,7 @@ fn surface_destroy(client mut *client, u32 surface_id) -> result
 
   client.surfaces.erase(j);
 
-  return 0;
+  return ok;
 }
 
 fn buffer_resize(client mut *client, u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, winton::format format) -> result
@@ -648,7 +651,7 @@ fn buffer_resize(client mut *client, u32 buffer_id, u32 offset, i32 width, i32 h
       return winton::errc::invalid_buffer;
   }
 
-  return 0;
+  return ok;
 }
 
 fn buffer_destroy(client mut *client, u32 buffer_id) -> result
@@ -660,7 +663,33 @@ fn buffer_destroy(client mut *client, u32 buffer_id) -> result
 
   client.buffers.erase(j);
 
-  return 0;
+  return ok;
+}
+
+fn create_desktop(client mut *client, u32 surface_id) -> result
+{
+  var compositor = client.compositor;
+
+  switch (client.surfaces.get(surface_id))
+  {
+    case Some[surface]:
+
+      if (surface.node)
+        return winton::errc::invalid_surface;
+
+      surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::desktop);
+
+      surface.incoming_width = compositor.display.width;
+      surface.incoming_height = compositor.display.height;
+      surface.incoming_flags |= winton::state::fullscreen;
+
+      surface.pending_input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
+
+    else:
+      return winton::errc::invalid_surface;
+  }
+
+  return ok;
 }
 
 fn create_window(client mut *client, u32 surface_id) -> result
@@ -682,13 +711,13 @@ fn create_window(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn create_popup(client mut *client, u32 surface_id, u32 parent_id) -> result
 {
 
-  return 0;
+  return ok;
 }
 
 fn configure(client mut *client, surface mut *surface) -> result
@@ -705,7 +734,7 @@ fn configure(client mut *client, surface mut *surface) -> result
 
   zidl::send<winton::compositor::configure_response>(client.channel, serial, surface.id);
 
-  return 0;
+  return ok;
 }
 
 fn acknowledge(client mut *client, u32 serial) -> result
@@ -748,7 +777,7 @@ fn acknowledge(client mut *client, u32 serial) -> result
     }
   }
 
-  return 0;
+  return ok;
 }
 
 fn release(client mut *client, surface mut *surface, buffer mut *buffer) -> result
@@ -758,7 +787,7 @@ fn release(client mut *client, surface mut *surface, buffer mut *buffer) -> resu
     zidl::send<winton::compositor::surface_release_response>(client.channel, surface.id, buffer.id);
   }
 
-  return 0;
+  return ok;
 }
 
 fn callback(client mut *client, surface mut *surface, u64 time) -> result
@@ -767,7 +796,7 @@ fn callback(client mut *client, surface mut *surface, u64 time) -> result
 
   surface.callback = false;
 
-  return 0;
+  return ok;
 }
 
 fn pointer_enter(client mut *client, surface mut *surface, vec2 position) -> result
@@ -778,7 +807,7 @@ fn pointer_enter(client mut *client, surface mut *surface, vec2 position) -> res
 
   client.compositor.pointer.focus_serial = serial;
 
-  return 0;
+  return ok;
 }
 
 fn pointer_leave(client mut *client, surface mut *surface) -> result
@@ -787,28 +816,28 @@ fn pointer_leave(client mut *client, surface mut *surface) -> result
 
   zidl::send<winton::compositor::pointer_leave_response>(client.channel, serial, surface.id);
 
-  return 0;
+  return ok;
 }
 
 fn pointer_motion(client mut *client, surface mut *surface, u64 time, vec2 position) -> result
 {
   zidl::send<winton::compositor::pointer_motion_response>(client.channel, surface.id, time, cast<i32>(position.x + 0.5), cast<i32>(position.y + 0.5));
 
-  return 0;
+  return ok;
 }
 
 fn pointer_button(client mut *client, surface mut *surface, u64 time, u32 button, u32 state) -> result
 {
   zidl::send<winton::compositor::pointer_button_response>(client.channel, surface.id, time, button, state);
 
-  return 0;
+  return ok;
 }
 
 fn pointer_wheel(client mut *client, surface mut *surface, u64 time, f32 dx, f32 dy) -> result
 {
   zidl::send<winton::compositor::pointer_wheel_response>(client.channel, surface.id, time, cast<i32>(dx), cast<i32>(dy));
 
-  return 0;
+  return ok;
 }
 
 fn keyboard_enter(client mut *client, surface mut *surface) -> result
@@ -823,7 +852,7 @@ fn keyboard_enter(client mut *client, surface mut *surface) -> result
 
   configure(client, surface);
 
-  return 0;
+  return ok;
 }
 
 fn keyboard_leave(client mut *client, surface mut *surface) -> result
@@ -836,21 +865,21 @@ fn keyboard_leave(client mut *client, surface mut *surface) -> result
 
   configure(client, surface);
 
-  return 0;
+  return ok;
 }
 
 fn keyboard_modifiers(client mut *client, surface mut *surface, u64 time, winton::modifiers modifiers) -> result
 {
   zidl::send<winton::compositor::keyboard_modifiers_response>(client.channel, surface.id, time, modifiers);
 
-  return 0;
+  return ok;
 }
 
 fn keyboard_key(client mut *client, surface mut *surface, u64 time, u32 key, u32 state, char sym) -> result
 {
   zidl::send<winton::compositor::keyboard_key_response>(client.channel, surface.id, time, key, state, sym);
 
-  return 0;
+  return ok;
 }
 
 fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32 hotspot_y) -> result
@@ -858,7 +887,7 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return 0;
+    return ok;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -872,7 +901,7 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
         // todo: update hotspot
         // invalidate old and new
 
-        return 0;
+        return ok;
       }
 
       if (compositor.pointer.surface)
@@ -888,7 +917,7 @@ fn set_cursor(client mut *client, u32 serial, u32 surface_id, i32 hotspot_x, i32
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::cursor cursor) -> result
@@ -896,7 +925,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return 0;
+    return ok;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -942,7 +971,7 @@ fn set_standard_cursor(client mut *client, u32 serial, u32 surface_id, winton::c
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_minimised(client mut *client, u32 surface_id) -> result
@@ -964,7 +993,7 @@ fn set_minimised(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_maximised(client mut *client, u32 surface_id) -> result
@@ -991,7 +1020,7 @@ fn set_maximised(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_fullscreen(client mut *client, u32 surface_id) -> result
@@ -1018,7 +1047,7 @@ fn set_fullscreen(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn unset_maximised(client mut *client, u32 surface_id) -> result
@@ -1033,7 +1062,7 @@ fn unset_maximised(client mut *client, u32 surface_id) -> result
         return winton::errc::not_configured;
 
       if (!(surface.incoming_flags & winton::state::maximised))
-        return 0;
+        return ok;
 
       surface.incoming_width = surface.restore_width;
       surface.incoming_height = surface.restore_height;
@@ -1045,7 +1074,7 @@ fn unset_maximised(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn unset_fullscreen(client mut *client, u32 surface_id) -> result
@@ -1060,7 +1089,7 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
         return winton::errc::not_configured;
 
       if (!(surface.incoming_flags & winton::state::fullscreen))
-        return 0;
+        return ok;
 
       surface.incoming_width = surface.restore_width;
       surface.incoming_height = surface.restore_height;
@@ -1072,7 +1101,7 @@ fn unset_fullscreen(client mut *client, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_visible_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
@@ -1092,7 +1121,7 @@ fn set_visible_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 widt
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_opaque_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
@@ -1112,7 +1141,7 @@ fn set_opaque_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_input_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width, i32 height) -> result
@@ -1132,7 +1161,7 @@ fn set_input_region(client mut *client, u32 surface_id, i32 x, i32 y, i32 width,
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_minimum_size(client mut *client, u32 surface_id, i32 width, i32 height) -> result
@@ -1153,7 +1182,7 @@ fn set_minimum_size(client mut *client, u32 surface_id, i32 width, i32 height) -
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn set_maximum_size(client mut *client, u32 surface_id, i32 width, i32 height) -> result
@@ -1174,7 +1203,7 @@ fn set_maximum_size(client mut *client, u32 surface_id, i32 width, i32 height) -
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn move(client mut *client, u32 serial, u32 surface_id) -> result
@@ -1182,7 +1211,7 @@ fn move(client mut *client, u32 serial, u32 surface_id) -> result
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return 0;
+    return ok;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -1192,16 +1221,16 @@ fn move(client mut *client, u32 serial, u32 surface_id) -> result
         return winton::errc::not_configured;
 
       if (surface.node != compositor.pointer.focus)
-        return 0;
+        return ok;
 
       if (compositor.pointer.pressed_count == 0)
-        return 0;
+        return ok;
 
       if (compositor.pointer.grab_op != grab::none)
-        return 0;
+        return ok;
 
       if (surface.pending_flags & (winton::state::maximised | winton::state::fullscreen))
-        return 0;
+        return ok;
 
       compositor.pointer.grab_op = grab::move;
       compositor.pointer.grab_offset = project(inverse(surface.node.transform), compositor.pointer.grab_pos);
@@ -1210,7 +1239,7 @@ fn move(client mut *client, u32 serial, u32 surface_id) -> result
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether) -> result
@@ -1218,7 +1247,7 @@ fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether)
   var compositor = client.compositor;
 
   if (serial != compositor.pointer.focus_serial)
-    return 0;
+    return ok;
 
   switch (client.surfaces.get(surface_id))
   {
@@ -1228,13 +1257,13 @@ fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether)
         return winton::errc::not_configured;
 
       if (surface.node != compositor.pointer.focus)
-        return 0;
+        return ok;
 
       if (compositor.pointer.pressed_count == 0)
-        return 0;
+        return ok;
 
       if (compositor.pointer.grab_op != grab::none)
-        return 0;
+        return ok;
 
       compositor.pointer.grab_op = grab::resize;
       compositor.pointer.grab_bound = surface.active.value.bound;
@@ -1244,7 +1273,7 @@ fn resize(client mut *client, u32 serial, u32 surface_id, winton::tether tether)
       return winton::errc::invalid_surface;
   }
 
-  return 0;
+  return ok;
 }
 
 fn destroy(buffer mut *buffer) -> void
@@ -1314,7 +1343,7 @@ fn schedule_redraw(compositor mut *compositor, surface mut *surface) -> void
   std::assert(compositor.status & compositor::status::scheduled != compositor::status::scheduled);
 
   var now = os::timespec(void);
-  os::clock_time(os::clock::monotonic, &now);
+  os::clock_gettime(os::clock::monotonic, &now);
 
   if (compositor.redraw_handler.deadline < now)
     compositor.redraw_handler.deadline = now;
@@ -1329,7 +1358,7 @@ fn redraw_handler(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> voi
   var compositor = cast<compositor mut *>(cast<uintptr>(timeout) - offsetof(compositor::redraw_handler));
 
   var now = os::timespec(void);
-  os::clock_time(os::clock::monotonic, &now);
+  os::clock_gettime(os::clock::monotonic, &now);
 
   compositor.scene.update(1.0/60.0);
 
@@ -1671,29 +1700,4 @@ fn input_handler(compositor mut *compositor, input::event &event) -> void
     case pointer_wheel[evt]:
       pointer_wheel(compositor, evt.time, cast(evt.x), cast(evt.y));
   }
-}
-
-pub fn create_desktop(compositor mut &compositor, winton::uuid &surface_id) -> result
-{
-  for (var mut &client : compositor.clients)
-  {
-    for (var mut &[id, surface] : client.surfaces)
-    {
-      if (surface_id == surface.uuid)
-      {
-        if (surface.node)
-          return winton::errc::invalid_surface;
-
-        surface.node = compositor.scene.create_window(&*surface, scene::scene::layers::desktop);
-
-        surface.incoming_width = compositor.display.width;
-        surface.incoming_height = compositor.display.height;
-        surface.incoming_flags |= winton::state::fullscreen;
-
-        surface.pending_input_region = bound::from(vec2(-10000.0, -10000.0), vec2(10000.0, 10000.0));
-      }
-    }
-  }
-
-  return ok;
 }

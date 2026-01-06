@@ -3,7 +3,7 @@
 include ../../../mkspec.mk
 
 BUILD := $(BUILDROOT)/system/apps/coreutils
-ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
 LIBS := -lzrt
 
 BINS=\
@@ -28,6 +28,7 @@ $(BUILD)/ls\
 $(BUILD)/mkdir\
 $(BUILD)/more\
 $(BUILD)/mv\
+$(BUILD)/ps\
 $(BUILD)/pwd\
 $(BUILD)/realpath\
 $(BUILD)/rm\
@@ -35,6 +36,7 @@ $(BUILD)/stat\
 $(BUILD)/tail\
 $(BUILD)/touch\
 $(BUILD)/tty\
+$(BUILD)/uptime\
 
 default: $(BINS)
 

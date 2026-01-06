@@ -3,7 +3,7 @@
 include ../../../mkspec.mk
 
 BUILD := $(BUILDROOT)/system/servers/coco
-ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt
 LIBS := -lzrt
 
 default: $(BUILD)/coco

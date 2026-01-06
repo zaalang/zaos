@@ -5,15 +5,17 @@
 import std.stdio;
 import std.function;
 import app.loop;
+import gui.fonts;
+import gui.display as display;
 import zidl.zaos.sys;
-import shell;
 import desktop;
 
 struct service
 {
   app::loop loop;
+  display::connection connection;
 
-  std::delegate<(zidl::string_view, zidl::channel) -> void> on_connect;
+  std::flat_hash_map<std::string, std::delegate<(zidl::string_view, zidl::channel) -> void>> on_connect;
 
   service() = default;
   ~service() = default;
@@ -26,6 +28,20 @@ fn initialise(service mut &service) -> i32
 
   service.loop.connect_handler = &cast<fn (app::loop mut &, zidl::string_view, zidl::channel) -> void>(connect_handler);
 
+  if (var rc = display::initialise(&mut service.connection); rc < 0)
+    return rc;
+
+  gui::fonts::initialise(64*1024*1024);
+
+  try
+  {
+    gui::fonts::populate("/zaos/data/system.fontmap");
+  }
+  catch(std::error e)
+  {
+    std::print("font initialisation error - ", e);
+  }
+
   return 0;
 }
 
@@ -33,7 +49,11 @@ fn connect_handler(app::loop mut &loop, zidl::string_view uri, zidl::channel cha
 {
   var service = cast<service mut *>(cast<uintptr>(&loop) - offsetof(service::loop));
 
-  service.on_connect(uri, &move channel);
+  switch (service.on_connect.get(uri.strip_prefix("zaos.lamina/").cut('/').0))
+  {
+    case Some[callback]:
+      callback(uri, &move channel);
+  }
 }
 
 fn run(service mut &service) -> void
@@ -41,33 +61,16 @@ fn run(service mut &service) -> void
   service.loop.run();
 }
 
-fn main() -> int
+fn main() -> void
 {
   var service = service();
 
   if (var rc = initialise(&mut service); rc < 0)
-    std::panic("newton: unable to initialise - ", cast<std::errc>(-rc));
+    std::panic("lamina: unable to initialise - ", cast<std::errc>(-rc));
 
-  try
-  {
-    var shell = shell::create();
+  var desktop = desktop::create();
+  if (var rc = desktop::initialise(&mut desktop, &service.connection); rc < 0)
+    std::print("lamina: failed to initialise desktop - ", cast<std::errc>(-rc));
 
-    service.on_connect = |uri, channel| {
-      shell.accept(uri, &move channel);
-    };
-
-    shell.connect();
-
-    var desktop = desktop::create(&mut shell);
-
-    desktop.connect();
-
-    service.run();
-  }
-  catch(std::error e)
-  {
-    std::print("error - ", e);
-  }
-
-  return 0;
+  service.run();
 }

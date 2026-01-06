@@ -361,6 +361,12 @@ fn parse_numeric_literal(parse_context mut &ctx, std::span<token> mut &tokens) -
       case "%":
         return Expression::Number(number, Number::Unit::Percent, span);
 
+      case "s":
+        return Expression::Number(number, Number::Unit::S, span);
+
+      case "ms":
+        return Expression::Number(number, Number::Unit::Ms, span);
+
       case "":
         return Expression::Number(number, span);
     }
@@ -702,6 +708,67 @@ fn parse_signal(parse_context mut &ctx, std::span<token> mut &tokens) -> Signal
   return Signal(name, &move args, flags);
 }
 
+fn parse_animate(parse_context mut &ctx, std::span<token> mut &tokens) -> Animate
+{
+  var animate = Animate();
+
+  consume_token(&mut tokens, token::type::kw_animate);
+
+  for (; tokens[0] != token::type::eof; )
+  {
+    animate.targets.push_back(tokens[0].span);
+
+    if (!try_consume_token(&mut tokens, token::type::identifier))
+      ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+    if (!try_consume_token(&mut tokens, token::type::comma))
+      break;
+  }
+
+  switch (tokens[0].type)
+  {
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '{':
+          for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+          {
+            switch (tokens[0].type)
+            {
+              case kw_id:
+                animate.id = parse_id(&mut ctx, &mut tokens);
+
+              case identifier:
+                switch (tokens[1].type)
+                {
+                  case colon:
+                    animate.bindings.push_back(parse_binding(&mut ctx, &mut tokens));
+
+                  else:
+                    ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[1].span));
+                }
+
+              else:
+                ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
+            }
+
+            if (ctx.diag.has_errored)
+              break;
+          }
+
+          consume_token(&mut tokens, token::type::block);
+
+        else:
+          ctx.diag.error(ParseError::ExpectedScope(ctx.source, tokens[0].span));
+      }
+
+    else:
+      ctx.diag.error(ParseError::ExpectedScope(ctx.source, tokens[0].span));
+  }
+
+  return animate;
+}
+
 fn parse_binding(parse_context mut &ctx, std::span<token> mut &tokens) -> Binding
 {
   var name = tokens[0].span;
@@ -759,6 +826,9 @@ fn parse_element(parse_context mut &ctx, std::span<token> mut &tokens) -> Elemen
 
               case kw_signal:
                 element.signals.push_back(parse_signal(&mut ctx, &mut tokens));
+
+              case kw_animate:
+                element.animates.push_back(parse_animate(&mut ctx, &mut tokens));
 
               case identifier:
                 switch (tokens[1].type)

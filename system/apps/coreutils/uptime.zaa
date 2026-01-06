@@ -1,0 +1,42 @@
+//
+// uptime
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.time;
+import aargh;
+import chrono;
+
+struct opts
+{
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var now = os::timespec(void);
+  os::clock_gettime(os::clock::monotonic, &now);
+
+  var uptime = chrono::nanoseconds(now);
+  var days = chrono::duration_cast<chrono::days>(uptime);
+  var hours = chrono::duration_cast<chrono::hours>(uptime - days);
+  var minutes = chrono::duration_cast<chrono::minutes>(uptime - days - hours);
+
+  std::print("{} {} {}", days, hours, minutes);
+
+  return 0;
+}

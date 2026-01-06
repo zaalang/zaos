@@ -213,6 +213,16 @@ pub struct loop
     return 0;
   }
 
+  pub fn reset_timeout(this mut &loop, timeout_t mut *handler) -> i32
+  {
+    cancel_timeout(&mut loop, handler);
+
+    if (var rc = begin_timeout(&mut loop, handler); rc < 0)
+      return rc;
+
+    return 0;
+  }
+
   pub fn cancel_timeout(this mut &loop, timeout_t mut *handler) -> i32
   {
     if (handler.prev)
@@ -321,7 +331,7 @@ pub fn dispatch(loop mut &loop, u64 deadline = ~0) -> i32
   }
 
   var now = os::timespec(void);
-  if (var rc = os::clock_time(os::clock::monotonic, &now); rc < 0)
+  if (var rc = os::clock_gettime(os::clock::monotonic, &now); rc < 0)
     std::panic("clock time - ", cast<std::errc>(-rc));
 
   while (loop.timeouts.next != &loop.timeouts && loop.timeouts.next.deadline < now)

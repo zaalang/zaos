@@ -5,6 +5,7 @@
 import toml;
 import std.atomic;
 import std.string : String;
+import std.arc;
 import std.list;
 import std.flat_hash_map;
 import std.range;

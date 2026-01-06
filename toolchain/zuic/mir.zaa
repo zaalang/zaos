@@ -67,6 +67,7 @@ pub struct Property
 
   pub Kind kind;
   pub usize parent;
+  pub usize animation;
   pub std::string name;
   pub BoundExpression expression;
   pub Type type;
@@ -109,6 +110,7 @@ pub union Type
   pub Boolean,
   pub String,
   pub Color,
+  pub Brush,
   pub Object(usize),
   pub Enumeration(std::string),
   pub Signal(std::vector<Type>),
@@ -130,6 +132,7 @@ pub union BoundExpression
   pub LogicalLength(f64),
   pub PhysicalLength(f64),
   pub Percentage(f64),
+  pub Duration(u64),
   pub Integer(int),
   pub Boolean(bool),
   pub String(std::string),

@@ -39,6 +39,18 @@ pub struct Import
   pub ~Import() = default;
 }
 
+pub struct Animate
+{
+  pub std::string_view id;
+
+  pub std::vector<std::string_view> targets;
+  pub std::vector<Binding> bindings;
+
+  pub Animate() = default;
+  pub Animate(Animate &&) = default;
+  pub ~Animate() = default;
+}
+
 pub struct Element
 {
   pub std::string_view id;
@@ -47,6 +59,7 @@ pub struct Element
   pub std::vector<Local> locals;
   pub std::vector<Signal> signals;
   pub std::vector<Binding> bindings;
+  pub std::vector<Animate> animates;
   pub std::vector<Element> children;
 
   pub Element() = default;
@@ -160,6 +173,8 @@ pub struct Number
     Pt,
     Phx,
     Percent,
+    S,
+    Ms,
   }
 
   pub f64 value;

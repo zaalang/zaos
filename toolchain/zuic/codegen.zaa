@@ -38,7 +38,53 @@ struct codegen_context
   }
 }
 
-fn codegen_type(codegen_context &ctx, Component &component, usize object_id) -> std::string
+fn codegen_type(codegen_context &ctx, Component &component, Type &type) -> std::string
+{
+  switch (type)
+  {
+    case Angle:
+    case Length:
+    case Number:
+    case Percent:
+      return "float";
+
+    case Duration:
+      return "u64";
+
+    case Integer:
+      return "int";
+
+    case Boolean:
+      return "bool";
+
+    case String:
+      return "std::string";
+
+    case Color:
+      return "gfx::color";
+
+    case Brush:
+      return "gfx::brush";
+
+    case Enumeration[enumeration]:
+      switch (enumeration)
+      {
+        case "Transform":
+          return "gfx::transform";
+
+        else:
+          return enumeration;
+      }
+
+    case Signal[args]:
+      return std::format("std::delegate<({}) -> void>", args.transform(|arg| codegen_type(ctx, component, arg)).join(", "));
+
+    else:
+      return "#ERR";
+  }
+}
+
+fn codegen_object_type(codegen_context &ctx, Component &component, usize object_id) -> std::string
 {
   var &object = component.objects[object_id];
 
@@ -68,56 +114,32 @@ fn codegen_type(codegen_context &ctx, Component &component, usize object_id) -> 
 
     case "TouchArea":
       return "gui::TouchArea";
+
+    case "Animate":
+      var &parent = component.objects[object.parent];
+      for (var propertyid = parent.property_index; propertyid < parent.property_index + parent.property_count; ++propertyid)
+        if (component.properties[propertyid].animation == object_id)
+          return std::format("gui::Animation<{}>", codegen_property_type(ctx, component, propertyid));
   }
 
   return object.type;
 }
 
-fn codegen_type(codegen_context &ctx, Component &component, Type &type) -> std::string
+fn codegen_property_type(codegen_context &ctx, Component &component, usize property_id) -> std::string
 {
-  switch (type)
-  {
-    case Angle:
-    case Length:
-    case Duration:
-    case Number:
-    case Percent:
-      return "float";
+  var &property = component.properties[property_id];
 
-    case Integer:
-      return "int";
-
-    case Boolean:
-      return "bool";
-
-    case String:
-      return "std::string";
-
-    case Color:
-      return "gfx::color";
-
-    case Object[objectid]:
-      return codegen_type(ctx, component, objectid);
-
-    case Enumeration[enumeration]:
-      switch (enumeration)
-      {
-        case "Transform":
-          return "gfx::transform";
-
-        else:
-          return enumeration;
-      }
-
-    case Signal[args]:
-      return std::format("std::delegate<({}) -> void>", args.transform(|arg| codegen_type(ctx, component, arg)).join(", "));
-
-    else:
-      return "#ERR";
-  }
+  return codegen_type(ctx, component, property.type);
 }
 
-fn codegen_path(codegen_context &ctx, Component &component, usize property_id) -> std::string
+fn codegen_object_path(codegen_context &ctx, Component &component, usize object_id) -> std::string
+{
+  var &object = component.objects[object_id];
+
+  return object.name;
+}
+
+fn codegen_property_path(codegen_context &ctx, Component &component, usize property_id) -> std::string
 {
   var &property = component.properties[property_id];
   var &object = component.objects[property.parent];
@@ -166,6 +188,9 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
     case Percentage[percentage]:
       return std::format("{}", percentage);
 
+    case Duration[duration]:
+      return std::format("{}", duration);
+
     case Integer[integer]:
       return std::format("{}", integer);
 
@@ -179,10 +204,10 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
       return std::format("gfx::rgba(0x{:08x})", color);
 
     case ObjectId[objectid]:
-      return std::format("this.{}", component.objects[objectid].name);
+      return std::format("this.{}", codegen_object_path(ctx, component, objectid));
 
     case PropertyId[propertyid]:
-      return std::format("this.{}", codegen_path(ctx, component, propertyid));
+      return std::format("this.{}", codegen_property_path(ctx, component, propertyid));
 
     case Enumeration[enumeration]:
       return enumeration.name;
@@ -306,7 +331,7 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
       }
 
     case CallOp[callop]:
-      return std::format("this.{}({})", codegen_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+      return std::format("this.{}({})", codegen_property_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
     case Block[block]:
       var stmts = std::string();
@@ -357,13 +382,13 @@ fn codegen_implicit_width(codegen_context &ctx, Component &component, usize obje
     case "VerticalLayout":
     case "FlexLayout":
       if (var id = component.find_property(object_id, "min-width"); id && component.properties[id?!].expression)
-        widths.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+        widths.push_back(std::format("this.{}", codegen_property_path(ctx, component, id?!)));
 
     else:
       var ws = std::vector<std::string>();
 
       if (var id = component.find_property(object_id, "min-width"); id && component.properties[id?!].expression)
-        ws.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+        ws.push_back(std::format("this.{}", codegen_property_path(ctx, component, id?!)));
 
       ws.push_back(std::format("this.{}.implicit_width", object.name));
 
@@ -412,13 +437,13 @@ fn codegen_implicit_height(codegen_context &ctx, Component &component, usize obj
     case "VerticalLayout":
     case "FlexLayout":
       if (var id = component.find_property(object_id, "min-height"); id && component.properties[id?!].expression)
-        heights.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+        heights.push_back(std::format("this.{}", codegen_property_path(ctx, component, id?!)));
 
     else:
       var hs = std::vector<std::string>();
 
       if (var id = component.find_property(object_id, "min-height"); id && component.properties[id?!].expression)
-        hs.push_back(std::format("this.{}", codegen_path(ctx, component, id?!)));
+        hs.push_back(std::format("this.{}", codegen_property_path(ctx, component, id?!)));
 
       hs.push_back(std::format("this.{}.implicit_height", object.name));
 
@@ -452,6 +477,16 @@ fn codegen_implicit_height(codegen_context &ctx, Component &component, usize obj
   return codegen_sum(ctx, heights);
 }
 
+fn codegen_update(codegen_context &ctx, Component &component, usize property_id, String &value) -> std::string
+{
+  var &property = component.properties[property_id];
+
+  if (property.animation != 0)
+    return std::format("this.{}.start(this.{}, {}); ", codegen_object_path(ctx, component, property.animation), codegen_property_path(ctx, component, property_id), value);
+
+  return std::format("this.{} = {}; ", codegen_property_path(ctx, component, property_id), value);
+}
+
 fn codegen_layout_update(codegen_context &ctx, Component &component, std::vector<usize> &propset) -> std::string
 {
   var stmts = std::string();
@@ -467,7 +502,7 @@ fn codegen_layout_update(codegen_context &ctx, Component &component, std::vector
       for (var childid = layout.child_index; childid < layout.child_index + layout.child_count; ++childid)
       {
         if (var id = component.find_property(childid, "min-width"); id && !component.properties[id?!].expression)
-          stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, id?!), codegen_implicit_width(ctx, component, childid));
+          stmts += std::format("this.{} = {}; ", codegen_property_path(ctx, component, id?!), codegen_implicit_width(ctx, component, childid));
       }
 
       stmts += std::format("this.{}.update(); ", layout.name);
@@ -480,7 +515,7 @@ fn codegen_layout_update(codegen_context &ctx, Component &component, std::vector
       for (var childid = layout.child_index; childid < layout.child_index + layout.child_count; ++childid)
       {
         if (var id = component.find_property(childid, "min-height"); id && !component.properties[id?!].expression)
-          stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, id?!), codegen_implicit_height(ctx, component, childid));
+          stmts += std::format("this.{} = {}; ", codegen_property_path(ctx, component, id?!), codegen_implicit_height(ctx, component, childid));
       }
 
       stmts += std::format("this.{}.update(); ", layout.name);
@@ -490,24 +525,13 @@ fn codegen_layout_update(codegen_context &ctx, Component &component, std::vector
   return stmts;
 }
 
-fn codegen_property_update(codegen_context &ctx, Component &component, usize property_id, String &value) -> std::string
+fn codegen_propset_update(codegen_context &ctx, Component &component, std::vector<usize> mut &propset) -> std::string
 {
   var stmts = std::string();
 
-  var &object = component.objects[component.properties[property_id].parent];
-  var &property = component.properties[property_id];
+  var n = propset.len;
 
-  stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, property_id), value);
-
-  var propset = std::vector<usize>();
-
-  switch (ctx.invpropmap.get(property_id))
-  {
-    case Some[props]:
-      propset.append(props.transform(|kv| kv.key));
-  }
-
-  for (var i = 0; i < propset.len; ++i)
+  for (var i = 0; i < n; ++i)
   {
     switch (ctx.invpropmap.get(propset[i]))
     {
@@ -518,18 +542,44 @@ fn codegen_property_update(codegen_context &ctx, Component &component, usize pro
     }
   }
 
-  std::bubble_sort(&mut propset, |lhs, rhs| ctx.propmap.contains((rhs, lhs)));
+  for (var i = n; i < propset.len; ++i)
+  {
+    if (component.properties[propset[i]].animation != 0)
+      continue;
 
-  for (var &propertyid : propset)
+    switch (ctx.invpropmap.get(propset[i]))
+    {
+      case Some[props]:
+        for (var prop : props.transform(|kv| kv.key))
+          if (std::find(propset, prop) == propset.end)
+            propset.push_back(prop);
+    }
+  }
+
+  std::bubble_sort(&mut propset[n .. propset.len], |lhs, rhs| ctx.propmap.contains((rhs, lhs)));
+
+  for (var &propertyid : propset.drop_n(n))
   {
     var &property = component.properties[propertyid];
 
-    stmts += std::format("this.{} = {}; ", codegen_path(ctx, component, propertyid), codegen_expression(ctx, component, property.expression));
+    stmts += codegen_update(ctx, component, propertyid, codegen_expression(ctx, component, property.expression));
   }
 
-  propset.push_back(property_id);
-
   stmts += codegen_layout_update(ctx, component, propset);
+
+  stmts.strip_suffix!("; ");
+
+  return stmts;
+}
+
+fn codegen_property_update(codegen_context &ctx, Component &component, usize property_id, String &value) -> std::string
+{
+  var stmts = std::string();
+
+  stmts += codegen_update(ctx, component, property_id, value);
+
+  if (component.properties[property_id].animation == 0)
+    stmts += codegen_propset_update(ctx, component, std::vector::from([ property_id ]));
 
   stmts.strip_suffix!("; ");
 
@@ -585,7 +635,7 @@ fn codegen_objects(codegen_context mut &ctx, Component &component) throws(std::e
   {
     var &object = component.objects[object_id];
 
-    std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_type(ctx, component, object_id), object.name);
+    std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_object_type(ctx, component, object_id), object.name);
   }
 
   for (var property_id = 0; property_id < component.properties.len; ++property_id)
@@ -597,7 +647,7 @@ fn codegen_objects(codegen_context mut &ctx, Component &component) throws(std::e
       case Public:
       case Private:
       case Signal:
-        std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_type(ctx, component, property.type), codegen_path(ctx, component, property_id));
+        std::fprintf(&mut ctx.fout, "  pub {} {};\n", codegen_property_type(ctx, component, property_id), codegen_property_path(ctx, component, property_id));
     }
   }
 
@@ -616,16 +666,16 @@ fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std
     {
       case Signal:
         std::fprintf(&mut ctx.fout, "  pub fn {}(this &&) {{\n", property.name.gsub("-", "_"));
-        std::fprintf(&mut ctx.fout, "    return &this.{};\n", codegen_path(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "    return &this.{};\n", codegen_property_path(ctx, component, propertyid));
         std::fprintf(&mut ctx.fout, "  }}\n\n");
 
       case Public:
       case Binding:
-        std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} {{\n", property.name.gsub("-", "_"), codegen_type(ctx, component, property.type));
-        std::fprintf(&mut ctx.fout, "    return this.{};\n", codegen_path(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} {{\n", property.name.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "    return this.{};\n", codegen_property_path(ctx, component, propertyid));
         std::fprintf(&mut ctx.fout, "  }}\n\n");
 
-        std::fprintf(&mut ctx.fout, "  pub fn {}=(this mut &, {} &&value) -> void {{\n", property.name.gsub("-", "_"), codegen_type(ctx, component, property.type));
+        std::fprintf(&mut ctx.fout, "  pub fn {}=(this mut &, {} &&value) -> void {{\n", property.name.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
         std::fprintf(&mut ctx.fout, "    {};\n", codegen_property_update(&mut ctx, component, propertyid, "&&value"));
         std::fprintf(&mut ctx.fout, "  }}\n\n");
     }
@@ -637,6 +687,52 @@ fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std
 
   std::fprintf(&mut ctx.fout, "  pub fn implicit_height(this &) -> float {{\n");
   std::fprintf(&mut ctx.fout, "    return {};\n", codegen_implicit_height(ctx, component, 0));
+  std::fprintf(&mut ctx.fout, "  }}\n\n");
+}
+
+fn codegen_update(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "  pub fn update(this mut &, u64 mut &deadline) -> void {{\n");
+
+  var propset = std::vector<usize>();
+
+  for (var property_id = 0; property_id < component.properties.len; ++property_id)
+  {
+    var &property = component.properties[property_id];
+
+    if (property.animation != 0)
+      propset.push_back(property_id);
+  }
+
+  std::bubble_sort(&mut propset, |lhs, rhs| ctx.propmap.contains((rhs, lhs)));
+
+  for (var &propertyid : propset)
+  {
+    var &property = component.properties[propertyid];
+
+    std::fprintf(&mut ctx.fout, "    this.{}.update(&mut deadline);\n", codegen_object_path(ctx, component, property.animation));
+  }
+
+  for (var object_id = 1; object_id < component.objects.len; ++object_id)
+  {
+    var &object = component.objects[object_id];
+
+    switch (ctx.mir.lookup(object.type))
+    {
+      case Some:
+        std::fprintf(&mut ctx.fout, "    this.{}.update(&mut deadline);\n", codegen_object_path(ctx, component, object_id));
+    }
+  }
+
+  std::fprintf(&mut ctx.fout, "  }}\n\n");
+}
+
+fn codegen_resize(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "  pub fn resize(this mut &, float width, float height) -> void {{\n");
+  std::fprintf(&mut ctx.fout, "    this.root_0.width = width;\n");
+  std::fprintf(&mut ctx.fout, "    this.root_0.height = height;\n");
+  std::fprintf(&mut ctx.fout, "    {};\n", codegen_propset_update(ctx, component, std::vector::from([ component.find_property(0, "width")?!, component.find_property(0, "height")?! ])));
   std::fprintf(&mut ctx.fout, "  }}\n\n");
 }
 
@@ -689,6 +785,7 @@ fn codegen_scene(codegen_context mut &ctx, Component &component) throws(std::err
           switch (scope.lookup(object.type))
           {
             case Some[var &[scope, component]]:
+              itemmap.insert(object_id, items.len);
               append_items(&mut ctx, &mut items, itemmap[object.parent], std::format("{}{}.", base, object.name), scope, component);
           }
       }
@@ -783,6 +880,20 @@ fn codegen_constructor(codegen_context mut &ctx, Component &component) throws(st
     }
   }
 
+  for (var property_id = 0; property_id < component.properties.len; ++property_id)
+  {
+    var &property = component.properties[property_id];
+
+    if (property.animation == 0)
+      continue;
+
+    std::fprintf(&mut ctx.fout, "    {}.on_updated = |value| {{\n", codegen_object_path(ctx, component, property.animation));
+    std::fprintf(&mut ctx.fout, "      this.{} = value;\n", codegen_property_path(ctx, component, property_id));
+    std::fprintf(&mut ctx.fout, "      {};\n", codegen_propset_update(ctx, component, std::vector::from([ property_id ])));
+    std::fprintf(&mut ctx.fout, "    }};\n");
+    std::fprintf(&mut ctx.fout, "\n");
+  }
+
   var propset = std::vector<usize>();
 
   for (var property_id = 0; property_id < component.properties.len; ++property_id)
@@ -799,7 +910,7 @@ fn codegen_constructor(codegen_context mut &ctx, Component &component) throws(st
   {
     var &property = component.properties[propertyid];
 
-    std::fprintf(&mut ctx.fout, "    {} = {};\n", codegen_path(ctx, component, propertyid), codegen_expression(ctx, component, property.expression));
+    std::fprintf(&mut ctx.fout, "    {} = {};\n", codegen_property_path(ctx, component, propertyid), codegen_expression(ctx, component, property.expression));
   }
 
   std::fprintf(&mut ctx.fout, "    {}\n", codegen_layout_update(&mut ctx, component, propset));
@@ -827,6 +938,8 @@ fn codegen(codegen_context mut &ctx, Component &component) throws(std::error) ->
 
   codegen_objects(&mut ctx, component);
   codegen_parameters(&mut ctx, component);
+  codegen_update(&mut ctx, component);
+  codegen_resize(&mut ctx, component);
   codegen_constructor(&mut ctx, component);
   codegen_destructor(&mut ctx, component);
 
@@ -848,6 +961,7 @@ pub fn codegen(Mir &mir, std::string outfile, Source mut &source, diag::diag mut
   std::fprintf(&mut ctx.fout, "import std.algorithm;\n");
   std::fprintf(&mut ctx.fout, "import std.function;\n");
   std::fprintf(&mut ctx.fout, "import gui.scene;\n");
+  std::fprintf(&mut ctx.fout, "import gui.animation;\n");
   std::fprintf(&mut ctx.fout, "import gfx.transform;\n");
   std::fprintf(&mut ctx.fout, "import gfx.color;\n");
   std::fprintf(&mut ctx.fout, "import gui.font;\n");

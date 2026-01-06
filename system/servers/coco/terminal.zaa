@@ -254,7 +254,7 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
   var events = 0;
 
   var sp = os::timespec(void);
-  if (var rc = os::clock_time(os::clock::monotonic, &sp); rc < 0)
+  if (var rc = os::clock_gettime(os::clock::monotonic, &sp); rc < 0)
     return rc;
 
   var buffer = [u8(0); 4096];
@@ -537,7 +537,7 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
       return events;
 
     var tp = os::timespec(void);
-    if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+    if (var rc = os::clock_gettime(os::clock::monotonic, &tp); rc < 0)
       return rc;
 
     if (timeout.count >= 0)

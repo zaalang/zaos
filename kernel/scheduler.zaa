@@ -248,7 +248,7 @@ fn pick_next(run_queue mut &runqueue) -> thread mut *
 
   for (var thread = wakelist; thread; thread = thread.wakenext)
   {
-    std::assert(thread.cpu == cpu::current);
+    std::assert(thread.cpu == cpu::id);
 
     if (thread.wait_abstime != 0)
       runqueue.unblock(thread);
@@ -282,6 +282,19 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
   let quantum_leap = quantum & ~0xfff;
 
   var used_time = cpu::tsc - current_thread.tick_start_time;
+
+  if (var interrupt_time = cpu::current.process_counter_interrupt_time; interrupt_time != 0)
+  {
+    used_time -= interrupt_time;
+    std::atomic_add(&cpu::current.interrupt_time, interrupt_time);
+
+    cpu::current.process_counter_interrupt_time = 0;
+  }
+
+  if (current_thread.id != 0)
+    std::atomic_add(&cpu::current.active_time, used_time);
+  else
+    std::atomic_add(&cpu::current.idle_time, used_time);
 
   current_thread.state = state;
   current_thread.quantum_used_time += used_time;
@@ -372,7 +385,7 @@ fn rebalance(run_queue mut &runqueue) -> void
           continue;
 
         busiest.remove(thread);
-        thread.cpu = cpu::current;
+        thread.cpu = cpu::current.id;
         runqueue.push_back(thread, thread.priority);
 
         break;
@@ -395,7 +408,7 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
 
   var guard = std::lock_guard(&mut runqueue.lock);
 
-  thread.cpu = cpu::current;
+  thread.cpu = cpu::id;
   runqueue.push_back(thread, priority);
 
   platform::task_fork(&mut thread.task, extern(thread_main), thread);
@@ -618,7 +631,7 @@ pub fn start() -> void
 
   var mut &runqueue = cpu::runqueue;
 
-  idle_thread.cpu = cpu::current;
+  idle_thread.cpu = cpu::id;
   idle_thread.pinned = true;
   idle_thread.priority = thread::priority::idle;
   idle_thread.state = thread::state::ready;

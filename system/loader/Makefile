@@ -3,7 +3,7 @@
 include ../../mkspec.mk
 
 BUILD := $(BUILDROOT)/system/loader
-ZFLAGS += -I$(ROOT)/system/libs
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs
 LDFLAGS := -L$(BUILDROOT)/system/libs/libzrt
 LIBS := -lzrt
 

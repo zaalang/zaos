@@ -16,7 +16,7 @@ pub enum clock
 
 pub using timespec = u64;
 
-extern fn sys_clock_res(i32 clockid, virtaddr resbuf) -> result
+extern fn sys_clock_getres(i32 clockid, virtaddr resbuf) -> result
 {
   var res = u64(1);
 
@@ -38,7 +38,7 @@ extern fn sys_clock_res(i32 clockid, virtaddr resbuf) -> result
   return 0;
 }
 
-extern fn sys_clock_time(i32 clockid, virtaddr tpbuf) -> result
+extern fn sys_clock_gettime(i32 clockid, virtaddr tpbuf) -> result
 {
   var tp = cpu::system_time();
 

@@ -75,6 +75,11 @@ pub struct connection
     zidl::send<winton::compositor::buffer_destroy_request>(this.endpoint, buffer_id);
   }
 
+  pub fn create_desktop(this mut &, u32 surface_id) -> void
+  {
+    zidl::send<winton::compositor::create_desktop_request>(this.endpoint, surface_id);
+  }
+
   pub fn create_window(this mut &, u32 surface_id) -> void
   {
     zidl::send<winton::compositor::create_window_request>(this.endpoint, surface_id);
@@ -278,8 +283,7 @@ pub struct connection
           std::print("winton: error response - ", msg.code);
 
         else:
-          std::print(msg);
-          //completer.raise(zidl::errc::bad_dispatch);
+          completer.raise(zidl::errc::bad_dispatch);
       }
     });
 
@@ -481,6 +485,7 @@ pub vtable isurface : gui::iobject
   fn button_event(this mut &, pointer_event &) -> void;
   fn wheel_event(this mut &, pointer_event &) -> void;
   fn focus_event(this mut &, focus_event &) -> void;
+  fn leave_event(this mut &) -> void;
   fn key_event(this mut &, key_event &) -> void;
   fn paint_event(this mut &, buffer mut &, gui::rectset &) -> void;
   fn resize_event(this mut &, resize_event &) -> void;
@@ -551,7 +556,7 @@ pub struct surface : pub gui::object
 
   gui::cursor cursor;
 
-  pub fn create(this mut &, connection mut *connection, flags flags) throws(std::error) -> void
+  pub fn create(this mut &, connection mut *connection, flags flags) throws(std::error) -> u32
   {
     var id = connection.create_surface();
 
@@ -561,8 +566,7 @@ pub struct surface : pub gui::object
 
     connection.register(id, &this);
 
-    connection.create_window(id);
-    connection.surface_commit(id);
+    return id;
   }
 
   pub fn geometry(this &) -> gui::rect
@@ -667,7 +671,7 @@ pub struct surface : pub gui::object
 
     this.cursor = cursor;
 
-    this.status |= surface::status::cursor;
+    this.status |= status::cursor;
 
     this.schedule_update();
   }
@@ -677,9 +681,9 @@ pub struct surface : pub gui::object
     this.pending_size.width = width;
     this.pending_size.height = height;
 
-    this.status |= surface::status::resize;
+    this.status |= status::resize;
 
-    if (this.status & surface::status::init == surface::status::init)
+    if (this.status & status::init == status::init)
       this.schedule_update();
   }
 
@@ -690,9 +694,9 @@ pub struct surface : pub gui::object
     if (this.damage.empty)
       return;
 
-    this.status |= surface::status::redraw;
+    this.status |= status::redraw;
 
-    if (this.status & surface::status::init == surface::status::init)
+    if (this.status & status::init == status::init)
       this.schedule_update();
   }
 
@@ -723,7 +727,7 @@ pub struct surface : pub gui::object
     if (this.status & status::update != status::update)
     {
       var now = os::timespec(void);
-      os::clock_time(os::clock::monotonic, &now);
+      os::clock_gettime(os::clock::monotonic, &now);
 
       this.update.deadline = now;
       this.update.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(update_handler);
@@ -843,14 +847,13 @@ pub struct surface : pub gui::object
   {
     if (this.size != this.pending_size)
     {
-      this.status |= surface::status::resize;
+      this.status |= status::resize;
     }
 
     if (this.state != this.pending_state)
     {
       this.state = this.pending_state;
-      this.damage.add(gui::rect(0, 0, this.size.width, this.interior.y));
-      this.status |= surface::status::redraw;
+      this.schedule_redraw(gui::rect(0, 0, this.size.width, this.interior.y));
     }
 
     this.configure_event(&mut this, configure_event(this.pending_size));
@@ -868,14 +871,17 @@ pub struct surface : pub gui::object
   fn pointer_enter(this mut &, u32 serial, i32 x, i32 y) -> void
   {
     this.focus_serial = serial;
-    this.status |= surface::status::cursor;
+    this.status |= status::cursor;
   }
 
   fn pointer_leave(this mut &, u32 serial) -> void
   {
-    this.location = frame::location::exterior;
+    this.leave_event(&mut this);
 
-    this.schedule_redraw(gui::rect(0, 0, this.size.width, this.size.height));
+    if (this.location & (frame::location::minimise | frame::location::maximise | frame::location::close) != frame::location::exterior)
+      this.schedule_redraw(gui::rect(0, 0, this.size.width, this.interior.y));
+
+    this.location = frame::location::exterior;
   }
 
   fn pointer_motion(this mut &, u64 time, i32 x, i32 y) -> void
@@ -935,7 +941,7 @@ pub struct surface : pub gui::object
         this.motion_event(&mut this, pointer_event(time, cast(0), this.position, this.modifiers, this.buttons));
     }
 
-    if (this.status & surface::status::cursor == surface::status::cursor)
+    if (this.status & status::cursor == status::cursor)
       recursor(&mut this);
   }
 
@@ -1055,7 +1061,7 @@ pub struct surface : pub gui::object
     {
       this.size = this.pending_size;
       this.damage = gui::rect(0, 0, this.size.width, this.size.height);
-      this.status |= surface::status::redraw;
+      this.status |= status::redraw;
 
       this.resize_event(&mut this, resize_event(this.size)) -> void;
 
@@ -1066,7 +1072,7 @@ pub struct surface : pub gui::object
       this.connection.set_opaque_region(this.id, opaqueregion.x, opaqueregion.y, opaqueregion.width, opaqueregion.height);
     }
 
-    this.status &= ~surface::status::resize;
+    this.status &= ~status::resize;
   }
 
   fn redraw(this mut &) -> void
@@ -1128,7 +1134,7 @@ pub struct surface : pub gui::object
       std::print("redraw - ", e);
     }
 
-    this.status &= ~surface::status::redraw;
+    this.status &= ~status::redraw;
   }
 
   fn recursor(this mut &) -> void
@@ -1168,7 +1174,7 @@ pub struct surface : pub gui::object
 
     this.connection.surface_commit(this.connection.pointer);
 
-    this.status &= ~surface::status::cursor;
+    this.status &= ~status::cursor;
   }
 
   pub fn destroy(this mut &) -> void

@@ -382,7 +382,7 @@ pub fn wait(driver mut &driver, u64 timeout = ~0) -> int
   if (driver.events.len == 0)
   {
     var tp = os::timespec(void);
-    if (var rc = os::clock_time(os::clock::monotonic, &tp); rc < 0)
+    if (var rc = os::clock_gettime(os::clock::monotonic, &tp); rc < 0)
       return rc;
 
     var pollset = [ os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0) ];

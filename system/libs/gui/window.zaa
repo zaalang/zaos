@@ -38,7 +38,11 @@ pub struct window : pub display::surface
     width += frame::interior_left + frame::interior_right;
     height += frame::interior_top + frame::interior_bottom;
 
-    this.create(gui::conn, flags);
+    var id = this.create(gui::conn, flags);
+
+    gui::conn.create_window(id);
+    gui::conn.surface_commit(id);
+
     this.set_minimum_size(128, 42);
 
     this.schedule_resize(width, height);
@@ -58,6 +62,10 @@ pub struct window : pub display::surface
   }
 
   pub fn wheel_event(this mut &, pointer_event &) -> void
+  {
+  }
+
+  pub fn leave_event(this mut &) -> void
   {
   }
 

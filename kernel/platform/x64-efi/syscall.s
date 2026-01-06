@@ -19,8 +19,8 @@ systable:   .quad sys_thread_exit
             .quad sys_ioring_setup
             .quad sys_ioring_enter
             .quad sys_ioring_destroy
-            .quad sys_clock_res
-            .quad sys_clock_time
+            .quad sys_clock_getres
+            .quad sys_clock_gettime
             .quad sys_get_pid
             .quad sys_get_tid
             .quad sys_get_uid

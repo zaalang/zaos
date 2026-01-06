@@ -238,7 +238,7 @@ extern fn ipi() -> void
 {
   var delegate = std::delegate<() -> void>();
 
-  while (sys.ipiqueue[cast(cpu::current)].pop(&mut delegate))
+  while (sys.ipiqueue[cast(cpu::id)].pop(&mut delegate))
     delegate();
 }
 
@@ -258,7 +258,7 @@ pub fn broadcast_ipi_message<Callback>(Callback &&callback) -> void
 
   for (var i = 0; i < sys.cpu_count; ++i)
   {
-    if (i == cast(cpu::current))
+    if (i == cast(cpu::id))
       continue;
 
     while (!sys.ipiqueue[i].push(std::delegate<() -> void>(&&callback)))

@@ -3,7 +3,7 @@
 include ../../../mkspec.mk
 
 BUILD := $(BUILDROOT)/system/servers/lamina
-ZFLAGS += -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs -L$(BUILDROOT)/system/libs/libzrt -I$(BUILDROOT)/system/generated
 LIBS := -lzrt
 
 default: $(BUILD)/lamina

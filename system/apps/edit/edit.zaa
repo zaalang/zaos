@@ -148,7 +148,7 @@ fn initialise(application mut &app) -> i32
   app.screen.resize(width, height);
 
   var now = os::timespec(void);
-  os::clock_time(os::clock::monotonic, &now);
+  os::clock_gettime(os::clock::monotonic, &now);
 
   app.update_handler.deadline = now;
   app.update_handler.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(update_handler);

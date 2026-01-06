@@ -4,7 +4,7 @@
 
 import std.alloc;
 import std.flat_hash_map;
-import sysfs.proc;
+import sysfs;
 import vfs.node;
 import vfs.stat;
 import vfs.fs;
@@ -15,16 +15,16 @@ import support.rc : Rc;
 import support.json : json_stream;
 import chrono;
 
-pub struct proc_pid_node : pub sysfs::sysfs_directory_node
+pub struct proc_node : pub sysfs::sysfs_directory_node
 {
   process::id pid;
 
   pub fn create(vfs::node mut *parent, process::id pid) -> Rc<vfs::node>
   {
-    return std::allocator::new<proc_pid_node>(parent, pid);
+    return std::allocator::new<proc_node>(parent, pid);
   }
 
-  pub proc_pid_node(vfs::node mut *parent, process::id pid)
+  pub proc_node(vfs::node mut *parent, process::id pid)
     : super(&impl this, parent),
       pid(pid)
   {
@@ -32,7 +32,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
 
   pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
   {
-    var process = process::find(cast<proc_pid_node mut &>(*node).pid);
+    var process = process::find(cast<proc_node mut &>(*node).pid);
 
     if (!process)
       return not_found;
@@ -42,7 +42,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
 
   pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
   {
-    var process = process::find(cast<proc_pid_node mut &>(*node).pid);
+    var process = process::find(cast<proc_node mut &>(*node).pid);
 
     if (!process)
       return not_found;
@@ -55,7 +55,7 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
 
   pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
   {
-    var &this = cast<proc_pid_node&>(*path);
+    var &this = cast<proc_node&>(*path);
 
     switch (name)
     {
@@ -93,10 +93,10 @@ pub struct proc_pid_node : pub sysfs::sysfs_directory_node
 
   fn destroy(vfs::node mut *node) -> void
   {
-    std::allocator::delete(cast<proc_pid_node mut *>(node));
+    std::allocator::delete(cast<proc_node mut *>(node));
   }
 
-  pub ~proc_pid_node() = default;
+  pub ~proc_node() = default;
 }
 
 pub struct proc_stat_node : pub sysfs::sysfs_file_node
@@ -135,6 +135,7 @@ pub struct proc_stat_node : pub sysfs::sysfs_file_node
       stream.append("state", std::meta::enumerator_name(process.state));
       stream.append("vmsz", process.vmsz);
       stream.append("vmrss", process.vmrss);
+      stream.append("start_time", process.start_time);
 
       stream.begin("threads", '[');
 
@@ -543,24 +544,19 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
     if (!process)
       return null;
 
-    return proc_pid_node::create(path, pid);
+    return proc_node::create(path, pid);
   }
 
   pub fn readdir(vfs::node mut *node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) override -> vfs::result
   {
     var result = vm::result::ok;
 
-    process::enumerate(|process| [result, cursor, emit] {
-      if (!result)
-        return;
-
+    process::enumerate(|process| [result, emit] {
       var buf = [0; 64];
       var len = std::sprint(&mut buf, process.id);
 
       if (result = emit(vfs::filetype::directory, std::string_view(buf.data, len)); !result)
         return;
-
-      cursor += 1;
     });
 
     emit(vfs::filetype::symlink, std::string_view("self"));

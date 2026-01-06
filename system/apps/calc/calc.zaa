@@ -8,6 +8,7 @@ import gui.window;
 import gui.painter;
 import gfx;
 import app.loop;
+import os.zaos.time;
 import zuic.calc;
 
 struct Model
@@ -141,6 +142,8 @@ pub struct window : pub gui::window
   Model model;
   zuic::Calculator view;
 
+  app::loop::timeout_t animation_timer;
+
   pub fn create(i32 width, i32 height) throws(std::error) -> window
   {
     var window = window();
@@ -180,6 +183,8 @@ pub struct window : pub gui::window
       window.view.text = window.model.entry;
     };
 
+    window.animation_timer.callback = &cast<fn (app::loop mut &, app::loop::timeout_t mut *) -> void>(animation_timer);
+
     window.create(width, height);
 
     return window;
@@ -194,7 +199,7 @@ pub struct window : pub gui::window
 
       gui::scene_event(&mut this.view.scene, evt);
 
-      this.schedule_redraw(this.geometry);
+      this.schedule_redraw(this.interior);
     }
 
     gui::window::motion_event(&mut this, evt);
@@ -209,7 +214,7 @@ pub struct window : pub gui::window
 
       gui::scene_event(&mut this.view.scene, evt);
 
-      this.schedule_redraw(this.geometry);
+      this.schedule_redraw(this.interior);
     }
 
     gui::window::button_event(&mut this, evt);
@@ -223,17 +228,37 @@ pub struct window : pub gui::window
   pub fn paint_event(this mut &, gui::buffer mut &buffer, gui::rectset &region) override -> void
   {
     var painter = gui::painter(&mut buffer, this.interior);
+    var extents = gui::clamp(region.extents, this.interior).offset(-this.interior.top_left);
 
-    painter.fill_rect(region.extents, gfx::color(0.94, 0.94, 0.94));
-    painter.clip_rect = gfx::rect(cast(region.extents.left), cast(region.extents.top), cast(region.extents.right), cast(region.extents.bottom));
+    painter.fill_rect(extents, gfx::color(0.94, 0.94, 0.94));
+    painter.clip_rect = gfx::rect(cast(extents.left), cast(extents.top), cast(extents.width), cast(extents.height));
+
+    var deadline = ~0;
+    this.view.update(&mut deadline);
+
+    if (deadline < ~0)
+    {
+      var now = os::timespec(void);
+      os::clock_gettime(os::clock::monotonic, &now);
+
+      this.animation_timer.deadline = now + deadline;
+
+      app::loop::current.reset_timeout(&this.animation_timer);
+    }
 
     gui::scene_render(&mut painter, this.view.scene);
   }
 
+  pub fn animation_timer(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> void
+  {
+    var this = cast<window mut *>(cast<uintptr>(timeout) - offsetof(window::animation_timer));
+
+    this.schedule_redraw(this.interior);
+  }
+
   pub fn resize_event(this mut &, gui::resize_event &evt) override -> void
   {
-    this.view.width = cast(this.interior.width);
-    this.view.height = cast(this.interior.height);
+    this.view.resize(cast(this.interior.width), cast(this.interior.height));
   }
 
   pub fn close_event(this mut &) override -> void

@@ -1,5 +1,5 @@
 //
-// sessiond
+// session
 //
 
 import std.stdio;
@@ -142,7 +142,7 @@ fn spawn(session::unit mut &service) -> i32
   if (var rc = app::loop::current.begin_wait_fd(service.channel.fd, &service.channel_handler); rc < 0)
     return rc;
 
-  std::print("sessiond service launched (", service.pid, ":", service.path, ")");
+  std::print("session service launched (", service.pid, ":", service.path, ")");
 
   return 0;
 }
@@ -155,7 +155,7 @@ fn wait(session::unit mut &service) -> i32
   if (var rc = wait(service.pid, &rval, 0); rc < 0)
     return rc;
 
-  std::print("sessiond service exited (", service.pid, ":", service.path, ") - ", rval);
+  std::print("session service exited (", service.pid, ":", service.path, ") - ", rval);
 
   service.channel.close();
   service.pid = 0;
@@ -181,7 +181,7 @@ fn status_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   var unit = cast<session::unit mut *>(cast<uintptr>(wait) - offsetof(session::unit::status_handler));
 
   if (var rc = unit.wait(); rc < 0)
-    std::panic("sessiond: service wait - ", cast<std::errc>(-rc));
+    std::panic("session: service wait - ", cast<std::errc>(-rc));
 
   loop.cancel_wait(&unit.channel_handler);
   loop.cancel_wait(&unit.status_handler);
@@ -230,7 +230,7 @@ fn main() -> int
   for (var mut &[uri, service] : session::services)
   {
     if (var rc = service.spawn(); rc < 0)
-      std::panic("sessiond: service spawn (", service.path, ") - ", cast<std::errc>(-rc));
+      std::panic("session: service spawn (", service.path, ") - ", cast<std::errc>(-rc));
   }
 
   loop.run();

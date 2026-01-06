@@ -3,7 +3,7 @@
 include ../mkspec.mk
 
 BUILD := $(BUILDROOT)/kernel
-ZFLAGS += -I$(ROOT)/system/libs
+ZFLAGS := ${TARGETZFLAGS} -I$(ROOT)/system/libs
 
 PLATFORM=\
 platform/platform.zaa\
@@ -98,6 +98,7 @@ modules/pty/ptmx.zaa\
 modules/pty/ptty.zaa\
 modules/sysfs/sysfs.zaa\
 modules/sysfs/proc.zaa\
+modules/sysfs/cpu.zaa\
 modules/video/video.zaa\
 modules/console/console.zaa\
 modules/cfg/cfg.zaa\

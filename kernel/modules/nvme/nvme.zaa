@@ -724,7 +724,7 @@ pub fn enqueue(controller mut &controller, u32 nsid, blk::request mut *request) 
   std::assert(request.length / block_size < 65536);
   std::assert(request.position & cast(block_size - 1) == 0);
 
-  var quid = (cast<usize>(cpu::current) + sys::cpu_count - 1) % controller.queue_count;
+  var quid = (cast<usize>(cpu::id) + sys::cpu_count - 1) % controller.queue_count;
 
   var mut &queue = controller.queues[quid];
 

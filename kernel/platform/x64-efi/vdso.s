@@ -25,8 +25,8 @@
               .global __vdso_ioring_setup
               .global __vdso_ioring_enter
               .global __vdso_ioring_destroy
-              .global __vdso_clock_res
-              .global __vdso_clock_time
+              .global __vdso_clock_getres
+              .global __vdso_clock_gettime
               .global __vdso_get_pid
               .global __vdso_get_tid
               .global __vdso_get_uid
@@ -95,12 +95,12 @@ __vdso_ioring_destroy: # i32 fd
               syscall
               ret
 
-__vdso_clock_res: # i32 clockid, u64 mut *res
+__vdso_clock_getres: # i32 clockid, u64 mut *res
               mov rax, 8
               syscall
               ret
 
-__vdso_clock_time: # i32 clockid, u64 mut *tp
+__vdso_clock_gettime: # i32 clockid, u64 mut *tp
               rdtsc
               shl rdx, 32
               or rax, rdx

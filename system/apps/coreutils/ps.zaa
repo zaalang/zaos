@@ -1,0 +1,58 @@
+//
+// ps
+//
+
+import std.stdio;
+import std.env;
+import sys.fs;
+import aargh;
+import json;
+
+struct opts
+{
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+fn ps(opts &opts) throws(std::error) -> i32
+{
+  var proclist = json::load_from_file("/sys/proc/list");
+
+  if (proclist.error)
+    throw std::system_error(std::errc::format_error);
+
+  std::printf("{:>8} {:12}\n", "PID", "CMD");
+
+  for (var &process : proclist.value.as_array)
+  {
+    std::printf("{:>8} {:12}\n", process["pid"].as<int>, process["name"].as_str);
+  }
+
+  return 0;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  try
+  {
+    ps(opts);
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ps: ", rc);
+  }
+
+  return 0;
+}

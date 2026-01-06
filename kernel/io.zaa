@@ -117,6 +117,8 @@ pub fn remove_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mu
 
 extern fn io_dispatch(u8 irq) -> void
 {
+  var start_time = cpu::tsc;
+
   var mut &vector = intman.vectors[cast(irq)];
 
   var guard = std::lock_guard(&mut vector.lock);
@@ -125,6 +127,8 @@ extern fn io_dispatch(u8 irq) -> void
   {
     handler.handler_routine(handler.handler_argument);
   }
+
+  cpu::increment_interrupt_time(cpu::tsc - start_time);
 }
 
 pub struct iocb

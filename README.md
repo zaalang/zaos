@@ -1,5 +1,5 @@
 # ZaOS
-> Peter Niekamp, 2023
+> Peter Niekamp, 2026
 
 A x64 hobby OS for fun and learning.
 

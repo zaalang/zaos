@@ -55,7 +55,7 @@ fn run(service mut &service) -> void
   service.loop.run();
 }
 
-fn main()
+fn main() -> void
 {
   var service = service();
 

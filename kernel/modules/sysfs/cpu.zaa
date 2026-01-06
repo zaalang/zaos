@@ -1,0 +1,250 @@
+//
+// sysfs cpu
+//
+
+import std.alloc;
+import std.flat_hash_map;
+import sysfs;
+import vfs.node;
+import vm;
+import sys;
+import process as _ : process;
+import support.rc : Rc;
+import support.json : json_stream;
+import chrono;
+
+pub struct cpu_node : pub sysfs::sysfs_directory_node
+{
+  int cpu;
+
+  pub fn create(vfs::node mut *parent, int cpu) -> Rc<vfs::node>
+  {
+    return std::allocator::new<cpu_node>(parent, cpu);
+  }
+
+  pub cpu_node(vfs::node mut *parent, int cpu)
+    : super(&impl this, parent),
+      cpu(cpu)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    stat.uid = 0;
+    stat.gid = 0;
+
+    return ok;
+  }
+
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
+  {
+    var &this = cast<cpu_node&>(*path);
+
+    switch (name)
+    {
+      case "stat":
+        return cpu_stat_node::create(path, this.cpu);
+    }
+
+    return null;
+  }
+
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) override -> vfs::result
+  {
+    emit(vfs::filetype::regular, std::string_view("stat"));
+
+    return ok;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<cpu_node mut *>(node));
+  }
+
+  pub ~cpu_node() = default;
+}
+
+pub struct cpu_stat_node : pub sysfs::sysfs_file_node
+{
+  int cpu;
+
+  pub fn create(vfs::node mut *parent, int cpu) -> Rc<vfs::node>
+  {
+    return std::allocator::new<cpu_stat_node>(parent, cpu);
+  }
+
+  pub cpu_stat_node(vfs::node mut *parent, int cpu)
+    : super(&impl this, parent),
+      cpu(cpu)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<cpu_stat_node mut &>(*node);
+
+    var cpu = sys::cpu(this.cpu);
+
+    if (flags & 0x3 != 0)
+    {
+      var json = std::string();
+      var stream = json_stream(&mut json);
+
+      stream.begin('{');
+      stream.append("cpu", cpu.id);
+      stream.append("active_time", cpu.active_time);
+      stream.append("interrupt_time", cpu.interrupt_time);
+      stream.append("idle_time", cpu.idle_time);
+      stream.append("runqueue", cpu.runqueue.len);
+      stream.end('}');
+
+      this.contents = &move json;
+    }
+
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<cpu_stat_node mut *>(node));
+  }
+
+  pub ~cpu_stat_node() = default;
+}
+
+pub struct cpu_root_node : pub sysfs::sysfs_directory_node
+{
+  pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
+  {
+    return std::allocator::new<cpu_root_node>(parent);
+  }
+
+  pub cpu_root_node(vfs::node mut *parent)
+    : super(&impl this, parent)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
+  {
+    var &this = cast<cpu_root_node&>(*path);
+
+    if (name == "list")
+      return cpu_list_node::create(path);
+
+    var cpu = int();
+    if (std::atoi(name.begin, name.end, &mut cpu).len != name.len)
+      return null;
+
+    if (cpu < 0 || cast<usize>(cpu) >= sys::cpu_count)
+      return null;
+
+    return cpu_node::create(path, cpu);
+  }
+
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) override -> vfs::result
+  {
+    for (var cpu : sys::cpus)
+    {
+      var buf = [0; 64];
+      var len = std::sprint(&mut buf, cpu.id);
+
+      emit(vfs::filetype::directory, std::string_view(buf.data, len));
+    }
+
+    emit(vfs::filetype::regular, std::string_view("list"));
+
+    return ok;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<cpu_root_node mut *>(node));
+  }
+
+  pub ~cpu_root_node() = default;
+}
+
+pub struct cpu_list_node : pub sysfs::sysfs_file_node
+{
+  pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
+  {
+    return std::allocator::new<cpu_list_node>(parent);
+  }
+
+  pub cpu_list_node(vfs::node mut *parent)
+    : super(&impl this, parent)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<cpu_list_node mut &>(*node);
+
+    if (flags & 0x3 != 0)
+    {
+      var json = std::string();
+      var stream = json_stream(&mut json);
+
+      stream.begin('[');
+
+      for (var cpu : sys::cpus)
+      {
+        stream.begin('{');
+        stream.append("cpu", cpu.id);
+        stream.append("active_time", cpu.active_time);
+        stream.append("interrupt_time", cpu.interrupt_time);
+        stream.append("idle_time", cpu.idle_time);
+        stream.append("runqueue", cpu.runqueue.len);
+        stream.end('}');
+      }
+
+      stream.end(']');
+
+      this.contents = &move json;
+    }
+
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<cpu_list_node mut *>(node));
+  }
+
+  pub ~cpu_list_node() = default;
+}

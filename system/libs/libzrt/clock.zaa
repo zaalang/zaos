@@ -27,11 +27,11 @@ extern fn clk_getres(u32 clockid) -> clk_result
   switch (clockid)
   {
     case clockid::realtime:
-      if (var rc = os::clock_res(os::clock::realtime, &result.timespec); rc < 0)
+      if (var rc = os::clock_getres(os::clock::realtime, &result.timespec); rc < 0)
         result.errno = cast(-rc);
 
     case clockid::monotonic:
-      if (var rc = os::clock_res(os::clock::monotonic, &result.timespec); rc < 0)
+      if (var rc = os::clock_getres(os::clock::monotonic, &result.timespec); rc < 0)
         result.errno = cast(-rc);
 
     else:
@@ -48,11 +48,11 @@ extern fn clk_gettime(u32 clockid) -> clk_result
   switch (clockid)
   {
     case clockid::realtime:
-      if (var rc = os::clock_time(os::clock::realtime, &result.timespec); rc < 0)
+      if (var rc = os::clock_gettime(os::clock::realtime, &result.timespec); rc < 0)
         result.errno = cast(-rc);
 
     case clockid::monotonic:
-      if (var rc = os::clock_time(os::clock::monotonic, &result.timespec); rc < 0)
+      if (var rc = os::clock_gettime(os::clock::monotonic, &result.timespec); rc < 0)
         result.errno = cast(-rc);
 
     else:

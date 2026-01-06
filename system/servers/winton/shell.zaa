@@ -9,17 +9,31 @@ import zidl.zaos.winton;
 
 using winton = zidl::zaos_winton;
 
-pub struct shell
+struct client
 {
-  compositor::compositor mut &compositor;
+  shell mut *shell;
 
   zidl::channel channel;
   app::loop::wait_t handler;
+
+  ~client()
+  {
+    destroy(&this);
+  }
+
+  client() = default;
+}
+
+pub struct shell
+{
+  compositor::compositor mut &compositor;
 
   shell(compositor::compositor mut &compositor)
     : compositor(&compositor)
   {
   }
+
+  std::vector<std::box<client>> clients;
 
   pub ~shell() = default;
 }
@@ -36,29 +50,53 @@ pub fn initialise(shell mut &shell) -> i32
 
 pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) -> void
 {
-  if (shell.channel)
-    return;
-
   std::print("winton shell: accept connection");
 
-  shell.channel = &move channel;
-  shell.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
+  var mut &client = shell.clients.push_back();
 
-  app::loop::current.begin_wait_fd(shell.channel.fd, &shell.handler);
+  client.shell = &shell;
+
+  client.channel = &move channel;
+  client.handler.callback = &cast<fn (app::loop mut &, app::loop::wait_t mut *) -> void>(client_handler);
+
+  app::loop::current.begin_wait_fd(client.channel.fd, &client.handler);
+}
+
+enum result : i32
+{
+  ok = 0,
+
+  fn bool(result code) -> bool
+  {
+    return cast<i32>(code) >= 0;
+  }
+
+  fn ==(result code, winton::errc error) -> bool
+  {
+    return cast<i32>(code) == -cast<i32>(error);
+  }
+
+  fn result(winton::errc error) -> result
+  {
+    return cast(-cast<i32>(error));
+  }
+
+  fn result(i32 result) -> result
+  {
+    return cast(result);
+  }
 }
 
 fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
 {
-  var shell = cast<shell mut *>(cast<uintptr>(wait) - offsetof(shell::handler));
+  var client = cast<client mut *>(cast<uintptr>(wait) - offsetof(client::handler));
 
-  var result = zidl::recv<winton::shell>(shell.channel, |msg, completer| {
+  var result = zidl::recv<winton::shell>(client.channel, |msg, completer| {
 
-    var result = compositor::result::ok;
+    var result = result::ok;
 
     switch (msg)
     {
-      case create_desktop[msg]:
-        result = shell.compositor.create_desktop(msg.surface_id);
 
       else:
         completer.raise(zidl::errc::bad_dispatch);
@@ -68,7 +106,7 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
     {
       std::print("winton shell: client error - ", cast<winton::errc>(-cast<i32>(result)));
 
-      zidl::send<winton::shell::error_response>(shell.channel, 0, cast<winton::errc>(-cast<i32>(result)));
+      zidl::send<winton::shell::error_response>(client.channel, 0, cast<winton::errc>(-cast<i32>(result)));
     }
   });
 
@@ -76,7 +114,16 @@ fn client_handler(app::loop mut &loop, app::loop::wait_t mut *wait) -> void
   {
     std::print("winton compositor: client error - ", cast<zidl::errc>(-cast<i32>(result)));
 
-    app::loop::current.cancel_wait(&shell.handler);
-    shell.channel.close();
+    close(client.shell, client);
   }
+}
+
+fn destroy(client mut *client) -> void
+{
+  app::loop::current.cancel_wait(&client.handler);
+}
+
+fn close(shell mut *shell, client mut *client) -> void
+{
+  shell.clients.erase_if(|k| &*k == client);
 }

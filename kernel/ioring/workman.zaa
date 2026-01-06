@@ -108,7 +108,7 @@ pub fn trigger(work_manager mut &workman) -> void
 {
   std::atomic_add(&workman.activity, 1);
 
-  var mut &worker = workman.workers[cast<usize>(cpu::current) % workman.workers.len];
+  var mut &worker = workman.workers[cast<usize>(cpu::id) % workman.workers.len];
 
   worker.doorbell.release();
 }

@@ -58,6 +58,7 @@ pub struct token
     kw_private,
     kw_property,
     kw_signal,
+    kw_animate,
     kw_import,
 
     block,
@@ -416,6 +417,9 @@ fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
 
     case "signal":
       type = token::type::kw_signal;
+
+    case "animate":
+      type = token::type::kw_animate;
 
     case "public":
       type = token::type::kw_public;

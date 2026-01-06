@@ -94,6 +94,7 @@ protocol compositor
   buffer_resize(u32 buffer_id, u32 offset, i32 width, i32 height, i32 stride, format format);
   buffer_destroy(u32 buffer_id);
 
+  create_desktop(u32 surface_id);
   create_window(u32 surface_id);
   create_popup(u32 surface_id, u32 parent_id);
 
@@ -139,7 +140,6 @@ protocol compositor
 
 protocol shell
 {
-  create_desktop(uuid surface_id);
 
   -> error(u32 id, errc code);
 }

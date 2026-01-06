@@ -199,6 +199,9 @@ image:
             src: build/system/apps/coreutils/mv
             dest: /bin/mv
         - cp:
+            src: build/system/apps/coreutils/ps
+            dest: /bin/ps
+        - cp:
             src: build/system/apps/coreutils/pwd
             dest: /bin/pwd
         - cp:
@@ -219,6 +222,9 @@ image:
         - cp:
             src: build/system/apps/coreutils/tty
             dest: /bin/tty
+        - cp:
+            src: build/system/apps/coreutils/uptime
+            dest: /bin/uptime
         - cp:
             src: build/system/apps/edit/edit
             dest: /bin/edit

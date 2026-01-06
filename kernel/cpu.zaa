@@ -18,6 +18,11 @@ pub struct cpu_logical_core
 
   pub run_queue runqueue;
 
+  pub u64 active_time;
+  pub u64 interrupt_time;
+  pub u64 idle_time;
+
+  pub u64 process_counter_interrupt_time;
   pub usize process_counter_user_allocated_pages;
 
   cpu_logical_core() = default;
@@ -61,9 +66,16 @@ pub fn interrupts_disabled() -> bool
   return platform::interrupts_disabled;
 }
 
-pub fn current() -> int
+pub fn id() -> int
 {
   return self.id;
+}
+
+pub fn current() -> cpu_logical_core mut *
+{
+  std::assert(platform::interrupts_disabled);
+
+  return &self;
 }
 
 pub fn runqueue() -> run_queue mut &
@@ -88,9 +100,14 @@ pub fn switch_current_thread(thread mut *thread) -> void
   self.current_thread = thread;
 }
 
-pub fn process_counter_user_allocated_pages()
+pub fn increment_interrupt_time(u64 time)
 {
-  return &self.process_counter_user_allocated_pages;
+  self.process_counter_interrupt_time = __add_with_carry(self.process_counter_interrupt_time, time).0;
+}
+
+pub fn increment_user_allocated_pages(usize n)
+{
+  self.process_counter_user_allocated_pages = __add_with_carry(self.process_counter_user_allocated_pages, 1).0;
 }
 
 pub fn tsc() -> u64

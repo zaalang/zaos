@@ -40,6 +40,7 @@ pub struct process
 
   pub id id;
   pub state state;
+  pub u64 start_time;
 
   pub mutex lock;
   pub std::string uuid;
@@ -66,7 +67,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[8] reserved;
+  u8[64] reserved;
 
   pub fn current() -> process mut *
   {
@@ -473,6 +474,8 @@ pub fn process_start(process mut *process, thread::priority priority) -> process
 {
   std::print(*process, "started");
 
+  process.start_time = cpu::tsc;
+
   for (var thread = process.threads; thread; thread = thread.sibling)
     scheduler::enqueue(thread, priority);
 
@@ -649,13 +652,14 @@ pub fn teardown(process mut *process) -> void
 
 pub fn flush_process_counters() -> void
 {
+  var current_cpu = cpu::current;
   var current_thread = cpu::current_thread;
 
-  if (var n = cpu::process_counter_user_allocated_pages; n != 0)
+  if (var n = current_cpu.process_counter_user_allocated_pages; n != 0)
   {
     std::atomic_add(&current_thread.process.userspace.allocated_physical_pages, n);
 
-    cpu::process_counter_user_allocated_pages = 0;
+    current_cpu.process_counter_user_allocated_pages = 0;
   }
 }
 
