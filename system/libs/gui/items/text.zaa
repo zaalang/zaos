@@ -24,20 +24,6 @@ pub struct Text : pub item
   pub ~Text() = default;
 }
 
-pub fn pointer_event_filter(Text mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
-{
-  return forward;
-}
-
-pub fn pointer_event(Text mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
-{
-  return ignore;
-}
-
-pub fn pointer_exit(Text mut &this) -> void
-{
-}
-
 pub fn implicit_width(Text &this) -> float
 {
   var font = gui::font(this.font_family, this.font_size);
@@ -74,6 +60,36 @@ pub fn implicit_height(Text &this) -> float
   }
 
   return std::ceil(implicit_height);
+}
+
+pub fn focus_event(Text mut &this, gui::scene mut &scene, gui::iitem::reason, gui::focus_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_event_filter(Text mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(Text mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(Text mut &this, gui::scene mut &scene) -> void
+{
+}
+
+
+pub fn key_event_filter(Text mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(Text mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return ignore;
 }
 
 pub fn render(Text &this, gui::painter mut &painter, gfx::transform &transform) -> void

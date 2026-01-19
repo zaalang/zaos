@@ -1,0 +1,92 @@
+
+LineEdit {
+  alias text: edit.text;
+  alias input-type: edit.input-type;
+  property bool enabled: true;
+
+  signal edited(string text);
+  signal accepted();
+
+  private property bool focused: false;
+
+  on_focused: { edit.focus(); }
+
+  FocusScope {
+    id: scope;
+    enabled: root.enabled;
+    on_focus_in: { edit.focus(); }
+
+    TouchArea {
+      enabled: root.enabled;
+      on_entered: { box.border-color = #005fb8; }
+      on_exited: { box.border-color = #99000000; }
+      on_pressed: |position| { edit.focus(); }
+
+      Rectangle {
+        id: box;
+        border-width: 1px;
+        border-color: #99000000;
+        background: #ffffff;
+
+        HorizontalLayout {
+          padding-left: 12px;
+          padding-right: 8px;
+          padding-top: 2px;
+          padding-bottom: 2px;
+          spacing: 4px;
+
+          Input {
+            id: edit;
+            enabled: root.enabled;
+            font-family: "Noto Sans";
+            font-size: 12pt;
+            color: #000000;
+            horizontal-alignment: TextHorizontalAlignment.Left;
+            vertical-alignment: TextVerticalAlignment.Middle;
+            horizontal-stretch: 1.0;
+
+            on_focus_in: { root.focused = true; }
+            on_focus_out: { root.focused = false; }
+
+            on_edited: {
+              root.edited(this.text);
+            }
+
+            on_accepted: {
+              root.accepted();
+            }
+          }
+
+          Text {
+            id: cross;
+            text: "\ueab8";
+            font-family: "Codicon";
+            font-size: 12px;
+            color: #000000;
+            opacity: bar.opacity;
+            vertical-alignment: TextVerticalAlignment.Middle;
+            horizontal-alignment: TextHorizontalAlignment.Center;
+
+            TouchArea {
+              enabled: bar.opacity > 0.5;
+              on_clicked: { root.edited(""); }
+            }
+          }
+        }
+      }
+    }
+
+    Rectangle {
+      id: bar;
+      y: parent.height - 2px;
+      width: parent.width;
+      height: 2px;
+      background: #005fb8;
+      opacity: IF(root.focused, 1.0, 0.0);
+
+      animate opacity {
+        duration: 150ms;
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@
 
 import std.stdio;
 import std.string : String;
+import std.range : Range;
 import std.flat_hash_map;
 import std.box;
 import os.zaos.fcntl;
@@ -260,7 +261,7 @@ pub struct loop
     state = loop::state::shutdown;
   }
 
-  pub fn (*connect_handler)(loop mut &, zidl::string_view, zidl::channel) -> void;
+  pub fn (*connect_handler)(loop mut &, zidl::string, zidl::channel) -> void;
 
   state state;
   pollset pollset;
@@ -361,7 +362,7 @@ pub fn connect_to_service(String &uri) throws(std::error) -> zidl::channel
 {
   var [server_end, client_end] = zidl::channel::create();
 
-  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(uri), &move server_end); !result)
+  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string(uri), &move server_end); !result)
     throw std::system_error(std::errc::broken_pipe);
 
   return &move client_end;
@@ -374,8 +375,28 @@ pub fn connect_to_service(String &service, zidl::channel mut &client_end) -> i32
   if (var rc = zidl::channel::create(&mut server_end, &mut client_end); rc < 0)
     return rc;
 
-  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string_view(service), &move server_end); !result)
+  if (var result = zidl::send<zidl::zaos_sys::service::connect_to_service_request>(STDSYS_FILENO, zidl::string(service), &move server_end); !result)
     return -cast<i32>(std::errc::broken_pipe);
+
+  return 0;
+}
+
+pub fn launch(String &path, Range<String> &args) -> i32
+{
+  var argv = std::vector<zidl::string>();
+
+  argv.push_back(path);
+
+  for (var &arg : args)
+    argv.push_back(arg);
+
+  var endpoint = zidl::channel();
+
+  if (var rc = connect_to_service("zaos.sys/launcher", &mut endpoint); rc < 0)
+    return rc;
+
+  if (var result = zidl::send<zidl::zaos_sys::launcher::launch_request>(endpoint, zidl::vector<zidl::string>(argv)); !result)
+    return cast<i32>(result);
 
   return 0;
 }

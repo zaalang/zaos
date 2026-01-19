@@ -465,6 +465,19 @@ fn parse_variable_declaration(parse_context mut &ctx) -> decl
   if (!ctx.try_consume_token(token::type::identifier))
     ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
 
+  if (ctx.try_consume_token(token::type::l_angle))
+  {
+    variable.type += '<';
+    variable.type += ctx.tok.text;
+    variable.type += '>';
+
+    if (!ctx.try_consume_token(token::type::identifier))
+      ctx.diag.error(ParseError::ExpectedIdentifier(ctx.text, ctx.tok));
+
+    if (!ctx.try_consume_token(token::type::r_angle))
+      ctx.diag.error(ParseError::ExpectedClosingBracket(ctx.text, ctx.tok));
+  }
+
   if (ctx.try_consume_token(token::type::l_square))
   {
     variable.type += '[';

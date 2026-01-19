@@ -1,0 +1,117 @@
+//
+// focusscope item
+//
+
+import std.stdlib;
+import std.function;
+import gui.scene : item;
+import gui.painter;
+import gfx.transform;
+
+pub struct item_key_event
+{
+  pub enum kind
+  {
+    pressed,
+    released,
+  }
+
+  pub u64 time;
+  pub kind kind;
+  pub u32 key;
+  pub char sym;
+  pub gui::modifiers modifiers;
+
+  pub bool accepted;
+
+  item_key_event(u64 time, kind kind, u32 key, char sym, gui::modifiers modifiers)
+    : time(time), kind(kind), key(key), sym(sym), modifiers(modifiers)
+  {
+  }
+
+  pub item_key_event() = default;
+  pub item_key_event(item_key_event&) = default;
+  pub fn =(item_key_event mut &, item_key_event &) -> item_key_event mut & = default;
+  pub ~item_key_event() = default;
+}
+
+pub struct FocusScope : pub item
+{
+  pub bool enabled = true;
+  pub std::delegate<() -> void> on_focus_in;
+  pub std::delegate<() -> void> on_focus_out;
+  pub std::delegate<(item_key_event mut &) -> void> key_event;
+
+  pub FocusScope()
+    : super(&impl this)
+  {
+  }
+
+  pub ~FocusScope() = default;
+}
+
+pub fn focus_event(FocusScope mut &this, gui::scene mut &scene, gui::iitem::reason reason, gui::focus_event &evt) -> gui::iitem::action
+{
+  if (!this.enabled)
+    return ignore;
+
+  switch (evt.type)
+  {
+    case focus_in:
+      if (this.on_focus_in)
+        this.on_focus_in();
+
+    case focus_out:
+      if (this.on_focus_out)
+        this.on_focus_out();
+  }
+
+  return accept;
+}
+
+pub fn pointer_event_filter(FocusScope mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(FocusScope mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(FocusScope mut &this, gui::scene mut &scene) -> void
+{
+}
+
+pub fn key_event_filter(FocusScope mut &this, gui::scene mut &scene, gui::key_event &evt) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(FocusScope mut &this, gui::scene mut &scene, gui::key_event &evt) -> gui::iitem::action
+{
+  if (this.key_event)
+  {
+    var event = item_key_event();
+
+    switch (evt.state)
+    {
+      case 1:
+        event = item_key_event(evt.time, item_key_event::kind::pressed, evt.key, evt.sym, evt.modifiers);
+
+      case 0:
+        event = item_key_event(evt.time, item_key_event::kind::released, evt.key, evt.sym, evt.modifiers);
+    }
+
+    this.key_event(&mut event);
+
+    if (event.accepted)
+      return accept;
+  }
+
+  return ignore;
+}
+
+pub fn render(FocusScope &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+}

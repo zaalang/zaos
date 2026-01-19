@@ -5,13 +5,14 @@
 import std.stdio;
 import app.loop;
 import gui.display as display;
+import gui.painter;
 import gui.rect;
 
 pub struct desktop : pub display::surface
 {
   fn connect(this mut &, display::connection mut *connection) throws(std::error) -> void
   {
-    var id = this.create(connection, cast(0));
+    var id = this.create(connection, display::surface::flags::no_back_buffer);
 
     connection.create_desktop(id);
     connection.surface_commit(id);
@@ -48,11 +49,9 @@ pub struct desktop : pub display::surface
 
   pub fn paint_event(this mut &, display::buffer mut &buffer, gui::rectset &region) -> void
   {
-  std::print(region);
-    var addr = cast<u32 mut *>(buffer.data);
+    var painter = gui::painter(&mut buffer, this.interior);
 
-    for (var i = 0; i < buffer.size / sizeof<u32>; ++i)
-      *(addr + i) = 0xff336698;
+    painter.clear(0xff336698);
   }
 
   pub fn resize_event(this mut &, display::resize_event &) -> void

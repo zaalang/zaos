@@ -429,7 +429,7 @@ pub struct pointer_event
 
 pub struct focus_event
 {
-  enum type
+  pub enum type
   {
     focus_in,
     focus_out,
@@ -497,10 +497,12 @@ pub struct surface : pub gui::object
   pub enum flags
   {
     close_button = 0x1000,
-    minimise_button = 0x02000,
-    maximise_button = 0x04000,
+    minimise_button = 0x2000,
+    maximise_button = 0x4000,
 
     resizeable = 0x10000,
+
+    no_back_buffer = 0x80000,
 
     pub const fn bool(flags lhs) -> bool { return cast<isize>(lhs) != 0; }
 
@@ -820,12 +822,14 @@ pub struct surface : pub gui::object
     this.connection.surface_damage(this.id, this.damage.extents.x, this.damage.extents.y, this.damage.extents.width, this.damage.extents.height);
     this.connection.surface_commit(this.id, callback: true);
 
-    this.active_buffer = &buffer;
-    this.previous_damage = this.damage.extents;
+    if (this.flags & flags::no_back_buffer != flags::no_back_buffer)
+    {
+      this.active_buffer = &buffer;
+      this.previous_damage = this.damage.extents;
+      buffer.busy = true;
+    }
 
     this.damage.clear();
-
-    buffer.busy = true;
   }
 
   fn configure_window(this mut &, i32 width, i32 height, winton::state state) -> void

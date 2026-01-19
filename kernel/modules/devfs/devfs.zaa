@@ -5,7 +5,6 @@
 import std.alloc;
 import std.flat_hash_map;
 import std.string : String;
-import blk;
 import vfs.node;
 import vfs.stat;
 import vfs.fs;

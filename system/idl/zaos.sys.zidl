@@ -6,6 +6,7 @@ library zaos.sys;
 
 protocol launcher
 {
+  launch(vector<string> argv);
 }
 
 protocol service

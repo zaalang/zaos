@@ -38,7 +38,7 @@ fn bootstrap_filesystem() -> void
       rootdev = dev;
   });
 
-  if (!rootdev)
+  for (; !rootdev; )
   {
     std::print("unable to determine root file system, detected devices:");
 
@@ -47,7 +47,12 @@ fn bootstrap_filesystem() -> void
         std::print("  ", uuid);
     });
 
-    std::panic("no system device");
+    scheduler::sleep_until(cpu::system_time + 100_000_000);
+
+    blk::enumerate(|id, dev| [rootdev, rootuuid] {
+      if (var uuid = dev.query(blk::query::device_uuid); uuid == rootuuid)
+        rootdev = dev;
+    });
   }
 
   var ctx = vfs::file_system_context();

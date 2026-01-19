@@ -186,6 +186,9 @@ fn destroy(vfs::node mut *node) -> void
 {
   var ptm = cast<ptm mut *>(node);
 
+  if (!ptm.ptty.readable.ready)
+    io::complete(&mut ptm.ptty.readable.cb, 0);
+
   dev::remove(ptm.ptty);
 
   std::allocator::delete(ptm);

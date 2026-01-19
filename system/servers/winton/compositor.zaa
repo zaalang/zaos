@@ -248,7 +248,7 @@ pub fn initialise(compositor mut &compositor) -> i32
   return 0;
 }
 
-pub fn accept(compositor mut &compositor, zidl::string_view uri, zidl::channel channel) -> void
+pub fn accept(compositor mut &compositor, zidl::string uri, zidl::channel channel) -> void
 {
   std::print("winton compositor: accept connection");
 

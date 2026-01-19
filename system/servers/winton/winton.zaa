@@ -15,7 +15,7 @@ struct service
 {
   app::loop loop;
 
-  std::flat_hash_map<std::string, std::delegate<(zidl::string_view, zidl::channel) -> void>> on_connect;
+  std::flat_hash_map<std::string, std::delegate<(zidl::string, zidl::channel) -> void>> on_connect;
 
   service() = default;
   ~service() = default;
@@ -26,12 +26,12 @@ fn initialise(service mut &service) -> i32
   if (var rc = app::initialise(&mut service.loop); rc < 0)
     std::panic("winton: unable to init loop - ", cast<std::errc>(-rc));
 
-  service.loop.connect_handler = &cast<fn (app::loop mut &, zidl::string_view, zidl::channel) -> void>(connect_handler);
+  service.loop.connect_handler = &cast<fn (app::loop mut &, zidl::string, zidl::channel) -> void>(connect_handler);
 
   return 0;
 }
 
-fn connect_handler(app::loop mut &loop, zidl::string_view uri, zidl::channel channel) -> void
+fn connect_handler(app::loop mut &loop, zidl::string uri, zidl::channel channel) -> void
 {
   var service = cast<service mut *>(cast<uintptr>(&loop) - offsetof(service::loop));
 

@@ -52,11 +52,11 @@ pub struct encoder
   pub ~encoder() = default;
 }
 
-pub fn encode(encoder mut &encoder, zidl::string_view str) -> void
+pub fn encode(encoder mut &encoder, zidl::string string) -> void
 {
-  if (var data = encoder.alloc(str.len))
+  if (var data = encoder.alloc(string.len))
   {
-    std::memcpy(data, str.data, str.len);
+    std::memcpy(data, string.data, string.len);
   }
 }
 
@@ -65,11 +65,35 @@ pub fn encode(encoder mut &encoder, zidl::handle &handle) -> void
   encoder.submit(handle.fd);
 }
 
-pub fn encode<T>(encoder mut &encoder, T &object) -> void
+pub fn encode<T>(encoder mut &encoder, zidl::vector<T> vector) -> void
 {
-  using T;
+  if (var data = encoder.alloc(vector.len * sizeof<T>))
+  {
+    std::memcpy(data, vector.data, vector.len * sizeof<T>);
 
-  encode(&mut encoder, object);
+    #if (requires (encoder encoder, T object) { encode(&mut encoder, object); })
+      for (var &element : vector)
+        encode(&mut encoder, element);
+  }
+}
+
+pub fn encode<T, N>(encoder mut &encoder, T[N] &array) -> void
+  where requires (encoder encoder, T object) { encode(&mut encoder, object); }
+{
+  for (var i = 0; i < N; ++i)
+  {
+    encode(&mut encoder, array[i]);
+  }
+}
+
+pub fn encode<T>(encoder mut &encoder, T &object) -> void
+  where __is_struct<T>
+{
+  #for (const k : std::meta::fields_of($T))
+  {
+    #if (requires (encoder encoder, T object) { encode(&mut encoder, object.#k); })
+      encode(&mut encoder, object.#k);
+  }
 }
 
 pub struct encode_result
@@ -103,7 +127,7 @@ pub fn encode<zidl_message_t>(Span<u8> mut &bytes, Span<i32> mut &handles, zidl_
     std::memcpy(inline, &msg, sizeof(msg));
   }
 
-  zidl_message_t::encode(&mut encoder, msg);
+  encode(&mut encoder, msg);
 
   if (bytes.end < encoder.bytes_tail)
     result.error = zidl::errc::exhausted_bytes_capacity;

@@ -1,0 +1,22 @@
+//
+// gui view
+//
+
+import gui.scene;
+
+pub struct View<T> : pub gui::scene
+{
+  T view;
+
+  pub View()
+  {
+    view.initialise(&mut this);
+  }
+
+  pub fn *(this &&)
+  {
+    return &this.view;
+  }
+
+  pub ~View() = default;
+}

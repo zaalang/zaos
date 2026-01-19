@@ -60,6 +60,11 @@ pub struct painter
   pub ~painter() = default;
 }
 
+pub fn clear(painter mut &painter, u32 color) -> void
+{
+  gfx::clear(&mut painter.ctx, color);
+}
+
 pub fn clear(painter mut &painter, gfx::color &color) -> void
 {
   gfx::clear(&mut painter.ctx, color);

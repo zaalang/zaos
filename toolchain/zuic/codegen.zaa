@@ -69,15 +69,60 @@ fn codegen_type(codegen_context &ctx, Component &component, Type &type) -> std::
     case Enumeration[enumeration]:
       switch (enumeration)
       {
+        case "TextHorizontalAlignment":
+          return "gui::text_horizontal_alignment";
+
+        case "TextVerticalAlignment":
+          return "gui::text_vertical_alignment";
+
+        case "LayoutHorizontalAlignment":
+          return "gui::layout_horizontal_alignment";
+
+        case "LayoutVerticalAlignment":
+          return "gui::layout_vertical_alignment";
+
+        case "PointerEvent":
+          return "gui::item_pointer_event";
+
+        case "PointerEventButton":
+          return "gui::button";
+
+        case "PointerEventKind":
+          return "gui::item_pointer_event";
+
+        case "WheelEvent":
+          return "gui::item_wheel_event";
+
+        case "KeyEvent":
+          return "gui::item_key_event";
+
+        case "KeyEventKind":
+          return "gui::item_key_event";
+
+        case "InputType":
+          return "gui::input_type";
+
         case "Transform":
           return "gfx::transform";
+
+        case "Easing":
+          return "gui::animation_easing";
+
+        case "Direction":
+          return "gui::animation_direction";
+
+        case "Point":
+          return "gfx::point";
+
+        case "Rect":
+          return "gfx::rect";
 
         else:
           return enumeration;
       }
 
-    case Signal[args]:
-      return std::format("std::delegate<({}) -> void>", args.transform(|arg| codegen_type(ctx, component, arg)).join(", "));
+    case Function[args]:
+      return std::format("std::delegate<({}) -> void>", args.transform(|arg| codegen_type(ctx, component, arg) + " &").join(", "));
 
     else:
       return "#ERR";
@@ -114,6 +159,12 @@ fn codegen_object_type(codegen_context &ctx, Component &component, usize object_
 
     case "TouchArea":
       return "gui::TouchArea";
+
+    case "FocusScope":
+      return "gui::FocusScope";
+
+    case "Input":
+      return "gui::Input";
 
     case "Animate":
       var &parent = component.objects[object.parent];
@@ -157,19 +208,23 @@ fn codegen_property_path(codegen_context &ctx, Component &component, usize prope
       var &layout = component.objects[object.parent];
 
       return std::format("{}.{}s[{}]", layout.name, property.name.gsub("-", "_"), property.parent - layout.child_index);
-
-    else:
-      switch (property.kind)
-      {
-        case Public:
-        case Private:
-        case Signal:
-          return std::format("{}_{}", object.name, property.name.gsub("-", "_"));
-
-        else:
-          return std::format("{}.{}", object.name, property.name.gsub("-", "_"));
-      }
   }
+
+  switch (property.kind)
+  {
+    case Public:
+    case Private:
+    case Signal:
+      return std::format("{}_{}", object.name, property.name.gsub("-", "_"));
+
+    case Binding:
+      return std::format("{}.{}", object.name, property.name.gsub("-", "_"));
+
+    case Method:
+      return std::format("{}.{}", object.name, property.name.gsub("-", "_"));
+  }
+
+  return property.name.gsub("-", "_");
 }
 
 fn codegen_expression(codegen_context &ctx, Component &component, BoundExpression &expression) -> std::string
@@ -273,6 +328,9 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
         case Assign:
           switch (*binaryop.lhs)
           {
+            case Enumeration[enumeration]:
+              return std::format("{} = {}", enumeration.name, codegen_expression(ctx, component, *binaryop.rhs));
+
             case PropertyId[propertyid]:
               return codegen_property_update(ctx, component, propertyid, codegen_expression(ctx, component, *binaryop.rhs));
           }
@@ -293,6 +351,9 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
         case TransformTranslation:
           return std::format("gfx::transform::translation({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
+        case If:
+          return std::format("({}) ? {} : {}", codegen_expression(ctx, component, functionop.args[0]), codegen_expression(ctx, component, functionop.args[1]), codegen_expression(ctx, component, functionop.args[2]));
+
         case Min:
           return std::format("std::min({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
@@ -311,35 +372,88 @@ fn codegen_expression(codegen_context &ctx, Component &component, BoundExpressio
         case Round:
           return std::format("std::round({})", codegen_expression(ctx, component, functionop.args[0]));
 
+        case Abs:
+          return std::format("std::abs({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Sin:
+          return std::format("std::sin({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Cos:
+          return std::format("std::cos({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Val:
+          return std::format("zuic::val({})", codegen_expression(ctx, component, functionop.args[0]));
+
+        case Fix:
+          return std::format("zuic::fix({})", codegen_expression(ctx, component, functionop.args[0]));
+
         case Str$:
-          return std::format("str$({})", codegen_expression(ctx, component, functionop.args[0]));
+          return std::format("zuic::str$({})", codegen_expression(ctx, component, functionop.args[0]));
 
         case Left$:
-          return std::format("left$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+          return std::format("zuic::left$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
         case Right$:
-          return std::format("right$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+          return std::format("zuic::right$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
         case Mid$:
-          return std::format("mid$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+          return std::format("zuic::mid$({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
 
         case Trim$:
-          return std::format("trim$({})", codegen_expression(ctx, component, functionop.args[0]));
+          return std::format("zuic::trim$({})", codegen_expression(ctx, component, functionop.args[0]));
 
         case Debug:
-          return std::format("debug({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+          return std::format("zuic::debug({})", functionop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
       }
 
     case CallOp[callop]:
-      return std::format("this.{}({})", codegen_property_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+      switch (component.properties[callop.id].kind)
+      {
+        case Signal:
+          return std::format("this.{}({})", codegen_property_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+
+        case SetFocus:
+          return std::format("gui::scene_set_focus(&mut *this.scene, &this.{})", codegen_object_path(ctx, component, component.properties[callop.id].parent));
+
+        case ClearFocus:
+          return std::format("gui::scene_clear_focus(&mut *this.scene, &this.{})", codegen_object_path(ctx, component, component.properties[callop.id].parent));
+
+        case Method:
+          return std::format("this.{}({})", codegen_property_path(ctx, component, callop.id), callop.args.transform(|arg| codegen_expression(ctx, component, arg)).join(", "));
+      }
 
     case Block[block]:
       var stmts = std::string();
 
-      for (var &stmt : block.stmts)
-        stmts.append(codegen_expression(ctx, component, stmt), "; ");
+      for (var &stmt : block.statements)
+      {
+        stmts += codegen_statement(ctx, component, stmt);
+      }
 
       return std::format("|{}| {{ {} }}", block.args.join(", "), stmts);
+  }
+
+  return "#ERR";
+}
+
+fn codegen_statement(codegen_context &ctx, Component &component, BoundStatement &statement) -> std::string
+{
+  switch (statement)
+  {
+    case Var[stmt]:
+      return std::format("var {} = {}; ", stmt.name, codegen_expression(ctx, component, stmt.expression));
+
+    case If[stmt]:
+      return std::format("if ({}) {{ {} }} ", codegen_expression(ctx, component, stmt.condition), codegen_statement(ctx, component, *stmt.statement));
+
+    case IfElse[stmt]:
+      return std::format("{} else {{ {} }} ", codegen_statement(ctx, component, *stmt.statement), codegen_statement(ctx, component, *stmt.otherwise));
+
+    case Compound[stmt]:
+      return std::format("{{ {} }} ", stmt.statements.transform(|stmt| codegen_statement(ctx, component, stmt)).join);
+
+    case Expression[expr]:
+      return std::format("{}; ", codegen_expression(ctx, component, expr));
   }
 
   return "#ERR";
@@ -377,10 +491,12 @@ fn codegen_implicit_width(codegen_context &ctx, Component &component, usize obje
   {
     case "Rectangle":
     case "TouchArea":
+    case "FocusScope":
     case "GridLayout":
     case "HorizontalLayout":
     case "VerticalLayout":
     case "FlexLayout":
+    case "Input":
       if (var id = component.find_property(object_id, "min-width"); id && component.properties[id?!].expression)
         widths.push_back(std::format("this.{}", codegen_property_path(ctx, component, id?!)));
 
@@ -432,6 +548,7 @@ fn codegen_implicit_height(codegen_context &ctx, Component &component, usize obj
   {
     case "Rectangle":
     case "TouchArea":
+    case "FocusScope":
     case "GridLayout":
     case "HorizontalLayout":
     case "VerticalLayout":
@@ -631,6 +748,9 @@ fn codegen_propmap(codegen_context mut &ctx, Component &component) -> void
 
 fn codegen_objects(codegen_context mut &ctx, Component &component) throws(std::error) -> void
 {
+  std::fprintf(&mut ctx.fout, "  pub gui::scene mut *scene;\n");
+  std::fprintf(&mut ctx.fout, "\n");
+
   for (var object_id = 0; object_id < component.objects.len; ++object_id)
   {
     var &object = component.objects[object_id];
@@ -658,6 +778,19 @@ fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std
 {
   var rootobj = component.objects[0];
 
+  for (var &[alias, propertyid]: rootobj.aliases)
+  {
+    var &property = component.properties[propertyid];
+
+    std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} & {{\n", alias.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
+    std::fprintf(&mut ctx.fout, "    return &this.{};\n", codegen_property_path(ctx, component, propertyid));
+    std::fprintf(&mut ctx.fout, "  }}\n\n");
+
+    std::fprintf(&mut ctx.fout, "  pub fn {}=(this mut &, {} &&value) -> void {{\n", alias.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
+    std::fprintf(&mut ctx.fout, "    {};\n", codegen_property_update(&mut ctx, component, propertyid, "&&value"));
+    std::fprintf(&mut ctx.fout, "  }}\n\n");
+  }
+
   for (var propertyid = rootobj.property_index; propertyid < rootobj.property_index + rootobj.property_count; ++propertyid)
   {
     var &property = component.properties[propertyid];
@@ -671,8 +804,8 @@ fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std
 
       case Public:
       case Binding:
-        std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} {{\n", property.name.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
-        std::fprintf(&mut ctx.fout, "    return this.{};\n", codegen_property_path(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "  pub fn {}(this &) -> {} & {{\n", property.name.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
+        std::fprintf(&mut ctx.fout, "    return &this.{};\n", codegen_property_path(ctx, component, propertyid));
         std::fprintf(&mut ctx.fout, "  }}\n\n");
 
         std::fprintf(&mut ctx.fout, "  pub fn {}=(this mut &, {} &&value) -> void {{\n", property.name.gsub("-", "_"), codegen_property_type(ctx, component, propertyid));
@@ -687,6 +820,14 @@ fn codegen_parameters(codegen_context mut &ctx, Component &component) throws(std
 
   std::fprintf(&mut ctx.fout, "  pub fn implicit_height(this &) -> float {{\n");
   std::fprintf(&mut ctx.fout, "    return {};\n", codegen_implicit_height(ctx, component, 0));
+  std::fprintf(&mut ctx.fout, "  }}\n\n");
+}
+
+fn codegen_focus(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "  pub fn focus(this mut &) -> void {{\n");
+  std::fprintf(&mut ctx.fout, "    if (this.root_0_on_focused)\n");
+  std::fprintf(&mut ctx.fout, "      this.root_0_on_focused();\n");
   std::fprintf(&mut ctx.fout, "  }}\n\n");
 }
 
@@ -716,6 +857,12 @@ fn codegen_update(codegen_context mut &ctx, Component &component) throws(std::er
   for (var object_id = 1; object_id < component.objects.len; ++object_id)
   {
     var &object = component.objects[object_id];
+
+    switch (object.type)
+    {
+      case "Input":
+        std::fprintf(&mut ctx.fout, "    this.{}.update(&mut deadline);\n", codegen_object_path(ctx, component, object_id));
+    }
 
     switch (ctx.mir.lookup(object.type))
     {
@@ -771,7 +918,9 @@ fn codegen_scene(codegen_context mut &ctx, Component &component) throws(std::err
       {
         case "Rectangle":
         case "Text":
+        case "Input":
         case "TouchArea":
+        case "FocusScope":
           itemmap.insert(object_id, items.len);
           items.push_back(items.len, itemmap[object.parent], std::format("{}{}", base, object.name));
 
@@ -792,7 +941,7 @@ fn codegen_scene(codegen_context mut &ctx, Component &component) throws(std::err
     }
   }
 
-  append_items(&mut ctx, &mut items, 0, std::string("&"), ctx.mir, component);
+  append_items(&mut ctx, &mut items, 0, std::string(), ctx.mir, component);
 
   std::stable_sort(&mut items, |x, y| x.parent < y.parent);
 
@@ -818,7 +967,7 @@ fn codegen_scene(codegen_context mut &ctx, Component &component) throws(std::err
       child_count += 1;
     }
 
-    std::fprintf(&mut ctx.fout, "    scene.push_back({}, {}, {}, {});\n", item.name, parent_index, child_count, child_index);
+    std::fprintf(&mut ctx.fout, "  scene.push_back(&this.{}, {}, {}, {});\n", item.name, parent_index, child_count, child_index);
   }
 }
 
@@ -914,11 +1063,6 @@ fn codegen_constructor(codegen_context mut &ctx, Component &component) throws(st
   }
 
   std::fprintf(&mut ctx.fout, "    {}\n", codegen_layout_update(&mut ctx, component, propset));
-
-  std::fprintf(&mut ctx.fout, "\n");
-
-  codegen_scene(&mut ctx, component);
-
   std::fprintf(&mut ctx.fout, "  }}\n");
   std::fprintf(&mut ctx.fout, "\n");
 }
@@ -928,16 +1072,44 @@ fn codegen_destructor(codegen_context mut &ctx, Component &component) throws(std
   std::fprintf(&mut ctx.fout, "  pub ~{}() = default;\n", component.name);
 }
 
+fn codegen_initialise(codegen_context mut &ctx, Component &component) throws(std::error) -> void
+{
+  std::fprintf(&mut ctx.fout, "pub fn initialise({} mut &this, gui::scene mut &scene) -> void {{\n", component.name);
+
+  std::fprintf(&mut ctx.fout, "  this.scene = &scene;\n");
+
+  for (var object_id = 1; object_id < component.objects.len; ++object_id)
+  {
+    var &object = component.objects[object_id];
+
+    switch (ctx.mir.lookup(object.type))
+    {
+      case Some:
+        std::fprintf(&mut ctx.fout, "  this.{}.scene = &scene;\n", codegen_object_path(ctx, component, object_id));
+    }
+  }
+
+  std::fprintf(&mut ctx.fout, "\n");
+
+  codegen_scene(&mut ctx, component);
+
+  std::fprintf(&mut ctx.fout, "\n");
+
+  std::fprintf(&mut ctx.fout, "  this.focus();\n");
+
+  std::fprintf(&mut ctx.fout, "}}\n");
+  std::fprintf(&mut ctx.fout, "\n");
+}
+
 fn codegen(codegen_context mut &ctx, Component &component) throws(std::error) -> void
 {
   std::fprintf(&mut ctx.fout, "pub struct {} {{\n", component.name);
-  std::fprintf(&mut ctx.fout, "  pub gui::view scene;\n");
-  std::fprintf(&mut ctx.fout, "\n");
 
   codegen_propmap(&mut ctx, component);
 
   codegen_objects(&mut ctx, component);
   codegen_parameters(&mut ctx, component);
+  codegen_focus(&mut ctx, component);
   codegen_update(&mut ctx, component);
   codegen_resize(&mut ctx, component);
   codegen_constructor(&mut ctx, component);
@@ -945,6 +1117,8 @@ fn codegen(codegen_context mut &ctx, Component &component) throws(std::error) ->
 
   std::fprintf(&mut ctx.fout, "}}\n");
   std::fprintf(&mut ctx.fout, "\n");
+
+  codegen_initialise(&mut ctx, component);
 
   ctx.invpropmap.clear();
   ctx.propmap.clear();
@@ -960,6 +1134,7 @@ pub fn codegen(Mir &mir, std::string outfile, Source mut &source, diag::diag mut
   std::fprintf(&mut ctx.fout, "import std.vector;\n");
   std::fprintf(&mut ctx.fout, "import std.algorithm;\n");
   std::fprintf(&mut ctx.fout, "import std.function;\n");
+  std::fprintf(&mut ctx.fout, "import gui.view;\n");
   std::fprintf(&mut ctx.fout, "import gui.scene;\n");
   std::fprintf(&mut ctx.fout, "import gui.animation;\n");
   std::fprintf(&mut ctx.fout, "import gfx.transform;\n");
@@ -977,7 +1152,7 @@ pub fn codegen(Mir &mir, std::string outfile, Source mut &source, diag::diag mut
     std::fprintf(&mut ctx.fout, "\n");
   }
 
-  std::fprintf(&mut ctx.fout, "import zuic.builtins : *;\n");
+  std::fprintf(&mut ctx.fout, "import zuic.builtins;\n");
   std::fprintf(&mut ctx.fout, "\n");
 
   for (var &component : mir.components)

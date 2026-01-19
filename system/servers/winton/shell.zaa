@@ -48,7 +48,7 @@ pub fn initialise(shell mut &shell) -> i32
   return 0;
 }
 
-pub fn accept(shell mut &shell, zidl::string_view uri, zidl::channel channel) -> void
+pub fn accept(shell mut &shell, zidl::string uri, zidl::channel channel) -> void
 {
   std::print("winton shell: accept connection");
 

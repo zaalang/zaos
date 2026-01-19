@@ -30,6 +30,19 @@ pub fn trim$(String &str) -> std::string
   return str.trim();
 }
 
+pub fn val(String &str) -> float
+{
+  var number = float(std::NaN);
+  std::atof(str.begin, str.end, &mut number);
+
+  return number;
+}
+
+pub fn fix(float value) -> int
+{
+  return cast<int>(std::clamp(std::round(value), cast<float>(std::numeric_traits<int>::min), cast<float>(std::numeric_traits<int>::max)));
+}
+
 pub fn debug<Args>(Args & ...args) -> void
 {
   std::print(args...);

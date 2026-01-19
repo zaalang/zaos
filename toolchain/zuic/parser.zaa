@@ -484,6 +484,102 @@ fn parse_group_expression(parse_context mut &ctx, std::span<token> mut &tokens) 
   return Expression::UnaryOp(UnaryOp::Kind::Group, &move expr);
 }
 
+fn parse_var_statement(parse_context mut &ctx, std::span<token> mut &tokens) -> Statement
+{
+  consume_token(&mut tokens, token::type::kw_var);
+
+  var name = tokens[0].span;
+
+  if (!try_consume_token(&mut tokens, token::type::identifier))
+    ctx.diag.error(ParseError::ExpectedIdentifier(ctx.source, tokens[0].span));
+
+  if (!try_consume_token(&mut tokens, token::type::equal))
+    ctx.diag.error(ParseError::ExpectedExperssion(ctx.source, tokens[0].span));
+
+  var expression = parse_expression(&mut ctx, &mut tokens);
+
+  if (!try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return Statement::Var(name, &move expression);
+}
+
+fn parse_if_statement(parse_context mut &ctx, std::span<token> mut &tokens) -> Statement
+{
+  consume_token(&mut tokens, token::type::kw_if);
+
+  var condition = parse_expression(&mut ctx, &mut tokens);
+
+  var statement = parse_statement(&mut ctx, &mut tokens);
+
+  switch (tokens[0].type)
+  {
+    case kw_else:
+      consume_token(&mut tokens, token::type::kw_else);
+
+      var otherwise = parse_statement(&mut ctx, &mut tokens);
+
+      return Statement::IfElse(Statement::If(&move condition, &move statement), &move otherwise);
+
+    else:
+      return Statement::If(&move condition, &move statement);
+  }
+}
+
+fn parse_expression_statement(parse_context mut &ctx, std::span<token> mut &tokens) -> Statement
+{
+  var expression = parse_expression(&mut ctx, &mut tokens);
+
+  if (!try_consume_token(&mut tokens, token::type::semi))
+    ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+
+  return Statement::Expression(&move expression);
+}
+
+fn parse_compound_statement(parse_context mut &ctx, std::span<token> mut &tokens) -> Statement
+{
+  var stmts = std::vector<Statement>();
+
+  for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
+  {
+    stmts.push_back(parse_statement(&mut ctx, &mut tokens));
+
+    if (ctx.diag.has_errored)
+      break;
+  }
+
+  consume_token(&mut tokens, token::type::block);
+
+  return Statement::Compound(&move stmts);
+}
+
+fn parse_statement(parse_context mut &ctx, std::span<token> mut &tokens) -> Statement
+{
+  switch (tokens[0].type)
+  {
+    case kw_var:
+      return parse_var_statement(&mut ctx, &mut tokens);
+
+    case kw_if:
+      return parse_if_statement(&mut ctx, &mut tokens);
+
+    case block:
+      switch (tokens[0].span[0])
+      {
+        case '{':
+          return parse_compound_statement(&mut ctx, &mut tokens);
+
+        else:
+          ctx.diag.error(ParseError::ExpectedExperssion(ctx.source, tokens[0].span));
+      }
+
+    else:
+      return parse_expression_statement(&mut ctx, &mut tokens);
+  }
+
+  return Statement();
+}
+
 fn parse_block_expression(parse_context mut &ctx, std::span<token> mut &tokens) -> Expression
 {
   var args = std::vector<std::string_view>();
@@ -505,7 +601,7 @@ fn parse_block_expression(parse_context mut &ctx, std::span<token> mut &tokens) 
       ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[0].span));
   }
 
-  var stmts = std::vector<Expression>();
+  var stmts = std::vector<Statement>();
 
   switch (tokens[0].type)
   {
@@ -515,10 +611,7 @@ fn parse_block_expression(parse_context mut &ctx, std::span<token> mut &tokens) 
         case '{':
           for (var tokens = lexer::lex(tokens[0].span.drop_front(1).drop_back(1)).span; tokens[0] != token::type::eof; )
           {
-            stmts.push_back(parse_expression(&mut ctx, &mut tokens));
-
-            if (!try_consume_token(&mut tokens, token::type::semi))
-              ctx.diag.error(ParseError::ExpectedSemi(ctx.source, tokens[0].span));
+            stmts.push_back(parse_statement(&mut ctx, &mut tokens));
 
             if (ctx.diag.has_errored)
               break;
@@ -819,6 +912,10 @@ fn parse_element(parse_context mut &ctx, std::span<token> mut &tokens) -> Elemen
                   else:
                     ctx.diag.error(ParseError::UnexpectedToken(ctx.source, tokens[1].span));
                 }
+
+              case kw_alias:
+                consume_token(&mut tokens, token::type::kw_alias);
+                element.aliases.push_back(parse_binding(&mut ctx, &mut tokens));
 
               case kw_property:
                 element.locals.push_back(parse_local(&mut ctx, &mut tokens));

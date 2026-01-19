@@ -1,65 +1,97 @@
 
 CheckBox {
-  property string text: "";
+  alias text: label.text;
   property bool enabled: true;
   property bool checked: false;
 
   signal toggled(bool checked);
 
-  Rectangle {
-    HorizontalLayout {
-      spacing: 8px;
+  private property bool focused: false;
 
-      VerticalLayout {
-        min-width: 18px;
-        alignment: LayoutVerticalAlignment.Middle;
+  on_focused: { scope.focus(); }
 
-        Rectangle
-        {
-          id: rect;
-          min-height: 18px;
-          border-width: 1px;
-          border-radius: 2px;
-          border-color: #99000000;
-          background: #05000000;
+  FocusScope {
+    id: scope;
+    enabled: root.enabled;
+    on_focus_in: { root.focused = true; }
+    on_focus_out: { root.focused = false; }
 
-          Rectangle
-          {
-            id: check;
-            background: #005fb8;
-            border-radius: 2px;
-            visible: root.checked;
+    TouchArea {
+      enabled: root.enabled;
+      on_entered: { box.background = #66ffffff; box.border-color = #005fb8; check.background = #b6005fb8; }
+      on_exited: { box.background = #05ffffff; box.border-color = #99000000; check.background = #ff005fb8; }
+      on_pressed: |position| { box.background = #17ffffff; box.border-color = #58005fb8; check.background = #ff005fb8; scope.focus(); }
+      on_released: |position| { box.background = #66ffffff; box.border-color = #ff005fb8; check.background = #b6005fb8; }
+      on_clicked: { root.toggled(!root.checked); }
 
-            Text {
-              text: "\ueab2";
-              font-family: "Codicon";
-              font-size: 12px;
-              color: #ffffff;
-              vertical-alignment: TextVerticalAlignment.Middle;
-              horizontal-alignment: TextHorizontalAlignment.Center;
+      Rectangle {
+        HorizontalLayout {
+          spacing: 8px;
+
+          VerticalLayout {
+            min-width: 18px;
+            alignment: LayoutVerticalAlignment.Middle;
+
+            Rectangle
+            {
+              id: box;
+              min-height: 18px;
+              border-width: 1px;
+              border-radius: 2px;
+              border-color: #99000000;
+              background: #05ffffff;
+
+              animate background {
+                duration: 150ms;
+              }
+
+              Rectangle
+              {
+                id: check;
+                background: #005fb8;
+                border-radius: 2px;
+                opacity: IF(root.checked, 1.0, 0.0);
+
+                animate opacity {
+                  duration: 150ms;
+                }
+
+                Text {
+                  text: "\ueab2";
+                  font-family: "Codicon";
+                  font-size: 12px;
+                  color: #ffffff;
+                  vertical-alignment: TextVerticalAlignment.Middle;
+                  horizontal-alignment: TextHorizontalAlignment.Center;
+                }
+              }
             }
+          }
+
+          Text {
+            id: label;
+            font-family: "Noto Sans";
+            font-size: 12pt;
+            color: #000000;
+            horizontal-alignment: TextHorizontalAlignment.Left;
+            vertical-alignment: TextVerticalAlignment.Middle;
+            horizontal-stretch: 1.0;
           }
         }
       }
-
-      Text {
-        text: root.text;
-        font-family: "Noto Sans";
-        font-size: 12pt;
-        color: #000000;
-        horizontal-alignment: TextHorizontalAlignment.Left;
-        vertical-alignment: TextVerticalAlignment.Middle;
-        horizontal-stretch: 1.0;
-      }
     }
-  }
 
-  TouchArea {
-    enabled: root.enabled;
-    on_entered: { rect.background = #0f000000; check.background = #b6005fb8; }
-    on_exited: { rect.background = #05000000; check.background = #ff005fb8; }
-    on_pressed: |position| { rect.background = #17000000; rect.border-color = #58000000; check.background = #ff005fb8; }
-    on_released: |position| { rect.background = #0f000000; rect.border-color = #99000000; check.background = #b6005fb8; }
-    on_clicked: { root.toggled(!root.checked); }
+//    Rectangle {
+//      id: bar;
+//      y: parent.height - 2px;
+//      width: parent.width;
+//      height: 2px;
+//      background: #005fb8;
+//      opacity: IF(root.focused, 1.0, 0.0);
+//
+//      animate opacity {
+//        duration: 150ms;
+//      }
+//    }
   }
 }

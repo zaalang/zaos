@@ -50,11 +50,11 @@ pub struct decoder
   pub ~decoder() = default;
 }
 
-pub fn decode(decoder mut &decoder, zidl::string_view mut &str) -> void
+pub fn decode(decoder mut &decoder, zidl::string mut &string) -> void
 {
-  if (var data = decoder.consume(str.len))
+  if (var data = decoder.consume(string.len))
   {
-    str.data = data;
+    string.data = data;
   }
 }
 
@@ -74,11 +74,35 @@ pub fn decode(decoder mut &decoder, zidl::buffer mut &buffer) -> void
   new<zidl::buffer>(&buffer)(fd);
 }
 
-pub fn decode<T>(decoder mut &decoder, T mut &object) -> void
+pub fn decode<T>(decoder mut &decoder, zidl::vector<T> mut &vector) -> void
 {
-  using T;
+  if (var data = decoder.consume(vector.len * sizeof<T>))
+  {
+    vector.data = cast<T*>(data);
 
-  decode(&mut decoder, object);
+    #if (requires (decoder decoder, T object) { decode(&mut decoder, &mut object); })
+      for (var i = 0; i < vector.len; ++i)
+        decode(&mut decoder, &mut *(cast<T mut *>(data) + i));
+  }
+}
+
+pub fn decode<T, N>(decoder mut &decoder, T[N] mut &array) -> void
+  where requires (decoder decoder, T object) { decode(&mut decoder, &mut object); }
+{
+  for (var i = 0; i < N; ++i)
+  {
+    decode(&mut decoder, &mut array[i]);
+  }
+}
+
+pub fn decode<T>(decoder mut &decoder, T mut &object) -> void
+  where __is_struct<T>
+{
+  #for (const k : std::meta::fields_of($T))
+  {
+    #if (requires (decoder decoder, T object) { decode(&mut decoder, &mut object.#k); })
+      decode(&mut decoder, &mut object.#k);
+  }
 }
 
 pub struct decode_result
@@ -111,7 +135,7 @@ pub fn decode<zidl_message_t>(Span<u8> mut &bytes, Span<i32> mut &handles, zidl_
   {
     msg = cast<zidl_message_t mut *>(inline);
 
-    zidl_message_t::decode(&mut decoder, &mut *msg);
+    decode(&mut decoder, &mut *msg);
   }
 
   if (!result.error && decoder.bytes_head != bytes.end)

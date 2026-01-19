@@ -3,17 +3,19 @@
 //
 
 import std.string : String;
+import std.range : Range;
+import std.span : Span;
 import os.zaos.fcntl;
 import std.fmt;
 
 extern fn thread_ring() -> os::ioring mut &;
 
-pub struct string_view
+pub struct string
 {
   pub usize len;
   pub u8 *data;
 
-  pub string_view(String &str)
+  pub string(String &str)
     : data(str.data), len(str.len)
   {
   }
@@ -23,25 +25,75 @@ pub struct string_view
     return std::string_view(this.data, this.len);
   }
 
-  pub fn ==(this &lhs, String &rhs) -> bool
+  pub fn ==(string &lhs, String &rhs) -> bool
   {
     return std::string_view(lhs.data, lhs.len) == rhs;
   }
 
-  pub string_view() = default;
-  pub string_view(string_view &that) = default;
-  pub fn =(this mut &, string_view &that) -> string_view mut & = default;
-  pub ~string_view() = default;
+  pub fn ~=(std::string_literal lhs, string &rhs) -> bool
+  {
+    return lhs == std::string_view(rhs.data, rhs.len);
+  }
+
+  pub string() = default;
+  pub string(string &that) = default;
+  pub fn =(this mut &, string &that) -> string mut & = default;
+  pub ~string() = default;
 }
 
-pub fn fmt<K, V>(std::OutputStream mut &os, std::fmt_context mut &ctx, string_view str) throws(std::error) -> void
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, string str) throws(std::error) -> void
 {
   std::fmt_to(&mut os, &mut ctx, std::string_view(str));
 }
 
+pub struct vector<T>
+{
+  pub usize len;
+  pub T *data;
+
+  pub vector(Span<T> &span)
+    : data(span.data), len(span.len)
+  {
+  }
+
+  pub fn Span<T>(this &) -> std::span<T>
+  {
+    return std::span(this.data, this.len);
+  }
+
+  pub fn begin(this &) -> T *
+  {
+    return this.data;
+  }
+
+  pub fn end(this &) -> T *
+  {
+    return this.data + this.len;
+  }
+
+  pub fn [](this &, usize index) -> T &
+  {
+    std::assert(index < this.len);
+
+    return &*(this.data + index);
+  }
+
+  pub fn [](this &, T *iter)
+  {
+    std::assert(this.data <= iter && iter < this.data + this.len);
+
+    return &*iter;
+  }
+
+  pub vector() = default;
+  pub vector(vector &that) = default;
+  pub fn =(this mut &, vector &that) -> vector mut & = default;
+  pub ~vector() = default;
+}
+
 pub struct handle
 {
-  pub handle(i32 fd = ~0)
+  pub handle(i32 fd = -1)
     : fd(fd)
   {
   }
@@ -49,7 +101,7 @@ pub struct handle
   pub handle(handle &&other)
     where __is_rvalue<typeof(other)>
   {
-    std::swap(&mut fd, &mut other.fd);
+    this.fd = std::exchange(&mut other.fd, -1);
   }
 
   pub fn =(handle mut &this, handle &&other) -> handle mut &
@@ -57,7 +109,7 @@ pub struct handle
   {
     this.close();
 
-    std::swap(&mut this.fd, &mut other.fd);
+    this.fd = std::exchange(&mut other.fd, -1);
 
     return &this;
   }
@@ -69,7 +121,7 @@ pub struct handle
 
   pub fn bool(this &) -> bool
   {
-    return this.fd != ~0;
+    return this.fd >= 0;
   }
 
   pub fn ==(handle &lhs, handle &rhs) -> bool
@@ -81,22 +133,22 @@ pub struct handle
   {
     var fd = this.fd;
 
-    this.fd = ~0;
+    this.fd = -1;
 
     return fd;
   }
 
   pub fn close(this mut &) -> void
   {
-    if (this.fd != ~0)
+    if (this.fd >= 0)
       os::close(&mut thread_ring, this.fd);
 
-    this.fd = ~0;
+    this.fd = -1;
   }
 
   pub ~handle()
   {
-    if (fd != ~0)
+    if (fd >= 0)
       os::close(&mut thread_ring, this.fd);
   }
 
@@ -126,11 +178,12 @@ pub struct channel : pub handle
     return 0;
   }
 
-  pub channel(i32 fd = ~0)
+  pub channel(i32 fd)
     : super(fd)
   {
   }
 
+  pub channel() = default;
   pub channel(channel &&) = default;
   pub fn =(channel mut &, channel &&) -> channel mut & = default;
   pub ~channel() = default;
@@ -159,11 +212,12 @@ pub struct buffer : pub handle
     return 0;
   }
 
-  pub buffer(i32 fd = ~0)
+  pub buffer(i32 fd)
     : super(fd)
   {
   }
 
+  pub buffer() = default;
   pub buffer(buffer &&) = default;
   pub fn =(buffer mut &, buffer &&) -> buffer mut & = default;
   pub ~buffer() = default;

@@ -8,6 +8,8 @@ WIDGETS=\
 $(BUILD)/std/button.zaa\
 $(BUILD)/std/checkbox.zaa\
 $(BUILD)/std/slider.zaa\
+$(BUILD)/std/spinbox.zaa\
+$(BUILD)/std/lineedit.zaa\
 
 default: $(WIDGETS)
 

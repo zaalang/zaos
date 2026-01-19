@@ -20,18 +20,33 @@ pub struct Rectangle : pub item
   pub ~Rectangle() = default;
 }
 
-pub fn pointer_event_filter(Rectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
-{
-  return forward;
-}
-
-pub fn pointer_event(Rectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+pub fn focus_event(Rectangle mut &this, gui::scene mut &scene, gui::iitem::reason, gui::focus_event &) -> gui::iitem::action
 {
   return ignore;
 }
 
-pub fn pointer_exit(Rectangle mut &this) -> void
+pub fn pointer_event_filter(Rectangle mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
 {
+  return forward;
+}
+
+pub fn pointer_event(Rectangle mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(Rectangle mut &this, gui::scene mut &scene) -> void
+{
+}
+
+pub fn key_event_filter(Rectangle mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(Rectangle mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return ignore;
 }
 
 pub fn render(Rectangle &this, gui::painter mut &painter, gfx::transform &transform) -> void
@@ -71,18 +86,33 @@ pub struct FramedRectangle : pub item
   pub ~FramedRectangle() = default;
 }
 
-pub fn pointer_event_filter(FramedRectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
-{
-  return forward;
-}
-
-pub fn pointer_event(FramedRectangle mut &this, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+pub fn focus_event(FramedRectangle mut &this, gui::scene mut &scene, gui::iitem::reason, gui::focus_event &) -> gui::iitem::action
 {
   return ignore;
 }
 
-pub fn pointer_exit(FramedRectangle mut &this) -> void
+pub fn pointer_event_filter(FramedRectangle mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
 {
+  return forward;
+}
+
+pub fn pointer_event(FramedRectangle mut &this, gui::scene mut &scene, gfx::point &, gui::pointer_event &) -> gui::iitem::action
+{
+  return ignore;
+}
+
+pub fn pointer_exit(FramedRectangle mut &this, gui::scene mut &scene) -> void
+{
+}
+
+pub fn key_event_filter(FramedRectangle mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(FramedRectangle mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return ignore;
 }
 
 pub fn render(FramedRectangle &this, gui::painter mut &painter, gfx::transform &transform) -> void

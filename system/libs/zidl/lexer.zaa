@@ -76,6 +76,8 @@ pub struct token
     r_paren,
     l_brace,
     r_brace,
+    l_angle,
+    r_angle,
     period,
     arrow,
     colon,
@@ -337,6 +339,14 @@ fn lex_punctuators(source_text &src, lex_cursor cursor, token mut &tok) -> lex_c
     case '}':
       ptr += 1;
       type = token::type::r_brace;
+
+    case '<':
+      ptr += 1;
+      type = token::type::l_angle;
+
+    case '>':
+      ptr += 1;
+      type = token::type::r_angle;
 
     case '.':
       ptr += 1;

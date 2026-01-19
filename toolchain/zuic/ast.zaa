@@ -59,6 +59,7 @@ pub struct Element
   pub std::vector<Local> locals;
   pub std::vector<Signal> signals;
   pub std::vector<Binding> bindings;
+  pub std::vector<Binding> aliases;
   pub std::vector<Animate> animates;
   pub std::vector<Element> children;
 
@@ -366,13 +367,87 @@ pub struct BinaryOp
   pub ~BinaryOp() = default;
 }
 
+pub union Statement
+{
+  pub Var(Var),
+  pub If(If),
+  pub IfElse(IfElse),
+  pub Compound(Compound),
+  pub Expression(Expression),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub Statement() = default;
+  pub Statement(Statement &&) = default;
+  pub fn =(Statement mut &, Statement &&) -> Statement mut & = default;
+  pub ~Statement() = default;
+}
+
+pub struct If
+{
+  pub Expression condition;
+  pub std::box<Statement> statement;
+
+  pub If(Expression &&condition, Statement &&statement)
+    : condition(&&condition), statement(&&statement)
+  {
+  }
+
+  pub If(If &&) = default;
+  pub ~If() = default;
+}
+
+pub struct IfElse
+{
+  pub std::box<Statement> statement;
+  pub std::box<Statement> otherwise;
+
+  pub IfElse(Statement &&statement, Statement &&otherwise)
+    : statement(&&statement), otherwise(&&otherwise)
+  {
+  }
+
+  pub IfElse(IfElse &&) = default;
+  pub ~IfElse() = default;
+}
+
+pub struct Var
+{
+  pub std::string_view name;
+  pub Expression expression;
+
+  pub Var(std::string_view name, Expression &&expression)
+    : name(&&name), expression(&&expression)
+  {
+  }
+
+  pub Var(Var &&) = default;
+  pub ~Var() = default;
+}
+
+pub struct Compound
+{
+  pub std::vector<Statement> statements;
+
+  pub Compound(std::vector<Statement> &&statements)
+    : statements(&&statements)
+  {
+  }
+
+  pub Compound(Compound &&) = default;
+  pub ~Compound() = default;
+}
+
 pub struct Block
 {
   pub std::vector<std::string_view> args;
-  pub std::vector<Expression> stmts;
+  pub std::vector<Statement> statements;
 
-  pub Block(std::vector<std::string_view> &&args, std::vector<Expression> &&stmts)
-    : args(&&args), stmts(&&stmts)
+  pub Block(std::vector<std::string_view> &&args, std::vector<Statement> &&statements)
+    : args(&&args), statements(&&statements)
   {
   }
 

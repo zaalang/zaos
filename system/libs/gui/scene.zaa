@@ -10,6 +10,8 @@ import gfx.transform;
 import gui.items.rectangle;
 import gui.items.text;
 import gui.items.toucharea;
+import gui.items.focusscope;
+import gui.items.input;
 import gui.layouts.grid;
 import gui.layouts.horizontal;
 import gui.layouts.vertical;
@@ -25,9 +27,22 @@ pub vtable iitem
     ignore,
   }
 
-  fn pointer_event_filter(this mut &, gfx::point &, gui::pointer_event &) -> action;
-  fn pointer_event(this mut &, gfx::point &, gui::pointer_event &) -> action;
-  fn pointer_exit(this mut &) -> void;
+  pub enum reason
+  {
+    tab,
+    shortcut,
+    window,
+    other,
+  }
+
+  fn focus_event(this mut &, scene mut &, reason, gui::focus_event &) -> action;
+
+  fn pointer_event_filter(this mut &, scene mut &, gfx::point &, gui::pointer_event &) -> action;
+  fn pointer_event(this mut &, scene mut &, gfx::point &, gui::pointer_event &) -> action;
+  fn pointer_exit(this mut &, scene mut &) -> void;
+
+  fn key_event_filter(this mut &, scene mut &, gui::key_event &) -> action;
+  fn key_event(this mut &, scene mut &, gui::key_event &) -> action;
 
   fn render(this &, gui::painter mut &, gfx::transform &) -> void;
 }
@@ -58,7 +73,7 @@ pub struct item : iitem &
   pub ~item() = default;
 }
 
-pub struct view : pub gui::object
+pub struct scene : pub gui::object
 {
   struct node
   {
@@ -78,25 +93,95 @@ pub struct view : pub gui::object
 
   std::vector<node> nodes;
 
-  bool grabbed = false;
+  bool grabbed;
   std::vector<usize> item_stack;
+  std::vector<usize> focus_stack;
 
   pub fn push_back(this mut &, item mut *item, usize parent_index, usize children_count, usize children_index) -> void
   {
     this.nodes.push_back(item, parent_index, children_count, children_index);
   }
 
-  pub view()
+  pub scene()
     : super(&impl this)
   {
   }
 
-  pub ~surface() = default;
+  pub ~scene() = default;
 }
 
-fn scene_event(view mut &view, gfx::point &xy, gui::pointer_event &evt, usize index) -> iitem::action
+fn set_focus(scene mut &scene, item *item, iitem::reason reason) -> void
 {
-  var mut &item = view.nodes[index].item;
+  if (!scene.focus_stack.empty)
+  {
+    if (&scene.nodes[scene.focus_stack.back].item == item)
+      return;
+
+    var evt = gui::focus_event();
+    evt.type = gui::focus_event::type::focus_out;
+
+    var mut &item = scene.nodes[scene.focus_stack.back].item;
+
+    item.focus_event(&mut item, &mut scene, reason, evt);
+
+    scene.focus_stack.clear();
+  }
+
+  scene.focus_stack.push_back(scene.nodes.find_if(|node| &node.item == item) - scene.nodes.begin);
+
+  while (scene.focus_stack.back != 0)
+  {
+    scene.focus_stack.push_back(scene.nodes[scene.focus_stack.back].parent_index);
+  }
+
+  std::reverse!(&mut scene.focus_stack);
+
+  if (!scene.focus_stack.empty)
+  {
+    var evt = gui::focus_event();
+    evt.type = gui::focus_event::type::focus_in;
+
+    var mut &item = scene.nodes[scene.focus_stack.back].item;
+
+    switch (item.focus_event(&mut item, &mut scene, reason, evt))
+    {
+      case accept:
+        ;
+    }
+  }
+}
+
+pub fn scene_set_focus(scene mut &scene, item *item) -> void
+{
+  scene.set_focus(item, iitem::reason::other);
+}
+
+fn clear_focus(scene mut &scene) -> void
+{
+  var evt = gui::focus_event();
+  evt.type = gui::focus_event::type::focus_out;
+
+  var mut &item = scene.nodes[scene.focus_stack.back].item;
+
+  item.focus_event(&mut item, &mut scene, iitem::reason::other, evt);
+
+  scene.focus_stack.clear();
+}
+
+pub fn scene_clear_focus(scene mut &scene, item *item) -> void
+{
+  if (scene.focus_stack.empty)
+    return;
+
+  if (&scene.nodes[scene.focus_stack.back].item != item)
+    return;
+
+  scene.clear_focus();
+}
+
+fn scene_event(scene mut &scene, gfx::point &xy, gui::pointer_event &evt, usize index) -> iitem::action
+{
+  var mut &item = scene.nodes[index].item;
 
   if (!item.visible)
     return ignore;
@@ -105,14 +190,14 @@ fn scene_event(view mut &view, gfx::point &xy, gui::pointer_event &evt, usize in
 
   if (gfx::rect(0.0, 0.0, item.width, item.height).contains(xy))
   {
-    view.item_stack.push_back(index);
+    scene.item_stack.push_back(index);
 
-    switch (item.pointer_event_filter(&mut item, xy, evt))
+    switch (item.pointer_event_filter(&mut item, &mut scene, xy, evt))
     {
       case forward:
-        rof (var child = view.nodes[index].children_index + view.nodes[index].children_count, var beg = view.nodes[index].children_index; child == beg; --child)
+        rof (var child = scene.nodes[index].children_index + scene.nodes[index].children_count, var beg = scene.nodes[index].children_index; child == beg; --child)
         {
-          switch (scene_event(&mut view, xy, evt, child))
+          switch (scene_event(&mut scene, xy, evt, child))
           {
             case accept:
               return accept;
@@ -120,53 +205,50 @@ fn scene_event(view mut &view, gfx::point &xy, gui::pointer_event &evt, usize in
         }
     }
 
-    switch (item.pointer_event(&mut item, xy, evt))
+    switch (item.pointer_event(&mut item, &mut scene, xy, evt))
     {
       case accept:
         return accept;
     }
 
-    view.item_stack.pop_back();
+    scene.item_stack.pop_back();
   }
 
   return ignore;
 }
 
-pub fn scene_event(view mut &view, gui::pointer_event &evt) -> void
+pub fn scene_event(scene mut &scene, gui::pointer_event &evt) -> void
 {
-  if (view.nodes.empty)
+  if (scene.nodes.empty)
     return;
 
   var evt = evt;
-  var old_item_stack = view.item_stack.take(view.item_stack.begin, view.item_stack.end);
+  var old_item_stack = scene.item_stack.take(scene.item_stack.begin, scene.item_stack.end);
 
-  if (view.grabbed)
+  if (scene.grabbed)
   {
     var xy = gfx::point(cast<float>(evt.position.0), cast<float>(evt.position.1));
 
     for (var index : old_item_stack)
     {
-      var mut &item = view.nodes[index].item;
+      var mut &item = scene.nodes[index].item;
 
-      if (!item.visible)
-        break;
-
-      view.item_stack.push_back(index);
+      scene.item_stack.push_back(index);
 
       xy = item.transform.inverse * gfx::transform::translation(-item.x, -item.y) * xy;
 
-      switch (item.pointer_event_filter(&mut item, xy, evt))
+      switch (item.pointer_event_filter(&mut item, &mut scene, xy, evt))
       {
-        case forward:
+        case accept:
           ;
       }
     }
 
-    if (view.item_stack.len != 0)
+    if (scene.item_stack.len != 0)
     {
-      var mut &item = view.nodes[view.item_stack.back].item;
+      var mut &item = scene.nodes[scene.item_stack.back].item;
 
-      switch (item.pointer_event(&mut item, xy, evt))
+      switch (item.pointer_event(&mut item, &mut scene, xy, evt))
       {
         case accept:
           ;
@@ -176,35 +258,77 @@ pub fn scene_event(view mut &view, gui::pointer_event &evt) -> void
     if (evt.button != cast(0) && std::all_of(evt.buttons, |state| state == 0))
     {
       evt.button = cast(0);
-      view.item_stack.clear();
-      view.grabbed = false;
+      scene.item_stack.clear();
+      scene.grabbed = false;
     }
   }
 
-  if (!view.grabbed)
+  if (!scene.grabbed)
   {
-    scene_event(&mut view, gfx::point(cast<float>(evt.position.0), cast<float>(evt.position.1)), evt, 0);
+    switch (scene_event(&mut scene, gfx::point(cast<float>(evt.position.0), cast<float>(evt.position.1)), evt, 0))
+    {
+      case accept:
+        if (evt.button != cast(0) && evt.buttons[cast(evt.button)] == 1)
+          scene.grabbed = true;
 
-    if (evt.button != cast(0) && evt.buttons[cast(evt.button)] == 1)
-      view.grabbed = true;
+      case ignore:
+        if (evt.button != cast(0) && evt.buttons[cast(evt.button)] == 1)
+          if (!scene.focus_stack.empty)
+            scene.clear_focus();
+    }
   }
 
   for (var i = 0, var j = 0; i < old_item_stack.len; ++i)
   {
-    var mut &item = view.nodes[old_item_stack[i]].item;
+    var mut &item = scene.nodes[old_item_stack[i]].item;
 
-    for (; j < view.item_stack.len; ++j)
-      if (view.item_stack[j] == old_item_stack[i])
+    for (; j < scene.item_stack.len; ++j)
+      if (scene.item_stack[j] == old_item_stack[i])
         break;
 
-    if (j == view.item_stack.len)
-      item.pointer_exit(&mut item);
+    if (j == scene.item_stack.len)
+      item.pointer_exit(&mut item, &mut scene);
   }
 }
 
-fn scene_render(gui::painter mut &painter, gfx::transform &transform, view &view, usize index) -> void
+pub fn scene_event(scene mut &scene, gui::key_event &evt) -> void
 {
-  var &item = view.nodes[index].item;
+  if (scene.nodes.empty)
+    return;
+
+  var item_stack = std::vector<usize>();
+
+  for (var index : scene.focus_stack)
+  {
+    var mut &item = scene.nodes[index].item;
+
+    if (!item.visible)
+      break;
+
+    item_stack.push_back(index);
+
+    switch (item.key_event_filter(&mut item, &mut scene, evt))
+    {
+      case accept:
+        break;
+    }
+  }
+
+  rof (var index : item_stack)
+  {
+    var mut &item = scene.nodes[index].item;
+
+    switch (item.key_event(&mut item, &mut scene, evt))
+    {
+      case accept:
+        break;
+    }
+  }
+}
+
+fn scene_render(gui::painter mut &painter, gfx::transform &transform, scene &scene, usize index) -> void
+{
+  var &item = scene.nodes[index].item;
 
   if (!item.visible)
     return;
@@ -219,7 +343,7 @@ fn scene_render(gui::painter mut &painter, gfx::transform &transform, view &view
 
   var aabb = transform * gfx::rect(0.0, 0.0, item.width, item.height);
 
-  if (!aabb.clamp(painter.clip_rect).empty)
+  if (aabb.intersects(painter.clip_rect))
   {
     item.render(item, &mut painter, transform);
   }
@@ -231,9 +355,9 @@ fn scene_render(gui::painter mut &painter, gfx::transform &transform, view &view
     if (item.clip)
       painter.clip_rect = gfx::clamp(cliprect, aabb);
 
-    for (var child = view.nodes[index].children_index, var end = view.nodes[index].children_index + view.nodes[index].children_count; child < end; ++child)
+    for (var child = scene.nodes[index].children_index, var end = scene.nodes[index].children_index + scene.nodes[index].children_count; child < end; ++child)
     {
-      scene_render(&mut painter, transform, view, child);
+      scene_render(&mut painter, transform, scene, child);
     }
 
     painter.clip_rect = cliprect;
@@ -242,18 +366,18 @@ fn scene_render(gui::painter mut &painter, gfx::transform &transform, view &view
   painter.opacity = opacity;
 }
 
-pub fn scene_render(gui::painter mut &painter, gfx::transform &transform, view &view) -> void
+pub fn scene_render(gui::painter mut &painter, gfx::transform &transform, scene &scene) -> void
 {
-  if (view.nodes.empty)
+  if (scene.nodes.empty)
     return;
 
-  scene_render(&mut painter, transform, view, 0);
+  scene_render(&mut painter, transform, scene, 0);
 }
 
-pub fn scene_render(gui::painter mut &painter, view &view) -> void
+pub fn scene_render(gui::painter mut &painter, scene &scene) -> void
 {
-  if (view.nodes.empty)
+  if (scene.nodes.empty)
     return;
 
-  scene_render(&mut painter, gfx::transform::identity, view, 0);
+  scene_render(&mut painter, gfx::transform::identity, scene, 0);
 }

@@ -46,6 +46,8 @@ pub struct Object
   pub usize property_count;
   pub usize property_index;
 
+  pub std::flat_hash_map<std::string, usize> aliases;
+
   pub Object(usize parent, String &&name, String &&type)
     : name(&&name), type(&&type), parent(parent)
   {
@@ -63,6 +65,9 @@ pub struct Property
     Private,
     Signal,
     Binding,
+    SetFocus,
+    ClearFocus,
+    Method,
   }
 
   pub Kind kind;
@@ -90,6 +95,12 @@ pub fn find_property(Component &component, usize object_id, String &name) -> std
 {
   var &object = component.objects[object_id];
 
+  switch (object.aliases.get(name))
+  {
+    case Some[property_id]:
+      return property_id;
+  }
+
   for (var property_id = object.property_index; property_id < object.property_index + object.property_count; ++property_id)
   {
     if (component.properties[property_id].name == name)
@@ -113,7 +124,7 @@ pub union Type
   pub Brush,
   pub Object(usize),
   pub Enumeration(std::string),
-  pub Signal(std::vector<Type>),
+  pub Function(std::vector<Type>),
 
   pub fn bool(this &) -> bool
   {
@@ -265,12 +276,18 @@ pub struct BoundFunctionOp
     TransformTranslation,
     TransformRotation,
     TransformScale,
+    If,
     Min,
     Max,
     Clamp,
     Ceil,
     Floor,
     Round,
+    Abs,
+    Sin,
+    Cos,
+    Val,
+    Fix,
     Str$,
     Left$,
     Right$,
@@ -315,13 +332,87 @@ pub struct BoundCallOp
   pub ~BoundCallOp() = default;
 }
 
+pub union BoundStatement
+{
+  pub Var(BoundVar),
+  pub If(BoundIf),
+  pub IfElse(BoundIfElse),
+  pub Compound(BoundCompound),
+  pub Expression(BoundExpression),
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub BoundStatement() = default;
+  pub BoundStatement(BoundStatement &&) = default;
+  pub fn =(BoundStatement mut &, BoundStatement &&) -> BoundStatement mut & = default;
+  pub ~BoundStatement() = default;
+}
+
+pub struct BoundVar
+{
+  pub std::string_view name;
+  pub BoundExpression expression;
+
+  pub BoundVar(std::string_view name, BoundExpression &&expression)
+    : name(name), expression(&&expression)
+  {
+  }
+
+  pub BoundVar(BoundVar &&) = default;
+  pub ~BoundVar() = default;
+}
+
+pub struct BoundIf
+{
+  pub BoundExpression condition;
+  pub std::box<BoundStatement> statement;
+
+  pub BoundIf(BoundExpression &&condition, BoundStatement &&statement)
+    : condition(&&condition), statement(&&statement)
+  {
+  }
+
+  pub BoundIf(BoundIf &&) = default;
+  pub ~BoundIf() = default;
+}
+
+pub struct BoundIfElse
+{
+  pub std::box<BoundStatement> statement;
+  pub std::box<BoundStatement> otherwise;
+
+  pub BoundIfElse(BoundStatement &&statement, BoundStatement &&otherwise)
+    : statement(&&statement), otherwise(&&otherwise)
+  {
+  }
+
+  pub BoundIfElse(BoundIfElse &&) = default;
+  pub ~BoundIfElse() = default;
+}
+
+pub struct BoundCompound
+{
+  pub std::vector<BoundStatement> statements;
+
+  pub BoundCompound(std::vector<BoundStatement> &&statements)
+    : statements(&&statements)
+  {
+  }
+
+  pub BoundCompound(BoundCompound &&) = default;
+  pub ~BoundCompound() = default;
+}
+
 pub struct BoundBlock
 {
   pub std::vector<std::string_view> args;
-  pub std::vector<BoundExpression> stmts;
+  pub std::vector<BoundStatement> statements;
 
-  pub BoundBlock(std::vector<std::string_view> &&args, std::vector<BoundExpression> &&stmts)
-    : args(&&args), stmts(&&stmts)
+  pub BoundBlock(std::vector<std::string_view> &&args, std::vector<BoundStatement> &&statements)
+    : args(&&args), statements(&&statements)
   {
   }
 

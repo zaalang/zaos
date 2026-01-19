@@ -162,18 +162,30 @@ fn lower_ident(lower_context mut &ctx, usize object_id, Ident &ident) -> BoundEx
     case "TextVerticalAlignment":
     case "LayoutHorizontalAlignment":
     case "LayoutVerticalAlignment":
+    case "PointerEvent":
     case "PointerEventButton":
     case "PointerEventKind":
+    case "WheelEvent":
+    case "KeyEvent":
+    case "KeyEventKind":
+    case "InputType":
     case "Transform":
     case "Easing":
+    case "Direction":
     case "Point":
     case "Rect":
+    case "IF":
     case "MIN":
     case "MAX":
     case "CLAMP":
     case "CEIL":
     case "FLOOR":
     case "ROUND":
+    case "ABS":
+    case "SIN":
+    case "COS":
+    case "VAL":
+    case "FIX":
     case "STR$":
     case "LEFT$":
     case "RIGHT$":
@@ -207,12 +219,10 @@ fn lower_field(lower_context mut &ctx, usize object_id, Field &field) -> BoundEx
   switch (lower_expression(&mut ctx, object_id, *field.base))
   {
     case ObjectId[objectid]:
-      var mut &object = component.objects[objectid];
-
-      for (var propertyid = object.property_index; propertyid < object.property_index + object.property_count; ++propertyid)
+      switch (component.find_property(objectid, field.name))
       {
-        if (component.properties[propertyid].name == field.name)
-          return BoundExpression::PropertyId(propertyid);
+        case Some[property_id]:
+          return BoundExpression::PropertyId(property_id);
       }
 
     case Enumeration[enumeration]:
@@ -334,6 +344,42 @@ fn lower_field(lower_context mut &ctx, usize object_id, Field &field) -> BoundEx
               return BoundExpression::Enumeration("gui::item_pointer_event::kind::moved");
           }
 
+        case "KeyEventKind":
+          switch (field.name)
+          {
+            case "pressed":
+            case "Pressed":
+              return BoundExpression::Enumeration("gui::item_key_event::kind::pressed");
+
+            case "released":
+            case "Released":
+              return BoundExpression::Enumeration("gui::item_key_event::kind::released");
+
+            case "moved":
+            case "Moved":
+              return BoundExpression::Enumeration("gui::item_pointer_event::kind::moved");
+          }
+
+        case "InputType":
+          switch (field.name)
+          {
+            case "text":
+            case "Text":
+              return BoundExpression::Enumeration("gui::input_type::text");
+
+            case "password":
+            case "Password":
+              return BoundExpression::Enumeration("gui::input_type::password");
+
+            case "number":
+            case "Number":
+              return BoundExpression::Enumeration("gui::input_type::number");
+
+            case "decimal":
+            case "Decimal":
+              return BoundExpression::Enumeration("gui::input_type::decimal");
+          }
+
         case "Transform":
           switch (field.name)
           {
@@ -398,6 +444,18 @@ fn lower_field(lower_context mut &ctx, usize object_id, Field &field) -> BoundEx
               return BoundExpression::Enumeration("gui::animation_easing::in_out_bounce");
           }
 
+        case "Direction":
+          switch (field.name)
+          {
+            case "Normal":
+            case "normal":
+              return BoundExpression::Enumeration("gui::animation_direction::normal");
+
+            case "alternate":
+            case "Alternate":
+              return BoundExpression::Enumeration("gui::animation_direction::alternate");
+          }
+
         else:
           return BoundExpression::Enumeration(std::format("{}.{}", enumeration.name, field.name));
       }
@@ -428,6 +486,9 @@ fn lower_call(lower_context mut &ctx, usize object_id, Call &call) -> BoundExpre
         case "Rect":
           return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Rect, &move args);
 
+        case "IF":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::If, &move args);
+
         case "MIN":
           return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Min, &move args);
 
@@ -445,6 +506,21 @@ fn lower_call(lower_context mut &ctx, usize object_id, Call &call) -> BoundExpre
 
         case "ROUND":
           return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Round, &move args);
+
+        case "ABS":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Abs, &move args);
+
+        case "SIN":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Sin, &move args);
+
+        case "COS":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Cos, &move args);
+
+        case "VAL":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Val, &move args);
+
+        case "FIX":
+          return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Fix, &move args);
 
         case "STR$":
           return BoundExpression::FunctionOp(BoundFunctionOp::Kind::Str$, &move args);
@@ -485,18 +561,90 @@ fn lower_call(lower_context mut &ctx, usize object_id, Call &call) -> BoundExpre
   return BoundExpression();
 }
 
+fn lower_var(lower_context mut &ctx, usize object_id, Var &stmt) -> BoundStatement
+{
+  var expression = lower_expression(&mut ctx, object_id, stmt.expression);
+
+  return BoundStatement::Var(stmt.name, &move expression);
+}
+
+fn lower_if(lower_context mut &ctx, usize object_id, If &stmt) -> BoundStatement
+{
+  var condition = lower_expression(&mut ctx, object_id, stmt.condition);
+
+  var statement = lower_statement(&mut ctx, object_id, *stmt.statement);
+
+  return BoundStatement::If(&move condition, &move statement);
+}
+
+fn lower_ifelse(lower_context mut &ctx, usize object_id, IfElse &stmt) -> BoundStatement
+{
+  var statement = lower_statement(&mut ctx, object_id, *stmt.statement);
+
+  var otherwise = lower_statement(&mut ctx, object_id, *stmt.otherwise);
+
+  return BoundStatement::IfElse(&move statement, &move otherwise);
+}
+
+fn lower_compound(lower_context mut &ctx, usize object_id, Compound &stmt) -> BoundStatement
+{
+  ctx.scopes.push_back();
+
+  var statements = std::vector<BoundStatement>();
+
+  for (var &stmt : stmt.statements)
+  {
+    statements.push_back(lower_statement(&mut ctx, object_id, stmt));
+  }
+
+  ctx.scopes.pop_back();
+
+  return BoundStatement::Compound(&move statements);
+}
+
+fn lower_statement(lower_context mut &ctx, usize object_id, Statement &statement) -> BoundStatement
+{
+  switch (statement)
+  {
+    case Var[stmt]:
+      return lower_var(&mut ctx, object_id, stmt);
+
+    case If[stmt]:
+      return lower_if(&mut ctx, object_id, stmt);
+
+    case IfElse[stmt]:
+      return lower_ifelse(&mut ctx, object_id, stmt);
+
+    case Compound[stmt]:
+      return lower_compound(&mut ctx, object_id, stmt);
+
+    case Expression[expr]:
+      return BoundStatement::Expression(lower_expression(&mut ctx, object_id, expr));
+  }
+
+  return BoundStatement();
+}
+
 fn lower_block(lower_context mut &ctx, usize object_id, Block &block) -> BoundExpression
 {
   ctx.scopes.push_back(block.args);
 
-  var stmts = std::vector<BoundExpression>();
+  var statements = std::vector<BoundStatement>();
 
-  for (var &stmt : block.stmts)
-    stmts.push_back(lower_expression(&mut ctx, object_id, stmt));
+  for (var &stmt : block.statements)
+  {
+    statements.push_back(lower_statement(&mut ctx, object_id, stmt));
+
+    switch (statements.back)
+    {
+      case Var[stmt]:
+        ctx.scopes.back.vars.push_back(stmt.name);
+    }
+  }
 
   ctx.scopes.pop_back();
 
-  return BoundExpression::Block(block.args, &move stmts);
+  return BoundExpression::Block(block.args, &move statements);
 }
 
 fn lower_expression(lower_context mut &ctx, usize object_id, Expression &expression) -> BoundExpression
@@ -795,6 +943,12 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
       component.properties.push_back(object_id, Type::Enumeration("Transform"), "transform");
   }
 
+  if (component.objects[object_id].parent == object_id)
+  {
+    component.properties.push_back(Property::Kind::Method, object_id, Type::Function(), "focus");
+    component.properties.push_back(Property::Kind::Private, object_id, Type::Function(), "on_focused");
+  }
+
   switch (component.objects[component.objects[object_id].parent].type)
   {
     case "GridLayout":
@@ -839,13 +993,41 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
 
     case "TouchArea":
       component.properties.push_back(object_id, Type::Boolean, "enabled");
-      component.properties.push_back(object_id, Type::Signal(), "on_entered");
-      component.properties.push_back(object_id, Type::Signal(), "on_exited");
-      component.properties.push_back(object_id, Type::Signal(), "on_clicked");
-      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_pressed");
-      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_released");
-      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("Point")])), "on_dragged");
-      component.properties.push_back(object_id, Type::Signal(std::vector::from([Type::Enumeration("PointerEvent")])), "pointer_event");
+      component.properties.push_back(object_id, Type::Function(), "on_entered");
+      component.properties.push_back(object_id, Type::Function(), "on_exited");
+      component.properties.push_back(object_id, Type::Function(), "on_clicked");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("Point")])), "on_pressed");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("Point")])), "on_released");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("Point")])), "on_dragged");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("PointerEvent")])), "pointer_event");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("WheelEvent")])), "wheel_event");
+
+    case "FocusScope":
+      component.properties.push_back(object_id, Type::Boolean, "enabled");
+      component.properties.push_back(object_id, Type::Function(), "on_focus_in");
+      component.properties.push_back(object_id, Type::Function(), "on_focus_out");
+      component.properties.push_back(object_id, Type::Function(std::vector::from([Type::Enumeration("KeyEvent")])), "key_event");
+      component.properties.push_back(Property::Kind::SetFocus, object_id, Type::Function(), "focus");
+      component.properties.push_back(Property::Kind::ClearFocus, object_id, Type::Function(), "clear_focus");
+
+    case "Input":
+      component.properties.push_back(object_id, Type::Boolean, "enabled");
+      component.properties.push_back(object_id, Type::String, "font-family");
+      component.properties.push_back(object_id, Type::Length, "font-size");
+      component.properties.push_back(object_id, Type::String, "text");
+      component.properties.push_back(object_id, Type::Color, "color");
+      component.properties.push_back(object_id, Type::Color, "selection-foreground");
+      component.properties.push_back(object_id, Type::Color, "selection-background");
+      component.properties.push_back(object_id, Type::Enumeration("TextHorizontalAlignment"), "horizontal-alignment");
+      component.properties.push_back(object_id, Type::Enumeration("TextVerticalAlignment"), "vertical-alignment");
+      component.properties.push_back(object_id, Type::Enumeration("InputType"), "input-type");
+      component.properties.push_back(object_id, Type::Boolean, "clip");
+      component.properties.push_back(object_id, Type::Function(), "on_focus_in");
+      component.properties.push_back(object_id, Type::Function(), "on_focus_out");
+      component.properties.push_back(Property::Kind::SetFocus, object_id, Type::Function(), "focus");
+      component.properties.push_back(Property::Kind::ClearFocus, object_id, Type::Function(), "clear_focus");
+      component.properties.push_back(object_id, Type::Function(), "on_edited");
+      component.properties.push_back(object_id, Type::Function(), "on_accepted");
 
     case "GridLayout":
     case "HorizontalLayout":
@@ -881,7 +1063,15 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
               case Public:
               case Signal:
                 component.properties.push_back(Property(object_id, property.type, property.name));
+
+              case Method:
+                component.properties.push_back(Property(Property::Kind::Method, object_id, property.type, property.name));
             }
+          }
+
+          for (var &[alias, propertyid]: rootobj.aliases)
+          {
+            component.properties.push_back(Property(object_id, element.properties[propertyid].type, alias));
           }
 
         case None:
@@ -908,7 +1098,7 @@ fn lower_properties(lower_context mut &ctx, usize object_id, Element &element) -
     for (var &arg: signal.args)
       args.push_back(lower_type(&mut ctx, arg.type));
 
-    component.properties.push_back(Property::Kind::Signal, object_id, Type::Signal(args), signal.name);
+    component.properties.push_back(Property::Kind::Signal, object_id, Type::Function(args), signal.name);
   }
 
   object.property_index = n;
@@ -923,13 +1113,15 @@ fn lower_animates(lower_context mut &ctx, usize object_id, Element &element) -> 
   {
     for (var &target : animate.targets)
     {
-      component.objects.push_back(object_id, std::format("{}_{}", target, component.objects.len), "Animate");
+      component.objects.push_back(object_id, std::format("{}_{}", target.gsub("-", "_"), component.objects.len), "Animate");
 
       var animate_id = component.objects.len - 1;
       component.objects.back.property_index = component.properties.len;
       component.properties.push_back(animate_id, Type::Duration, "delay");
       component.properties.push_back(animate_id, Type::Duration, "duration");
+      component.properties.push_back(animate_id, Type::Integer, "loops");
       component.properties.push_back(animate_id, Type::Enumeration("Easing"), "easing");
+      component.properties.push_back(animate_id, Type::Enumeration("Direction"), "direction");
       component.objects.back.property_count = component.properties.len - component.objects.back.property_index;
 
       for (var &binding : animate.bindings)
@@ -974,7 +1166,7 @@ fn lower_objects(lower_context mut &ctx, usize object_id, Element &element) -> v
 
   for (var &child : element.children)
   {
-    component.objects.push_back(object_id, std::format("{}_{}", std::to_lowercase(child.type), component.objects.len), child.type);
+    component.objects.push_back(object_id, std::format("{}_{}", std::to_lowercase(child.type).gsub("-", "_"), component.objects.len), child.type);
   }
 
   for (var childid = child_index; childid < child_index + child_count; ++childid)
@@ -1161,6 +1353,18 @@ fn lower_bindings(lower_context mut &ctx, Element &element) -> void
 {
   var mut &component = ctx.mir.components.back;
   var mut &object = component.objects[0];
+
+  for (var &alias : element.aliases)
+  {
+    switch (lower_expression(&mut ctx, 0, alias.expression))
+    {
+      case PropertyId[propertyid]:
+        object.aliases.insert(alias.name, propertyid);
+
+      else:
+        ctx.diag.error(LowerError::UnknownProperty(ctx.source, alias.name));
+    }
+  }
 
   for (var &binding : element.bindings)
   {

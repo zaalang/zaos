@@ -56,10 +56,14 @@ pub struct token
     kw_id,
     kw_public,
     kw_private,
+    kw_alias,
     kw_property,
     kw_signal,
     kw_animate,
     kw_import,
+    kw_var,
+    kw_if,
+    kw_else,
 
     block,
     partial_block,
@@ -412,6 +416,9 @@ fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
     case "id":
       type = token::type::kw_id;
 
+    case "alias":
+      type = token::type::kw_alias;
+
     case "property":
       type = token::type::kw_property;
 
@@ -429,6 +436,15 @@ fn lex_identifier(std::string_view src, usize cursor, token mut &tok) -> usize
 
     case "import":
       type = token::type::kw_import;
+
+    case "var":
+      type = token::type::kw_var;
+
+    case "if":
+      type = token::type::kw_if;
+
+    case "else":
+      type = token::type::kw_else;
   }
 
   tok = token(type, src[beg .. idx]);

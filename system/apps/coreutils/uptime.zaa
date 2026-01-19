@@ -36,7 +36,7 @@ pub fn main() -> i32
   var hours = chrono::duration_cast<chrono::hours>(uptime - days);
   var minutes = chrono::duration_cast<chrono::minutes>(uptime - days - hours);
 
-  std::print("{} {} {}", days, hours, minutes);
+  std::printf("{} {} {}\n", days, hours, minutes);
 
   return 0;
 }

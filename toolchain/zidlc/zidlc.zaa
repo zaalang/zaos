@@ -39,51 +39,83 @@ struct builtin_type
   {
   }
 
-  builtin_type(builtin_type&&) = default;
+  builtin_type(builtin_type &&) = default;
   ~builtin_type() = default;
+}
+
+struct enumerator_type
+{
+  std::string name;
+
+  enumerator_type(String &&name)
+    : name(&&name)
+  {
+  }
+
+  enumerator_type(enumerator_type &&) = default;
+  ~enumerator_type() = default;
+}
+
+struct tag_type
+{
+  std::string name;
+
+  std::vector<type*> field_types;
+  std::vector<std::string> field_names;
+
+  tag_type(String &&name, std::vector<std::string> &&field_names, std::vector<type*> &&field_types)
+    : name(&&name), field_names(&&field_names), field_types(&&field_types)
+  {
+  }
+
+  tag_type(tag_type &&) = default;
+  ~tag_type() = default;
 }
 
 struct array_type
 {
   std::string name;
 
-  type *type;
-  usize size;
+  type *element_type;
+  usize element_count;
 
-  array_type(String &&name, type *type, usize size)
-    : name(&&name), type(type), size(size)
+  array_type(String &&name, type *element_type, usize element_count)
+    : name(&&name), element_type(element_type), element_count(element_count)
   {
   }
 
-  array_type(array_type&&) = default;
+  array_type(array_type &&) = default;
   ~array_type() = default;
 }
 
-struct tag_type
+struct vector_type
 {
   std::string name;
-  std::vector<type*> fields;
 
-  tag_type(String &&name, std::vector<type*> &&fields)
-    : name(&&name), fields(&&fields)
+  type *element_type;
+
+  vector_type(String &&name, type *element_type)
+    : name(&&name), element_type(element_type)
   {
   }
 
-  tag_type(tag_type&&) = default;
-  ~tag_type() = default;
+  vector_type(vector_type &&) = default;
+  ~vector_type() = default;
 }
 
 union type
 {
   builtin(builtin_type),
-  array(array_type),
+  enumerator(enumerator_type),
   tag(tag_type),
+  array(array_type),
+  vector(vector_type),
   string,
   channel,
   buffer,
 
   type() = default;
-  type(type&&) = default;
+  type(type &&) = default;
   ~type() = default;
 }
 
@@ -91,8 +123,6 @@ struct context
 {
   std::file fout;
   diag::diag mut *diag;
-
-  type *i32type;
 
   std::vector<std::box<type>> typetable;
 
@@ -115,8 +145,6 @@ struct context
     ctx.add_type(type::string());
     ctx.add_type(type::channel());
     ctx.add_type(type::buffer());
-
-    ctx.i32type = ctx.resolve_type("i32");
   }
 
   context() = default;
@@ -138,12 +166,20 @@ fn resolve_type(context mut &ctx, std::string_view name) -> type *
         if (name == builtin.name)
           return &*type;
 
-      case array[array]:
-        if (name == array.name)
+      case enumerator[enumerator]:
+        if (name == enumerator.name)
           return &*type;
 
       case tag[tag]:
         if (name == tag.name)
+          return &*type;
+
+      case array[array]:
+        if (name == array.name)
+          return &*type;
+
+      case vector[vector]:
+        if (name == vector.name)
           return &*type;
 
       case string[string]:
@@ -171,6 +207,14 @@ fn resolve_type(context mut &ctx, std::string_view name) -> type *
     }
   }
 
+  if (var j = name.find_first('<'); j != name.end)
+  {
+    if (var type = resolve_type(&mut ctx, name[j + 1.. name.end - 1]))
+    {
+      return &*ctx.typetable.emplace(ctx.typetable.end, type::vector(name, type));
+    }
+  }
+
   ctx.diag.error("unknown type");
 
   return null;
@@ -186,7 +230,7 @@ fn sizeof_tag_type(tag_type *tagtype) -> usize
   var size = 0;
   var align = 1;
 
-  for (var field : tagtype.fields)
+  for (var &field : tagtype.field_types)
   {
     var alignment = alignof_type(field);
 
@@ -205,14 +249,20 @@ fn sizeof_type(type *type) -> usize
     case builtin[builtin]:
       return builtin.size;
 
-    case string:
-      return sizeof<zidl::string_view>;
-
-    case array[array]:
-      return sizeof_type(array.type) * array.size;
+    case enumerator[enumerator]:
+      return sizeof<i32>;
 
     case tag[tag]:
       return sizeof_tag_type(&tag);
+
+    case array[array]:
+      return sizeof_type(array.element_type) * array.element_count;
+
+    case vector[vector]:
+      return sizeof<zidl::vector<void*>>;
+
+    case string:
+      return sizeof<zidl::string>;
 
     case channel:
       return sizeof<zidl::channel>;
@@ -228,7 +278,7 @@ fn alignof_tag_type(tag_type *tagtype) -> usize
 {
   var align = 1;
 
-  for (var field : tagtype.fields)
+  for (var &field : tagtype.field_types)
   {
     align = std::max(align, alignof_type(field));
   }
@@ -243,14 +293,20 @@ fn alignof_type(type *type) -> usize
     case builtin[builtin]:
       return builtin.align;
 
-    case array[array]:
-      return alignof_type(array.type);
+    case enumerator[enumerator]:
+      return alignof<i32>;
 
     case tag[tag]:
       return alignof_tag_type(&tag);
 
+    case array[array]:
+      return alignof_type(array.element_type);
+
+    case vector[vector]:
+      return alignof<zidl::vector<void*>>;
+
     case string:
-      return alignof<zidl::string_view>;
+      return alignof<zidl::string>;
 
     case channel:
       return alignof<zidl::channel>;
@@ -262,21 +318,27 @@ fn alignof_type(type *type) -> usize
   std::panic("unknown alignof type");
 }
 
-fn zidl_typename(type *type) -> std::string_view
+fn zidl_typename(type *type) -> std::string
 {
   switch (*type)
   {
     case builtin[builtin]:
       return builtin.name;
 
-    case array[array]:
-      return array.name;
+    case enumerator[enumerator]:
+      return enumerator.name;
 
     case tag[tag]:
       return tag.name;
 
+    case array[array]:
+      return std::format("{}[{}]", zidl_typename(array.element_type), array.element_count);
+
+    case vector[vector]:
+      return std::format("zidl::vector<{}>", zidl_typename(vector.element_type));
+
     case string:
-      return "zidl::string_view";
+      return "zidl::string";
 
     case channel:
       return "zidl::channel";
@@ -300,11 +362,39 @@ fn max_message_size(context mut &ctx, std::vector<zidl::decl> &variables) -> usi
     switch (variable)
     {
       case variable[variable]:
-
         if (var type = resolve_type(&mut ctx, variable.type))
+        {
           size = std::align_up(size, alignof_type(type)) + sizeof_type(type);
 
-        data += std::align_up(std::max(variable.constraint, 64), 8);
+          var constraint = variable.constraint;
+
+          if (variable.constraint == 0)
+          {
+            switch (*type)
+            {
+              case array[array]:
+                switch (*array.element_type)
+                {
+                  case tag[tag]:
+                    constraint = 128 * array.element_count;
+
+                  case string:
+                    constraint = 80 * array.element_count;
+                }
+
+              case vector[vector]:
+                constraint = 2048;
+
+              case tag[tag]:
+                constraint = 256;
+
+              case string:
+                constraint = 80;
+            }
+          }
+
+          data += std::align_up(constraint, 8);
+        }
 
       else:
         std::panic("unhandled variable decl");
@@ -325,7 +415,6 @@ fn max_request_size(context mut &ctx, std::vector<zidl::decl> &methods) -> usize
     switch (method)
     {
       case method[method]:
-
         size += max_message_size(&mut ctx, method.parameters);
 
       else:
@@ -345,7 +434,6 @@ fn max_response_size(context mut &ctx, std::vector<zidl::decl> &methods) -> usiz
     switch (method)
     {
       case method[method]:
-
         size += max_message_size(&mut ctx, method.returns);
 
       else:
@@ -393,15 +481,15 @@ fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) thr
           switch (*type)
           {
             case builtin:
+            case enumerator:
               std::fprintf(&mut ctx.fout, "{} {}", zidl_typename(type), variable.name);
 
+            case tag:
             case array:
               std::fprintf(&mut ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
 
-            case tag:
-              std::fprintf(&mut ctx.fout, "{} &&{}", zidl_typename(type), variable.name);
-
             case string:
+            case vector:
             case channel:
             case buffer:
               std::fprintf(&mut ctx.fout, "{} {}", zidl_typename(type), variable.name);
@@ -433,15 +521,15 @@ fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) thr
             switch (*type)
             {
               case builtin:
+              case enumerator:
                 std::fprintf(&mut ctx.fout, "{}({})", variable.name, variable.name);
 
+              case tag:
               case array:
                 std::fprintf(&mut ctx.fout, "{}(&&{})", variable.name, variable.name);
 
-              case tag:
-                std::fprintf(&mut ctx.fout, "{}(&&{})", variable.name, variable.name);
-
               case string:
+              case vector:
                 std::fprintf(&mut ctx.fout, "{}({})", variable.name, variable.name);
 
               case channel:
@@ -463,68 +551,6 @@ fn codegen_constructor(context mut &ctx, std::vector<zidl::decl> &variables) thr
   std::fprintf(&mut ctx.fout, "      \n");
 }
 
-fn codegen_encode(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
-{
-  std::fprintf(&mut ctx.fout, "      pub fn encode(zidl::encoder mut &encoder, typeof(this) &value) -> void\n");
-  std::fprintf(&mut ctx.fout, "      {{\n");
-
-  for (var &variable : variables)
-  {
-    switch (variable)
-    {
-      case variable[variable]:
-
-        if (var type = resolve_type(&mut ctx, variable.type))
-        {
-          switch (*type)
-          {
-            case string:
-            case channel:
-            case buffer:
-              std::fprintf(&mut ctx.fout, "        zidl::encode(&mut encoder, value.{});\n", variable.name);
-          }
-        }
-
-      else:
-        std::panic("unhandled parameter decl");
-    }
-  }
-
-  std::fprintf(&mut ctx.fout, "      }}\n");
-  std::fprintf(&mut ctx.fout, "      \n");
-}
-
-fn codegen_decode(context mut &ctx, std::vector<zidl::decl> &variables) throws(std::error) -> void
-{
-  std::fprintf(&mut ctx.fout, "      pub fn decode(zidl::decoder mut &decoder, typeof(this) mut &value) -> void\n");
-  std::fprintf(&mut ctx.fout, "      {{\n");
-
-  for (var &variable : variables)
-  {
-    switch (variable)
-    {
-      case variable[variable]:
-
-        if (var type = resolve_type(&mut ctx, variable.type))
-        {
-          switch (*type)
-          {
-            case string:
-            case channel:
-            case buffer:
-              std::fprintf(&mut ctx.fout, "        zidl::decode(&mut decoder, &mut value.{});\n", variable.name);
-          }
-        }
-
-      else:
-        std::panic("unhandled parameter decl");
-    }
-  }
-
-  std::fprintf(&mut ctx.fout, "      }}\n");
-  std::fprintf(&mut ctx.fout, "      \n");
-}
-
 fn codegen_method(context mut &ctx, zidl::method &method) throws(std::error) -> void
 {
   if (method.type == zidl::method::type::oneway || method.type == zidl::method::type::twoway)
@@ -537,8 +563,6 @@ fn codegen_method(context mut &ctx, zidl::method &method) throws(std::error) -> 
 
     codegen_fields(&mut ctx, method.parameters);
     codegen_constructor(&mut ctx, method.parameters);
-    codegen_encode(&mut ctx, method.parameters);
-    codegen_decode(&mut ctx, method.parameters);
 
     std::fprintf(&mut ctx.fout, "      pub ~this() = default;\n");
     std::fprintf(&mut ctx.fout, "    }}\n");
@@ -555,8 +579,6 @@ fn codegen_method(context mut &ctx, zidl::method &method) throws(std::error) -> 
 
     codegen_fields(&mut ctx, method.returns);
     codegen_constructor(&mut ctx, method.returns);
-    codegen_encode(&mut ctx, method.returns);
-    codegen_decode(&mut ctx, method.returns);
 
     std::fprintf(&mut ctx.fout, "      pub ~this() = default;\n");
     std::fprintf(&mut ctx.fout, "    }}\n");
@@ -657,7 +679,7 @@ fn codegen_bits(context mut &ctx, zidl::bits &bits) throws(std::error) -> void
   std::fprintf(&mut ctx.fout, "  }}\n");
   std::fprintf(&mut ctx.fout, "\n");
 
-  ctx.typetable.push_back(type::tag(bits.name, std::vector::from([ctx.i32type])));
+  ctx.typetable.push_back(type::enumerator(bits.name));
 }
 
 fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws(std::error) -> void
@@ -680,24 +702,35 @@ fn codegen_enumerator(context mut &ctx, zidl::enumerator &enumerator) throws(std
   std::fprintf(&mut ctx.fout, "  }}\n");
   std::fprintf(&mut ctx.fout, "\n");
 
-  ctx.typetable.push_back(type::tag(enumerator.name, std::vector::from([ctx.i32type])));
+  ctx.typetable.push_back(type::enumerator(enumerator.name));
 }
 
 fn codegen_structure(context mut &ctx, zidl::structure &structure) throws(std::error) -> void
 {
-  std::fprintf(&mut ctx.fout, "  pub struct {}\n", structure.name);
-  std::fprintf(&mut ctx.fout, "  {{\n");
+  var names = std::vector<std::string>();
+  var types = std::vector<type*>();
 
   for (var &field : structure.fields)
   {
     switch (field)
     {
       case variable[field]:
-        std::fprintf(&mut ctx.fout, "    pub {} {};\n", field.type, field.name);
+        names.push_back(field.name);
+
+        if (var type = resolve_type(&mut ctx, field.type))
+          types.push_back(type);
 
       else:
         std::panic("unhandled struct decl");
     }
+  }
+
+  std::fprintf(&mut ctx.fout, "  pub struct {}\n", structure.name);
+  std::fprintf(&mut ctx.fout, "  {{\n");
+
+  for (var &[name, type] : std::zip(names, types))
+  {
+    std::fprintf(&mut ctx.fout, "    pub {} {};\n", zidl_typename(type), name);
   }
 
   std::fprintf(&mut ctx.fout, "    \n");
@@ -709,22 +742,7 @@ fn codegen_structure(context mut &ctx, zidl::structure &structure) throws(std::e
   std::fprintf(&mut ctx.fout, "  }}\n");
   std::fprintf(&mut ctx.fout, "\n");
 
-  var fields = std::vector<type*>();
-
-  for (var &field : structure.fields)
-  {
-    switch (field)
-    {
-      case variable[field]:
-        if (var type = resolve_type(&mut ctx, field.type))
-          fields.push_back(type);
-
-      else:
-        std::panic("unhandled struct decl");
-    }
-  }
-
-  ctx.add_type(type::tag(structure.name, fields));
+  ctx.add_type(type::tag(structure.name, &move names, &move types));
 }
 
 fn codegen(zidl::ast &ast, std::string &outfile, diag::diag mut &diag) throws(std::error) -> void

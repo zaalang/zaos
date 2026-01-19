@@ -1,69 +1,130 @@
 
 Slider {
-  property bool enabled: true;
   property float value: 30.0;
   property float minimum: 0.0;
   property float maximum: 100.0;
+  property float step-size: 1.0;
+  property bool enabled: true;
 
-  signal dragged(float value);
+  signal changed(float value);
   signal released();
 
-  Rectangle
-  {
-    id: rail;
-    y: (parent.height - this.height) / 2.0;
-    width: parent.width;
-    height: 4px;
-    border-radius: 2px;
-    background: #73000000;
-  }
+  private property bool focused: false;
 
-  Rectangle
-  {
-    id: track;
-    y: (parent.height - this.height) / 2.0;
-    width: thumb.x + (thumb.width / 2.0);
-    height: rail.height;
-    border-radius: 2px;
-    background: #005fb8;
-  }
+  on_focused: { scope.focus(); }
 
-  Rectangle
-  {
-    id: thumb;
-    x: (parent.width - this.width) * (root.value - root.minimum) / (root.maximum - root.minimum);
-    y: (parent.height - this.height) / 2.0;
-    width: 20px;
-    height: 20px;
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: #58000000;
-    background: #ffffff;
-
-    Rectangle
-    {
-      id: knob;
-      x: 4px;
-      y: 4px;
-      width: 12px;
-      height: 12px;
-      border-width: 1.5px;
-      border-radius: 6px;
-      border-color: #ffffff;
-      background: #005fb8;
-    }
-  }
-
-  TouchArea {
+  FocusScope {
+    id: scope;
     enabled: root.enabled;
-    on_entered: { knob.border-color = #005fb8; }
-    on_exited: { knob.border-color = #ffffff; }
+    on_focus_in: { root.focused = true; }
+    on_focus_out: { root.focused = false; }
 
-    on_dragged: |position| {
-      root.dragged(root.minimum + CLAMP((position.x - 0.5*thumb.width) / (root.width - thumb.width), 0.0, 1.0) * (root.maximum - root.minimum));
+    key_event: |evt| {
+      if (evt.kind == KeyEventKind.Pressed && evt.key == 29)
+        if (root.value + root.step-size <= root.maximum)
+          root.changed(root.value + root.step-size);
+
+      if (evt.kind == KeyEventKind.Released && evt.key == 29)
+        root.released();
+
+      if (evt.kind == KeyEventKind.Pressed && evt.key == 28)
+        if (root.value - root.step-size >= root.minimum)
+          root.changed(root.value - root.step-size);
+
+      if (evt.kind == KeyEventKind.Released && evt.key == 28)
+        root.released();
+
+      evt.accepted = true;
     }
 
-    on_released: |position| {
+    TouchArea {
+      enabled: root.enabled;
+      on_entered: { knob.border-color = #005fb8; }
+      on_exited: { knob.border-color = #ffffff; }
+      on_pressed: |position| { scope.focus(); }
+
+      on_dragged: |position| {
+        var value = root.minimum + CLAMP((position.x - 0.5*thumb.width) / (root.width - thumb.width), 0.0, 1.0) * (root.maximum - root.minimum);
+
+        if (value != root.value)
+          root.changed(value);
+      }
+
+      on_released: |position| {
+        root.released();
+      }
+
+      wheel_event: |evt| {
+        var value = CLAMP(root.value - evt.angle.y/120.0, root.minimum, root.maximum);
+
+        if (value != root.value)
+          root.changed(value);
+
+        scope.focus();
+      }
+
+      Rectangle
+      {
+        id: rail;
+        y: (parent.height - this.height) / 2.0;
+        width: parent.width;
+        height: 4px;
+        border-radius: 2px;
+        background: #73000000;
+      }
+
+      Rectangle
+      {
+        id: track;
+        y: (parent.height - this.height) / 2.0;
+        width: thumb.x + (thumb.width / 2.0);
+        height: rail.height;
+        border-radius: 2px;
+        background: #005fb8;
+      }
+
+      Rectangle
+      {
+        id: thumb;
+        x: (parent.width - this.width) * (root.value - root.minimum) / (root.maximum - root.minimum);
+        y: (parent.height - this.height) / 2.0;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: #58000000;
+        background: #ffffff;
+
+        Rectangle
+        {
+          id: knob;
+          x: 4px;
+          y: 4px;
+          width: 12px;
+          height: 12px;
+          border-width: 1.5px;
+          border-radius: 6px;
+          border-color: #ffffff;
+          background: #005fb8;
+
+          animate border-color {
+            duration: 150ms;
+          }
+        }
+      }
     }
+
+//    Rectangle {
+//      id: bar;
+//      y: parent.height - 2px;
+//      width: parent.width;
+//      height: 2px;
+//      background: #005fb8;
+//      opacity: IF(root.focused, 1.0, 0.0);
+//
+//      animate opacity {
+//        duration: 150ms;
+//      }
+//    }
   }
 }

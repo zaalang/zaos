@@ -33,13 +33,16 @@ pub enum animation_easing
 
 pub enum animation_direction
 {
-
+  normal,
+  alternate,
 }
 
 pub struct Animation<T>
 {
   pub u64 delay;
   pub u64 duration;
+  pub int loops = 1;
+  pub animation_direction direction = animation_direction::normal;
   pub animation_easing easing = animation_easing::linear;
 
   pub std::delegate<(T &) -> void> on_updated;
@@ -152,6 +155,11 @@ pub fn easing(animation_easing &curve, f32 alpha) -> f32
   }
 }
 
+pub fn interpolate(bool src, bool dst, f32 alpha) -> bool
+{
+  return dst;
+}
+
 pub fn interpolate(float src, float dst, f32 alpha) -> float
 {
   return src + cast<float>(alpha) * (dst - src);
@@ -173,6 +181,11 @@ pub fn start<T, V>(Animation<T> mut &this, T &from, V &target) -> void
   this.target = T(target);
   this.start_time = now();
   this.state = animation_state::starting;
+}
+
+pub fn stop<T, V>(Animation<T> mut &this) -> void
+{
+  this.state = animation_state::finished;
 }
 
 pub fn update<T>(Animation<T> mut &this, u64 mut &deadline) -> void
@@ -203,13 +216,32 @@ pub fn update<T>(Animation<T> mut &this, u64 mut &deadline) -> void
 
         this.on_updated(interpolate(this.from, this.target, easing(this.easing, alpha)));
 
-        deadline = 0;
+        #if (__is_same<T, bool>)
+          deadline = std::min(deadline, this.duration - dt);
+        #else
+          deadline = 0;
       }
       else
       {
         this.on_updated(this.target);
 
-        this.state = animation_state::finished;
+        if (this.loops < 0)
+        {
+          this.start_time += this.duration;
+
+          switch (this.direction)
+          {
+            case alternate:
+              std::swap(&mut this.from, &mut this.target);
+          }
+
+          deadline = 0;
+        }
+
+        if (this.loops == 1)
+        {
+          this.state = animation_state::finished;
+        }
       }
   }
 }

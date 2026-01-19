@@ -68,10 +68,12 @@ fn main() -> int
         test(&mut engine, &mut stack, input);
 
       case ctrl_d:
+      case end_of_file:
         break;
 
       case error[e]:
-        std::print("Error: ", e);
+        std::print(e);
+        break;
     }
   }
 

@@ -140,7 +140,7 @@ struct Model
 pub struct window : pub gui::window
 {
   Model model;
-  zuic::Calculator view;
+  gui::View<zuic::Calculator> view;
 
   app::loop::timeout_t animation_timer;
 
@@ -197,7 +197,7 @@ pub struct window : pub gui::window
       evt.position.0 -= this.interior.left;
       evt.position.1 -= this.interior.top;
 
-      gui::scene_event(&mut this.view.scene, evt);
+      gui::scene_event(&mut this.view, evt);
 
       this.schedule_redraw(this.interior);
     }
@@ -212,7 +212,7 @@ pub struct window : pub gui::window
       evt.position.0 -= this.interior.left;
       evt.position.1 -= this.interior.top;
 
-      gui::scene_event(&mut this.view.scene, evt);
+      gui::scene_event(&mut this.view, evt);
 
       this.schedule_redraw(this.interior);
     }
@@ -220,8 +220,29 @@ pub struct window : pub gui::window
     gui::window::button_event(&mut this, evt);
   }
 
+  pub fn wheel_event(this mut &, gui::pointer_event &evt) override -> void
+  {
+    {
+      var evt = evt;
+      evt.position.0 -= this.interior.left;
+      evt.position.1 -= this.interior.top;
+
+      gui::scene_event(&mut this.view, evt);
+
+      this.schedule_redraw(this.interior);
+    }
+
+    gui::window::wheel_event(&mut this, evt);
+  }
+
   pub fn key_event(this mut &, gui::key_event &evt) override -> void
   {
+    {
+      gui::scene_event(&mut this.view, evt);
+
+      this.schedule_redraw(this.interior);
+    }
+
     gui::window::key_event(&mut this, evt);
   }
 
@@ -246,7 +267,7 @@ pub struct window : pub gui::window
       app::loop::current.reset_timeout(&this.animation_timer);
     }
 
-    gui::scene_render(&mut painter, this.view.scene);
+    gui::scene_render(&mut painter, this.view);
   }
 
   pub fn animation_timer(app::loop mut &loop, app::loop::timeout_t mut *timeout) -> void

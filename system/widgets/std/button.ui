@@ -1,42 +1,69 @@
 
 Button {
-  property string text: "";
+  alias text: label.text;
   property bool enabled: true;
 
   signal clicked();
 
-  Rectangle {
-    id: rect;
-    border-radius: 4px;
-    border-width: 1px;
-    border-color: #99000000;
-    background: #05ffffff;
+  private property bool focused: false;
 
-    HorizontalLayout {
-      padding-left: 12px;
-      padding-right: 12px;
-      padding-top: 5px;
-      padding-bottom: 5px;
+  on_focused: { scope.focus(); }
 
-      Text {
-        id: text;
-        text: root.text;
-        font-family: "Noto Sans";
-        font-size: 12pt;
-        color: #000000;
-        horizontal-alignment: TextHorizontalAlignment.Center;
-        vertical-alignment: TextVerticalAlignment.Middle;
-        horizontal-stretch: 1.0;
+  FocusScope {
+    id: scope;
+    enabled: root.enabled;
+    on_focus_in: { root.focused = true; }
+    on_focus_out: { root.focused = false; }
+
+    TouchArea {
+      enabled: root.enabled;
+      on_entered: { box.background = #66ffffff; box.border-color = #005fb8; }
+      on_exited: { box.background = #05ffffff; box.border-color = #99000000; }
+      on_pressed: |position| { box.background = #17ffffff; box.border-color = #58005fb8; label.color = #83000000; scope.focus(); }
+      on_released: |position| { box.background = #66ffffff; box.border-color = #ff005fb8; label.color = #000000; }
+      on_clicked: { root.clicked(); }
+
+      Rectangle {
+        id: box;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: #99000000;
+        background: #05ffffff;
+
+        animate background {
+          duration: 150ms;
+        }
+
+        HorizontalLayout {
+          padding-left: 12px;
+          padding-right: 12px;
+          padding-top: 4px;
+          padding-bottom: 4px;
+
+          Text {
+            id: label;
+            font-family: "Noto Sans";
+            font-size: 12pt;
+            color: #000000;
+            horizontal-alignment: TextHorizontalAlignment.Center;
+            vertical-alignment: TextVerticalAlignment.Middle;
+            horizontal-stretch: 1.0;
+          }
+        }
       }
     }
-  }
 
-  TouchArea {
-    enabled: root.enabled;
-    on_entered: { rect.background = #05000000; }
-    on_exited: { rect.background = #05ffffff; }
-    on_pressed: |position| { rect.background = #0fcde3f1; rect.border-color = #58000000; text.color = #b3000000; }
-    on_released: |position| { rect.background = #05000000; rect.border-color = #000000; text.color = #000000; }
-    on_clicked: { root.clicked(); }
+    Rectangle {
+      id: bar;
+      y: parent.height - 2px;
+      width: parent.width;
+      height: 2px;
+      background: #005fb8;
+      opacity: IF(root.focused, 1.0, 0.0);
+
+      animate opacity {
+        duration: 150ms;
+      }
+    }
   }
 }

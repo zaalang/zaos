@@ -1937,7 +1937,7 @@ pub fn find_and_replace_all(textbuffer mut &this, std::string &pattern, search_o
 // Moves the cursor to the given offset.
 pub fn cursor_move_to_offset(textbuffer mut &this, usize offset) -> void
 {
-  cursor_move_to_offset_internal(this, &mut this.cursor, offset);
+  cursor_move_to_offset(this, &mut this.cursor, offset);
 
   this.last_history_type = history_type::other;
   this.selection.clear();

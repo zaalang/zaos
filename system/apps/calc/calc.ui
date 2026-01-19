@@ -15,6 +15,11 @@ Button {
     border-color: #ffffff;
     background: root.background;
 
+    animate background {
+      duration: 150ms;
+      easing: Easing.OutQuad;
+    }
+
     Text {
       text: root.text;
       font-family: "Noto Sans";

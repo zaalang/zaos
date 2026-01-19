@@ -35,6 +35,24 @@ pub struct item_pointer_event
   pub ~item_pointer_event() = default;
 }
 
+pub struct item_wheel_event
+{
+  pub u64 time;
+  pub gfx::point angle;
+  pub gfx::point position;
+  pub gui::modifiers modifiers;
+
+  item_wheel_event(u64 time, gfx::point angle, gfx::point position, gui::modifiers modifiers)
+    : time(time), angle(angle), position(position), modifiers(modifiers)
+  {
+  }
+
+  pub item_wheel_event() = default;
+  pub item_wheel_event(item_wheel_event&) = default;
+  pub fn =(item_wheel_event mut &, item_wheel_event &) -> item_wheel_event mut & = default;
+  pub ~item_wheel_event() = default;
+}
+
 pub struct TouchArea : pub item
 {
   pub bool enabled = true;
@@ -44,7 +62,8 @@ pub struct TouchArea : pub item
   pub std::delegate<(gfx::point) -> void> on_pressed;
   pub std::delegate<(gfx::point) -> void> on_released;
   pub std::delegate<(gfx::point) -> void> on_dragged;
-  pub std::delegate<(item_pointer_event) -> void> pointer_event;
+  pub std::delegate<(item_pointer_event &) -> void> pointer_event;
+  pub std::delegate<(item_wheel_event &) -> void> wheel_event;
 
   bool hovered;
 
@@ -56,9 +75,17 @@ pub struct TouchArea : pub item
   pub ~TouchArea() = default;
 }
 
-pub fn pointer_event_filter(TouchArea mut &this, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+pub fn focus_event(TouchArea mut &this, gui::scene mut &scene, gui::iitem::reason, gui::focus_event &) -> gui::iitem::action
 {
-  if (this.enabled && gfx::rect(0.0, 0.0, this.width, this.height).contains(xy))
+  return ignore;
+}
+
+pub fn pointer_event_filter(TouchArea mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  if (!this.enabled)
+    return ignore;
+
+  if (gfx::rect(0.0, 0.0, this.width, this.height).contains(xy))
   {
     if (!this.hovered)
     {
@@ -72,7 +99,7 @@ pub fn pointer_event_filter(TouchArea mut &this, gfx::point &xy, gui::pointer_ev
   return forward;
 }
 
-pub fn pointer_event(TouchArea mut &this, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+pub fn pointer_event(TouchArea mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
 {
   if (!this.enabled)
     return ignore;
@@ -117,10 +144,16 @@ pub fn pointer_event(TouchArea mut &this, gfx::point &xy, gui::pointer_event &ev
     }
   }
 
+  if (this.wheel_event)
+  {
+    if (evt.angle != (0, 0))
+      this.wheel_event(item_wheel_event(evt.time, gfx::point(cast<float>(evt.angle.0), cast<float>(evt.angle.1)), xy, evt.modifiers));
+  }
+
   return accept;
 }
 
-pub fn pointer_exit(TouchArea mut &this) -> void
+pub fn pointer_exit(TouchArea mut &this, gui::scene mut &scene) -> void
 {
   if (this.hovered)
   {
@@ -129,6 +162,16 @@ pub fn pointer_exit(TouchArea mut &this) -> void
 
     this.hovered = false;
   }
+}
+
+pub fn key_event_filter(TouchArea mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(TouchArea mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
+{
+  return ignore;
 }
 
 pub fn render(TouchArea &this, gui::painter mut &painter, gfx::transform &transform) -> void

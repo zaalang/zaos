@@ -1,0 +1,415 @@
+//
+// input item
+//
+
+import std.stdlib;
+import std.function;
+import std.string : String;
+import std.bits.utf as utf;
+import unicode.grapheme;
+import input.keys : Key;
+import gui.scene : item;
+import gui.animation;
+import gui.painter;
+import gfx.transform;
+
+pub enum input_type
+{
+  text,
+  password,
+  number,
+  decimal,
+}
+
+pub struct Input : pub item
+{
+  pub bool enabled = true;
+  pub input_type input_type = input_type::text;
+
+  pub std::string text;
+  pub gfx::color color;
+  pub gfx::color selection_foreground;
+  pub gfx::color selection_background;
+  pub gui::text_horizontal_alignment horizontal_alignment = gui::text_horizontal_alignment::left;
+  pub gui::text_vertical_alignment vertical_alignment = gui::text_vertical_alignment::top;
+  pub std::string font_family;
+  pub float font_size;
+
+  pub std::delegate<() -> void> on_edited;
+  pub std::delegate<() -> void> on_accepted;
+
+  pub std::delegate<() -> void> on_focus_in;
+  pub std::delegate<() -> void> on_focus_out;
+
+  cursor cursor;
+  bool cursor_visible;
+  gui::Animation<bool> cursor_animation;
+
+  mut float scroll_x;
+  mut float scroll_y;
+
+  pub Input()
+    : super(&impl this)
+  {
+    cursor_animation.on_updated = |visible| {
+      this.cursor_visible = visible;
+    };
+  }
+
+  pub ~Input() = default;
+}
+
+pub enum movement
+{
+  grapheme,
+  word,
+}
+
+struct cursor
+{
+  usize offset;
+  (usize, usize) logical;
+
+  cursor() = default;
+  cursor(cursor &&) = default;
+  fn =(cursor mut &, cursor &&) -> cursor mut & = default;
+  ~cursor() = default;
+}
+
+fn show_cursor(Input mut &this) -> void
+{
+  this.cursor_animation.loops = -1;
+  this.cursor_animation.duration = 500_000_000;
+  this.cursor_animation.direction = gui::animation_direction::alternate;
+  this.cursor_animation.start(this.cursor_visible, !this.cursor_visible);
+}
+
+fn hide_cursor(Input mut &this) -> void
+{
+  this.cursor_animation.stop();
+
+  this.cursor_visible = false;
+}
+
+fn cursor_measure_forward(Input &this, cursor mut &cursor, usize offset_target = ~0, (usize, usize) &logical_target = (~0, ~0)) -> void
+{
+  var offset = cursor.offset;
+  var logical_x = cursor.logical.0;
+  var logical_y = cursor.logical.1;
+
+  var logical_target_x = logical_target.0;
+
+  for (var iter = this.text[offset .. this.text.len].chars.begin; iter != this.text.end; )
+  {
+    if (offset >= offset_target || logical_x >= logical_target_x)
+      break;
+
+    var next = unicode::next_grapheme_boundary(iter, this.text.end);
+
+    logical_x += 1;
+    offset += std::string_view(iter, next).len;
+
+    iter = next;
+  }
+
+  cursor.offset = offset;
+  cursor.logical = (logical_x, logical_y);
+}
+
+fn cursor_move_to_offset(Input &this, cursor mut &cursor, usize offset) -> void
+{
+  if (cursor.offset == offset)
+    return;
+
+  if (offset < cursor.offset)
+  {
+    cursor = cursor();
+  }
+
+  cursor_measure_forward(this, &mut cursor, offset_target: offset);
+}
+
+fn cursor_move_to_logical(Input &this, cursor mut &cursor, (usize, usize) &position) -> void
+{
+  if (cursor.logical == position)
+    return;
+
+  if (position.1 != cursor.logical.1 || position.0 < cursor.logical.0)
+  {
+    cursor = cursor();
+  }
+
+  cursor_measure_forward(this, &mut cursor, logical_target: position);
+}
+
+fn cursor_move_delta(Input &this, cursor mut &cursor, movement granularity, int delta) -> void
+{
+  if (delta == 0)
+    return;
+
+  switch (granularity)
+  {
+    case grapheme:
+      cursor_move_to_logical(this, &mut cursor, (std::saturating_add(cursor.logical.0, delta), cursor.logical.1));
+  }
+}
+
+fn valid_input(Input &this, std::string_view text) -> bool
+{
+  switch (this.input_type)
+  {
+    case text:
+    case password:
+      return true;
+
+    case number:
+      return std::all_of(text, |ch| std::is_digit(ch));
+
+    case decimal:
+      var input = this.text;
+      input.insert(input.begin + this.cursor.offset, text);
+
+      var decimal = f64();
+
+      if (input.starts_with("-"))
+        input.drop_front!(1);
+
+      if (input.ends_with("e-") || input.ends_with("E-"))
+        input.drop_back!(1);
+
+      if (input.ends_with("e") || input.ends_with("E"))
+        input.drop_back!(1);
+
+      return (std::atof(input.begin, input.end, &mut decimal).len == input.len);
+
+    else:
+      std::panic();
+  }
+}
+
+fn insert(Input mut &this, std::string_view text) -> void
+{
+  this.text.insert(this.text.begin + this.cursor.offset, text);
+
+  cursor_move_to_offset(this, &mut this.cursor, this.cursor.offset + text.len);
+
+  if (this.on_edited)
+    this.on_edited();
+}
+
+fn delete(Input mut &this, movement granularity, int delta) -> void
+{
+  var end = this.cursor;
+
+  cursor_move_delta(this, &mut end, granularity,delta);
+
+  if (this.cursor.offset == end.offset)
+    return;
+
+  if (this.cursor.offset > end.offset)
+    std::swap(&mut this.cursor, &mut end);
+
+  this.text.erase(this.cursor.offset, end.offset - this.cursor.offset);
+
+  if (this.on_edited)
+    this.on_edited();
+}
+
+pub fn text=(Input mut &this, String &&text) -> void
+{
+  if (!(&text == &this.text || text == this.text))
+  {
+    this.text.replace(this.text.data, this.text.len, text);
+
+    this.cursor = cursor();
+
+    //this.select_all();
+    cursor_move_to_logical(this, &mut this.cursor, (1 << 30, this.cursor.logical.1));
+  }
+}
+
+pub fn update(Input mut &this, u64 mut &deadline) -> void
+{
+  this.cursor_animation.update(&mut deadline);
+}
+
+pub fn implicit_height(Input &this) -> float
+{
+  var font = gui::font(this.font_family, this.font_size);
+
+  return std::ceil(font.line_spacing);
+}
+
+pub fn focus_event(Input mut &this, gui::scene mut &scene, gui::iitem::reason reason, gui::focus_event &evt) -> gui::iitem::action
+{
+  if (!this.enabled)
+    return ignore;
+
+  switch (evt.type)
+  {
+    case focus_in:
+      show_cursor(&mut this);
+
+      if (this.on_focus_in)
+        this.on_focus_in();
+
+    case focus_out:
+      hide_cursor(&mut this);
+
+      if (this.on_focus_out)
+        this.on_focus_out();
+  }
+
+  return accept;
+}
+
+pub fn pointer_event_filter(Input mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn pointer_event(Input mut &this, gui::scene mut &scene, gfx::point &xy, gui::pointer_event &evt) -> gui::iitem::action
+{
+  if (!this.enabled)
+    return ignore;
+
+  if (evt.button != cast(0) && evt.buttons[cast(evt.button)] == 1)
+  {
+    scene_set_focus(&mut scene, &this);
+
+    return accept;
+  }
+
+  return ignore;
+}
+
+pub fn pointer_exit(Input mut &this, gui::scene mut &scene) -> void
+{
+}
+
+pub fn key_event_filter(Input mut &this, gui::scene mut &scene, gui::key_event &evt) -> gui::iitem::action
+{
+  return forward;
+}
+
+pub fn key_event(Input mut &this, gui::scene mut &scene, gui::key_event &evt) -> gui::iitem::action
+{
+  if (evt.state == 1)
+  {
+    switch (evt.key)
+    {
+      case Key::Return:
+        if (this.on_accepted)
+          this.on_accepted();
+
+      case Key::Home:
+        cursor_move_to_logical(this, &mut this.cursor, (0, this.cursor.logical.1));
+
+      case Key::End:
+        cursor_move_to_logical(this, &mut this.cursor, (1 << 30, this.cursor.logical.1));
+
+      case Key::Left:
+        cursor_move_delta(this, &mut this.cursor, movement::grapheme, -1);
+
+      case Key::Right:
+        cursor_move_delta(this, &mut this.cursor, movement::grapheme, +1);
+
+      case Key::Backspace:
+        this.delete(movement::grapheme, -1);
+
+      case Key::Delete:
+        this.delete(movement::grapheme, +1);
+
+      else:
+        if (std::is_cntrl(evt.sym))
+          return ignore;
+
+        var buf = [0; 8];
+        var len = utf::encode(buf.data, evt.sym);
+
+        if (!valid_input(this, buf.substr(0, len)))
+          return ignore;
+
+        this.insert(buf.substr(0, len));
+    }
+
+    return accept;
+  }
+
+  return ignore;
+}
+
+pub fn render(Input &this, gui::painter mut &painter, gfx::transform &transform) -> void
+{
+  var font = gui::font(this.font_family, this.font_size);
+
+  var old_clip_rect = painter.clip_rect;
+  painter.clip_rect = gfx::clamp(painter.clip_rect, transform * gfx::rect(0.0, 0.0, this.width, this.height));
+
+  var x = this.scroll_x;
+  var y = this.scroll_y;
+
+  switch (this.vertical_alignment)
+  {
+    case top:
+      y = font.ascender;
+
+    case middle:
+      y =  0.5 * (this.height + font.height) + font.descender;
+
+    case bottom:
+      y = this.height + font.descender;
+  }
+
+  var ids = std::vector<u16>::with_capacity(this.text.len);
+  var offsets = std::vector<float>::with_capacity(this.text.len + 1);
+
+  font.layout_text(this.text.view, &mut ids, &mut offsets);
+
+  if (offsets.back < this.width)
+  {
+    switch (this.horizontal_alignment)
+    {
+      case left:
+        x = 0.0;
+
+      case center:
+        x = 0.5 * (this.width - offsets.back);
+
+      case right:
+        x = this.width - offsets.back;
+    }
+  }
+
+  if (x + offsets[this.cursor.logical.0] < 0.0)
+    x = 0.0 - offsets[this.cursor.logical.0];
+
+  if (x + offsets[this.cursor.logical.0] + 2.0 > this.width)
+    x = this.width - offsets[this.cursor.logical.0] - 2.0;
+
+  for (var &[id, offset, next_offset] : std::zip(ids, offsets, offsets.drop_n(1)))
+  {
+    if (x + next_offset < 0.0)
+      continue;
+
+    if (x + offset > this.width)
+      break;
+
+    var xy = transform * gfx::point(x + offset, y);
+    var glyph = font.glyph(id, transform[0, 0], transform[0, 1], transform[1, 0], transform[1, 1], xy.x - std::floor(xy.x), 0.0);
+
+    painter.draw_glyph(xy.x, xy.y, glyph, this.color);
+  }
+
+  if (this.cursor_visible)
+  {
+    var path = gfx::path();
+    path.rect_at(gfx::rect(x + offsets[this.cursor.logical.0], 0.5 * (this.height - font.ascender), 2.0, font.ascender));
+
+    painter.fill_path(transform, path, gfx::brush(this.color));
+  }
+
+  painter.clip_rect = old_clip_rect;
+
+  this.scroll_x = x;
+}

@@ -5,12 +5,14 @@
 import std.button;
 import std.checkbox;
 import std.slider;
+import std.spinbox;
+import std.lineedit;
 
 Gallery {
 
   VerticalLayout
   {
-    spacing: 5px;
+    spacing: 15px;
     padding-top: 5px;
     padding-bottom: 5px;
 
@@ -24,7 +26,8 @@ Gallery {
         text: "Hello World!";
         preferred-width: 150px;
 
-        clicked: { }
+        clicked: {
+        }
       }
 
       CheckBox {
@@ -41,7 +44,7 @@ Gallery {
         min-width: 40px;
         preferred-width: 120px;
 
-        dragged: |value| {
+        changed: |value| {
           this.value = value;
         }
 
@@ -57,6 +60,41 @@ Gallery {
         color: #000000;
         vertical-alignment: TextVerticalAlignment.Middle;
         horizontal-alignment: TextHorizontalAlignment.Left;
+      }
+    }
+
+    HorizontalLayout
+    {
+      spacing: 5px;
+      padding-left: 5px;
+      padding-right: 5px;
+
+      LineEdit {
+        id: edit;
+        min-width: 120px;
+        preferred-width: 180px;
+        text: "Hi";
+
+        edited: |text| {
+          this.text = text;
+        }
+
+        accepted: {
+        }
+      }
+
+      SpinBox {
+        id: spin;
+        min-width: 100px;
+        preferred-width: 100px;
+        value: 99;
+
+        changed: |value| {
+          this.value = value;
+        }
+
+        accepted: {
+        }
       }
     }
   }
