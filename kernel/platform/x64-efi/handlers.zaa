@@ -84,13 +84,9 @@ extern fn page_fault_handler(interrupt_frame &frame, u8 irq, fault errorcode) ->
   if (frame.rflags & 0x200 == 0)
     std::panic("page fault while interrupts disabled ", cast<void*>(cr2), " from ip ", cast<void*>(frame.rip));
 
-  var gs = cpu::gsbase();
-  cpu::wrgsbase(sys::rsp0());
   cpu::enable_interrupts();
 
   page_fault(cr2, errorcode & fault::write, errorcode & fault::fetch, is_user_frame(frame));
-
-  cpu::wrgsbase(gs);
 }
 
 extern fn stack_fault_handler(interrupt_frame &frame, u8 irq) -> void
@@ -110,8 +106,6 @@ extern fn machine_check_exception_handler(interrupt_frame &frame, u8 irq, u64 er
 
 extern fn unhandled_exception_handler(interrupt_frame &frame, u8 irq) -> void
 {
-  var gs = cpu::gsbase();
-  cpu::wrgsbase(sys::rsp0());
   cpu::enable_interrupts();
 
   switch (irq)

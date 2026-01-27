@@ -845,7 +845,7 @@ fn fault_region(page_table mut &pagetable, region mut *region, virtaddr addr, bo
     region.allocated_physical_pages += 1;
 
     if (is_user_address(addr))
-      cpu::increment_user_allocated_pages(1);
+      cpu::increment_user_allocated_pages();
 
     mapping = pagetable.query(addr);
   }

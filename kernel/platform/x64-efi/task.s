@@ -61,8 +61,6 @@ platform_task_switch: # uintptr mut &from, uintptr to
             push r13
             push r12
             push rbx
-            rdgsbase rax
-            push rax
             lea rax, [rip + 1f]
             push rax
 
@@ -70,9 +68,7 @@ platform_task_switch: # uintptr mut &from, uintptr to
             mov rsp, rsi
             ret
 
- 1:         pop rax
-            wrgsbase rax
-            pop rbx
+ 1:         pop rbx
             pop r12
             pop r13
             pop r14

@@ -82,7 +82,7 @@ pub struct thread
 
   pub fn current() -> thread mut *
   {
-    return cast<thread mut *>(cast<uintptr>(platform::task_self()) - offsetof(thread::task));
+    return cpu::current_thread;
   }
 
   pub fn find(thread::id id) -> Rc<thread>

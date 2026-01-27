@@ -96,7 +96,8 @@ fn coldplug(namespace mut &cfg) -> acpi::result
         if (var rc = ns.invoke(*node, "_CID", &mut cid); !rc && rc != acpi::result::value_not_found)
           std::panic("_CID: ", rc);
 
-        //attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+        if (acpi::eisaid_to_string(&mut cid))
+          attributes.push_back(dev::attr_t::type::cid, &move cid.string);
       }
 
       if (node.get("_ADR"))
@@ -113,9 +114,17 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 
       if (var bus = dev::get(dev))
       {
+        var ids = std::vector<std::string>();
+
         if (var hid = bus.find(dev::attr_t::type::hid))
+          ids.push_back(hid?!.string);
+
+        if (var cid = bus.find(dev::attr_t::type::cid))
+          ids.append(cid?!.string.split(","));
+
+        for (var &id : ids)
         {
-          switch (hid?!.string)
+          switch (id)
           {
             case "PNP0303":
               ps2::initialise();

@@ -343,7 +343,7 @@ fn scene_render(gui::painter mut &painter, gfx::transform &transform, scene &sce
 
   var aabb = transform * gfx::rect(0.0, 0.0, item.width, item.height);
 
-  if (aabb.intersects(painter.clip_rect))
+  if (!gfx::clamp(painter.clip_rect, aabb).empty)
   {
     item.render(item, &mut painter, transform);
   }

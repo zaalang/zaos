@@ -4,11 +4,11 @@ include ../mkspec.mk
 
 default:
 	@echo "PULL zrt"
-	@if cd ${BUILDROOT}/toolchain/zrt &>/dev/null; then git pull; else git clone https://github.com/zaalang/zrt.git ${BUILDROOT}/toolchain/zrt; fi
+	@if [ -d ${BUILDROOT}/toolchain/zrt ]; then cd ${BUILDROOT}/toolchain/zrt && git pull; else git clone https://github.com/zaalang/zrt.git ${BUILDROOT}/toolchain/zrt; fi
 	@echo "PULL zacc"
-	@if cd ${BUILDROOT}/toolchain/zacc &>/dev/null; then git pull; else git clone https://github.com/zaalang/zacc.git ${BUILDROOT}/toolchain/zacc; fi
+	@if [ -d ${BUILDROOT}/toolchain/zacc ]; then cd ${BUILDROOT}/toolchain/zacc && git pull; else git clone https://github.com/zaalang/zacc.git ${BUILDROOT}/toolchain/zacc; fi
 	@echo "PULL std"
-	@if cd ${BUILDROOT}/toolchain/std &>/dev/null; then git pull; else git clone https://github.com/zaalang/std.git ${BUILDROOT}/toolchain/std; fi
+	@if [ -d ${BUILDROOT}/toolchain/std ]; then cd ${BUILDROOT}/toolchain/std && git pull; else git clone https://github.com/zaalang/std.git ${BUILDROOT}/toolchain/std; fi
 	
 	@echo "MAKE zrt"
 	@mkdir -p ${BUILDROOT}/toolchain/zrt/build

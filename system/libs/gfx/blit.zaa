@@ -10,17 +10,17 @@ import gfx.blend;
 
   fn repsto(u16 mut *dst, u16 value, usize n) -> void
   {
-    __asm("cld; rep stosw", "{ax},{rdi},{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
+    __asm("cld; rep stosw", "{ax},{rdi},{ecx},~{rdi},~{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
   }
 
   fn repsto(u32 mut *dst, u32 value, usize n) -> void
   {
-    __asm("cld; rep stosd", "{eax},{rdi},{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
+    __asm("cld; rep stosd", "{eax},{rdi},{ecx},~{rdi},~{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
   }
 
   fn repsto(u64 mut *dst, u64 value, usize n) -> void
   {
-    __asm("cld; rep stosq", "{rax},{rdi},{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
+    __asm("cld; rep stosq", "{rax},{rdi},{ecx},~{rdi},~{ecx},~{memory},~{dirflag},~{fpsr},~{flags}", value, dst, n);
   }
 
 #else

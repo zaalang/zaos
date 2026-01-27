@@ -108,7 +108,7 @@ pub const fn rgba(u8 r, u8 g, u8 b, u8 a) -> u32
 #[nodiscard]
 pub const fn rgba(color &color) -> u32
 {
-  var rgba = clamp(color.map(|x| x * 255.0 + 0.5), 0.0, 255.0);
+  var rgba = clamp(color.transform(|x| x * 255.0 + 0.5), 0.0, 255.0);
 
   return cast<u32>(rgba.b) << 0 | cast<u32>(rgba.g) << 8 | cast<u32>(rgba.r) << 16 | cast<u32>(rgba.a) << 24;
 }

@@ -301,3 +301,33 @@ pub fn interrupts_disabled() -> bool
 {
   return __asm("pushf; pop $0", "=r") & 0x200 == 0;
 }
+
+pub fn percpu_addr<T>(#std::string_literal base, #usize offset = 0) -> T
+{
+  return cast<T>(__asm(#std::format("mov $0, fs:0x0; lea $0, [$0 - {}@tpoff + {}]", base, offset).as_literal, "=r"));
+}
+
+pub fn percpu_load<T>(#std::string_literal base, #usize offset) -> T
+{
+  return cast<T>(__asm(#std::format("mov $0, fs:[{}@tpoff + {}]", base, offset).as_literal, "=r"));
+}
+
+pub fn percpu_store<T>(#std::string_literal base, #usize offset, T value) -> void
+{
+  __asm(#std::format("mov fs:[{}@tpoff + {}], $0", base, offset).as_literal, "r", value);
+}
+
+pub fn percpu_inc<T>(#std::string_literal base, #usize offset) -> void
+{
+  __asm(#std::format("inc qword ptr fs:[{}@tpoff + {}]", base, offset).as_literal, "");
+}
+
+pub fn percpu_dec<T>(#std::string_literal base, #usize offset) -> void
+{
+  __asm(#std::format("dec qword ptr fs:[{}@tpoff + {}]", base, offset).as_literal, "");
+}
+
+pub fn percpu_add<T>(#std::string_literal base, #usize offset, T value) -> void
+{
+  __asm(#std::format("add fs:[{}@tpoff + {}], $0", base, offset).as_literal, "r", value);
+}

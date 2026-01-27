@@ -78,10 +78,6 @@ syscall_entry:
             rdgsbase r11
             wrfsbase r11                  # load tls frame
             swapgs
-            rdgsbase r11
-            push r11                      # save gs
-            mov r11, [fs:tss@tpoff + 4]   # rsp0
-            wrgsbase r11
             mov rcx, r10                  # arg 4
             lea r11, [rip + syscall_return]
             push r11                      # return
@@ -105,8 +101,6 @@ syscall_return:
             call terminate
 
  1:         cli
-            pop r11
-            wrgsbase r11                  # restore gs
             pop r11
             wrfsbase r11                  # restore fs
             xor rdx, rdx

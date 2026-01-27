@@ -89,11 +89,6 @@ pub fn task_get_self() -> task mut *
   return cast<task mut *>(task_get_task_gate() - sizeof<typeof(task::kernel_stack)>);
 }
 
-pub fn task_self() -> task mut *
-{
-  return cast<task mut *>(cpu::gsbase() - sizeof<typeof(task::kernel_stack)>);
-}
-
 pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback) -> void
 {
   fn trampoline(void mut *callback) -> void
@@ -101,12 +96,14 @@ pub fn on_stack<Callback>(u8 mut *base, usize size, Callback &&callback) -> void
     cast<Callback mut *>(callback)();
   }
 
-  var tp = task_self.tp;
-  task_self.tp = cast<uintptr>(base);
+  var task = task_get_self();
+
+  var tp = task.tp;
+  task.tp = cast<uintptr>(base);
 
   platform_task_on_stack(&callback, cast<fn (*)(void mut *) -> void>(trampoline), base + size);
 
-  task_self.tp = tp;
+  task.tp = tp;
 }
 
 pub fn on_stack<Callback>(Span<u8> mut &stack, Callback &&callback) -> void

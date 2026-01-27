@@ -32,7 +32,7 @@ pub struct cpu_logical_core
 
 fn self() -> cpu_logical_core mut &
 {
-  static thread_local cpu_logical_core = #cpu_logical_core();
+  extern static thread_local cpu_logical_core = #cpu_logical_core();
 
   return &cpu_logical_core;
 }
@@ -68,29 +68,26 @@ pub fn interrupts_disabled() -> bool
 
 pub fn id() -> int
 {
-  return self.id;
+  return platform::percpu_load<int>("cpu_logical_core", offsetof(cpu_logical_core::id));
+}
+
+pub fn current_thread() -> thread mut *
+{
+  return platform::percpu_load<thread mut *>("cpu_logical_core", offsetof(cpu_logical_core::current_thread));
 }
 
 pub fn current() -> cpu_logical_core mut *
 {
   std::assert(platform::interrupts_disabled);
 
-  return &self;
+  return platform::percpu_addr<cpu_logical_core mut *>("cpu_logical_core");
 }
 
 pub fn runqueue() -> run_queue mut &
 {
   std::assert(platform::interrupts_disabled);
 
-  return &self.runqueue;
-  //return cast<run_queue mut &>(extern("cpu_logical_core@tpoff"));
-}
-
-pub fn current_thread() -> thread mut *
-{
-  std::assert(platform::interrupts_disabled);
-
-  return self.current_thread;
+  return platform::percpu_addr<run_queue mut &>("cpu_logical_core", offsetof(cpu_logical_core::runqueue));
 }
 
 pub fn switch_current_thread(thread mut *thread) -> void
@@ -102,12 +99,12 @@ pub fn switch_current_thread(thread mut *thread) -> void
 
 pub fn increment_interrupt_time(u64 time)
 {
-  self.process_counter_interrupt_time = __add_with_carry(self.process_counter_interrupt_time, time).0;
+  platform::percpu_add("cpu_logical_core", offsetof(cpu_logical_core::process_counter_interrupt_time), time);
 }
 
-pub fn increment_user_allocated_pages(usize n)
+pub fn increment_user_allocated_pages()
 {
-  self.process_counter_user_allocated_pages = __add_with_carry(self.process_counter_user_allocated_pages, 1).0;
+  platform::percpu_inc("cpu_logical_core", offsetof(cpu_logical_core::process_counter_user_allocated_pages));
 }
 
 pub fn tsc() -> u64

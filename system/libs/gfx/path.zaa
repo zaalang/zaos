@@ -328,6 +328,9 @@ pub fn arc_at(path mut &this, gfx::point &origin, gfx::point &endpoint, float ra
 
 pub fn rect_at(path mut &this, gfx::rect &bound) -> void
 {
+  if (bound.empty)
+    return;
+
   this.move_to(bound.left, bound.bottom);
   this.line_to(bound.right, bound.bottom);
   this.line_to(bound.right, bound.top);
@@ -337,6 +340,9 @@ pub fn rect_at(path mut &this, gfx::rect &bound) -> void
 
 pub fn ellipse_at(path mut &this, gfx::rect &bound) -> void
 {
+  if (bound.empty)
+    return;
+
   var center = bound.center;
   var weight = std::sqrt(2) / 2.0;
 
@@ -366,6 +372,9 @@ pub fn circle_at(path mut &this, gfx::point &center, float radius) -> void
 
 pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float[8] &radii) -> void
 {
+  if (bound.empty)
+    return;
+
   var weight = std::sqrt(2) / 2.0;
 
   this.move_to(bound.left, bound.bottom - radii[1]);
@@ -381,6 +390,9 @@ pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float[8] &radii) -> voi
 
 pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float bottom_left_radius, float bottom_right_radius, float top_right_radius, float top_left_radius) -> void
 {
+  if (bound.empty)
+    return;
+
   if (bottom_left_radius < 0.0 || bottom_right_radius < 0.0 || top_right_radius < 0.0 || top_left_radius < 0.0)
     return;
 
@@ -399,6 +411,9 @@ pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float bottom_left_radiu
 
 pub fn rounded_rect_at(path mut &this, gfx::rect &bound, float radius_x, float radius_y) -> void
 {
+  if (bound.empty)
+    return;
+
   if (radius_x < 0.0 || radius_y < 0.0)
     return;
 

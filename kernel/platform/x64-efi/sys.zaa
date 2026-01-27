@@ -298,11 +298,6 @@ fn idt_set_user_gate(idt mut &idt, usize index, uintptr offset, cpu::selector se
   idt.entries[index][1] = cast<u64>((offset & 0xffffffff00000000) >> 32);
 }
 
-pub fn rsp0() -> uintptr
-{
-  return td.tss.rsp[0];
-}
-
 fn disable_legacy_pic() -> void
 {
   cpu::out8(0x21, 0xff);
