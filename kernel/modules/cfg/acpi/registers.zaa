@@ -192,7 +192,7 @@ pub fn acpi_write_register(acpi::gas &gas0, acpi::gas &gas1, u64 value) -> acpi:
     return rc;
 
   if (gas1.address != 0)
-    if (var rc = acpi_write_register(gas1, 0); !rc)
+    if (var rc = acpi_write_register(gas1, value); !rc)
       return rc;
 
   return ok;

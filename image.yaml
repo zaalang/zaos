@@ -226,6 +226,9 @@ image:
             src: build/system/apps/coreutils/uptime
             dest: /bin/uptime
         - cp:
+            src: build/system/apps/coreutils/shutdown
+            dest: /bin/shutdown
+        - cp:
             src: build/system/apps/edit/edit
             dest: /bin/edit
         - cp:
@@ -247,8 +250,8 @@ image:
             src: build/system/apps/breakout/breakout
             dest: /root/breakout
         - cp:
-            src: build/system/apps/mandlebrot/mandlebrot
-            dest: /root/mandlebrot
+            src: build/system/apps/mandelbrot/mandelbrot
+            dest: /root/mandelbrot
         - cp:
             src: build/system/apps/gallery/gallery
             dest: /root/gallery

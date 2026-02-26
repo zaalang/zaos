@@ -477,3 +477,8 @@ pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_vi
 {
   return ok;
 }
+
+pub fn sync(sysfs mut *fs) -> vfs::result
+{
+  return ok;
+}

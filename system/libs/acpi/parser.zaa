@@ -96,6 +96,9 @@ enum state
   to_integer,
   sizeof_op,
   acquire_op,
+  signal_op,
+  wait_op,
+  reset_op,
   release_op,
   stall_op,
   sleep_op,
@@ -107,8 +110,8 @@ enum state
   breakpoint_op,
   method_invocation,
   method_call,
+  end_method,
   end_scope,
-  pop_frame,
   store,
   loop,
   pkg,
@@ -277,10 +280,7 @@ struct context
 
     this.scopes.pop_back();
 
-    if (this.stack.len - this.frame.rsp == NLOCALS)
-      this.push_value(value());
-
-    this.stack.erase(this.frame.rsp - NARGS - 1, this.stack.len - (this.frame.rsp - NARGS));
+    this.stack.erase(this.frame.rsp - NARGS, NARGS + NLOCALS);
 
     std::allocator::delete(this.frame.scope);
 
@@ -1207,6 +1207,12 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_state(state::word_data);
       ctx.push_state(state::term_arg);
 
+    case wait_op:
+      is.drop_front!(2);
+      ctx.push_state(state::wait_op);
+      ctx.push_state(state::term_arg);
+      ctx.push_state(state::term_arg);
+
     case load_op:
       is.drop_front!(2);
       ctx.push_state(state::load_op);
@@ -1422,6 +1428,18 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
       ctx.push_state(state::term_arg);
       ctx.push_state(state::term_arg);
 
+    case signal_op:
+      is.drop_front!(2);
+      ctx.push_state(state::term_list);
+      ctx.push_state(state::signal_op);
+      ctx.push_state(state::term_arg);
+
+    case reset_op:
+      is.drop_front!(2);
+      ctx.push_state(state::term_list);
+      ctx.push_state(state::reset_op);
+      ctx.push_state(state::term_arg);
+
     case release_op:
       is.drop_front!(2);
       ctx.push_state(state::term_list);
@@ -1455,6 +1473,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case if_op:
       is.drop_front!(1);
       ctx.push_state(state::term_list);
+      ctx.push_state(state::pkg);
       ctx.push_state(state::if_op);
       ctx.push_state(state::term_arg);
       ctx.push_state(state::pkg_length);
@@ -1528,6 +1547,7 @@ fn term_list(context mut &ctx, std::span<u8> mut &is) -> result
     case tohexstring_op:
     case tointeger_op:
     case acquire_op:
+    case wait_op:
     case load_op:
     case store_op:
     case copyobject_op:
@@ -2081,9 +2101,9 @@ fn define_mutex(context mut &ctx, std::span<u8> mut &is) -> result
   switch (resolve(ctx, &mut name))
   {
     case Some[node]:
-      var mutex = acpi::mutex();
+      var mutex = acpi::mutex(flags);
 
-      if (var rc = ctx.namespace.create_mutex(flags, &mut mutex); !rc)
+      if (var rc = ctx.namespace.create_mutex(&mut mutex); !rc)
         return rc;
 
       ctx.namespace.define(node, name.span, value::mutex(mutex));
@@ -2106,7 +2126,12 @@ fn define_event(context mut &ctx, std::span<u8> mut &is) -> result
   switch (resolve(ctx, &mut name))
   {
     case Some[node]:
-      ctx.namespace.define(node, name.span, value::event());
+      var event = acpi::event();
+
+      if (var rc = ctx.namespace.create_event(&mut event); !rc)
+        return rc;
+
+      ctx.namespace.define(node, name.span, value::event(event));
 
     else:
       return invalid_path;
@@ -2962,6 +2987,85 @@ fn acquire_op(context mut &ctx, std::span<u8> mut &is) -> result
 }
 
 #[noinline]
+fn signal_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var source = ctx.stack.take_back();
+
+  if (!source.is_reference)
+    return invalid_target;
+
+  switch (source.reference)
+  {
+    case value[value]:
+      if (!value.is_event)
+        return bad_value;
+
+      ctx.namespace.signal(value.event);
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+#[noinline]
+fn wait_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var timeout = ctx.stack.take_back();
+  var source = ctx.stack.take_back();
+
+  if (var rc = load(&mut ctx, &mut timeout); !rc)
+    return rc;
+
+  if (!ctx.namespace.to_integer(&mut timeout.value))
+    return bad_value;
+
+  if (timeout.value.integer > 0xffff)
+    timeout.value.integer = 0xffff;
+
+  if (!source.is_reference)
+    return invalid_target;
+
+  switch (source.reference)
+  {
+    case value[value]:
+      if (!value.is_event)
+        return bad_value;
+
+      ctx.push_value(value::boolean(!ctx.namespace.try_wait(value.event, cast(timeout.value.integer))));
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+#[noinline]
+fn reset_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var source = ctx.stack.take_back();
+
+  if (!source.is_reference)
+    return invalid_target;
+
+  switch (source.reference)
+  {
+    case value[value]:
+      if (!value.is_event)
+        return bad_value;
+
+      ctx.namespace.reset(value.event);
+
+    else:
+      return invalid_target;
+  }
+
+  return ok;
+}
+
+#[noinline]
 fn release_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
   var source = ctx.stack.take_back();
@@ -2995,6 +3099,9 @@ fn stall_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut period.value))
     return bad_value;
 
+  if (period.value.integer > 0xff)
+    period.value.integer = 0xff;
+
   var now = u64();
 
   if (var rc = ctx.namespace.timer(&mut now); !rc)
@@ -3021,6 +3128,9 @@ fn sleep_op(context mut &ctx, std::span<u8> mut &is) -> result
 
   if (!ctx.namespace.to_integer(&mut period.value))
     return bad_value;
+
+  if (period.value.integer > 2000)
+    period.value.integer = 2000;
 
   ctx.namespace.sleep(1_000_000 * period.value.integer);
 
@@ -3078,7 +3188,6 @@ fn load_op(context mut &ctx, std::span<u8> mut &is) -> result
 
   ctx.push_frame(0, ctx.scope, is);
   ctx.push_state(state::loaded);
-  ctx.push_state(state::pop_frame);
   ctx.push_state(state::end_scope);
   ctx.push_state(state::term_list);
   ctx.push_scope(ctx.namespace.root);
@@ -3091,6 +3200,8 @@ fn load_op(context mut &ctx, std::span<u8> mut &is) -> result
 #[noinline]
 fn loaded(context mut &ctx, std::span<u8> mut &is) -> result
 {
+  is = ctx.pop_frame();
+
   ctx.push_value(value::boolean(true));
 
   if (var rc = store(&mut ctx, &mut is); !rc)
@@ -3161,9 +3272,12 @@ fn method_call(context mut &ctx, std::span<u8> mut &is) -> result
   {
     case method[method]:
       ctx.push_frame(argc, method.scope, is);
-      ctx.push_state(state::pop_frame);
+      ctx.push_state(state::end_method);
       ctx.push_state(state::term_list);
       is = method.code;
+
+      if (var rc = ctx.namespace.enter(method); !rc)
+        return rc;
 
     case callback[callback]:
       var args = std::vector<value, N:7>();
@@ -3183,9 +3297,25 @@ fn method_call(context mut &ctx, std::span<u8> mut &is) -> result
 }
 
 #[noinline]
+fn end_method(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var retval = operand();
+
+  if (ctx.stack.len - ctx.frame.rsp > NLOCALS)
+    retval = ctx.stack.take_back();
+
+  is = ctx.pop_frame();
+
+  ctx.namespace.leave(ctx.stack.take_back().callee.method);
+
+  ctx.stack.push_back(&move retval);
+
+  return ok;
+}
+
+#[noinline]
 fn if_op(context mut &ctx, std::span<u8> mut &is) -> result
 {
-  var block = ctx.blocks.take_back();
   var predicate = ctx.stack.take_back();
 
   if (var rc = load(&mut ctx, &mut predicate); !rc)
@@ -3194,20 +3324,22 @@ fn if_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (!ctx.namespace.to_integer(&mut predicate.value))
     return bad_value;
 
-  is = std::span(is.data, block.1.end);
+  if (predicate.value.integer != 0)
+  {
+    ctx.push_state(state::term_list);
+  }
 
   if (predicate.value.integer == 0)
   {
-    is = block.1;
+    is = ctx.blocks.back.1;
 
     switch (peek_op(is))
     {
       case else_op:
         is.drop_front!(1);
-
-        var len = 0;
-        if (!scan_pkg_length(&mut is, &mut len))
-          return unexpected_end_of_stream;
+        ctx.blocks.pop_back();
+        ctx.push_state(state::term_list);
+        ctx.push_state(state::pkg_length);
     }
   }
 
@@ -3669,6 +3801,21 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
         if (var rc = acquire_op(&mut ctx, &mut is); !rc)
           return rc;
 
+      case signal_op:
+
+        if (var rc = signal_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case wait_op:
+
+        if (var rc = wait_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case reset_op:
+
+        if (var rc = reset_op(&mut ctx, &mut is); !rc)
+          return rc;
+
       case release_op:
 
         if (var rc = release_op(&mut ctx, &mut is); !rc)
@@ -3719,6 +3866,11 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
         if (var rc = method_call(&mut ctx, &mut is); !rc)
           return rc;
 
+      case end_method:
+
+        if (var rc = end_method(&mut ctx, &mut is); !rc)
+          return rc;
+
       case if_op:
 
         if (var rc = if_op(&mut ctx, &mut is); !rc)
@@ -3761,10 +3913,6 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
 
         ctx.scopes.pop_back();
 
-      case pop_frame:
-
-        is = ctx.pop_frame();
-
       case pop:
 
         ctx.stack.pop_back();
@@ -3805,11 +3953,16 @@ pub fn execute(namespace mut &ns, acpi::method &method, value mut &dst, std::spa
 
   ctx.push_frame(args.len, method.scope, std::span<u8>());
 
+  if (var rc = ctx.namespace.enter(method); !rc)
+    return rc;
+
   if (var rc = evaluate(&mut ctx, method.code); !rc)
     return rc;
 
   if (ctx.stack.len > NARGS + NLOCALS)
     dst = ctx.stack.take_back().value;
+
+  ctx.namespace.leave(method);
 
   return ok;
 }
@@ -3826,11 +3979,16 @@ pub fn execute<Args>(namespace mut &ns, acpi::method &method, value mut &dst, Ar
 
   ctx.push_frame(args.len, method.scope, std::span<u8>());
 
+  if (var rc = ctx.namespace.enter(method); !rc)
+    return rc;
+
   if (var rc = evaluate(&mut ctx, method.code); !rc)
     return rc;
 
   if (ctx.stack.len > NARGS + NLOCALS)
     dst = ctx.stack.take_back().value;
+
+  ctx.namespace.leave(method);
 
   return ok;
 }

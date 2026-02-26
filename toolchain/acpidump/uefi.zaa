@@ -122,11 +122,15 @@ extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u32 rights, u32 fdfl
 
   dat.push_back(0);
 
+  var loadedimage = null<EFI_LOADED_IMAGE_PROTOCOL*>();
   var filesystem = null<EFI_SIMPLE_FILE_SYSTEM_PROTOCOL*>();
   var root = null<EFI_FILE_PROTOCOL*>();
   var file = null<EFI_FILE_PROTOCOL*>();
 
-  if (BootServices.LocateProtocol(&EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID, null, cast(&filesystem)) != 0)
+  if (BootServices.HandleProtocol(Instance, &EFI_LOADED_IMAGE_PROTOCOL_GUID, cast(&loadedimage)) != 0)
+    return 2;
+
+  if (BootServices.HandleProtocol(loadedimage.DeviceHandle, &EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID, cast(&filesystem)) != 0)
     return 2;
 
   if (filesystem.OpenVolume(&root) != 0)

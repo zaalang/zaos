@@ -117,8 +117,6 @@ pub fn bootstrap(platform::BootInfo &bootinfo) -> void
   heap.blocksize = std::align_up((heap.limit - heap.base) / (64 * heap.blockmap[0].n + 1), 0x10000);
   heap.blockshift = std::ctz(heap.blocksize);
 
-  std::memset(memory, 0, bitmapsize * sizeof<u64>);
-
   for (var i = 0; i < (heap.limit - heap.base) / (heap.blockmap[0].n * heap.blocksize); ++i)
     heap.blockmap[heap.blockmap.len - 1].set(i);
 
@@ -138,6 +136,8 @@ pub fn early_malloc(platform::BootInfo &bootinfo, usize size) -> virtaddr
 
   if (bootinfo.hunk_size < heap.used)
     std::panic("booloader hunk exhausted");
+
+  std::memset(base.ptr, 0, size);
 
   return base;
 }

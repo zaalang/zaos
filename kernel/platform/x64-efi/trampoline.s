@@ -23,9 +23,9 @@ _trampoline:
             .align 64
 
  .L8040:    .quad 0
-            .quad 0x00cf9a000000ffff      # flat code
-            .quad 0x008f92000000ffff      # flat data
-            .quad 0x00Cf890000000068      # tss
+            .quad 0x00cf9a000000ffff      # code32
+            .quad 0x00cf92000000ffff      # data32
+            .quad 0x00af9a000000ffff      # code64
 
  .L8060:    .word 31                      # gdt size
             .long 0x8040                  # gdt address

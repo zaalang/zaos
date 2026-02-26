@@ -39,10 +39,10 @@ pub fn initialise(BootInfo mut &bootinfo)
     cpu::wrmsr(cpu::msr_index::apic_esr, 0);
 
     // trigger INIT IPI
-    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x04500);
+    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x0C500);
 
     // deassert INIT IPI
-    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x00500);
+    cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x08500);
 
     // 10 millisecond pause
     cpu::spin(bootinfo.early_tsc_frequency / 100 + 1);
@@ -54,7 +54,7 @@ pub fn initialise(BootInfo mut &bootinfo)
       cpu::wrmsr(cpu::msr_index::apic_esr, 0);
 
       // trigger STARTUP IPI for 0800:0000
-      cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x0c608);
+      cpu::wrmsr(cpu::msr_index::apic_isr, cast<u64>(apicid) << 32 | 0x00608);
 
       // wait 200 usec
       cpu::spin(bootinfo.early_tsc_frequency / 5000 + 1);

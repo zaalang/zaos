@@ -20,7 +20,6 @@ _start:
             mov rbp, rsp
             push rcx                      # [rbp - 8]  Handle
             push rdx                      # [rbp - 16] System Table
-            sub rsp, 4*8                  # shadow space rcx, rdx, r8, r9
 
             # check signature
             test rdx, rdx
@@ -29,16 +28,25 @@ _start:
             cmp [rdx], rax
             jne .halt
 
-            # clear screen
-            #mov rcx, [rbp - 16]
-            #mov rcx, [rcx + 64]          # ConOut*
-            #call [rcx + 48]              # ClearScreen
-
             # output dot
+            sub rsp, 48
             mov rcx, [rbp - 16]
             mov rcx, [rcx + 64]           # ConOut*
             lea rdx, [rip + .dot]
             call [rcx + 8]                # OutputString
+            add rsp, 48
+
+            # reserve smp trampoline
+            sub rsp, 56
+            mov qword ptr [rsp + 48], 0x8000
+            mov ecx, 2
+            mov edx, 2
+            mov r8, 8
+            lea r9, [rsp + 40]
+            mov rdi, [rbp - 16]
+            mov rdi, [rdi + 96]           # BootServices*
+            call [rdi + 40]               # AllocatePages
+            add rsp, 56
 
             # relocations
             lea rdi, [rip + _BASE]

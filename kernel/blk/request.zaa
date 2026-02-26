@@ -26,7 +26,8 @@ pub struct request
   pub enum type
   {
     read,
-    write
+    write,
+    sync,
   }
 
   pub Rc<blk::blkdev> device;

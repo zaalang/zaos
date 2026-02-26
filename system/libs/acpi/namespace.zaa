@@ -26,6 +26,12 @@ pub vtable interface
   fn mutex_acquire(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result;
   fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result;
 
+  fn event_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result;
+  fn event_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result;
+  fn event_wait(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result;
+  fn event_signal(acpi::namespace mut &namespace, void *handle) -> acpi::result;
+  fn event_reset(acpi::namespace mut &namespace, void *handle) -> acpi::result;
+
   fn notify(acpi::namespace mut &namespace, acpi::node *node, acpi::value &value) -> acpi::result;
 
   fn sleep(acpi::namespace mut &namespace, u64 period) -> acpi::result;
@@ -86,6 +92,13 @@ pub struct buffer
 
 pub struct event
 {
+  void *handle;
+
+  pub fn bool(this &) -> bool
+  {
+    return this.handle != null;
+  }
+
   pub event() = default;
   pub event(event &&) = default;
   pub fn =(event mut &, event &&) -> event mut & = default;
@@ -99,6 +112,16 @@ pub struct mutex
   u32 owner;
   u32 depth;
   void *handle;
+
+  pub fn bool(this &) -> bool
+  {
+    return this.handle != null;
+  }
+
+  pub mutex(u8 flags)
+    : flags(flags)
+  {
+  }
 
   pub mutex() = default;
   pub mutex(mutex &&) = default;
@@ -195,6 +218,8 @@ pub struct method
   pub u8 flags;
   pub std::span<u8> code;
   pub node *scope;
+
+  mutex mutex;
 
   pub method(node *scope, u8 flags, std::span<u8> code)
     : flags(flags), code(code), scope(scope)
@@ -434,8 +459,8 @@ pub struct node
   pub std::flat_hash_map<std::string, node*> children;
   pub node *parent;
 
-  node *next;
-  node *first;
+  node mut *next;
+  node mut *first;
 
   pub node(type type, node *parent)
     : type(type), parent(parent)
@@ -562,6 +587,36 @@ pub fn initialise(namespace mut &ns, interface &interface) -> acpi::result
   return ok;
 }
 
+pub fn enter(namespace mut &ns, method &method) -> acpi::result
+{
+  var mut &method = cast<method mut &>(method);
+
+  if (method.flags & 0x8 != 0)
+  {
+    if (!method.mutex)
+    {
+      if (var rc = ns.create_mutex(&mut method.mutex); !rc)
+        return rc;
+    }
+
+    ns.try_lock(method.mutex, 0xffff);
+  }
+
+  return ok;
+}
+
+pub fn leave(namespace mut &ns, method &method) -> acpi::result
+{
+  var mut &method = cast<method mut &>(method);
+
+  if (method.mutex)
+  {
+    ns.unlock(method.mutex);
+  }
+
+  return ok;
+}
+
 pub fn try_lock(namespace mut &ns, mutex &mutex, u16 timeout) -> bool
 {
   var mut &mutex = cast<mutex mut &>(mutex);
@@ -570,10 +625,13 @@ pub fn try_lock(namespace mut &ns, mutex &mutex, u16 timeout) -> bool
   ns.interface.thread_getid(&mut ns, &mut tid);
 
   if (std::atomic_load(&mutex.owner) != tid)
+  {
     if (!ns.interface.mutex_acquire(&mut ns, mutex.handle, timeout))
       return false;
 
-  mutex.owner = tid;
+    mutex.owner = tid;
+  }
+
   mutex.depth += 1;
 
   return true;
@@ -583,10 +641,36 @@ pub fn unlock(namespace mut &ns, mutex &mutex) -> void
 {
   var mut &mutex = cast<mutex mut &>(mutex);
 
-  mutex.owner = 0;
-
   if (--mutex.depth == 0)
+  {
+    std::atomic_store(&mutex.owner, 0);
+
     ns.interface.mutex_release(&mut ns, mutex.handle);
+  }
+}
+
+pub fn try_wait(namespace mut &ns, event &event, u16 timeout) -> bool
+{
+  var mut &event = cast<event mut &>(event);
+
+  if (!ns.interface.event_wait(&mut ns, event.handle, timeout))
+    return false;
+
+  return true;
+}
+
+pub fn signal(namespace mut &ns, event &event) -> void
+{
+  var mut &event = cast<event mut &>(event);
+
+  ns.interface.event_signal(&mut ns, event.handle);
+}
+
+pub fn reset(namespace mut &ns, event &event) -> void
+{
+  var mut &event = cast<event mut &>(event);
+
+  ns.interface.event_reset(&mut ns, event.handle);
 }
 
 pub fn get(node &node, String &name) -> std::optional<value *>
@@ -624,7 +708,12 @@ pub fn define(namespace mut &ns, node *node, node::type type, String &&name) -> 
   var node = cast<node mut *>(node);
   var scope = &ns.nodes.push_back(type, node);
 
-  scope.next = std::exchange(&mut node.first, scope);
+  var last = &node.first;
+
+  while (*last)
+    last = &last.next;
+
+  *last = scope;
 
   return node.children.emplace(&&name, scope);
 }
@@ -1372,10 +1461,8 @@ pub fn timer(namespace mut &ns, u64 mut &clock) -> acpi::result
   return ok;
 }
 
-pub fn create_mutex(namespace mut &ns, u8 flags, mutex mut &mutex) -> acpi::result
+pub fn create_mutex(namespace mut &ns, mutex mut &mutex) -> acpi::result
 {
-  mutex.flags = flags;
-
   if (var rc = ns.interface.mutex_create(&mut ns, &mut mutex.handle); !rc)
     return rc;
 
@@ -1385,6 +1472,19 @@ pub fn create_mutex(namespace mut &ns, u8 flags, mutex mut &mutex) -> acpi::resu
 pub fn destroy_mutex(namespace mut &ns, mutex &mutex) -> void
 {
   ns.interface.mutex_destroy(&mut ns, mutex.handle);
+}
+
+pub fn create_event(namespace mut &ns, event mut &event) -> acpi::result
+{
+  if (var rc = ns.interface.event_create(&mut ns, &mut event.handle); !rc)
+    return rc;
+
+  return ok;
+}
+
+pub fn destroy_event(namespace mut &ns, event &event) -> void
+{
+  ns.interface.event_destroy(&mut ns, event.handle);
 }
 
 pub fn notify(namespace mut &ns, node *node, value &value) -> void

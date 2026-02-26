@@ -326,7 +326,57 @@ pub fn initialise(usb::usbdev mut *device, std::span<u8> descriptors) -> usb::re
   return ok;
 }
 
-pub fn enqueue(bot_unit mut &unit, blk::request mut *request) -> usb::result
+pub fn flush(bot_unit mut &unit, blk::request mut *request) -> usb::result
+{
+  var slot = unit.find_slot();
+
+  if (slot == bot_unit::CLSZ)
+    return device_busy;
+
+  var lun = unit.lun;
+
+  var mut &cl = unit.cl[slot];
+
+  cl.cmd[0] = cbw::signature[3];
+  cl.cmd[1] = cbw::signature[2];
+  cl.cmd[2] = cbw::signature[1];
+  cl.cmd[3] = cbw::signature[0];
+  cl.cmd[4] = cast(slot + 1);
+  cl.cmd[8] = 0;
+  cl.cmd[9] = 0;
+  cl.cmd[10] = 0;
+  cl.cmd[11] = 0;
+  cl.cmd[12] = 0x80;
+  cl.cmd[13] = lun;
+  cl.cmd[14] = 10;
+  cl.cmd[15] = scsi::op::synchronize_cache_10;
+
+  io::initiate(&mut request.cb, 2);
+
+  var stage1 = |result| [var request = request, var unit = &unit, var slot = slot] {
+
+    var stage2 = |result| [var request = request, var unit = unit, var slot = slot] {
+
+      if (unit.cl[slot].sts[12] != 0)
+        result = usb::result::io_error;
+
+      blk::complete(request, result ? blk::request::status::success : blk::request::status::errored);
+
+      if (std::atomic_and(&unit.slots, ~(1 << slot)) == 1 << bot_unit::CLSZ - 1)
+        blk::wake_from_stall();
+    };
+
+    var mut &cl = unit.cl[slot];
+
+    usb::submit(unit.device, &mut request.cb, usb::endpoint::type::bulk, unit.endpoints[0], unit.clvec, slot * sizeof<bot_command> + cl.cmd.len, cl.sts.len, std::delegate<(usb::result) -> void>(stage2));
+  };
+
+  usb::submit(unit.device, &mut request.cb, usb::endpoint::type::bulk, unit.endpoints[1], unit.clvec, slot * sizeof<bot_command> + 0, cl.cmd.len, std::delegate<(usb::result) -> void>(stage1));
+
+  return ok;
+}
+
+pub fn readwrite(bot_unit mut &unit, blk::request mut *request) -> usb::result
 {
   var slot = unit.find_slot();
 

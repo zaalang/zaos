@@ -3,9 +3,13 @@
 //
 
 import std.stdio;
+import acpi.fadt;
 import acpi.parser;
+import cpu;
 import dev;
+import scheduler;
 import cfg.acpi.namespace : namespace;
+import cfg.acpi.registers : acpi_read_register, acpi_write_register;
 import platform;
 
 import pci;
@@ -18,9 +22,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 {
   var mut &ns = cfg.ns?!;
 
-  var devlist = std::flat_hash_map<acpi::node*, dev::dev_t>();
-
-  if (cfg.fadt.flags & acpi::fadt_power_button == 0)
+  if (cfg.fadt.flags & acpi::fadt_power_button != 0)
   {
     var attributes = std::vector<dev::attr_t>();
 
@@ -29,7 +31,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
     dev::register(dev::dev_t(), &move attributes);
   }
 
-  if (cfg.fadt.flags & acpi::fadt_sleep_button == 0)
+  if (cfg.fadt.flags & acpi::fadt_sleep_button != 0)
   {
     var attributes = std::vector<dev::attr_t>();
 
@@ -37,6 +39,10 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 
     dev::register(dev::dev_t(), &move attributes);
   }
+
+  var guard = std::lock_guard(&mut cfg.lock);
+
+  var devlist = std::flat_hash_map<acpi::node*, dev::dev_t>();
 
   for (var node = ns.begin; node != ns.end; ++node)
   {
@@ -76,8 +82,15 @@ fn coldplug(namespace mut &cfg) -> acpi::result
         if (var rc = ns.invoke(*node, "_HID", &mut hid); !rc && rc != acpi::result::value_not_found)
           std::panic("_HID: ", rc);
 
-        if (acpi::eisaid_to_string(&mut hid))
-          attributes.push_back(dev::attr_t::type::hid, &move hid.string);
+        switch (hid)
+        {
+          case integer:
+            if (acpi::eisaid_to_string(&mut hid))
+              attributes.push_back(dev::attr_t::type::hid, &move hid.string);
+
+          case string:
+            attributes.push_back(dev::attr_t::type::hid, &move hid.string);
+        }
       }
 
       if (node.get("_UID"))
@@ -86,8 +99,14 @@ fn coldplug(namespace mut &cfg) -> acpi::result
         if (var rc = ns.invoke(*node, "_UID", &mut uid); !rc && rc != acpi::result::value_not_found)
           std::panic("_UID: ", rc);
 
-        if (ns.to_string(&mut uid))
-          attributes.push_back(dev::attr_t::type::uid, &move uid.string);
+        switch (uid)
+        {
+          case integer:
+            attributes.push_back(dev::attr_t::type::uid, uid.integer);
+
+          case string:
+            attributes.push_back(dev::attr_t::type::uid, &move uid.string);
+        }
       }
 
       if (node.get("_CID"))
@@ -96,8 +115,15 @@ fn coldplug(namespace mut &cfg) -> acpi::result
         if (var rc = ns.invoke(*node, "_CID", &mut cid); !rc && rc != acpi::result::value_not_found)
           std::panic("_CID: ", rc);
 
-        if (acpi::eisaid_to_string(&mut cid))
-          attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+        switch (cid)
+        {
+          case integer:
+            if (acpi::eisaid_to_string(&mut cid))
+              attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+
+          case string:
+            attributes.push_back(dev::attr_t::type::cid, &move cid.string);
+        }
       }
 
       if (node.get("_ADR"))
@@ -106,8 +132,11 @@ fn coldplug(namespace mut &cfg) -> acpi::result
         if (var rc = ns.invoke(*node, "_ADR", &mut adr); !rc && rc != acpi::result::value_not_found)
           std::panic("_ADR: ", rc);
 
-        if (ns.to_integer(&mut adr))
-          attributes.push_back(dev::attr_t::type::adr, &move adr.integer);
+        switch (adr)
+        {
+          case integer:
+            attributes.push_back(dev::attr_t::type::adr, adr.integer);
+        }
       }
 
       var dev = dev::register(parent, &move attributes);
@@ -162,6 +191,156 @@ fn coldplug(namespace mut &cfg) -> acpi::result
   return ok;
 }
 
+fn reboot(namespace mut &cfg) -> acpi::result
+{
+  var guard = std::lock_guard(&mut cfg.lock);
+
+  if (cfg.fadt.flags & acpi::fadt_reset_register == 0)
+    return not_supported;
+
+  if (var rc = acpi_write_register(cfg.fadt.reset_register, cast(cfg.fadt.reset_value)); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn get_sleep_type(acpi::namespace mut &ns, u8 mut &sleep_type_a, u8 mut &sleep_type_b) -> acpi::result
+{
+  var obj = acpi::value();
+  if (var rc = ns.invoke(ns.root, "_S5_", &mut obj); !rc)
+    return rc;
+
+  if (!obj.is_package)
+    return bad_value;
+
+  switch (obj.package.size)
+  {
+    case 0:
+      return bad_value;
+      
+    case 1:
+      switch (obj.package.elements[0])
+      {
+        case integer[integer]:
+          sleep_type_a = cast<u8>(integer & 0xff);
+          sleep_type_b = cast<u8>(integer >> 8 & 0xff);
+
+        else:
+          return bad_value;
+      }
+
+    else:
+      switch (obj.package.elements[0])
+      {
+        case integer[integer]:
+          sleep_type_a = cast<u8>(integer & 0xff);
+
+        else:
+          return bad_value;
+      }
+
+      switch (obj.package.elements[1])
+      {
+        case integer[integer]:
+          sleep_type_b = cast<u8>(integer & 0xff);
+
+        else:
+          return bad_value;
+      }
+  }
+
+  return ok;
+}
+
+fn legacy_sleep(namespace mut &cfg, u8 sleep_type_a, u8 sleep_type_b) -> acpi::result
+{
+  var status = 0;
+  var control = 0;
+
+  if (var rc = acpi_read_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, &mut status); !rc)
+    return rc;
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, status | acpi::pm1::wake_status); !rc)
+    return rc;
+
+  cfg.gpe_disable_all();
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_status_block, cfg.fadt.x_pm1b_status_block, 0xC731); !rc)
+    return rc;
+
+  if (var rc = acpi_read_register(cfg.fadt.x_pm1a_control_block, cfg.fadt.x_pm1b_control_block, &mut control); !rc)
+    return rc;
+
+  control &= ~(acpi::pm1::sleep_type | acpi::pm1::sleep_enable);
+  control |= cast<u64>(sleep_type_a | sleep_type_b) << 10;
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_control_block, cfg.fadt.x_pm1b_control_block, control); !rc)
+    return rc;
+
+  control |= acpi::pm1::sleep_enable;
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_control_block, cfg.fadt.x_pm1b_control_block, control); !rc)
+    return rc;
+
+  scheduler::sleep_until(cpu::system_time + 10_000_000_000);
+
+  if (var rc = acpi_write_register(cfg.fadt.x_pm1a_control_block, cfg.fadt.x_pm1b_control_block, control); !rc)
+    return rc;
+
+  return not_supported;
+}
+
+fn extended_sleep(namespace mut &cfg, u8 sleep_type_a, u8 sleep_type_b) -> acpi::result
+{
+  var control = 0;
+
+  if (var rc = acpi_write_register(cfg.fadt.sleep_status_register, 0x80); !rc)
+    return rc;
+
+  control |= cast<u64>(sleep_type_a) << 2;
+  control |= 0x20;
+
+  if (var rc = acpi_write_register(cfg.fadt.sleep_control_register, control); !rc)
+    return rc;
+
+  return not_supported;
+}
+
+fn poweroff(namespace mut &cfg) -> acpi::result
+{
+  var mut &ns = cfg.ns?!;
+
+  var guard = std::lock_guard(&mut cfg.lock);
+
+  var sleep_type_a = 0;
+  var sleep_type_b = 0;
+
+  if (var rc = get_sleep_type(&mut ns, &mut sleep_type_a, &mut sleep_type_b); !rc)
+    return rc;
+
+  var ret = acpi::value();
+
+  if (var rc = ns.invoke(ns.root, "_PTS", &mut ret, acpi::value(0)); !rc && rc != acpi::result::value_not_found)
+    return rc;
+
+  ns.invoke(ns.root, "_SI_._SST", &mut ret, acpi::value(0));
+
+  platform::disable_interrupts();
+
+  switch (cfg.fadt.flags & acpi::fadt_hw_reduced)
+  {
+    case 0:
+      if (var rc = legacy_sleep(&mut cfg, sleep_type_a, sleep_type_b); !rc)
+        return rc;
+
+    case acpi::fadt_hw_reduced:
+      if (var rc = extended_sleep(&mut cfg, sleep_type_a, sleep_type_b); !rc)
+        return rc;
+  }
+  
+  return ok;
+}
+
 pub fn initialise() -> void
 {
   platform::on_stack(std::vector<u8>::with_size(32768), || {
@@ -182,8 +361,25 @@ pub fn coldplug() -> void
     if (var rc = coldplug(&mut namespace::instance); !rc)
       std::panic("acpi coldplug failed: ", rc);
 
-    if (var rc = enable(&mut namespace::instance); !rc)
-      std::panic("acpi enable failed: ", rc);
+  });
+}
+
+pub fn reboot() -> void
+{
+  platform::on_stack(std::vector<u8>::with_size(32768), || {
+
+    if (var rc = reboot(&mut namespace::instance); !rc)
+      std::panic("acpi reboot failed: ", rc);
+
+  });
+}
+
+pub fn poweroff() -> void
+{
+  platform::on_stack(std::vector<u8>::with_size(32768), || {
+
+    if (var rc = poweroff(&mut namespace::instance); !rc)
+      std::panic("acpi poweroff failed: ", rc);
 
   });
 }

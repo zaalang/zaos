@@ -33,3 +33,6 @@
 
 # svn
 .svn
+
+# vscode
+.vscode

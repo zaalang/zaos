@@ -858,6 +858,18 @@ pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_vi
   return ok;
 }
 
+pub fn sync(ext2fs mut *fs) -> vfs::result
+{
+  var guard = std::lock_shared_guard(&mut fs.lock);
+
+  for (var &[ino, node] : fs.node_cache)
+  {
+    blk::flush(node);
+  }
+
+  return ok;
+}
+
 fn destroy(vfs::node mut *node) -> void
 {
   var inode = cast<inode mut *>(node);

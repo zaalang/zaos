@@ -23,9 +23,6 @@ pub fn eisaid_to_string(acpi::value mut &value) -> bool
       value.string[5] = digits[cast<usize>(swapped >> 4 & 0xf)];
       value.string[6] = digits[cast<usize>(swapped >> 0 & 0xf)];
 
-    case string[string]:
-      ;
-
     else:
       return false;
   }

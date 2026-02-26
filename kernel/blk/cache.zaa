@@ -206,6 +206,9 @@ struct block_cache
   semaphore plumber_doorbell;
   cache_entry mut *drain;
 
+  u32 ticket;
+  u32 serving;
+
   fn get(block_cache mut &pagecache, cache_key &key) -> block_ptr
   {
     var guard = std::lock_guard(&mut pagecache.lock);
@@ -339,6 +342,28 @@ pub fn commit(block_ptr mut &block, void *data, usize len) -> void
   }
 }
 
+pub fn flush(vfs::node *node) -> void
+{
+  var ticket = std::atomic_load(&pagecache.serving);
+
+  {
+    var guard = std::lock_guard(&mut pagecache.lock);
+
+    for (var entry = pagecache.head; entry; entry = entry.next)
+    {
+      if (entry.node == node && std::atomic_load(&entry.dirty) != 0)
+      {
+        pagecache.plumber_doorbell.release();
+        ticket += 1;
+        break;
+      }
+    }
+  }
+
+  while (std::atomic_load(&pagecache.ticket) < ticket)
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+}
+
 pub fn purge(vfs::node *node) -> void
 {
   var guard = std::lock_guard(&mut pagecache.lock);
@@ -403,8 +428,10 @@ pub fn reap() -> void
 fn plumber(void*) -> void
 {
   for (;;)
-  {
+  {   
     scheduler::sleep_until(cpu::system_time + 1_000_000_000);
+
+    std::atomic_add(&pagecache.serving, 1);
 
     for (var entry = std::atomic_xchg(&pagecache.drain, null); entry; )
     {
@@ -446,6 +473,8 @@ fn plumber(void*) -> void
 
       entry = next;
     }
+
+    std::atomic_add(&pagecache.ticket, 1);
 
     pagecache.plumber_doorbell.wait();
   }

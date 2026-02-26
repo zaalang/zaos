@@ -1,0 +1,34 @@
+//
+// shutdown
+//
+
+import std.stdio;
+import std.env;
+import os.zaos.halt;
+import aargh;
+
+struct opts
+{
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  if (var rc = os::halt(os::HALT_POWEROFF); rc < 0)
+    std::fprint(std::stderr, "shutdown: ", rc);
+
+  return 0;
+}

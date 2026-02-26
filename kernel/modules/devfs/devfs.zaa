@@ -722,3 +722,39 @@ pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, std::string_vi
 
   return ok;
 }
+
+pub fn sync(devfs mut *fs) -> vfs::result
+{
+  fs.lock.lock_shared();
+
+  var stack = std::vector<directory *>::from([ &cast<directory mut &>(*fs.root) ]);
+
+  while (!stack.empty)
+  {
+    for (var &[name, node] : stack.take_back.contents)
+    {
+      switch (node.type)
+      {
+        case volume:
+          blk::flush(node);
+
+        case directory:
+          stack.push_back(&cast<directory mut &>(*node));
+      }
+    }
+  }
+
+  fs.lock.unlock_shared();
+
+  var response = io::response();
+
+  blk::enumerate(|id, device| [response] {
+    io::initiate(&mut response.cb, 1);
+    blk::sync(device, &mut response.cb);
+  });
+
+  if (response.wait(); !response)
+    return io_error;
+ 
+  return ok;
+}

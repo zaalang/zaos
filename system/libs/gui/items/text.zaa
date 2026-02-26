@@ -81,7 +81,6 @@ pub fn pointer_exit(Text mut &this, gui::scene mut &scene) -> void
 {
 }
 
-
 pub fn key_event_filter(Text mut &this, gui::scene mut &scene, gui::key_event &) -> gui::iitem::action
 {
   return forward;

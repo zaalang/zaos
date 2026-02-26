@@ -1,24 +1,36 @@
 #!/bin/sh
 
-# gdb 
-# symbol-file kernel/kernel.elf -o 0xffffffff80000000
-# target remote localhost:1234
-
 # gdb -ex "symbol-file kernel/kernel.elf -o 0xffffffff80000000" -ex "target remote localhost:1234"
 
-OVMF=/usr/share/edk2-ovmf
-if [ -d "$OVMF/x64" ]; then
-  OVMF=$OVMF/x64
+if [ -d /usr/share/OVMF ]; then
+  OVMF="/usr/share/OVMF"
+elif [ -d /usr/share/edk2/ovmf ]; then
+  OVMF="/usr/share/edk2/ovmf"
+elif [ -d /usr/share/edk2-ovmf ]; then
+  OVMF="/usr/share/edk2-ovmf"
 fi
 
-if [ ! -f "OVMF_VARS.4m.fd" ]; then
-  cp $OVMF/OVMF_VARS.4m.fd .
+if [ -f $OVMF/OVMF_CODE.fd ]; then
+  OVMF_CODE="$OVMF/OVMF_CODE.fd"
+  OVMF_VARS="$OVMF/OVMF_VARS.fd"
+elif [ -f $OVMF/OVMF_CODE_4M.fd ]; then
+  OVMF_CODE="$OVMF/OVMF_CODE_4M.fd"
+  OVMF_VARS="$OVMF/OVMF_VARS_4M.fd"
+elif [ -f $OVMF/x64/OVMF_CODE.4m.fd ]; then
+  OVMF_CODE="$OVMF/x64/OVMF_CODE.4m.fd"
+  OVMF_VARS="$OVMF/x64/OVMF_VARS.4m.fd"
+else
+  echo "UEFI firmware not found."
 fi
 
-OPTS="-machine q35,i8042=off -cpu host,invtsc -enable-kvm -m 2G -smp 4"
+if [ ! -f "OVMF_VARS.fd" ]; then
+  cp $OVMF_VARS OVMF_VARS.fd
+fi
 
-OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF/OVMF_CODE.4m.fd,format=raw"
-OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.4m.fd,format=raw"
+OPTS="-machine q35,i8042=off,accel=kvm -cpu host,invtsc -m 2G -smp 4"
+
+OPTS="$OPTS -drive if=pflash,readonly=on,file=$OVMF_CODE,format=raw"
+#OPTS="$OPTS -drive if=pflash,file=OVMF_VARS.fd,format=raw"
 
 OPTS="$OPTS -drive id=disk0,if=none,file=disk.img,format=raw"
 OPTS="$OPTS -device ide-hd,bus=ide.0,drive=disk0,bootindex=0"

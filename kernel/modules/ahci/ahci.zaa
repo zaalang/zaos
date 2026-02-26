@@ -617,7 +617,42 @@ pub fn identify(port mut &port, vm::physaddr buffer) -> result
   return ok;
 }
 
-pub fn enqueue(port mut &port, blk::request mut *request) -> result
+pub fn flush(port mut &port, blk::request mut *request) -> result
+{
+  std::assert(request.length & 511 == 0);
+  std::assert(request.length / 512 < 65536);
+  std::assert(request.position < (1 << 48));
+
+  var slot = port.find_slot();
+
+  if (slot == port::CLSZ)
+    return device_busy;
+
+  var cmd = &port.cl[slot];
+  var tbl = cast<ahci_command_table mut *>(cmd.ctba.ptr);
+
+  std::memset(tbl.cfis.data, 0, 20);
+
+  tbl.cfis[0] = 0x27;
+  tbl.cfis[1] = 0x80;
+  tbl.cfis[2] = 0xea;
+
+  cmd.opts = 5;
+  cmd.prdtl = 0;
+  cmd.prdbc = 0;
+
+  request.status = blk::request::status::running;
+
+  std::atomic_thread_fence();
+
+  std::atomic_store(&port.requests[slot], request);
+  std::atomic_or(&port.issued, 1 << slot);
+  std::atomic_store(&port.regs.ci, 1 << slot);
+
+  return ok;
+}
+
+pub fn readwrite(port mut &port, blk::request mut *request) -> result
 {
   std::assert(request.length & 511 == 0);
   std::assert(request.length / 512 < 65536);

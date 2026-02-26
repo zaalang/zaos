@@ -212,9 +212,23 @@ pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
     blkman.doorbell.release();
 }
 
-pub fn ioctl(blkdev mut *dev, u32 op, vm::iovec &iovec) -> result
+pub fn sync(blkdev mut *device, Rc<io::iocb> mut &cb) -> void
 {
-  return dev.ioctl(op, iovec);
+  var rq = request::create();
+  rq.device = device;
+  rq.type = request::type::sync;
+  rq.cb = cb;
+  rq.ref();
+
+  blkman.ioqueue.append(rq);
+
+  if (blkman.ioqueue.head == rq)
+    blkman.doorbell.release();
+}
+
+pub fn ioctl(blkdev mut *device, u32 op, vm::iovec &iovec) -> result
+{
+  return device.ioctl(op, iovec);
 }
 
 pub fn complete(request mut *rq, request::status status) -> void

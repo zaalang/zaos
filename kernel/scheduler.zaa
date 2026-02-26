@@ -369,30 +369,28 @@ fn rebalance(run_queue mut &runqueue) -> void
 
   if (1 < busiest.len && runqueue.len < 3*busiest.len/4)
   {
-    std::assert(busiest != &runqueue);
+    runqueue.lock.lock();
 
-    for (var mut &cpu: sys::cpus)
+    if (busiest.lock.try_lock())
     {
-      if (&cpu.runqueue == &runqueue || &cpu.runqueue == busiest)
-        cpu.runqueue.lock.lock();
-    }
-
-    for (var thread : busiest.ready)
-    {
-      if (thread)
+      for (var thread : busiest.ready)
       {
-        if (thread.pinned)
-          continue;
+        if (thread)
+        {
+          if (thread.pinned)
+            continue;
 
-        busiest.remove(thread);
-        thread.cpu = cpu::current.id;
-        runqueue.push_back(thread, thread.priority);
+          busiest.remove(thread);
+          thread.cpu = cpu::current.id;
+          runqueue.push_back(thread, thread.priority);
 
-        break;
+          break;
+        }
       }
+
+      busiest.lock.unlock();
     }
 
-    busiest.lock.unlock();
     runqueue.lock.unlock();
   }
 
@@ -504,7 +502,6 @@ pub fn block<Lock>(Lock mut &lock) -> i32
     runqueue.lock.unlock();
   }
 
-  std::assert(&runqueue == &cpu::runqueue);
   std::assert(current_thread == cpu::current_thread);
 
   var status = current_thread.wait_status;
@@ -535,7 +532,6 @@ pub fn block_until<Lock>(Lock mut &lock, u64 abstime) -> i32
     runqueue.lock.unlock();
   }
 
-  std::assert(&runqueue == &cpu::runqueue);
   std::assert(current_thread == cpu::current_thread);
   std::assert(current_thread.wait_abstime == 0);
 

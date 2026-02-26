@@ -13,6 +13,7 @@ pub enum op
   pub const read_capacity_16 = 0x9e;
   pub const read_10 = 0x28;
   pub const write_10 = 0x2a;
+  pub const synchronize_cache_10 = 0x35;
   pub const read_12 = 0xa8;
   pub const write_12 = 0xaa;
   pub const read_16 = 0x88;

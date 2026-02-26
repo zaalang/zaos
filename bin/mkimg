@@ -11,16 +11,28 @@ cat > $2/grub.cfg <<-GRUBCFG
   # grub.cfg
   # grub-mkimage -O x86_64-efi -p /efi/boot normal search echo fat ext2 part_gpt chain efi_gop gfxterm > grubx64.efi
   #
-	
+
+  set timeout=4
+  set default=1
+
   #set root=(hd0,gpt2)
   search --no-floppy --fs-uuid --set=root c8d7a3b6-7a52-4eb0-b251-7f3ba6567cbd
 	
-  set gfxmode=1280x720
-  terminal_output gfxterm
-	
-  echo 'Loading ZaOS ...'
-  chainloader /boot/kernel.efi root=a1eb64ad-52c6-4e96-9c85-b7263c18d4f0
-  boot
+  #set gfxmode=1280x720
+  #if loadfont /boot/grub/fonts/unicode.pf2; then
+  #  terminal_output gfxterm
+  #fi
+
+  menuentry 'ZaOS CoCo' {
+    echo 'Loading ZaOS ...'
+    chainloader /boot/kernel.efi root=a1eb64ad-52c6-4e96-9c85-b7263c18d4f0 init=/zaos/srv/coco
+  }
+
+  menuentry 'ZaOS Init' {
+    echo 'Loading ZaOS ...'
+    chainloader /boot/kernel.efi root=a1eb64ad-52c6-4e96-9c85-b7263c18d4f0
+  }
+
 GRUBCFG
 
 grub-mkimage -O x86_64-efi -p /efi/boot normal search echo fat ext2 part_gpt chain efi_gop gfxterm > $2/grubx64.efi

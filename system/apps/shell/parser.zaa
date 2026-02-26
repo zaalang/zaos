@@ -264,29 +264,30 @@ fn consume_adjacent(std::span<token> mut &tokens) -> std::string_view
 
   while (tokens[0].type != token::type::eof)
   {
-    if (tokens[0].span.data != span.end)
-      break;
+    switch (tokens[0].type)
+    {
+      case amp:
+      case arrow:
+      case less:
+      case lessequal:
+      case greater:
+      case greaterequal:
+      case pipe:
+      case equal:
+      case equalequal:
+      case semi:
+      case eol:
+        break;
 
-    span.len += tokens[0].span.len;
+      else:
 
-    consume_token(&mut tokens, tokens[0].type);
-  }
+        if (tokens[0].span.data != span.end)
+          break;
 
-  return span;
-}
+        span.len += tokens[0].span.len;
 
-fn consume_adjacent_til(std::span<token> mut &tokens, token::type type) -> std::string_view
-{
-  var span = std::string_view(tokens[0].span.data, 0);
-
-  while (tokens[0] != type && tokens[0] != token::type::eof)
-  {
-    if (tokens[0].span.data != span.end)
-      break;
-
-    span.len += tokens[0].span.len;
-
-    consume_token(&mut tokens, tokens[0].type);
+        consume_token(&mut tokens, tokens[0].type);
+    }
   }
 
   return span;
@@ -632,7 +633,7 @@ fn parse_callee(parse_context mut &ctx, std::span<token> mut &tokens) -> Express
 
       case minusminus:
 
-        var name = consume_adjacent_til(&mut tokens, token::type::equal);
+        var name = consume_adjacent(&mut tokens);
 
         if (try_consume_token(&mut tokens, token::type::equal) && tokens[0] != token::type::eof)
         {
@@ -651,7 +652,15 @@ fn parse_callee(parse_context mut &ctx, std::span<token> mut &tokens) -> Express
 
         arguments.push_back(Argument::Free(&move expr));
 
+      case amp:
+      case arrow:
+      case less:
+      case lessequal:
+      case greater:
+      case greaterequal:
       case pipe:
+      case equal:
+      case equalequal:
       case semi:
       case eol:
         break;

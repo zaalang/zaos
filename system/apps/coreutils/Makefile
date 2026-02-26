@@ -37,6 +37,7 @@ $(BUILD)/tail\
 $(BUILD)/touch\
 $(BUILD)/tty\
 $(BUILD)/uptime\
+$(BUILD)/shutdown\
 
 default: $(BINS)
 

@@ -715,7 +715,29 @@ pub fn identify(controller mut &controller, u32 nsid, vm::physaddr buffer) -> re
   return ok;
 }
 
-pub fn enqueue(controller mut &controller, u32 nsid, blk::request mut *request) -> result
+pub fn flush(controller mut &controller, u32 nsid, blk::request mut *request) -> result
+{
+  var quid = (cast<usize>(cpu::id) + sys::cpu_count - 1) % controller.queue_count;
+
+  var mut &queue = controller.queues[quid];
+
+  var cmd = nvme_sqe();
+  cmd.opc = cmd::flush;
+  cmd.nsid = nsid;
+
+  request.status = blk::request::status::running;
+
+  var completer = |cqe, status| [var request = request] {
+    blk::complete(request, status ? blk::request::status::success : blk::request::status::errored);
+  };
+
+  if (var result = queue.submit(cmd, &move std::delegate<(nvme_cqe *, result) -> void>(completer)); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn readwrite(controller mut &controller, u32 nsid, blk::request mut *request) -> result
 {
   let block_size = request.device.block_size;
   let block_shift = request.device.block_shift;

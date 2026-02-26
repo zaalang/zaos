@@ -62,8 +62,17 @@ pub struct satadev : pub blk::blkdev
 
   pub fn enqueue(this mut &, blk::request mut *request) override -> blk::result
   {
-    if (var result = this.port.enqueue(request); !result)
-      return cast<blk::result>(result);
+    switch (request.type)
+    {
+      case read:
+      case write:
+        if (var result = this.port.readwrite(request); !result)
+          return cast<blk::result>(result);
+
+      case sync:
+        if (var result = this.port.flush(request); !result)
+          return cast<blk::result>(result);
+    }
 
     return ok;
   }

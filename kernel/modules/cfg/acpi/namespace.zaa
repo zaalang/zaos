@@ -24,6 +24,8 @@ import cfg.acpi.registers : acpi_read_register, acpi_write_register;
 
 pub struct namespace
 {
+  pub mutex lock;
+
   pub acpi::fadt *fadt;
   pub acpi::mcfg *mcfg;
   pub std::optional<acpi::namespace> ns;
@@ -137,7 +139,7 @@ pub struct namespace
 
         for (var config : instance.mcfg.entries)
         {
-          if (config.segment_group == cast<u16>(seg.integer))
+          if (cast<u64>(config.segment_group) == seg.integer && cast<u64>(config.bus_start) <= bus && bus <= cast<u64>(config.bus_end))
           {
             base = physaddr(cast<uintptr>(config.base_address)) + cast<uintptr>(bus) << 20 + cast<uintptr>(dev) << 15 + cast<uintptr>(func) << 12;
           }
@@ -390,6 +392,14 @@ pub struct namespace
     return ok;
   }
 
+  pub fn gpe_disable_all(this mut &cfg) -> acpi::result
+  {
+    for (var idx = 0; idx < cfg.events.len; ++idx)
+      gpe_disable(&mut cfg, idx);
+      
+    return ok;
+  }
+
   fn thread_getid(acpi::namespace mut &namespace, u32 mut &id) -> acpi::result
   {
     id = cast(thread::current.id);
@@ -406,21 +416,112 @@ pub struct namespace
 
   fn mutex_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result
   {
+    handle = std::allocator::new<mutex>();
+
     return ok;
   }
 
   fn mutex_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result
   {
+    std::allocator::delete(cast<mutex mut *>(handle));
+
     return ok;
   }
 
   fn mutex_acquire(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result
   {
-    return ok;
+    var result = acpi::result::ok;
+
+    switch (timeout)
+    {
+      case 0:
+
+        if (!cast<mutex mut *>(handle).try_lock())
+          result = acpi::result::timed_out;
+
+      else:
+
+        instance.lock.unlock();
+
+        switch (timeout)
+        {
+          case 0xffff:
+            cast<mutex mut *>(handle).lock();
+
+          else:
+            if (!cast<mutex mut *>(handle).try_lock_until(cpu::system_time + cast(timeout) * 1_000_000))
+              result = acpi::result::timed_out;
+        }
+
+        instance.lock.lock();
+    }
+
+    return result;
   }
 
   fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result
   {
+    cast<mutex mut *>(handle).unlock();
+
+    return ok;
+  }
+
+  fn event_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result
+  {
+    handle = std::allocator::new<semaphore>(0, 65536);
+
+    return ok;
+  }
+
+  fn event_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result
+  {
+    std::allocator::delete(cast<semaphore mut *>(handle));
+
+    return ok;
+  }
+
+  fn event_wait(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result
+  {
+    var result = acpi::result::ok;
+
+    switch (timeout)
+    {
+      case 0:
+
+        if (!cast<semaphore mut *>(handle).try_wait())
+          result = acpi::result::timed_out;
+
+      else:
+
+        instance.lock.unlock();
+
+        switch (timeout)
+        {
+          case 0xffff:
+            cast<semaphore mut *>(handle).wait();
+
+          else:
+            if (!cast<semaphore mut *>(handle).wait_until(cpu::system_time + cast(timeout) * 1_000_000))
+              result = acpi::result::timed_out;
+        }
+
+        instance.lock.lock();
+    }
+
+    return result;
+  }
+
+  fn event_signal(acpi::namespace mut &namespace, void *handle) -> acpi::result
+  {
+    cast<semaphore mut *>(handle).release();
+
+    return ok;
+  }
+
+  fn event_reset(acpi::namespace mut &namespace, void *handle) -> acpi::result
+  {
+    cast<semaphore mut *>(handle).reset();
+
     return ok;
   }
 
@@ -433,7 +534,11 @@ pub struct namespace
 
   fn sleep(acpi::namespace mut &ns, u64 period) -> acpi::result
   {
+    instance.lock.unlock();
+
     scheduler::sleep_until(cpu::system_time + period);
+
+    instance.lock.lock();
 
     return ok;
   }
@@ -562,6 +667,8 @@ fn acpi_event_handler(namespace mut *cfg) -> void
 
       if (var mask = status & enable; mask != 0)
       {
+        var guard = std::lock_guard(&mut cfg.lock);
+
         for (var i = std::ctz(mask); i < 8; ++i, i += std::ctz(mask >> i))
         {
           var &event = cfg.events[(index << 3) + cast<usize>(i)];
@@ -618,6 +725,8 @@ pub fn initialise(namespace mut &cfg) -> acpi::result
   if (!dsdt)
     std::panic("bad_acpi_dsdt");
 
+  var guard = std::lock_guard(&mut cfg.lock);
+
   if (var rc = acpi::parse(&mut ns, dsdt.payload); !rc)
     std::panic("acpi dsdt parse error - ", rc);
 
@@ -668,6 +777,8 @@ pub fn configure(namespace mut &cfg) -> acpi::result
   if (var rc = acpi_write_register(cfg.fadt.x_pm1a_enable_block, cfg.fadt.x_pm1b_enable_block, acpi::pm1::power_button_enable); !rc)
     return rc;
 
+  var guard = std::lock_guard(&mut cfg.lock);
+
   for (var &[name, value] : ns.root.find("_GPE")?!.values)
   {
     if (!value.is_method)
@@ -685,11 +796,6 @@ pub fn configure(namespace mut &cfg) -> acpi::result
   if (var rc = ns.invoke(ns.root, "_PIC", &mut acpi::value(), acpi::value(1)); !rc)
     return rc;
 
-  return ok;
-}
-
-pub fn enable(namespace mut &cfg) -> acpi::result
-{
   scheduler::enqueue(cfg.event_handler);
 
   return ok;

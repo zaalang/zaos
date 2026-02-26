@@ -71,4 +71,6 @@ pub vtable file_system_operations
 
   pub fn mount(this mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result;
   pub fn statfs(this mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result;
+
+  pub fn sync(this mut *fs) -> vfs::result;
 }

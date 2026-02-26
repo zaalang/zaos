@@ -153,6 +153,22 @@ fn early_tsc_frequency() -> u64
     frequency = cast<u64>(cpu::cpuid(0x16).0) * 1000000;
   }
 
+  if (cpu::cpuid(0x1).2 & 0x80000000 != 0)
+  {
+    // kvm clock
+
+    for (var base = 0x40000000;; base += 0x100)
+    {
+      var [eax, ebx, ecx, edx] = cpu::cpuid(base);
+
+      if (eax < base)
+        break;
+
+      if (ebx == 0x4b4d564b && ecx == 0x564b4d56 && edx == 0x0000004d) // KVMKVMKVM
+        frequency = cast<u64>(cpu::cpuid(base + 0x10).0) * 1000;
+    }
+  }
+
   if (frequency == 0)
   {
     // fallback to quick pit

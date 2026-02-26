@@ -93,8 +93,6 @@ pub fn bootstrap(platform::BootInfo &bootinfo) -> void
 
   var zeropage = heap::early_malloc(bootinfo, PAGE_SIZE);
 
-  std::memset(zeropage.ptr, 0, PAGE_SIZE);
-
   mm.zeropage = mm.pageallocator.page_from_address(physaddr(bootinfo.hunk_base) + (zeropage - bootinfo.heap_base));
   mm.zeropage.ref();
 

@@ -25,11 +25,27 @@ pub struct gas
   pub ~gas() = default;
 }
 
+#[packed]
+pub struct facs
+{
+  pub u8[4] signature;
+  pub u32 length;
+  pub u32 hardware_signature;
+  pub u32 firmware_waking_vector;
+  pub u32 global_lock;
+  pub u32 flags;
+  pub u64 x_firmware_waking_vector;
+  pub u8 version;
+  pub u8[3] reserved;
+  pub u32 ospm_flags;
+}
+
 pub const fadt_c1_supported = 0x4;
 pub const fadt_c2_mp_supported = 0x8;
 pub const fadt_power_button = 0x10;
 pub const fadt_sleep_button = 0x20;
 pub const fadt_fixed_rtc = 0x40;
+pub const fadt_reset_register = 0x400;
 pub const fadt_hw_reduced = 0x100000;
 
 pub enum pm1
@@ -114,6 +130,9 @@ pub struct fadt : pub acpi::sdt
   pub gas x_pmtimer_block;
   pub gas x_gpe0_block;
   pub gas x_gpe1_block;
+  pub gas sleep_control_register;
+  pub gas sleep_status_register;
+  pub u64 hypervisor_vendor_identity;
 
   pub fn facs_address(this &fadt) -> uintptr
   {

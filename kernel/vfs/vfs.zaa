@@ -404,3 +404,18 @@ pub fn notify(vfs::node mut *path, vfs::node mut *node, u64 mask, String &name =
 
   return path.directory_operations.notify(path, node, mask, std::string_view(name));
 }
+
+pub fn sync() -> vfs::result
+{
+  var guard = std::lock_guard(&mut vfs.lock);
+
+  rof (var mut &mount : vfs.mounts)
+  {
+    var fs = mount.fs;
+
+    if (var result = fs.ops.sync(fs); !result)
+      std::print("sync: unable to sync fs - ", result);
+  }
+
+  return ok;
+}

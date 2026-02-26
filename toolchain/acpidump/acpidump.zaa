@@ -54,6 +54,31 @@ fn mutex_release(acpi::namespace mut &namespace, void *handle) -> acpi::result
   return ok;
 }
 
+fn event_create(acpi::namespace mut &namespace, void * mut &handle) -> acpi::result
+{
+  return ok;
+}
+
+fn event_destroy(acpi::namespace mut &namespace, void *handle) -> acpi::result
+{
+  return ok;
+}
+
+fn event_wait(acpi::namespace mut &namespace, void *handle, u16 timeout) -> acpi::result
+{
+  return ok;
+}
+
+fn event_signal(acpi::namespace mut &namespace, void *handle) -> acpi::result
+{
+  return ok;
+}
+
+fn event_reset(acpi::namespace mut &namespace, void *handle) -> acpi::result
+{
+  return ok;
+}
+
 fn notify(acpi::namespace mut &ns, acpi::node *node, acpi::value &value) -> acpi::result
 {
   return ok;

@@ -7,6 +7,7 @@ import std.string;
 import std.atomic;
 import std.fmt;
 import sys;
+import cpu;
 import platform : PHYSICAL_BASE;
 
 const font = [
@@ -1766,7 +1767,7 @@ pub fn kprintf<Args>(#std::string_literal format, Args & ...args) -> void
 
   try
   {
-    var guard = std::lock_guard(&mut ctx.lock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut ctx.lock);
 
     var fb = sys::boot_frame_buffer();
     var len = std::format_to(&mut std::mutable_span(buffer.data, buffer.len), format, args...);

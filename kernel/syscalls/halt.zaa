@@ -1,0 +1,43 @@
+//
+// halt
+//
+
+import std.stdlib;
+import vfs;
+import sys;
+import scheduler;
+import result as _ : result;
+import thread as _ : thread;
+import process as _ : process;
+import platform;
+import cfg.acpi;
+
+enum flags
+{
+  const reboot = 0x1;
+  const poweroff = 0x2;
+}
+
+extern fn sys_halt(u64 flags) -> result
+{
+  vfs::sync();
+
+  switch (flags & 0x3)
+  {
+    case flags::reboot:
+      cfg::reboot();
+  
+    case flags::poweroff:
+      cfg::poweroff();
+
+    else:
+      process::enumerate(|process| {
+        if (process == colonel)
+          return;
+
+        process.terminate();
+      });
+  }
+
+  return 0;
+}

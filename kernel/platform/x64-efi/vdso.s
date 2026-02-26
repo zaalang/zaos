@@ -45,6 +45,7 @@
               .global __vdso_sched_set_param
               .global __vdso_kill
               .global __vdso_get_random
+              .global __vdso_halt
 
               .section .rodata
 
@@ -215,5 +216,10 @@ __vdso_kill: # u8 *uuid, usize uuidlen, u64 flags
 
 __vdso_get_random: # void mut *buffer, usize length, u64 flags
               mov rax, 27
+              syscall
+              ret
+
+__vdso_halt: # u64 flags
+              mov rax, 28
               syscall
               ret
