@@ -67,6 +67,7 @@ OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-tablet"
 
 OPTS="$OPTS -device qxl-vga"
 #OPTS="$OPTS -device virtio-gpu-pci"
+#OPTS="$OPTS -device vmware-svga"
 
 #OPTS="$OPTS -monitor stdio"
 #OPTS="$OPTS -serial file:serial.log"

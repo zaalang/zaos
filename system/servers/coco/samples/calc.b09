@@ -1,0 +1,156 @@
+PROCEDURE calc
+  DIM s: STRING[80]
+  DIM p: INTEGER
+  DIM res: INTEGER
+  DIM done: INTEGER
+
+  PRINT "Simple Basic09 Calculator"
+  done = 0
+  WHILE done = 0 DO
+    PRINT "Enter expression (or press Enter to quit):"
+    INPUT s
+    IF LEN(s) = 0 THEN
+      done = 1
+    ELSE
+      p = 1
+      RUN expr_parse(s, p, res)
+      PRINT "Final Result: "; res
+      PRINT ""
+    ENDIF
+  ENDWHILE
+  END
+
+PROCEDURE expr_parse
+  PARAM s: STRING
+  PARAM p: INTEGER
+  PARAM res: INTEGER
+  DIM term_val: INTEGER
+  DIM op: STRING[1]
+  DIM done: INTEGER
+
+  RUN term_parse(s, p, res)
+  done = 0
+  WHILE done = 0 DO
+    RUN skip_space(s, p)
+    IF p > LEN(s) THEN
+      done = 1
+    ELSE
+      op = MID$(s, p, 1)
+      IF op = "+" OR op = "-" THEN
+        p = p + 1
+        RUN term_parse(s, p, term_val)
+        IF op = "+" THEN
+          PRINT res; " + "; term_val; " = "; res + term_val
+          res = res + term_val
+        ELSE
+          PRINT res; " - "; term_val; " = "; res - term_val
+          res = res - term_val
+        ENDIF
+      ELSE
+        done = 1
+      ENDIF
+    ENDIF
+  ENDWHILE
+  END
+
+PROCEDURE term_parse
+  PARAM s: STRING
+  PARAM p: INTEGER
+  PARAM res: INTEGER
+  DIM fact_val: INTEGER
+  DIM op: STRING[1]
+  DIM done: INTEGER
+
+  RUN fact_parse(s, p, res)
+  done = 0
+  WHILE done = 0 DO
+    RUN skip_space(s, p)
+    IF p > LEN(s) THEN
+      done = 1
+    ELSE
+      op = MID$(s, p, 1)
+      IF op = "*" OR op = "/" THEN
+        p = p + 1
+        RUN fact_parse(s, p, fact_val)
+        IF op = "*" THEN
+          PRINT res; " * "; fact_val; " = "; res * fact_val
+          res = res * fact_val
+        ELSE
+          IF fact_val = 0 THEN
+            PRINT "Error: Division by zero"
+            res = 0
+          ELSE
+            PRINT res; " / "; fact_val; " = "; res / fact_val
+            res = res / fact_val
+          ENDIF
+        ENDIF
+      ELSE
+        done = 1
+      ENDIF
+    ENDIF
+  ENDWHILE
+  END
+
+PROCEDURE fact_parse
+  PARAM s: STRING
+  PARAM p: INTEGER
+  PARAM res: INTEGER
+  DIM ch: STRING[1]
+  DIM done: INTEGER
+
+  RUN skip_space(s, p)
+  IF p > LEN(s) THEN
+    res = 0
+  ELSE
+    ch = MID$(s, p, 1)
+    IF ch = "(" THEN
+      p = p + 1
+      RUN expr_parse(s, p, res)
+      RUN skip_space(s, p)
+      IF p <= LEN(s) THEN
+        ch = MID$(s, p, 1)
+        IF ch = ")" THEN
+          p = p + 1
+        ENDIF
+      ENDIF
+    ELSE
+      res = 0
+      done = 0
+      WHILE done = 0 DO
+        IF p > LEN(s) THEN
+          done = 1
+        ELSE
+          ch = MID$(s, p, 1)
+          IF ch >= "0" AND ch <= "9" THEN
+            res = res * 10 + (ASC(ch) - 48)
+            p = p + 1
+          ELSE
+            done = 1
+          ENDIF
+        ENDIF
+      ENDWHILE
+    ENDIF
+  ENDIF
+  END
+
+PROCEDURE skip_space
+  PARAM s: STRING
+  PARAM p: INTEGER
+  DIM ch: STRING[1]
+  DIM done: INTEGER
+
+  done = 0
+  WHILE done = 0 DO
+    IF p > LEN(s) THEN
+      done = 1
+    ELSE
+      ch = MID$(s, p, 1)
+      IF ch = " " THEN
+        p = p + 1
+      ELSE
+        done = 1
+      ENDIF
+    ENDIF
+  ENDWHILE
+  END
+

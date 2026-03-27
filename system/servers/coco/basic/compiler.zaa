@@ -1951,7 +1951,22 @@ fn emit_run(compile_context mut &ctx, Run &run) -> result
         ctx.text[ctx.text.len - 6] += 0x10;
 
       else:
-        link_storage_size += sizeof_type(ctx, arg.type);
+        switch (arg.type)
+        {
+          case Real:
+            link_storage_size += sizeof<float>;
+
+          case Byte:
+          case Boolean:
+          case Integer:
+            link_storage_size += sizeof<int>;
+
+          case String[capacity]:
+            link_storage_size += 256;
+
+          else:
+            std::panic("unhandled");
+        }
     }
 
     if (&arg != &run.args.back)

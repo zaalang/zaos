@@ -501,7 +501,7 @@ pub struct namespace
             cast<semaphore mut *>(handle).wait();
 
           else:
-            if (!cast<semaphore mut *>(handle).wait_until(cpu::system_time + cast(timeout) * 1_000_000))
+            if (!cast<semaphore mut *>(handle).try_wait_until(cpu::system_time + cast(timeout) * 1_000_000))
               result = acpi::result::timed_out;
         }
 

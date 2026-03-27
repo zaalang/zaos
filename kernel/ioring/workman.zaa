@@ -216,7 +216,7 @@ fn kworkd(worker mut *worker) -> void
     if (std::atomic_load(&workman.activity) != activity)
       continue;
 
-    worker.doorbell.wait_until(waketime);
+    worker.doorbell.try_wait_until(waketime);
   }
 }
 

@@ -47,7 +47,7 @@ pub struct semaphore
     return std::atomic_cmpxchg_weak(&this.value, current, std::min(current, this.maxvalue) - 1);
   }
 
-  pub fn wait_until(this mut &, u64 abstime) -> bool
+  pub fn try_wait_until(this mut &, u64 abstime) -> bool
   {
     for (;;)
     {

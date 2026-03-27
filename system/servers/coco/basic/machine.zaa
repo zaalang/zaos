@@ -825,6 +825,12 @@ fn gep(machine mut &vm, op mut &type, std::mutable_span<u8> mut &span) -> result
     case op::parameter_vector:
     case op::parameter_table:
     case op::parameter_matrix:
+      if (vm.frame.sp + addr >= vm.stack.len)
+        return errc::parameter_error;
+
+      if (base + size > vm.stack[vm.frame.sp + addr].reference.2)
+        return errc::parameter_error;
+
       span.len = size;
       span.data = vm.stack[vm.frame.sp + addr].reference.1 + base;
 
@@ -1093,27 +1099,6 @@ fn evaluate(machine mut &vm) -> result
         vm.ip += 1 + sizeof(integer);
 
       case op::parameter_unit:
-        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
-        var type = cast<op>(vm.frame.rodata[offset]);
-        var idx = cast<usize>(vm.frame.rodata[offset + 1]);
-
-        if (vm.stack.len <= vm.frame.sp + idx)
-          return errc::parameter_error;
-
-        switch (vm.stack[vm.frame.sp + idx])
-        {
-          case reference[reference]:
-            if (type != reference.0)
-              return errc::parameter_error;
-
-            vm.stack.push_back(load(&mut vm, reference.0, reference.1, reference.2));
-
-          else:
-            std::panic("unhandled");
-        }
-
-        vm.ip += 3;
-
       case op::parameter_vector:
       case op::parameter_table:
       case op::parameter_matrix:
@@ -1126,27 +1111,6 @@ fn evaluate(machine mut &vm) -> result
         vm.stack.push_back(load(&mut vm, type, span.data, span.len));
 
       case op::parameter_reference_unit:
-        var offset = cast<usize>(*(vm.ip + 1)) + cast<usize>(*(vm.ip + 2)) << 8;
-        var type = cast<op>(vm.frame.rodata[offset]);
-        var idx = cast<usize>(vm.frame.rodata[offset + 1]);
-
-        if (vm.stack.len <= vm.frame.sp + idx)
-          return errc::parameter_error;
-
-        switch (vm.stack[vm.frame.sp + idx])
-        {
-          case reference[reference]:
-            if (type != reference.0)
-              return errc::parameter_error;
-
-            vm.stack.push_back(operand::reference(reference.0, reference.1, reference.2));
-
-          else:
-            std::panic("unhandled");
-        }
-
-        vm.ip += 3;
-
       case op::parameter_reference_vector:
       case op::parameter_reference_table:
       case op::parameter_reference_matrix:
@@ -2117,7 +2081,7 @@ fn run(machine mut &vm) -> result
             case string:
             case string_view:
               type = op::type_string;
-              size = sizeof<u16> + vm.stack.back.as_string_view.len;
+              size = 256;
 
             else:
               std::panic("unhandled");

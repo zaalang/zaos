@@ -261,5 +261,8 @@ image:
         - cp:
             src: system/servers/coco/samples/clock.b09
             dest: /root/clock.b09
+        - cp:
+            src: system/servers/coco/samples/calc.b09
+            dest: /root/calc.b09
 
 

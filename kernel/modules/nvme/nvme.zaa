@@ -449,7 +449,7 @@ fn initialise(controller mut &controller) -> result
 
   var cap = regs.cap;
 
-  controller.doorbell_stride = 1 << ((cap >> cap::dbl_shift) & cap::dbl_mask);
+  controller.doorbell_stride = 1 << (cap >> cap::dbl_shift & cap::dbl_mask);
 
   controller.admin = std::allocator::new<queue>(&mut controller, 0, 16);
 
@@ -462,7 +462,7 @@ fn initialise(controller mut &controller) -> result
 
   io::install_handler(irq, &cast<(controller mut *) -> void>(nvme_controller_handler), &controller);
 
-  var queue_entries = std::min(cast<u32>((cap >> cap::mqes_shift) & cap::mqes_mask + 1), 1024);
+  var queue_entries = std::min(cast<u32>(cap >> cap::mqes_shift & cap::mqes_mask) + 1, 1024);
 
   var identbuf = vm::allocate_physical(4096);
 
