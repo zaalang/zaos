@@ -52,14 +52,14 @@ fn pagecache(memory_manager mut &) -> page_cache mut &
 {
   extern static thread_local cpu_page_cache = #page_cache();
 
-  return cast<page_cache mut &>(extern("cpu_page_cache@tpoff"));
+  return platform::percpu_addr<page_cache mut &>("cpu_page_cache");
 }
 
 fn regioncache(memory_manager mut &) -> slab_cache<region> mut &
 {
   extern static thread_local cpu_region_cache = #slab_cache<region>();
 
-  return cast<slab_cache<region> mut &>(extern("cpu_region_cache@tpoff"));
+  return platform::percpu_addr<slab_cache<region> mut &>("cpu_region_cache");
 }
 
 pub fn bootstrap(platform::BootInfo &bootinfo) -> void

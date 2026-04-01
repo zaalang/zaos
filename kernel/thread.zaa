@@ -203,7 +203,7 @@ struct thread_manager
   {
     extern static thread_local cpu_thread_cache = #slab_cache<thread>();
 
-    return cast<slab_cache<thread> mut &>(extern("cpu_thread_cache@tpoff"));
+    return platform::percpu_addr<slab_cache<thread> mut &>("cpu_thread_cache");
   }
 
   thread_manager() = default;

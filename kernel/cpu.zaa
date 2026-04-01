@@ -94,7 +94,7 @@ pub fn switch_current_thread(thread mut *thread) -> void
 {
   std::assert(platform::interrupts_disabled);
 
-  self.current_thread = thread;
+  platform::percpu_store("cpu_logical_core", offsetof(cpu_logical_core::current_thread), thread);
 }
 
 pub fn increment_interrupt_time(u64 time)
@@ -114,17 +114,17 @@ pub fn tsc() -> u64
 
 pub fn cyc2ns() -> u64
 {
-  return self.cyc2ns;
+  return platform::percpu_load<u64>("cpu_logical_core", offsetof(cpu_logical_core::cyc2ns));
 }
 
 pub fn clockspeed() -> u64
 {
-  return self.clockspeed;
+  return platform::percpu_load<u64>("cpu_logical_core", offsetof(cpu_logical_core::clockspeed));
 }
 
 pub fn system_time() -> u64
 {
-  return std::mul_with_carry(tsc, self.cyc2ns).1;
+  return std::mul_with_carry(tsc, cyc2ns).1;
 }
 
 pub fn bootstrap(platform::BootInfo &bootinfo, int cpu) -> void

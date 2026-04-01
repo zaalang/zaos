@@ -41,10 +41,6 @@ CheckBox {
               border-color: #99000000;
               background: #05ffffff;
 
-              animate background {
-                duration: 150ms;
-              }
-
               Rectangle
               {
                 id: check;
@@ -53,7 +49,7 @@ CheckBox {
                 opacity: IF(root.checked, 1.0, 0.0);
 
                 animate opacity {
-                  duration: 150ms;
+                  duration: 75ms;
                 }
 
                 Text {

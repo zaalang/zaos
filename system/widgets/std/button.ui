@@ -30,10 +30,6 @@ Button {
         border-color: #99000000;
         background: #05ffffff;
 
-        animate background {
-          duration: 150ms;
-        }
-
         HorizontalLayout {
           padding-left: 12px;
           padding-right: 12px;
