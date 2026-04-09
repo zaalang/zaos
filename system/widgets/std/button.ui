@@ -19,7 +19,7 @@ Button {
       enabled: root.enabled;
       on_entered: { box.background = #66ffffff; box.border-color = #005fb8; }
       on_exited: { box.background = #05ffffff; box.border-color = #99000000; }
-      on_pressed: |position| { box.background = #17ffffff; box.border-color = #58005fb8; label.color = #83000000; scope.focus(); }
+      on_pressed: |position| { box.background = #17ffffff; box.border-color = #58005fb8; label.color = #b6000000; scope.focus(); }
       on_released: |position| { box.background = #66ffffff; box.border-color = #ff005fb8; label.color = #000000; }
       on_clicked: { root.clicked(); }
 

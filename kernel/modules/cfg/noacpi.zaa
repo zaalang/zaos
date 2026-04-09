@@ -1,0 +1,50 @@
+//
+// no acpi cfg
+//
+
+import std.stdio;
+import cpu;
+import dev;
+import scheduler;
+import platform;
+
+import pci;
+import ps2;
+import ahci;
+import nvme;
+import usb.xhci as xhci;
+
+pub fn initialise() -> void
+{
+}
+
+pub fn coldplug() -> void
+{
+  ps2::initialise();
+  pci::initialise();
+
+  for (var &device : pci::devices)
+  {
+    switch (device.class_code)
+    {
+      case [1, 6, 1]:
+        ahci::initialise(device);
+
+      case [2, 8, 1]:
+        nvme::initialise(device);
+
+      case [48, 3, 12]:
+        xhci::initialise(device);
+    }
+  }
+}
+
+pub fn reboot() -> void
+{
+  std::panic("reboot");
+}
+
+pub fn poweroff() -> void
+{
+  std::panic("poweroff");
+}

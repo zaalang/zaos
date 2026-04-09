@@ -321,6 +321,9 @@ fn main() -> int
   if (termios::get_winsize(&mut width, &mut height) != 0)
     std::panic("unable to retreive termios size");
 
+  if (width < 40 || height < 32)
+    std::panic("terminal size too small");
+
   var oldstate = termios::termios(void);
   if (termios::enable_raw_mode(&mut oldstate) != 0)
     std::panic("unable to enter raw mode");

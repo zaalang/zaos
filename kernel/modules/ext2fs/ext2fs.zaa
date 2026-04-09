@@ -784,7 +784,7 @@ pub fn write(vfs::node mut *node, Rc<io::iocb> mut &cb, u64 position, vm::iovec 
     length = 0;
 
   if (position + cast(length) > std::align_up(this.size, fs.volume.bsize))
-    return invalid_argument;
+    length = std::align_up(cast<usize>(this.size - std::min(position, this.size)), fs.volume.bsize);
 
   for (var remaining = length; remaining != 0; )
   {
