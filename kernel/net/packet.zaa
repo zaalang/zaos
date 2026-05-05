@@ -1,0 +1,22 @@
+//
+// net packet
+//
+
+import std.atomic;
+import std.vector;
+import vm;
+import io;
+import net.result;
+import support.rc : Rc;
+
+pub struct packet
+{
+  pub usize length;
+
+  pub std::vector<vm::physrange, N:8> host;
+
+  pub Rc<io::iocb> cb;
+
+  pub packet() = default;
+  pub ~packet() = default;
+}

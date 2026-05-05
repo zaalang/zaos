@@ -1,0 +1,29 @@
+//
+// mac address
+//
+
+import std.stdio;
+import std.fmt;
+
+pub struct macaddr : pub u8[6]
+{
+  pub macaddr(u8[6] &addr)
+    : super(addr)
+  {
+  }
+
+  pub macaddr(u16[3] &addr)
+    : super([ cast<u8>(addr[0] & 0xff), cast<u8>(addr[0] >> 8), cast<u8>(addr[1] & 0xff), cast<u8>(addr[1] >> 8), cast<u8>(addr[2] & 0xff), cast<u8>(addr[2] >> 8) ])
+  {
+  }
+
+  pub macaddr() = default;
+  pub macaddr(macaddr &) = default;
+  pub fn =(macaddr mut &, macaddr &) -> macaddr mut & = default;
+  pub ~macaddr() = default; 
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, macaddr &addr) throws(std::error) -> void
+{
+  ctx.written += std::format_to(&mut os, "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+}

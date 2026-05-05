@@ -10,7 +10,7 @@ import result as _ : result;
 import thread as _ : thread;
 import process as _ : process;
 import platform;
-import cfg.acpi;
+import cfg;
 
 enum flags
 {

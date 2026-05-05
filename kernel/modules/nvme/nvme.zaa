@@ -91,10 +91,6 @@ enum cmd : u8
   reservation_report = 0x0e,
   reservation_acquire = 0x11,
   reservation_release = 0x15,
-
-  pub const fn ~(cmd lhs) -> cmd { return cast<cmd>(~cast<u8>(lhs)); }
-  pub const fn &(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) & cast<u8>(rhs)); }
-  pub const fn |(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) | cast<u8>(rhs)); }
 }
 
 enum nvme_qprio
@@ -316,7 +312,7 @@ pub struct queue
     return cast<u8>(this.index);
   }
 
-  pub queue(queue&&) = default;
+  pub queue(queue &&) = default;
   pub ~queue() = default;
 
   u32 entries;
@@ -481,7 +477,7 @@ fn initialise(controller mut &controller) -> result
     controller.queues[i] = std::allocator::new<queue>(&mut controller, i + 1, queue_entries);
 
     if (var result = controller.queues[i].initialise(); !result)
-      std::print("nvme error initialising queue ", i + 1, " - ", result);
+      std::print("nvme error initialising queue ", i, " - ", result);
   }
 
   for (var irq = controller.irqs.0; irq < controller.irqs.1; ++irq)
@@ -717,7 +713,7 @@ pub fn identify(controller mut &controller, u32 nsid, vm::physaddr buffer) -> re
 
 pub fn flush(controller mut &controller, u32 nsid, blk::request mut *request) -> result
 {
-  var quid = (cast<usize>(cpu::id) + sys::cpu_count - 1) % controller.queue_count;
+  var quid = (cast<usize>(cpu::id) + controller.queue_count - 1) % controller.queue_count;
 
   var mut &queue = controller.queues[quid];
 
@@ -746,7 +742,7 @@ pub fn readwrite(controller mut &controller, u32 nsid, blk::request mut *request
   std::assert(request.length / block_size < 65536);
   std::assert(request.position & cast(block_size - 1) == 0);
 
-  var quid = (cast<usize>(cpu::id) + sys::cpu_count - 1) % controller.queue_count;
+  var quid = (cast<usize>(cpu::id) + controller.queue_count - 1) % controller.queue_count;
 
   var mut &queue = controller.queues[quid];
 

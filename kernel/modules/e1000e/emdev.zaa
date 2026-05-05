@@ -1,0 +1,68 @@
+//
+// e1000e interface
+//
+
+import std.stdio;
+import std.atomic;
+import net;
+import e1000e;
+import vm;
+
+pub struct emdev : pub net::netdev
+{
+  pub emdev(e1000e::adaptor mut &adaptor, net::macaddr &address)
+    : super(&impl this),
+      adaptor(&adaptor)
+  {
+    this.address = address;
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return this.adaptor.name;
+  }
+
+  pub fn query(this &, net::query query, std::string mut &result) override -> net::result
+  {
+    switch (query)
+    {
+      case address:
+        result = std::format("{}", this.address);
+
+      case device_path:
+        result = std::format("net/{}/0", this.name);
+    }
+
+    return ok;
+  }
+
+  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) override -> net::result
+  {
+    if (var result = this.adaptor.transmit(packet); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) override -> net::result
+  {
+    if (var result = this.adaptor.emplace(buffer); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) override -> net::result
+  {
+    if (var result = this.adaptor.retrieve(packet); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub ~emdev() = default;
+
+  net::macaddr address;
+
+  e1000e::adaptor mut &adaptor;
+}

@@ -1,0 +1,99 @@
+//
+// net dev
+//
+
+import std.atomic;
+import std.function;
+import net.result;
+import net.packet;
+import io;
+import vm;
+import vfs : fd;
+import process as _ : process;
+import support.rc : Rc;
+
+pub enum query
+{
+  address,
+  device_path,
+}
+
+pub struct netdev
+{
+
+  pub fn create<T>(var && ...args) -> Rc<T>
+  {
+    var dev = std::allocator::new<T>(&&args...);
+
+    dev.destroy = fn (netdev mut *dev) { std::allocator::delete(cast<T mut *>(dev)); };
+
+    return Rc(dev);
+  }
+
+  pub fn query(this &, net::query query) -> std::string
+  {
+    var result = std::string();
+
+    this.ops.query(this, query, &mut result);
+
+    return result;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
+  {
+    return ok;
+  }
+
+  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) -> net::result
+  {
+    return this.ops.transmit(&mut this, txqid, packet);
+  }
+
+  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) -> net::result
+  {
+    return this.ops.emplace(&mut this, rxqid, buffer);
+  }
+
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result
+  {
+    return this.ops.retrieve(&mut this, rxqid, packet);
+  }
+
+  pub netdev(device_operations &ops)
+    : ops(&ops)
+  {
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub ~netdev() = default;
+
+  i32 refcnt;
+  device_operations &ops;
+  fn (*destroy)(netdev mut *) -> void;
+}
+
+pub vtable device_operations
+{
+  pub fn query(this &, net::query query, std::string mut &result) -> net::result;
+
+  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) -> net::result;
+
+  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) -> net::result;
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result;
+}
+
+fn destroy(netdev mut *device) -> void
+{
+  if (device.destroy)
+    device.destroy(device);
+}

@@ -1,0 +1,815 @@
+//
+// e1000e
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import ioapic;
+import pci;
+import vm;
+import io;
+import dev;
+import net;
+import scheduler;
+import heap;
+import thread as _ : thread;
+import process as _ : process;
+import semaphore as _ : semaphore;
+import support.rc : Rc;
+import e1000e.emdev;
+
+using vm::physaddr;
+using net::macaddr;
+
+enum ctrl : u64
+{
+  const asde = 0x20;
+  const slu = 0x40;
+  const rst = 0x04000000;
+}
+
+enum status : u64
+{
+  const fd = 0x1;
+  const lu = 0x2;
+  const txoff = 0x8;
+  const speed = 0xc0;
+}
+
+enum interrupts : u32
+{
+  const txdw = 0x1;
+  const txqe = 0x2;
+  const lsc = 0x4;
+  const rxseq = 0x8;
+  const rxdmt0 = 0x10;
+  const rxo = 0x40;
+  const rxt0 = 0x80;
+
+  const none = 0x0;
+  const all = 0xd5;
+}
+
+enum rctl : u32
+{
+  const en = 0x2;
+  const sbp = 0x4;
+  const upe = 0x8;
+  const mpe = 0x10;
+  const lpe = 0x20;
+  const lbm = 0xc0;
+  const rdmts_mask = 0x3;
+  const rdmts_shift = 8;
+  const mo_mask = 0x3;
+  const mo_shift = 12;
+  const bam =	0x8000;
+  const sz_2048 = 0x00000000;
+  const sz_1024 = 0x00010000;
+  const sz_512 = 0x00020000;
+  const sz_256 = 0x00030000;
+  const sz_16384 = 0x02010000;
+  const sz_8192 = 0x02020000;
+  const sz_4096 = 0x02030000;
+  const vfe =	0x40000;
+  const cfien = 0x80000;
+  const cfi = 0x100000;
+  const dpf = 0x400000;
+  const pmcf = 0x800000;
+  const bsex = 0x2000000;
+  const secrc = 0x4000000;
+}
+
+enum tctl : u32
+{
+  const en = 0x2;
+  const psp = 0x8;
+  const ct_mask = 0xff;
+  const ct_shift = 4;
+  const cold_mask = 0x3ff;
+  const cold_shift = 12;
+  const rtlc = 0x01000000;
+}
+
+struct e1000_regs
+{
+  u32 ctrl;
+  u32[1] reserved1;
+  u32 status;
+  u32[1] reserved2;
+  u32 eecd;
+  u32 eerd;
+  u32 ctrl_ext;
+  u32 fla;
+  u32 mdic;
+  u32 serdesctl;
+  u32 fcal;
+  u32 fcah;
+  u32 fct;
+  u32 kumctrlsta;
+  u32 vet;
+  u32[33] reserved3;
+  u32 icr;
+  u32 itr;
+  u32 ics;
+  u32[1] reserved4;
+  u32 ims;
+  u32[1] reserved5;
+  u32 imc;
+  u32[9] reserved6;
+  u32 rctl;
+  u32[191] reserved7;
+  u32 tctl;
+  u32[3] reserved8;
+  u32 tipg;
+
+  fn rdbal(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2800 + i * 0x100); }
+  fn rdbah(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2804 + i * 0x100); }
+  fn rdlen(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2808 + i * 0x100); }
+  fn rdh(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2810 + i * 0x100); }
+  fn rdt(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2818 + i * 0x100); }
+  fn rxdctl(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x2828 + i * 0x100); }
+
+  fn tdbal(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3800 + i * 0x100); }
+  fn tdbah(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3804 + i * 0x100); }
+  fn tdlen(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3808 + i * 0x100); }
+  fn tdh(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3810 + i * 0x100); }
+  fn tdt(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3818 + i * 0x100); }
+  fn txdctl(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3828 + i * 0x100); }
+
+  fn mta(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x5200 + i * 4); }
+
+  fn ral(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x5400 + i * 8); }
+  fn rah(this mut &, usize i) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x5404 + i * 8); }
+}
+
+enum cmd : u8
+{
+  eop = 0x1,   // end of packet
+  ifcs = 0x2,  // insert fcs
+  ic = 0x4,    // insert checksum
+  rs = 0x8,    // report status
+  rps = 0x10,  // report packet sent
+  vle = 0x40,  // vlan packet enable
+  ide = 0x80,  // interrupt delay enable
+
+  pub const fn ~(cmd lhs) -> cmd { return cast<cmd>(~cast<u8>(lhs)); }
+  pub const fn &(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) & cast<u8>(rhs)); }
+  pub const fn |(cmd lhs, cmd rhs) -> cmd { return cast<cmd>(cast<u8>(lhs) | cast<u8>(rhs)); }
+}
+
+struct e1000_tx_desc
+{
+	physaddr addr;
+  u16 length;
+	u8 cso;
+	u8 cmd;
+	u8 status;
+	u8 css;
+	u16 special;
+
+  const max_payload = 16288;
+
+  e1000_tx_desc() = default;
+  e1000_tx_desc(e1000_tx_desc &) = default;
+  ~e1000_tx_desc() = default;
+}
+
+struct e1000_rx_desc
+{
+  physaddr addr;
+  u16 length;
+  u16 checksum;
+  u8 status;
+  u8 errors;
+  u16 special;
+
+  e1000_rx_desc() = default;
+  e1000_rx_desc(e1000_rx_desc &) = default;
+  ~e1000_rx_desc() = default;
+}
+
+fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == mask)
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == cast(0))
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+  io_error = -5,
+  would_block = -11,
+  device_busy = -16,
+  invalid_argument = -22,
+  timed_out = -110,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct adaptor
+{
+  pub adaptor(pci::device &device)
+    : device(&device)
+  {
+  }
+
+  fn reset(this mut &) -> result
+  {
+    std::print("e1000e ", this.name, " adaptor reset");
+
+    var regs = this.regs;
+
+    std::volatile_store(&regs.imc, 0xffffffff);
+    std::volatile_store(&regs.rctl, 0);
+    std::volatile_store(&regs.tctl, regs.tctl & ~tctl::en);
+    std::volatile_load(&regs.status);
+
+    std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::rst);
+
+    if (!wait_until_clear(&regs.ctrl, ctrl::rst, 1000))
+      return timed_out;
+
+    std::volatile_load(&regs.icr);
+
+    return ok;
+  }
+
+  fn enable(this mut &) -> result
+  {
+    var regs = this.regs;
+
+    std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::slu);
+
+    return ok;
+  }
+
+  fn link_speed(this mut &) -> std::string_literal
+	{
+    var regs = this.regs;
+
+    switch (std::volatile_load(&regs.status) & status::speed)
+    {
+      case 0x0:
+  			return "10 Mbps";
+
+		  case 0x40:
+        return "100 Mbps";
+
+		  case 0x80:
+		  case 0xc0:
+        return "1000 Mbps";
+    }
+
+		return "unknown";
+	}
+
+  fn link_duplex(this mut &) -> std::string_literal
+	{
+    var regs = this.regs;
+
+    switch (std::volatile_load(&regs.status) & status::fd)
+    {
+      case 0x0:
+        return "Half Duplex";
+
+      case 0x1:
+        return "Full Duplex";
+    }
+
+    return "unknown";
+  }
+
+  pub fn rxq_free_slots(this mut &) -> usize
+  {
+    return cast<usize>((this.rxq.sq_tail + this.rxq.sq_mask + 1 - std::volatile_load(&this.regs.rdh(this.rxq.index))) & this.rxq.sq_mask);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
+  }
+
+  pub ~adaptor() = default;
+
+  macaddr addr;
+
+  tx_queue mut *txq;
+  rx_queue mut *rxq;
+
+  thread mut *packet_handler;
+  semaphore packet_handler_doorbell;
+
+  Rc<net::netdev> interface;
+
+  u8 irq;
+  e1000_regs mut *regs;
+  pci::device &device;
+}
+
+pub struct tx_queue
+{
+  std::spin_lock lock;
+
+  pub tx_queue(adaptor mut &adaptor, usize index, u32 entries)
+    : adaptor(&adaptor), index(index), entries(entries)
+  {
+    std::assert(entries & (entries - 1) == 0);
+
+    this.sq = vm::allocate_physical(sizeof<e1000_tx_desc> * cast(entries)).addr;
+    this.sq_mask = entries - 1;
+
+    this.packets.resize(cast(entries));
+  }
+
+  pub tx_queue(tx_queue &&) = default;
+  pub ~tx_queue() = default;
+
+  u32 entries;
+
+  physaddr sq;
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+
+  std::vector<net::packet mut *> packets;
+
+  usize index;
+  adaptor mut &adaptor;
+}
+
+pub struct rx_queue
+{
+  std::spin_lock lock;
+
+  pub rx_queue(adaptor mut &adaptor, usize index, u32 entries)
+    : adaptor(&adaptor), index(index), entries(entries)
+  {
+    std::assert(entries & (entries - 1) == 0);
+
+    this.sq = vm::allocate_physical(sizeof<e1000_rx_desc> * cast(entries)).addr;
+    this.sq_mask = entries - 1;
+  }
+
+  pub rx_queue(rx_queue &&) = default;
+  pub ~rx_queue() = default;
+
+  u32 entries;
+
+  physaddr sq;
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+
+  usize index;
+  adaptor mut &adaptor;
+}
+
+fn read_nvm(u32 mut *eerd, u8 addr) -> u16
+{
+  var data = 0;
+
+  std::volatile_store(eerd, 0x1 | cast<u32>(addr) << 2);
+
+  while ((data = std::volatile_load(eerd)) & 0x2 == 0)
+    scheduler::sleep_yield();
+
+  return cast<u16>(data >> 16);
+}
+
+fn read_mdic(u32 mut *mdic, u32 offset) -> u16
+{
+  var data = 0;
+
+  std::volatile_store(mdic, (offset << 16) | (1 << 21) | 0x08000000);
+
+  while ((data = std::volatile_load(mdic)) & 0x10000000 == 0)
+    scheduler::sleep_yield();
+
+  return cast<u16>(data & 0xffff);
+}
+
+fn store_rar(e1000_regs mut *regs, usize i, macaddr &addr) -> void
+{
+	var ral = cast<u32>(addr[0]) | cast<u32>(addr[1]) << 8 | cast<u32>(addr[2]) << 16 | cast<u32>(addr[3]) << 24;
+	var rah = cast<u32>(addr[4]) | cast<u32>(addr[5]) << 8;
+
+	if (ral != 0 || rah != 0)
+		rah |= 0x80000000;
+
+	std::volatile_store(&regs.ral(i), ral);
+  std::volatile_load(&regs.status);
+  std::volatile_store(&regs.rah(i), rah);
+  std::volatile_load(&regs.status);
+}
+
+fn e1000_txq_handler(tx_queue mut *txq) -> void
+{
+  var guard = std::lock_guard(&mut txq.lock);
+
+  var head = txq.sq_head;
+
+  for (; head != txq.sq_tail; )
+  {
+    var index = cast<usize>(head & txq.sq_mask);
+
+    var txd = cast<e1000_tx_desc mut *>((txq.sq + index * sizeof<e1000_tx_desc>).ptr);
+
+    if (txd.status & 1 != 1)
+      break;
+
+    if (var packet = std::exchange(&mut txq.packets[index], null))
+      io::complete(&mut packet.cb, packet.length);
+
+    head = std::add_with_carry(head, 1).0;
+  }
+
+  if (head != txq.sq_head)
+  {
+    txq.sq_head = head;
+  }
+}
+
+fn e1000_io_handler(adaptor mut *adaptor) -> void
+{
+  var icr = adaptor.regs.icr;
+  std::volatile_store(&adaptor.regs.icr, icr);
+
+  if (icr & interrupts::txdw != 0)
+  {
+    e1000_txq_handler(adaptor.txq);
+  }
+
+  if (icr & (interrupts::rxt0 | interrupts::rxo) != 0)
+  {
+    adaptor.packet_handler_doorbell.release();
+  }
+}
+
+fn e1000_packet_handler(adaptor mut *adaptor) -> void
+{
+  for (;;)
+  {
+    var pkt = net::packet();
+
+    while (adaptor.interface.retrieve(0, &pkt))
+    {
+      //std::print("*packet* ", pkt);
+
+      for (var range : pkt.host)
+      {
+        if (var result = adaptor.interface.emplace(0, range); !result)
+          std::print("lost packet buffer");
+      }
+
+      pkt.length = 0;
+      pkt.host.clear();
+    }
+
+    adaptor.packet_handler_doorbell.wait();
+  }
+}
+
+fn initialise(tx_queue mut &txq) -> result
+{
+  var regs = txq.adaptor.regs;
+
+  std::volatile_store(&regs.tdlen(txq.index), cast(txq.entries) * sizeof<e1000_tx_desc>);
+  std::volatile_store(&regs.tdbah(txq.index), cast<u32>((cast<uintptr>(txq.sq) >> 32) & 0xffffffff));
+  std::volatile_store(&regs.tdbal(txq.index), cast<u32>((cast<uintptr>(txq.sq) >> 0) & 0xffffffff));
+
+  std::volatile_store(&regs.tdt(txq.index), 0);
+  std::volatile_store(&regs.tdh(txq.index), 0);
+
+  std::volatile_store(&regs.txdctl(txq.index), 0x0341011f);
+
+  std::volatile_store(&regs.tipg, 0x0060200a);
+
+  var tctl = regs.tctl;
+  tctl = tctl | tctl::psp;
+  tctl = tctl | tctl::rtlc;
+  tctl = tctl & ~(tctl::ct_mask << tctl::ct_shift) | (15 << tctl::ct_shift);
+  tctl = tctl | tctl::en;
+
+  std::volatile_store(&regs.tctl, tctl);
+
+  return ok;
+}
+
+fn initialise(rx_queue mut &rxq) -> result
+{
+  var regs = rxq.adaptor.regs;
+
+  std::volatile_store(&regs.rdlen(rxq.index), cast(rxq.entries) * sizeof<e1000_rx_desc>);
+  std::volatile_store(&regs.rdbah(rxq.index), cast<u32>((cast<uintptr>(rxq.sq) >> 32) & 0xffffffff));
+  std::volatile_store(&regs.rdbal(rxq.index), cast<u32>((cast<uintptr>(rxq.sq) >> 0) & 0xffffffff));
+
+  std::volatile_store(&regs.rdt(rxq.index), 0);
+  std::volatile_store(&regs.rdh(rxq.index), 0);
+
+  std::volatile_store(&regs.rxdctl(rxq.index), 0x1040420);
+
+  std::volatile_store(&regs.itr, 0x1000);
+
+  var rctl = regs.rctl;
+  rctl = rctl | rctl::bam;
+  rctl = rctl & ~rctl::sbp;
+  rctl = rctl & ~rctl::lpe;
+  rctl = rctl | rctl::secrc;
+  rctl = rctl & ~(rctl::mo_mask << rctl::mo_shift);
+  rctl = rctl & ~rctl::vfe;
+  rctl = rctl | rctl::sz_2048;
+  rctl = rctl | rctl::en;
+
+  std::volatile_store(&regs.rctl, rctl);
+
+  rxq.adaptor.emplace(vm::physrange(vm::allocate_physical(cast<usize>(rxq.entries - 1) * 2048).addr, cast<usize>(rxq.entries - 1) * 2048));
+
+  return ok;
+}
+
+fn initialise(adaptor mut &adaptor) -> result
+{
+  var &device = adaptor.device;
+
+  var base = device.read_base_address(0);
+  var size = device.read_size_register(0);
+  var mapped = heap::mmap(vm::physrange(base, size));
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var irq = ioapic::resolve(device.read_interrupt_line());
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  adaptor.irq = irq;
+  adaptor.regs = cast<e1000_regs mut *>(mapped.addr);
+
+  var regs = adaptor.regs;
+
+  if (std::volatile_load(&regs.eecd) & 0x100 == 0)
+    return invalid_argument;
+
+  if (var result = adaptor.reset(); !result)
+    return result;
+
+  for (var i = 0; i < 15; ++i)
+    store_rar(regs, i, macaddr());
+
+  for (var i = 0; i < 127; ++i)
+    std::volatile_store(&regs.mta(i), 0);
+
+  adaptor.txq = std::allocator::new<tx_queue>(&mut adaptor, 0, 256);
+
+  if (var result = adaptor.txq.initialise(); !result)
+    return result;
+
+  adaptor.rxq = std::allocator::new<rx_queue>(&mut adaptor, 0, 256);
+
+  if (var result = adaptor.rxq.initialise(); !result)
+    return result;
+
+  adaptor.addr = macaddr([ read_nvm(&regs.eerd, 0), read_nvm(&regs.eerd, 1), read_nvm(&regs.eerd, 2) ]);
+
+  store_rar(regs, 0, adaptor.addr);
+
+  if (var result = adaptor.enable(); !result)
+    return result;
+
+  if (std::volatile_load(&regs.status) & status::lu != 0)
+  {
+    std::print("e1000e ", adaptor.name, " link up, ", adaptor.link_speed, " ", adaptor.link_duplex);
+  }
+
+  std::volatile_store(&regs.ims, interrupts::all);
+  std::volatile_load(&regs.icr);
+
+  io::install_handler(irq, &cast<(adaptor mut *) -> void>(e1000_io_handler), &adaptor);
+
+  adaptor.interface = net::netdev::create<emdev>(&mut adaptor, adaptor.addr);
+
+  adaptor.packet_handler = create_thread(process::current, &cast<(adaptor mut *) -> void>(e1000_packet_handler), &adaptor);
+
+  scheduler::enqueue(adaptor.packet_handler, thread::priority::normal + 2);
+
+  return ok;
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var adaptor = std::allocator::new<adaptor>(device);
+
+  if (var result = adaptor.initialise(); !result)
+    std::print("e1000 error initialising adaptor - ", result);
+
+  dev::register(dev::dev_t(), adaptor.interface);
+
+/*
+var pkt = net::packet();
+var data = std::vector<u8>();
+
+data.append([ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
+data.append(adaptor.addr);
+//data.append([ 0, 0, 0, 0 ]);
+data.append([ 0x08, 0x06 ]);
+data.append([ 0, 0x01, 0x08, 0 ]);
+data.append([ 6, 4 ]);
+data.append([ 0, 1 ]);
+data.append(adaptor.addr);
+data.append([ 10, 0, 2, 15 ]);
+data.append([ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
+data.append([ 10, 0, 2, 2 ]);
+data.append([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]);
+data.append([ 0, 0, 0, 0]);
+
+var response = io::response();
+
+io::initiate(&mut response.cb, 1);
+
+vm::lock(vm::virtrange(data.data, data.len), vm::protection::readonly, &mut pkt.host);
+
+pkt.length = data.len;
+pkt.cb = response.cb;
+
+net::transmit(dev, 0, &pkt);
+response.wait();
+
+vm::unlock(pkt.host);
+*/
+}
+
+fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, e1000_tx_desc *txds, usize n) -> result
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut txq.lock);
+
+  var tail = txq.sq_tail;
+  var mask = txq.sq_mask;
+
+  if ((tail + mask + 1 - std::volatile_load(&txq.sq_head)) & mask + cast(n) > mask)
+    return device_busy;
+
+  for (var i = 0; i < n; ++i)
+  {
+    var index = cast<usize>(tail & mask);
+
+    var txd = cast<e1000_tx_desc mut *>((txq.sq + index * sizeof<e1000_tx_desc>).ptr);
+
+    txd.addr = (txds + i).addr;
+    txd.length = (txds + i).length;
+    txd.cmd = cast(cmd::rs);
+    txd.status = 0;
+
+    if (i + 1 == n)
+    {
+      txd.cmd |= cast(cmd::eop | cmd::ifcs);
+
+      txq.packets[index] = packet;
+    }
+
+    tail = std::add_with_carry(tail, 1).0;
+  }
+
+  txq.sq_tail = tail;
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(&adaptor.regs.tdt(txq.index), tail & mask);
+
+  return ok;
+}
+
+fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, e1000_rx_desc *rxds, usize n) -> result
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rxq.lock);
+
+  var tail = rxq.sq_tail;
+  var mask = rxq.sq_mask;
+
+  if ((tail + mask + 1 - std::volatile_load(&rxq.sq_head)) & mask + cast(n) > mask)
+    return device_busy;
+
+  for (var i = 0; i < n; ++i)
+  {
+    var index = cast<usize>(tail & mask);
+
+    var rxd = cast<e1000_rx_desc mut *>((rxq.sq + index * sizeof<e1000_rx_desc>).ptr);
+
+    rxd.addr = (rxds + i).addr;
+    rxd.length = 0;
+    rxd.status = 0;
+
+    tail = std::add_with_carry(tail, 1).0;
+  }
+
+  rxq.sq_tail = tail;
+
+  std::atomic_thread_fence();
+
+  std::volatile_store(&adaptor.regs.rdt(rxq.index), tail & mask);
+
+  return ok;
+}
+
+pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
+{
+  var txds = std::vector<e1000_tx_desc, N:4>();
+
+  for (var host : packet.host)
+  {
+    for (var addr = host.addr; addr < host.end; addr += e1000_tx_desc::max_payload)
+    {
+      var mut &txd = txds.push_back();
+
+      txd.addr = addr;
+      txd.length = cast<u16>(std::min(host.end - addr, e1000_tx_desc::max_payload));
+    }
+  }
+
+  if (var result = adaptor.enqueue(adaptor.txq, packet, txds.data, txds.len); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn emplace(adaptor mut &adaptor, vm::physrange buffer) -> result
+{
+  var rxds = std::vector<e1000_rx_desc, N:4>();
+
+  for (var addr = buffer.addr; addr < buffer.end; addr += 2048)
+  {
+    var mut &rxd = rxds.push_back();
+
+    rxd.addr = addr;
+    rxd.length = 2048;
+  }
+
+  if (var result = adaptor.enqueue(adaptor.rxq, rxds.data, rxds.len); !result)
+    return result;
+
+  return ok;
+}
+
+fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut *packet) -> result
+{
+  var guard = std::lock_guard(&mut rxq.lock);
+
+  var head = rxq.sq_head;
+
+  for (;;)
+  {
+    if (head == rxq.sq_tail)
+      return would_block;
+
+    var index = cast<usize>(head & rxq.sq_mask);
+
+    var rxd = cast<e1000_rx_desc mut *>((rxq.sq + index * sizeof<e1000_rx_desc>).ptr);
+
+    if (rxd.status & 1 != 1)
+      return would_block;
+
+    packet.length += cast(rxd.length);
+    packet.host.push_back(vm::physrange(rxd.addr, 2048));
+
+    head = std::add_with_carry(head, 1).0;
+
+    if (rxd.status & 2 != 0)
+      break;
+  }
+
+  rxq.sq_head = head;
+
+  return ok;
+}
+
+pub fn retrieve(adaptor mut &adaptor, net::packet mut *packet) -> result
+{
+  if (var result = adaptor.dequeue(adaptor.rxq, packet); !result)
+    return result;
+
+  return ok;
+}

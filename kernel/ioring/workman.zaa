@@ -8,11 +8,11 @@ import ioring : ioring_header, ioring_sqe, ioring_cqe, io_ring, result;
 import cpu;
 import sys;
 import scheduler;
-import platform;
 import thread as _ : thread;
 import process as _ : process;
 import semaphore as _ : semaphore;
 import mutex as _ : mutex;
+import platform : MAX_CPU_COUNT;
 
 struct ring_queue
 {
@@ -76,11 +76,11 @@ struct worker
 
 struct work_manager
 {
+  u32 activity;
+
   ring_queue rings;
 
-  worker[1] workers;
-
-  u32 activity;
+  worker[MAX_CPU_COUNT] workers;
 
   pub fn instance() -> work_manager mut &
   {
@@ -108,9 +108,7 @@ pub fn trigger(work_manager mut &workman) -> void
 {
   std::atomic_add(&workman.activity, 1);
 
-  var mut &worker = workman.workers[cast<usize>(cpu::id) % workman.workers.len];
-
-  worker.doorbell.release();
+  workman.workers[cast<usize>(cpu::id)].doorbell.release();
 }
 
 pub fn wake_from_stall() -> void
@@ -224,12 +222,12 @@ pub fn initialise() -> void
 {
   workman.rings.last = &workman.rings.head;
 
-  for (var mut &worker : workman.workers)
+  for (var i = 0; i < sys::cpu_count; ++i)
   {
+    var mut &worker = workman.workers[i];
+
     worker.kworkd = create_thread(process::current, &cast<(worker mut *) -> void>(kworkd), &worker);
 
-    // TODO: affinity
-
-    scheduler::enqueue(worker.kworkd);
+    scheduler::enqueue_pinned(cast<int>(i), worker.kworkd);
   }
 }

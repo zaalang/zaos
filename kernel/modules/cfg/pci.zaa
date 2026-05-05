@@ -1,0 +1,41 @@
+//
+// cfg pci
+//
+
+import std.stdio;
+import cpu;
+import dev;
+import scheduler;
+import platform;
+
+import pci;
+import ahci;
+import nvme;
+import usb.xhci as xhci;
+import e1000e;
+
+pub fn coldplug(pci::device &device) -> void
+{
+  switch (device.class_code)
+  {
+    case [1, 6, 1]:
+      ahci::initialise(device);
+
+    case [2, 8, 1]:
+      nvme::initialise(device);
+
+    case [48, 3, 12]:
+      xhci::initialise(device);
+
+    case [0, 0, 2]:
+      switch (device.vendor_id)
+      {
+        case 0x8086:
+          switch (device.device_id)
+          {
+            case 0x10d3:
+              e1000e::initialise(device);
+          }
+      }
+  }
+}

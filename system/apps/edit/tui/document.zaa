@@ -1672,7 +1672,7 @@ pub struct context
   }
 
   // Creates a text area.
-  #[lifetime(assign(this, depend(text)))]
+  #[lifetime(poison(this), assign(this, depend(text)))]
   pub fn textarea(this mut &, std::string_literal classname, textbuffer mut &text) -> void
   {
     this.block_begin(classname);

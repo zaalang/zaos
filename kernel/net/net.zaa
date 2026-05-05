@@ -1,0 +1,61 @@
+//
+// net
+//
+
+import std.stdio;
+import std.atomic;
+import net.netdev;
+import net.result;
+import net.mac;
+import io;
+import vm;
+import vfs;
+import dev;
+import process as _ : process;
+import support.rc : Rc;
+
+pub fn open(netdev mut *device, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
+{
+  return device.open(&mut fd, process, flags, mode);
+}
+
+pub fn ioctl(netdev mut *device, u32 op, vm::iovec &iovec) -> net::result
+{
+  return device.ioctl(op, iovec);
+}
+
+pub fn poll(netdev mut *device, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> net::result
+{
+  return device.poll(&mut readable, &mut writeable);
+}
+
+pub fn read(netdev mut *device, vm::iovec &iovec, usize offset, usize length) -> net::result
+{
+  return device.read(iovec, offset, length);
+}
+
+pub fn write(netdev mut *device, vm::iovec &iovec, usize offset, usize length) -> net::result
+{
+  return device.write(iovec, offset, length);
+}
+
+pub fn mmap(netdev mut *device, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> net::result
+{
+  return device.mmap(range, offset, prot, use);
+}
+
+pub fn transmit(netdev mut *device, u16 txqid, net::packet mut *packet) -> net::result
+{
+  return device.transmit(txqid, packet);
+}
+
+pub fn enumerate(var &&callback) -> void
+{
+  dev::enumerate(|id, device| [callback] {
+    switch (device)
+    {
+      case netdev[dev]:
+        callback(id, dev);
+    }
+  });
+}

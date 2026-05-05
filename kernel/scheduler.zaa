@@ -413,6 +413,22 @@ pub fn enqueue(thread mut *thread, thread::priority priority = thread::priority:
 }
 
 #[noinline]
+pub fn enqueue_pinned(int cpu, thread mut *thread, thread::priority priority = thread::priority::normal) -> void
+{
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = sys::cpu(cpu).runqueue;
+
+  var guard = std::lock_guard(&mut runqueue.lock);
+
+  thread.cpu = cpu;
+  thread.pinned = true;
+  runqueue.push_back(thread, priority);
+
+  platform::task_fork(&mut thread.task, extern(thread_main), thread);
+}
+
+#[noinline]
 pub fn set_priority(thread mut *thread, thread::priority priority) -> void
 {
   if (thread.priority == priority)

@@ -465,7 +465,7 @@ struct xhci_ring
 {
   u32 run;
   u32 ccs;
-  usize idx;
+  usize head;
   usize tail;
   usize base;
   usize mask;
@@ -1146,7 +1146,7 @@ fn connect(controller mut *controller, xhci_path &path, usb::speed speed, Rc<xhc
 
   device.endpoints[0].ring.run = 1;
   device.endpoints[0].ring.ccs = 1;
-  device.endpoints[0].ring.idx = 0;
+  device.endpoints[0].ring.head = 0;
   device.endpoints[0].ring.tail = 0;
   device.endpoints[0].ring.base = 0;
   device.endpoints[0].ring.mask = (1 << 4) - 1;
@@ -1248,17 +1248,17 @@ fn enqueue(controller mut &controller, xhcidev mut *device, usize ep, usb::trans
   if (transfer.stream != 0)
     &ring = &device.endpoints[ep].streams.rings[transfer.stream - 1];
 
-  var idx = ring.idx;
-  var ccs = ring.ccs;
+  var tail = ring.tail;
   var base = ring.base;
   var mask = ring.mask;
+  var ccs = ring.ccs;
 
-  if ((idx + mask + 1 - std::volatile_load(&ring.tail)) & mask + n >= mask)
+  if ((tail + mask + 1 - std::volatile_load(&ring.head)) & mask + n > mask)
     return device_busy;
 
   for (var i = 0; i < n; ++i)
   {
-    var sqe = cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + idx;
+    var sqe = cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + tail;
 
     sqe.cdw0 = (trbs + i).cdw0;
     sqe.cdw1 = (trbs + i).cdw1;
@@ -1266,9 +1266,9 @@ fn enqueue(controller mut &controller, xhcidev mut *device, usize ep, usb::trans
     sqe.flags = (trbs + i).flags | (ccs ^ cast(i == 0));
 
     if (sqe.flags & cast(trb::flags::ioc) != 0)
-      device.transfers[idx] = transfer;
+      device.transfers[tail] = transfer;
 
-    var next = idx + 1;
+    var next = tail + 1;
 
     if (next == base + mask)
     {
@@ -1280,19 +1280,19 @@ fn enqueue(controller mut &controller, xhcidev mut *device, usize ep, usb::trans
       next = base;
     }
 
-    idx = next;
+    tail = next;
   }
 
   std::atomic_thread_fence();
 
-  (cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + ring.idx).flags ^= 1;
+  (cast<xhci_trb mut *>(device.transfer_ring.addr.ptr) + ring.tail).flags ^= 1;
 
   std::atomic_thread_fence();
 
   std::volatile_store(&controller.dbarray.db[cast<usize>(device.slot)], cast((ep + 1) | (transfer.stream << 16)));
 
   ring.ccs = ccs;
-  ring.idx = idx;
+  ring.tail = tail;
 
   return ok;
 }
@@ -1449,7 +1449,7 @@ fn configure(controller mut &controller, xhcidev mut *device, std::span<u8> desc
 
         device.endpoints[ep].ring.run = 1;
         device.endpoints[ep].ring.ccs = 1;
-        device.endpoints[ep].ring.idx = ring_base;
+        device.endpoints[ep].ring.head = ring_base;
         device.endpoints[ep].ring.tail = ring_base;
         device.endpoints[ep].ring.base = ring_base;
         device.endpoints[ep].ring.mask = ring_size - 1;
@@ -1632,7 +1632,7 @@ fn allocate_streams(controller mut &controller, xhcidev mut *device, std::span<u
     {
       dpscap.rings[i].run = 1;
       dpscap.rings[i].ccs = 1;
-      dpscap.rings[i].idx = ring_base;
+      dpscap.rings[i].head = ring_base;
       dpscap.rings[i].tail = ring_base;
       dpscap.rings[i].base = ring_base;
       dpscap.rings[i].mask = ring_size - 1;
@@ -1813,7 +1813,7 @@ fn xhci_transfer_handler(controller mut *controller, xhci_trb *trb) -> usb::resu
 
     usb::complete(transfer, result);
 
-    std::atomic_store(&ring.tail, index + 1);
+    std::atomic_store(&ring.head, index + 1);
   }
 
   return ok;

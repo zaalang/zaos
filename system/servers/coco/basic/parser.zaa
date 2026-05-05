@@ -782,7 +782,7 @@ struct parse_context
   std::flat_hash_map<std::string, void> variables;
   std::flat_hash_map<std::string, std::vector<std::string>> records;
 
-  #[lifetime(launder(this.tok))]
+  #[lifetime(launder(this.tok), poison(this.tok))]
   fn consume_token(this mut &, var mut &is) throws(std::error) -> void
   {
     this.tok = this.lexer.fetch(&mut is);

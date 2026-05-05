@@ -38,7 +38,7 @@ OPTS="$OPTS -device ide-hd,bus=ide.0,drive=disk0,bootindex=0"
 #OPTS="$OPTS -device virtio-blk-pci,drive=disk0,bootindex=0"
 #OPTS="$OPTS -device qemu-xhci -device usb-bot,id=bot -device scsi-hd,bus=bot.0,scsi-id=0,lun=0,drive=disk0,bootindex=0"
 #OPTS="$OPTS -device qemu-xhci -device usb-uas,id=uas -device scsi-hd,bus=uas.0,scsi-id=0,lun=0,drive=disk0,bootindex=0"
- 
+
 #OPTS="$OPTS -drive id=disk1,if=none,file=user.img,format=raw"
 #OPTS="$OPTS -device ide-hd,bus=ide.1,drive=disk1"
 #OPTS="$OPTS -device nvme,serial=deadbeaf,drive=disk1"
@@ -62,8 +62,11 @@ OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-tablet"
 #OPTS="$OPTS -device ioh3420,bus=pcie.0,addr=1c.0,multifunction=on,port=1,chassis=1,id=root.1"
 #OPTS="$OPTS -device vfio-pci,host=00:14.0,bus=root.1,addr=00.0"
 
-#OPTS="$OPTS -netdev id=net0,type=user"
+#OPTS="$OPTS -netdev id=net0,type=user,hostfwd=udp::5555-:5555"
+#OPTS="$OPTS -netdev id=net0,type=socket,connect=:1234"
+#OPTS="$OPTS -device e1000e,netdev=net0"
 #OPTS="$OPTS -device virtio-net-pci,netdev=net0,romfile="
+#OPTS="$OPTS -object filter-dump,id=cap0,netdev=net0,file=net.pcap"
 
 OPTS="$OPTS -device qxl-vga"
 #OPTS="$OPTS -device virtio-gpu-pci"
@@ -76,8 +79,7 @@ OPTS="$OPTS -debugcon stdio -global isa-debugcon.iobase=0x402"
 #OPTS="$OPTS -debugcon stdio"
 
 #OPTS="$OPTS -d int,cpu_reset"
-#OPTS="$OPTS -d guest_errors,trace:*usb*"
+#OPTS="$OPTS -d guest_errors,trace:*e1000*"
 #OPTS="$OPTS -no-reboot -no-shutdown"
 
 qemu-system-x86_64 "$@" -s $OPTS
-

@@ -11,6 +11,7 @@ import vfs.fs;
 import vfs.fd;
 import blk;
 import chr;
+import net;
 import dev;
 import vm;
 import io;
@@ -98,6 +99,11 @@ struct device : pub inode
   }
 
   fn create_chrdev(devfs mut *fs, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode) -> Rc<vfs::node>
+  {
+    return std::allocator::new<device>(fs, vfs::node::type::device, parent, id, uid, gid, mode);
+  }
+
+  fn create_netdev(devfs mut *fs, vfs::node mut *parent, dev::dev_t id, u32 uid, u32 gid, u32 mode) -> Rc<vfs::node>
   {
     return std::allocator::new<device>(fs, vfs::node::type::device, parent, id, uid, gid, mode);
   }
@@ -262,6 +268,24 @@ pub fn publish(dev::dev_t id, dev::device &device) -> void
 
       devfs.insert(parent, std::string_view(devname), device::create_chrdev(devfs, parent, id, 0, 0, 0o20600));
 
+    case netdev[device]:
+
+      var devname = device.query(net::query::device_path);
+
+      var parent = devfs.root;
+
+      if (var j = std::memrchr(devname.data, cast('/'), devname.len); j != devname.len)
+      {
+        parent = devfs.mkpath(parent, devname.substr(0, j));
+
+        devname = devname.substr(j + 1, devname.len);
+      }
+
+      if (parent.type != vfs::node::type::directory)
+        return;
+
+      devfs.insert(parent, std::string_view(devname), device::create_netdev(devfs, parent, id, 0, 0, 0o20600));
+
     else:
       std::panic("unhandled device");
   }
@@ -290,6 +314,24 @@ pub fn remove(dev::dev_t id, dev::device &device) -> void
     case chrdev[device]:
 
       var devname = device.query(chr::query::device_path);
+
+      var parent = devfs.root;
+
+      if (var j = std::memrchr(devname.data, cast('/'), devname.len); j != devname.len)
+      {
+        parent = devfs.mkpath(parent, devname.substr(0, j));
+
+        devname = devname.substr(j + 1, devname.len);
+      }
+
+      if (parent.type != vfs::node::type::directory)
+        return;
+
+      devfs.remove(parent, std::string_view(devname));
+
+    case netdev[device]:
+
+      var devname = device.query(net::query::device_path);
 
       var parent = devfs.root;
 
@@ -423,6 +465,9 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
         case chrdev[device]:
           return chr::open(device, &mut fd, process, flags, mode);
 
+        case netdev[device]:
+          return net::open(device, &mut fd, process, flags, mode);
+
         else:
           return no_such_device;
       }
@@ -463,6 +508,9 @@ pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::resul
           stat.size = cast<u64>(device.block_count) * cast<u64>(device.block_size);
 
         case chrdev[device]:
+          stat.size = 0;
+
+        case netdev[device]:
           stat.size = 0;
 
         else:
@@ -755,6 +803,6 @@ pub fn sync(devfs mut *fs) -> vfs::result
 
   if (response.wait(); !response)
     return io_error;
- 
+
   return ok;
 }

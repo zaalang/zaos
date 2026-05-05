@@ -223,6 +223,11 @@ struct context
     return this.text.take_back();
   }
 
+  fn push_scope(this mut &, acpi::node *scope) -> void
+  {
+    this.scopes.push_back(scope);
+  }
+
   fn push_reference(this mut &, operand &operand) -> void
   {
     switch (operand)
@@ -242,19 +247,32 @@ struct context
   {
     std::assert(this.stack.len < this.stack.capacity, "stack exhausted");
 
-    return &this.stack.push_back(operand::value(&&value)).value;
+    new<operand>(this.stack.end)(operand::value(&&value));
+
+    this.stack.append_from_capacity(1);
+
+    return &this.stack.back.value;
   }
 
   fn push_operand(this mut &, operand &&operand) -> operand mut &
   {
     std::assert(this.stack.len < this.stack.capacity, "stack exhausted");
 
-    return &this.stack.push_back(&&operand);
+    new<operand>(this.stack.end)(&&operand);
+
+    this.stack.append_from_capacity(1);
+
+    return &this.stack.back;
   }
 
-  fn push_scope(this mut &, acpi::node *scope) -> void
+  fn push_locals(this mut &, usize count) -> void
   {
-    this.scopes.push_back(scope);
+    std::assert(this.stack.len + count < this.stack.capacity, "stack exhausted");
+
+    for (var i = 0; i < count; ++i)
+      new<operand>(this.stack.end + i)();
+
+    this.stack.append_from_capacity(count);
   }
 
   fn push_frame(this mut &, usize argc, acpi::node *scope, std::span<u8> &ret) -> void
@@ -267,9 +285,7 @@ struct context
     frame.scope = std::allocator::new<acpi::node>(acpi::node::type::method, scope);
     frame.ret = ret;
 
-    std::assert(this.stack.len + (NARGS - argc) + NLOCALS < this.stack.capacity, "stack exhausted");
-
-    this.stack.resize(this.stack.len + (NARGS - argc) + NLOCALS);
+    this.push_locals((NARGS - argc) + NLOCALS);
 
     this.push_scope(frame.scope);
   }

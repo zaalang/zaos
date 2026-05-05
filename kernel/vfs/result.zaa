@@ -4,6 +4,7 @@
 
 import blk.result;
 import chr.result;
+import net.result;
 
 pub enum result : i32
 {
@@ -46,5 +47,9 @@ pub enum result : i32
   {
     return cast(result);
   }
-}
 
+  pub fn result(net::result result) -> result
+  {
+    return cast(result);
+  }
+}

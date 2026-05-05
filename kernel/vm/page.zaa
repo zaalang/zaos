@@ -62,7 +62,7 @@ pub struct physaddr : pub platform::physaddr_t
   }
 
   pub physaddr() = default;
-  pub physaddr(physaddr&) = default;
+  pub physaddr(physaddr &) = default;
   pub fn =(physaddr mut &, physaddr &) -> physaddr mut & = default;
   pub ~physaddr() = default;
 }
@@ -178,7 +178,7 @@ pub struct virtaddr : pub platform::virtaddr_t
   }
 
   pub virtaddr() = default;
-  pub virtaddr(virtaddr&) = default;
+  pub virtaddr(virtaddr &) = default;
   pub fn =(virtaddr mut &, virtaddr &) -> virtaddr mut & = default;
   pub ~virtaddr() = default;
 }

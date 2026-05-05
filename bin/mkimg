@@ -12,7 +12,7 @@ cat > $2/grub.cfg <<-GRUBCFG
   # grub-mkimage -O x86_64-efi -p /efi/boot normal search echo fat ext2 part_gpt chain efi_gop gfxterm > grubx64.efi
   #
 
-  set timeout=4
+  set timeout=0
   set default=1
 
   #set root=(hd0,gpt2)

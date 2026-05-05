@@ -1,3 +1,6 @@
 //
 // cfg
 //
+
+import cfg.acpi;
+//import cfg.none;

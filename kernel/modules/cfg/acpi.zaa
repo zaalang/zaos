@@ -10,13 +10,11 @@ import dev;
 import scheduler;
 import cfg.acpi.namespace : namespace;
 import cfg.acpi.registers : acpi_read_register, acpi_write_register;
+import cfg.pci;
 import platform;
 
 import pci;
 import ps2;
-import ahci;
-import nvme;
-import usb.xhci as xhci;
 
 fn coldplug(namespace mut &cfg) -> acpi::result
 {
@@ -163,17 +161,7 @@ fn coldplug(namespace mut &cfg) -> acpi::result
 
               for (var &device : pci::devices)
               {
-                switch (device.class_code)
-                {
-                  case [1, 6, 1]:
-                    ahci::initialise(device);
-
-                  case [2, 8, 1]:
-                    nvme::initialise(device);
-
-                  case [48, 3, 12]:
-                    xhci::initialise(device);
-                }
+                cfg::coldplug(device);
               }
           }
         }
