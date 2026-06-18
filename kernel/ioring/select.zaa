@@ -37,7 +37,7 @@ struct pollevt
   }
 
   pollevt() = default;
-  pollevt(pollevt&) = default;
+  pollevt(pollevt &) = default;
   ~pollevt() = default;
 }
 
@@ -73,6 +73,8 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
           case vfs::node::type::event:
           case vfs::node::type::buffer:
           case vfs::node::type::channel:
+          case vfs::node::type::socket:
+          case vfs::node::type::netlink:
           case vfs::node::type::watchset:
           case vfs::node::type::pollset:
           case vfs::node::type::ioring:

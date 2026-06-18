@@ -94,13 +94,13 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -
     if (!result)
       return;
 
-    if (result = this.ptty.gets(cast<u8 mut *>(region.addr.ptr), region.size); result)
-    {
-      count += cast(result);
+    if (result = this.ptty.gets(cast<u8 mut *>(region.addr.ptr), region.size); !result)
+      return;
 
-      if (cast(result) != region.size)
-        result = chr::result::would_block;
-    }
+    count += cast(result);
+
+    if (cast(result) != region.size)
+      result = chr::result::would_block;
   });
 
   if (count == 0)
@@ -120,13 +120,13 @@ pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) 
     if (!result)
       return;
 
-    if (result = this.ptty.puts(cast<u8*>(region.addr.ptr), region.size); result)
-    {
-      count += cast(result);
+    if (result = this.ptty.puts(cast<u8*>(region.addr.ptr), region.size); !result)
+      return;
 
-      if (cast(result) != region.size)
-        result = chr::result::would_block;
-    }
+    count += cast(result);
+
+    if (cast(result) != region.size)
+      result = chr::result::would_block;
   });
 
   if (count == 0)
@@ -172,9 +172,10 @@ pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
       this.ptty.setwinsize(winsize.ws_row, winsize.ws_col, winsize.ws_xpixel, winsize.ws_ypixel);
 
       return ok;
-  }
 
-  return not_supported;
+    else:
+      return not_supported;
+  }
 }
 
 pub fn mmap(vfs::node mut *node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result

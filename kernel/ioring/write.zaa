@@ -16,7 +16,7 @@ struct iov
   usize len;
 
   iov() = default;
-  iov(iov&) = default;
+  iov(iov &) = default;
   ~iov() = default;
 }
 
@@ -98,6 +98,8 @@ pub fn sys_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr buf
     case vfs::node::type::event:
     case vfs::node::type::buffer:
     case vfs::node::type::channel:
+    case vfs::node::type::socket:
+    case vfs::node::type::netlink:
     case vfs::node::type::watchset:
     case vfs::node::type::pollset:
     case vfs::node::type::ioring:
@@ -199,6 +201,8 @@ pub fn sys_writev(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr io
     case vfs::node::type::event:
     case vfs::node::type::buffer:
     case vfs::node::type::channel:
+    case vfs::node::type::socket:
+    case vfs::node::type::netlink:
     case vfs::node::type::watchset:
     case vfs::node::type::pollset:
     case vfs::node::type::ioring:

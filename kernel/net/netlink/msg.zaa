@@ -1,0 +1,91 @@
+//
+// msg
+//
+
+import std.stdio;
+import std.circular_buffer;
+import io;
+import vm;
+import mutex as _ : mutex;
+
+pub const NLM_F_REQUEST = 1;     /* It is request message */
+pub const NLM_F_MULTI = 2;       /* Multipart message, terminated by NLMSG_DONE */
+pub const NLM_F_ACK = 4;         /* Reply with ack, with zero or error code */
+pub const NLM_F_ECHO = 8;        /* Echo this request */
+
+pub const NLMSG_NOOP = 0x1;      /* Nothing */
+pub const NLMSG_ERROR = 0x2;     /* Error */
+pub const NLMSG_DONE = 0x3;      /* End of a dump */
+pub const NLMSG_OVERRUN = 0x4;   /* Data lost */
+
+pub struct nlmsghdr
+{
+  pub u32 nlmsg_len;    /* Size of message including header */
+  pub u16 nlmsg_type;   /* Type of message content */
+  pub u16 nlmsg_flags;  /* Additional flags */
+  pub u32 nlmsg_seq;    /* Sequence number */
+  pub u32 nlmsg_pid;    /* Sender port ID */
+}
+
+pub struct nlmsg_queue
+{
+  mutex lock;
+  io::response readable;
+  std::circular_buffer<u8, N:16384> buffer;
+
+  pub fn readable(this mut &) -> io::response mut &
+  {
+    return &this.readable;
+  }
+
+  pub fn push(this mut &, u8 *data, usize length) ->  vm::result
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    if (this.buffer.capacity < this.buffer.len + length)
+      return would_block;
+
+    this.buffer.append(data, data + length);
+
+    if (this.buffer.len == length)
+      io::complete(&mut this.readable.cb, 0);
+
+    return ok;
+  }
+
+  pub fn pop(this mut &, vm::iovec &iovec, usize offset, usize length, usize mut &count) -> vm::result
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    if (this.buffer.empty)
+      return would_block;
+
+    var remaining = cast<usize>(this.buffer[0]) + cast<usize>(this.buffer[1]) << 8 + cast<usize>(this.buffer[2]) << 16 + cast<usize>(this.buffer[3]) << 24;
+
+    for (var span : this.buffer.spans)
+    {
+      var bytes = std::min(remaining, span.len);
+
+      if (var result = vm::memcpy(iovec, offset, span.data, bytes); !result)
+        return cast(result);
+
+      count += bytes;
+      offset += bytes;
+      remaining -= bytes;
+    }
+
+    this.buffer.erase(this.buffer.begin, count);
+
+    if (this.buffer.len == 0)
+      io::initiate(&mut this.readable.cb, 1);
+
+    return ok;
+  }
+
+  pub nlmsg_queue()
+  {
+    io::initiate(&mut readable.cb, 1);
+  }
+
+  pub ~nlmsg_queue() = default;
+}

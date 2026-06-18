@@ -1,0 +1,270 @@
+//
+// sysfs net
+//
+
+import std.alloc;
+import std.flat_hash_map;
+import sysfs;
+import vfs.node;
+import dev;
+import net;
+import net.protocols.ipv6 as ipv6;
+import vm;
+import sys;
+import process as _ : process;
+import support.rc : Rc;
+import support.json : json_stream;
+import chrono;
+
+pub struct link_node : pub sysfs::sysfs_directory_node
+{
+  dev::dev_t id;
+
+  pub fn create(vfs::node mut *parent, dev::dev_t id) -> Rc<vfs::node>
+  {
+    return std::allocator::new<link_node>(parent, id);
+  }
+
+  pub link_node(vfs::node mut *parent, dev::dev_t id)
+    : super(&impl this, parent),
+      id(id)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    stat.uid = 0;
+    stat.gid = 0;
+
+    return ok;
+  }
+
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
+  {
+    var &this = cast<link_node&>(*path);
+
+    switch (name)
+    {
+      case "stat":
+        return link_stat_node::create(path, this.id);
+    }
+
+    return null;
+  }
+
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) override -> vfs::result
+  {
+    emit(vfs::filetype::regular, std::string_view("stat"));
+
+    return ok;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<link_node mut *>(node));
+  }
+
+  pub ~link_node() = default;
+}
+
+pub struct link_stat_node : pub sysfs::sysfs_file_node
+{
+  dev::dev_t id;
+
+  pub fn create(vfs::node mut *parent, dev::dev_t id) -> Rc<vfs::node>
+  {
+    return std::allocator::new<link_stat_node>(parent, id);
+  }
+
+  pub link_stat_node(vfs::node mut *parent, dev::dev_t id)
+    : super(&impl this, parent),
+      id(id)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<link_stat_node mut &>(*node);
+
+    var dev = dev::get(this.id);
+
+    if (dev.kind != typeof(dev::device::kind)::netdev)
+      return io_error;
+
+    var &dev = dev.netdev;
+
+    if (flags & 0x3 != 0)
+    {
+      var json = std::string();
+      var stream = json_stream(&mut json);
+
+      stream.begin('{');
+      stream.append("id", this.id);
+      stream.end('}');
+
+      this.contents = &move json;
+    }
+
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<link_stat_node mut *>(node));
+  }
+
+  pub ~link_stat_node() = default;
+}
+
+pub struct net_root_node : pub sysfs::sysfs_directory_node
+{
+  pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
+  {
+    return std::allocator::new<net_root_node>(parent);
+  }
+
+  pub net_root_node(vfs::node mut *parent)
+    : super(&impl this, parent)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn lookup(vfs::node mut *path, std::string_view name) override -> Rc<vfs::node>
+  {
+    var &this = cast<net_root_node&>(*path);
+
+    if (name == "list")
+      return net_list_node::create(path);
+
+    var id = dev::dev_t();
+    if (std::sscan(name, &mut id).len != name.len)
+      return null;
+
+    if (dev::get(id).kind != typeof(dev::device::kind)::netdev)
+      return null;
+
+    return link_node::create(path, id);
+  }
+
+  pub fn readdir(vfs::node mut *node, u64 mut &cursor, std::delegate<(vfs::filetype, std::string_view) -> vm::result> mut &emit) override -> vfs::result
+  {
+    net::enumerate(|id, dev| {
+      var buf = [0; 64];
+      var len = std::sprint(&mut buf, id);
+
+      emit(vfs::filetype::directory, std::string_view(buf.data, len));
+    });
+
+    emit(vfs::filetype::regular, std::string_view("list"));
+
+    return ok;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<net_root_node mut *>(node));
+  }
+
+  pub ~net_root_node() = default;
+}
+
+pub struct net_list_node : pub sysfs::sysfs_file_node
+{
+  pub fn create(vfs::node mut *parent) -> Rc<vfs::node>
+  {
+    return std::allocator::new<net_list_node>(parent);
+  }
+
+  pub net_list_node(vfs::node mut *parent)
+    : super(&impl this, parent)
+  {
+  }
+
+  pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+  {
+    var mut &this = cast<net_list_node mut &>(*node);
+
+    if (flags & 0x3 != 0)
+    {
+      var json = std::string();
+      var stream = json_stream(&mut json);
+
+      stream.begin('[');
+
+      net::enumerate(|id, dev| {
+        stream.begin('{');
+        stream.append("id", id);
+        stream.append("name", dev.query(net::query::name));
+        stream.append("type", dev.query(net::query::type));
+        stream.append("device", dev.query(net::query::device_path));
+        stream.append("address", dev.query(net::query::address));
+
+        stream.begin("flags", '[');
+        if (dev.flags & net::flags::up == net::flags::up)
+          stream.append("UP");
+        if (dev.flags & net::flags::lower_up == net::flags::lower_up)
+          stream.append("LOWER_UP");
+        stream.end(']');
+
+        stream.begin("inet6", '{');
+
+        stream.begin("addresses", '[');
+        dev.ipv6.enumerate_addrs(|ifa| {
+          stream.append(std::format("{}/{}", ifa.addr, ifa.prefixlen));
+        });
+        stream.end(']');
+
+        stream.end('}');
+
+        stream.end('}');
+      });
+
+      stream.end(']');
+
+      this.contents = &move json;
+    }
+
+    return ok;
+  }
+
+  pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+  {
+    return ok;
+  }
+
+  pub fn write(vfs::node mut *node, u64 position, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+  {
+    return not_supported;
+  }
+
+  fn destroy(vfs::node mut *node) -> void
+  {
+    std::allocator::delete(cast<net_list_node mut *>(node));
+  }
+
+  pub ~net_list_node() = default;
+}

@@ -1,0 +1,241 @@
+//
+// socket
+//
+
+import std.stdio;
+import net.stack;
+import net.result;
+import vm;
+import io;
+import vfs;
+import mutex as _ : mutex;
+import process as _ : process;
+import support.rc : Rc;
+
+pub const AF_INET6 = 10;
+
+pub const SOCK_STREAM = 1;
+pub const SOCK_DGRAM = 2;
+pub const SOCK_RAW = 3;
+
+pub const IPPROTO_IP = 0;
+pub const IPPROTO_ICMP = 1;
+pub const IPPROTO_TCP = 6;
+pub const IPPROTO_UDP = 17;
+pub const IPPROTO_IPV6 = 41;
+pub const IPPROTO_ICMPV6 = 58;
+
+pub struct sockaddr
+{
+  pub u16 sa_family;
+}
+
+pub struct sockaddr_storage
+{
+  pub u16 ss_family;
+  u8[6] __ss_pad1;
+  u64 __ss_pad2;
+  u8[112] __ss_pad3;
+
+  pub sockaddr_storage() = default;
+  pub ~sockaddr_storage() = default;
+}
+
+pub struct ctrlhdr
+{
+  pub u32 ctrl_len;
+  pub u32 ctrl_flags;
+}
+
+pub struct ctrlattr
+{
+  pub u32 cta_len;
+  pub i32 cta_level;
+  pub u16 cta_type;
+  pub u8[0] cta_value;
+}
+
+pub struct socket
+{
+  pub i32 family;
+  pub i32 type;
+  pub i32 protocol;
+
+  pub sockaddr_storage sockname;
+  pub sockaddr_storage peername;
+
+  pub io::response readable;
+  pub io::response writeable;
+
+  pub void mut *state;
+
+  vfs::node node_;
+
+  fn create() -> Rc<socket>
+  {
+    return std::allocator::new<socket>();
+  }
+
+  pub fn node(this mut &) -> Rc<vfs::node>
+  {
+    return &this.node_;
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    this.node_.ref();
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    this.node_.unref();
+  }
+
+  pub socket() = default;
+  pub ~socket() = default;
+}
+
+pub fn create_socket() -> Rc<socket>
+{
+  return socket::create();
+}
+
+pub fn setup_socket(Rc<socket> mut &socket, i32 family, i32 type, i32 protocol) -> net::result
+{
+  socket.family = family;
+  socket.type = type;
+  socket.protocol = protocol;
+
+  io::initiate(&mut socket.readable.cb, 1);
+
+  vfs::node::init(&socket.node_, vfs::node::type::socket, vfs::node::ops::stream(&impl *socket));
+
+  return ok;
+}
+
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      net::open(socket);
+  }
+
+  return ok;
+}
+
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+{
+  var mut &socket = *cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  readable = socket.readable.cb;
+  writeable = socket.writeable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, ctrlhdr mut *ctrl, usize ctrllen) -> vfs::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::read(socket, iovec, offset, length, ctrl, ctrllen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+{
+  return read(node, iovec, offset, length, null, 0);
+}
+
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> vfs::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::write(socket, iovec, offset, length, ctrl, ctrllen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+{
+  return write(node, iovec, offset, length, null, 0);
+}
+
+pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::ioctl(socket, op, iovec);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn bind(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::bind(socket, addr, alen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn listen(vfs::node mut *node) -> net::result
+{
+  return not_supported;
+}
+
+pub fn accept(vfs::node mut *node) -> net::result
+{
+  return not_supported;
+}
+
+pub fn shutdown(vfs::node mut *node) -> net::result
+{
+  return not_supported;
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      net::close(socket);
+  }
+
+  std::allocator::delete(socket);
+}

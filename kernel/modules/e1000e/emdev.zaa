@@ -14,7 +14,7 @@ pub struct emdev : pub net::netdev
     : super(&impl this),
       adaptor(&adaptor)
   {
-    this.address = address;
+    this.hwaddr = address;
   }
 
   pub fn name(this &) -> std::string
@@ -26,8 +26,14 @@ pub struct emdev : pub net::netdev
   {
     switch (query)
     {
+      case name:
+        result = std::format("");
+
+      case type:
+        result = std::format("ether");
+
       case address:
-        result = std::format("{}", this.address);
+        result = std::format("{}", this.hwaddr);
 
       case device_path:
         result = std::format("net/{}/0", this.name);
@@ -44,25 +50,23 @@ pub struct emdev : pub net::netdev
     return ok;
   }
 
-  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) override -> net::result
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) override -> net::result
   {
-    if (var result = this.adaptor.emplace(buffer); !result)
+    if (var result = this.adaptor.retrieve(rxqid, packet); !result)
       return cast<net::result>(result);
 
     return ok;
   }
 
-  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) override -> net::result
+  pub fn refill(this mut &, u16 rxqid) override -> net::result
   {
-    if (var result = this.adaptor.retrieve(packet); !result)
+    if (var result = this.adaptor.refill(rxqid); !result)
       return cast<net::result>(result);
 
     return ok;
   }
 
   pub ~emdev() = default;
-
-  net::macaddr address;
 
   e1000e::adaptor mut &adaptor;
 }

@@ -590,6 +590,25 @@ pub fn munmap(process mut *process, virtrange range) -> vm::result
   return munmap(&mut process.pagetable, &mut process.userspace, range);
 }
 
+pub fn lock(page mut *page) -> physrange
+{
+  page.ref();
+
+  return physrange(mm.pageallocator.address_for_page(page), PAGE_SIZE);
+}
+
+pub fn lock(physrange range) -> physrange
+{
+  for (var phys = range.begin; phys < range.end; phys = (phys + PAGE_SIZE) & ~PAGE_MASK)
+  {
+    var page = mm.pageallocator.page_from_address(phys);
+
+    page.ref();
+  }
+
+  return range;
+}
+
 fn lock(page_table mut &pagetable, address_space mut &space, virtrange range, protection prot, std::vector<physrange> mut &result) -> vm::result
 {
   var status = result::ok;
@@ -663,11 +682,19 @@ pub fn lock(process mut *process, virtrange range, protection prot, vm::iovec mu
   return lock(&mut process.pagetable, &mut process.userspace, range, prot, &mut result.host);
 }
 
-pub fn lock(virtrange range, protection prot, vm::iovec mut &result)
+pub fn lock(virtrange range, protection prot, vm::iovec mut &result) -> vm::result
 {
   result.length += range.size;
 
   return lock(&mut platform::pagetable, &mut address_space(range.addr), range, prot, &mut result.host);
+}
+
+pub fn lock(page mut *page, vm::iovec mut &result) -> vm::result
+{
+  result.length += PAGE_SIZE;
+  result.host.push_back(vm::lock(page));
+
+  return ok;
 }
 
 pub fn unlock(physrange range) -> void

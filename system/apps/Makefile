@@ -10,6 +10,7 @@ default:
 	@cd shell; $(MAKE)
 	@cd terminal; $(MAKE)
 	@cd coreutils; $(MAKE)
+	@cd netutils; $(MAKE)
 	@cd edit; $(MAKE)
 	@cd calc; $(MAKE)
 	@cd gallery; $(MAKE)
@@ -24,6 +25,7 @@ clean:
 	cd shell; $(MAKE) clean
 	cd terminal; $(MAKE) clean
 	cd coreutils; $(MAKE) clean
+	cd netutils; $(MAKE) clean
 	cd edit; $(MAKE) clean
 	cd calc; $(MAKE) clean
 	cd gallery; $(MAKE) clean

@@ -626,9 +626,12 @@ fn destroy(process mut *process) -> void
 
 pub fn teardown(process mut *process) -> void
 {
-  ioring::shutdown(process);
-
   process.fds.clear();
+
+  for (; process.iorings; )
+  {
+    ioring::shutdown(process.iorings);
+  }
 
   process.userspace.each(|region| {
     vm::munmap(process, region.range);

@@ -20,7 +20,7 @@ pub struct event
   io::response readable;
   io::response writeable;
 
-  vfs::node node;
+  vfs::node node_;
 
   fn create() -> Rc<event>
   {
@@ -29,28 +29,24 @@ pub struct event
 
   pub fn node(this mut &) -> Rc<vfs::node>
   {
-    return &this.node;
-  }
-
-  pub event()
-  {
-    vfs::node::init(&node, vfs::node::type::event, vfs::node::ops::stream(&impl node));
+    return &this.node_;
   }
 
   pub fn ref(this mut &) -> void
   {
-    this.node.ref();
+    this.node_.ref();
   }
 
   pub fn unref(this mut &) -> void
   {
-    this.node.unref();
+    this.node_.unref();
   }
 
+  pub event() = default;
   pub ~event() = default;
 }
 
-pub fn create_event(process mut *process) -> Rc<event>
+pub fn create_event() -> Rc<event>
 {
   return event::create();
 }
@@ -65,6 +61,8 @@ pub fn setup_event(Rc<event> mut &event, u64 value, u64 maxvalue) -> vfs::result
 
   if (value == maxvalue)
     io::initiate(&mut event.writeable.cb, 1);
+
+  vfs::node::init(&event.node_, vfs::node::type::event, vfs::node::ops::stream(&impl *event));
 
   return ok;
 }
@@ -86,7 +84,7 @@ pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 
 pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
-  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node_));
 
   readable = event.readable.cb;
   writeable = event.writeable.cb;
@@ -96,7 +94,7 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
 
 pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
-  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node_));
 
   var guard = std::lock_guard(&mut event.lock);
 
@@ -119,7 +117,7 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -
 
 pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
-  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
+  var mut &event = *cast<event mut *>(cast<uintptr>(node) - offsetof(event::node_));
 
   var guard = std::lock_guard(&mut event.lock);
 
@@ -147,7 +145,7 @@ pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) 
 
 fn destroy(vfs::node mut *node) -> void
 {
-  var event = cast<event mut *>(cast<uintptr>(node) - offsetof(event::node));
+  var event = cast<event mut *>(cast<uintptr>(node) - offsetof(event::node_));
 
   std::allocator::delete(event);
 }

@@ -536,7 +536,7 @@ pub struct proc_root_node : pub sysfs::sysfs_directory_node
       return proc_self_node::create(path);
 
     var pid = process::id();
-    if (std::atoi(name.begin, name.end, &mut pid).len != name.len)
+    if (std::sscan(name, &mut pid).len != name.len)
       return null;
 
     var process = process::find(pid);

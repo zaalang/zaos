@@ -7,6 +7,7 @@ import std.function;
 import std.flat_hash_map;
 import sysfs.proc;
 import sysfs.cpu;
+import sysfs.net;
 import vfs.node;
 import vfs.stat;
 import vfs.fs;
@@ -427,6 +428,7 @@ pub fn mount(sysfs mut *fs, Rc<vfs::node> mut &dentry) -> vfs::result
 
   fs.subsystems.insert("proc", proc_root_node::create(fs.root));
   fs.subsystems.insert("cpu", cpu_root_node::create(fs.root));
+  fs.subsystems.insert("net", net_root_node::create(fs.root));
 
   dentry = fs.root;
 

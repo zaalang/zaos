@@ -1,0 +1,214 @@
+//
+// net in
+//
+
+import std.stdio;
+import std.fmt;
+
+pub struct in4addr : pub u8[4]
+{
+  pub in4addr(u8[4] &addr)
+    : super(addr)
+  {
+  }
+
+  pub in4addr(u16[2] &addr)
+    : super([
+        cast<u8>(addr[0] >> 8), cast<u8>(addr[0] & 0xff),
+        cast<u8>(addr[1] >> 8), cast<u8>(addr[1] & 0xff),
+      ])
+  {
+  }
+
+  pub fn is_unspecified(this &) -> bool
+  {
+    return (this.super == [ 0, 0, 0, 0 ]);
+  }
+
+  pub fn masked(this &, usize prefixlen) -> in4addr
+  {
+    var masked = in4addr();
+
+    for (var i = 0; i < prefixlen/8; ++i)
+      masked[i] = this[i];
+
+    if (prefixlen & 7 != 0)
+      masked[prefixlen/8] = this[prefixlen/8] & (0xff << (8 - (prefixlen & 7)));
+
+    return masked;
+  }
+
+  pub fn ==(in4addr &, in4addr &) -> bool = default;
+  pub fn <=>(in4addr &, in4addr &) -> int = default;
+
+  pub in4addr() = default;
+  pub in4addr(in4addr &) = default;
+  pub fn =(in4addr mut &, in4addr &) -> in4addr mut & = default;
+  pub ~in4addr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, in4addr &addr) throws(std::error) -> void
+{
+  ctx.written += std::format_to(&mut os, "{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]);
+}
+
+pub struct in6addr : pub u8[16]
+{
+  pub in6addr(u8[16] &addr)
+    : super(addr)
+  {
+  }
+
+  pub in6addr(u16[8] &addr)
+    : super([
+        cast<u8>(addr[0] >> 8), cast<u8>(addr[0] & 0xff),
+        cast<u8>(addr[1] >> 8), cast<u8>(addr[1] & 0xff),
+        cast<u8>(addr[2] >> 8), cast<u8>(addr[2] & 0xff),
+        cast<u8>(addr[3] >> 8), cast<u8>(addr[3] & 0xff),
+        cast<u8>(addr[4] >> 8), cast<u8>(addr[4] & 0xff),
+        cast<u8>(addr[5] >> 8), cast<u8>(addr[5] & 0xff),
+        cast<u8>(addr[6] >> 8), cast<u8>(addr[6] & 0xff),
+        cast<u8>(addr[7] >> 8), cast<u8>(addr[7] & 0xff),
+      ])
+  {
+  }
+
+  pub fn segments(this &) -> u16[8]
+  {
+    return [
+      cast<u16>(this[0]) << 8 | cast<u16>(this[1]),
+      cast<u16>(this[2]) << 8 | cast<u16>(this[3]),
+      cast<u16>(this[4]) << 8 | cast<u16>(this[5]),
+      cast<u16>(this[6]) << 8 | cast<u16>(this[7]),
+      cast<u16>(this[8]) << 8 | cast<u16>(this[9]),
+      cast<u16>(this[10]) << 8 | cast<u16>(this[11]),
+      cast<u16>(this[12]) << 8 | cast<u16>(this[13]),
+      cast<u16>(this[14]) << 8 | cast<u16>(this[15]),
+    ];
+  }
+
+  pub fn is_unspecified(this &) -> bool
+  {
+    return (this.super == [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]);
+  }
+
+  pub fn is_loopback(this &) -> bool
+  {
+    return (this.super == [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ]);
+  }
+
+  pub fn is_v4mapped(this &) -> bool
+  {
+    return (this[0] == 0 && this[1] == 0 && this[2] == 0 && this[3] == 0 && this[4] == 0 && this[5] == 0 && this[6] == 0 && this[7] == 0 && this[8] == 0 && this[9] == 0 && this[10] == 0xff && this[11] == 0xff);
+  }
+
+  pub fn is_linklocal(this &) -> bool
+  {
+    return (this[0] == 0xfe) && (this[1] & 0xc0 == 0x80);
+  }
+
+  pub fn is_sitelocal(this &) -> bool
+  {
+    return (this[0] == 0xfe) && (this[1] & 0xc0 == 0xc0);
+  }
+
+  pub fn is_multicast(this &) -> bool
+  {
+    return (this[0] == 0xff);
+  }
+
+  pub fn masked(this &, usize prefixlen) -> in6addr
+  {
+    var masked = in6addr();
+
+    for (var i = 0; i < prefixlen/8; ++i)
+      masked[i] = this[i];
+
+    if (prefixlen & 7 != 0)
+      masked[prefixlen/8] = this[prefixlen/8] & (0xff << (8 - (prefixlen & 7)));
+
+    return masked;
+  }
+
+  pub fn ==(in6addr &, in6addr &) -> bool = default;
+  pub fn <=>(in6addr &, in6addr &) -> int = default;
+
+  pub in6addr() = default;
+  pub in6addr(in6addr &) = default;
+  pub fn =(in6addr mut &, in6addr &) -> in6addr mut & = default;
+  pub ~in6addr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, in6addr &addr) throws(std::error) -> void
+{
+  var segments = addr.segments;
+
+  ctx.written += std::format_to(&mut os, "{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}", segments[0], segments[1], segments[2], segments[3], segments[4], segments[5], segments[6], segments[7]);
+}
+
+pub union inaddr
+{
+  pub in4(in4addr),
+  pub in6(in6addr),
+
+  pub inaddr(in4addr &addr)
+    : in4(addr)
+  {
+  }
+
+  pub inaddr(in6addr &addr)
+    : in6(addr)
+  {
+  }
+
+  pub fn =(this mut &, in4addr &addr) -> inaddr mut &
+  {
+    return &(this = in4(addr));
+  }
+
+  pub fn =(this mut &, in6addr &addr) -> inaddr mut &
+  {
+    return &(this = in6(addr));
+  }
+
+  pub fn bool(this &) -> bool
+  {
+    return this.kind != cast(0);
+  }
+
+  pub fn masked(this &, usize prefixlen) -> inaddr
+  {
+    switch (this)
+    {
+      case in4:
+        return this.in4.masked(prefixlen);
+
+      case in6:
+        return this.in6.masked(prefixlen);
+
+      else:
+        return inaddr();
+    }
+  }
+
+  pub fn ==(inaddr &lhs, inaddr &rhs) -> bool
+  {
+    if (lhs.kind == rhs.kind)
+    {
+      switch (cast<int>(lhs.kind))
+      {
+        #{
+          #for (const k = 1; k != std::meta::fields_of($inaddr).len; ++k)
+            -> { case ${k}: return lhs.${k} == rhs.${k}; }
+        }
+      }
+    }
+
+    return lhs.kind == rhs.kind;
+  }
+
+  pub inaddr() = default;
+  pub inaddr(inaddr &) = default;
+  pub fn =(inaddr mut &, inaddr &) -> inaddr mut & = default;
+  pub ~inaddr() = default;
+}

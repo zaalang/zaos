@@ -29,7 +29,8 @@ pub struct node
     event,
     buffer,
     channel,
-    //socket,
+    netlink,
+    socket,
   }
 
   pub union ops

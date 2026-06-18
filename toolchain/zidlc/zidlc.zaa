@@ -742,7 +742,7 @@ fn codegen_structure(context mut &ctx, zidl::structure &structure) throws(std::e
   std::fprintf(&mut ctx.fout, "  }}\n");
   std::fprintf(&mut ctx.fout, "\n");
 
-  ctx.add_type(type::tag(structure.name, &move names, &move types));
+  ctx.add_type(type::tag(structure.name, names, types));
 }
 
 fn codegen(zidl::ast &ast, std::string &outfile, diag::diag mut &diag) throws(std::error) -> void

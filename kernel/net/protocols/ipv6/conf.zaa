@@ -1,0 +1,40 @@
+//
+// ipv6 autoconf
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6.state as ipv6.state;
+
+using net::in6addr;
+
+fn generate_linklocal_eui64(net::netdev mut *link, in6addr mut &addr) -> net::result
+{
+  addr[0] = 0xfe;
+  addr[1] = 0x80;
+  addr[8] = link.hwaddr[0] ^ 0x2;
+  addr[9] = link.hwaddr[1];
+  addr[10] = link.hwaddr[2];
+  addr[11] = 0xff;
+  addr[12] = 0xfe;
+  addr[13] = link.hwaddr[3];
+  addr[14] = link.hwaddr[4];
+  addr[15] = link.hwaddr[5];
+
+  return ok;
+}
+
+pub fn configure(net::netdev mut *link) -> net::result
+{
+  var linklocal = in6addr();
+
+  if (var result = generate_linklocal_eui64(link, &mut linklocal); !result)
+    return result;
+
+  link.ipv6.add_addr(linklocal, 64);
+
+  net::add_route(net::inaddr(linklocal.masked(64)), 64, net::inaddr(), link);
+
+  return ok;
+}

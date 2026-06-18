@@ -35,6 +35,16 @@ pub struct dev_t
   pub ~dev_t() = default;
 }
 
+pub fn scan(std::string_view is, std::scan_context mut &ctx, dev_t mut &dev) -> void
+{
+  std::scan_to(is, &mut ctx, &mut dev.id);
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, dev_t dev) throws(std::error) -> void
+{
+  std::fmt_to(&mut os, &mut ctx, dev.id);
+}
+
 pub struct attr_t
 {
   pub enum type

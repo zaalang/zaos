@@ -1,0 +1,101 @@
+//
+// ip-link
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import netlink;
+import json;
+
+using netlink;
+
+fn show(var &opts) throws(std::error) -> i32
+{
+  var linklist = json::load_from_file("/sys/net/list");
+
+  if (linklist.error)
+    throw std::system_error(std::errc::format_error);
+
+  for (var &link : linklist.value.as_array)
+  {
+    std::printf("{}: <{}>\n", link["device"].as_str, link["flags"].as_array.transform(|flag| flag.as_str).join(","));
+
+    std::printf("  link/{} {}\n", link["type"].as_str, link["address"].as_str);
+  }
+
+  return 0;
+}
+
+fn set(var &opts) throws(std::error) -> i32
+{
+  if (opts.commands.len < 2)
+    throw std::system_error(std::errc::invalid_argument);
+
+  var fd = std::file::open(opts.commands[1], std::fd::oflags::open, std::fd::rights::read | std::fd::rights::write);
+
+	struct req
+  {
+		nlmsghdr nlh;
+		ifinfomsg ifi;
+
+    req() = default;
+    ~req() = default;
+	}
+
+  var req = req();
+	req.nlh.nlmsg_len = sizeof<req>;
+	req.nlh.nlmsg_flags = NLM_F_REQUEST;
+	req.nlh.nlmsg_type = RTM_SETLINK;
+
+  for (var i = 2; i < opts.commands.len; ++i)
+  {
+    switch (opts.commands[i])
+    {
+      case "up":
+        req.ifi.ifi_flags |= IFF_UP;
+        req.ifi.ifi_change |= IFF_UP;
+
+      case "down":
+        req.ifi.ifi_flags &= ~IFF_UP;
+        req.ifi.ifi_change |= IFF_UP;
+
+      else:
+        std::fprint(std::stderr, "ip: unknown command '", opts.commands[i], "'");
+    }
+  }
+
+  fd.write(cast<u8 mut *>(&req), cast<usize>(req.nlh.nlmsg_len));
+
+  var buf = [<u8>: void; 4096];
+  var bytes = fd.read(buf.data, buf.len);
+
+  if (var result = *cast<i32*>(buf.data + sizeof<nlmsghdr>); result != 0)
+    std::fprint(std::stderr, "ip: error - ", result);
+
+  return 0;
+}
+
+pub fn link(var &opts) -> i32
+{
+  try
+  {
+    switch (opts.commands[0])
+    {
+      case "show":
+        show(opts);
+
+      case "set":
+        set(opts);
+
+      else:
+        std::fprint(std::stderr, "ip: unknown command '", opts.commands[0], "'");
+    }
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ip: ", rc);
+  }
+
+  return 0;
+}

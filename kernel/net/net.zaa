@@ -4,49 +4,153 @@
 
 import std.stdio;
 import std.atomic;
+import net.netctl;
 import net.netdev;
 import net.result;
 import net.mac;
+import net.in;
 import io;
 import vm;
 import vfs;
 import dev;
+import chr.chrdev;
 import process as _ : process;
+import thread as _ : thread;
+import mutex as _ : mutex;
+import scheduler;
 import support.rc : Rc;
+import net.stack.route;
+import net.stack.socket;
+import net.protocols.ipv6 as ipv6;
+import net.netlink.route as netlink.route;
+import net.stack as stack;
+
+struct network_manager
+{
+  mutex lock;
+
+  net::route_table routes;
+
+  std::vector<netlink::route mut *> listeners;
+
+  fn instance()
+  {
+    static instance = #network_manager();
+
+    return &instance;
+  }
+
+  network_manager() = default;
+  network_manager(#network_manager&) = default;
+  ~network_manager() = default;
+}
+
+fn netman()
+{
+  return &network_manager::instance;
+}
 
 pub fn open(netdev mut *device, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
 {
   return device.open(&mut fd, process, flags, mode);
 }
 
-pub fn ioctl(netdev mut *device, u32 op, vm::iovec &iovec) -> net::result
+pub fn transmit(netdev mut *device, Rc<io::iocb> mut &cb, net::packet mut *packet) -> void
 {
-  return device.ioctl(op, iovec);
+  packet.cb = cb;
+
+  if (var result = device.transmit(0, packet); !result)
+    io::complete(&mut packet.cb, result);
 }
 
-pub fn poll(netdev mut *device, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> net::result
+fn packet_handler(netdev mut *link) -> void
 {
-  return device.poll(&mut readable, &mut writeable);
+  var rxqid = 0;
+
+  for (;;)
+  {
+    var bufcnt = 32;
+
+    for (; bufcnt != 0; bufcnt -= 1)
+    {
+      var pkt = net::packet();
+
+      if (!link.retrieve(rxqid, &pkt))
+        break;
+
+      stack::receive(link, &mut pkt);
+
+      vm::unlock(pkt.host);
+    }
+
+    link.refill(rxqid);
+
+    if (bufcnt == 0)
+      continue;
+
+    link.packet_handler_doorbell.wait();
+  }
+
+  link.unref();
 }
 
-pub fn read(netdev mut *device, vm::iovec &iovec, usize offset, usize length) -> net::result
+pub fn up_link(netdev mut *link) -> void
 {
-  return device.read(iovec, offset, length);
+  var guard = std::lock_guard(&mut netman.lock);
+
+  if (std::atomic_or(&link.flags, net::flags::up) & net::flags::up == net::flags::up)
+    return;
+
+  if (var result = ipv6::configure(link); !result)
+    std::print("net: error configuring ipv6 - ", result);
+
+  link.ref();
+
+  link.packet_handler = create_thread(process::current, &cast<(netdev mut *) -> void>(packet_handler), link);
+
+  scheduler::enqueue(link.packet_handler, thread::priority::normal + 2);
 }
 
-pub fn write(netdev mut *device, vm::iovec &iovec, usize offset, usize length) -> net::result
+pub fn down_link(netdev mut *link) -> void
 {
-  return device.write(iovec, offset, length);
+  var guard = std::lock_guard(&mut netman.lock);
+
+  if (std::atomic_and(&link.flags, ~net::flags::up) & net::flags::up != net::flags::up)
+    return;
+
+  std::print("not implemented");
 }
 
-pub fn mmap(netdev mut *device, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> net::result
+pub fn add_route(inaddr &destination, usize prefixlen, inaddr &gateway, netdev mut *link) -> net::result
 {
-  return device.mmap(range, offset, prot, use);
+  if (var result = netman.routes.add_route(destination, prefixlen, gateway, link); !result)
+    return result;
+
+  return ok;
 }
 
-pub fn transmit(netdev mut *device, u16 txqid, net::packet mut *packet) -> net::result
+pub fn find_route(inaddr &addr) -> Rc<route>
 {
-  return device.transmit(txqid, packet);
+  return netman.routes.find_route(addr);
+}
+
+pub fn enumerate_routes(var &&callback) -> void
+{
+  enumerate_routes(&mut netman.routes, &&callback);
+}
+
+pub fn add_listener(netlink::route mut *node) -> void
+{
+  var guard = std::lock_guard(&mut netman.lock);
+
+  netman.listeners.push_back(node);
+}
+
+pub fn remove_listener(netlink::route mut *node) -> void
+{
+  var guard = std::lock_guard(&mut netman.lock);
+
+  netman.listeners.erase(node);
 }
 
 pub fn enumerate(var &&callback) -> void
@@ -58,4 +162,11 @@ pub fn enumerate(var &&callback) -> void
         callback(id, dev);
     }
   });
+}
+
+pub fn initialise() -> void
+{
+  var dev = chr::chrdev::create<ctldev>();
+
+  dev::register(dev::dev_t(), dev);
 }

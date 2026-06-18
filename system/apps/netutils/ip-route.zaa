@@ -1,0 +1,97 @@
+//
+// ip-route
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import net.ip;
+import netlink;
+import json;
+
+using netlink;
+
+fn show(var &opts) throws(std::error) -> i32
+{
+  var fd = std::file::open("/dev/net/0", std::fd::oflags::open, std::fd::rights::read | std::fd::rights::write);
+
+  struct req
+  {
+    nlmsghdr nlh;
+    rtmsg rtm;
+
+    req() = default;
+    ~req() = default;
+  }
+
+  var req = req();
+  req.nlh.nlmsg_len = sizeof<req>;
+  req.nlh.nlmsg_flags = NLM_F_REQUEST;
+  req.nlh.nlmsg_type = RTM_GETROUTE;
+
+  req.rtm.rtm_family = AF_INET6;
+  req.rtm.rtm_table = RT_TABLE_MAIN;
+
+  fd.write(cast<u8 mut *>(&req), cast<usize>(req.nlh.nlmsg_len));
+
+  for (;;)
+  {
+    var buf = [<u8>: void; 4096];
+    var bytes = fd.read(buf.data, buf.len);
+
+    var hdr = cast<nlmsghdr*>(buf.data);
+
+    if (hdr.nlmsg_type != RTM_NEWROUTE)
+      break;
+
+    var msg = cast<rtmsg*>(buf.data + sizeof<nlmsghdr>);
+
+    var ip = net::ipv6addr();
+    var gw = net::ipv6addr();
+    var oif = -1;
+
+    for (var offset = sizeof<nlmsghdr> + sizeof<ifndmsg>; offset < hdr.nlmsg_len; )
+    {
+      var rta = cast<rtattr*>(buf.data + cast<usize>(offset));
+
+      switch (rta.rta_type)
+      {
+        case RTA_DST:
+          ip = net::ipv6addr(rta.rta_value.data, cast(rta.rta_len) - sizeof<rtattr>);
+
+        case RTA_GATEWAY:
+          gw = net::ipv6addr(rta.rta_value.data, cast(rta.rta_len) - sizeof<rtattr>);
+
+        case RTA_OIF:
+          oif = *cast<i32 *>(rta.rta_value.data);
+      }
+
+      offset += cast(std::align_up(rta.rta_len, 4));
+    }
+
+    std::printf("  {}/{} gw {} dev {}\n", ip, msg.rtm_dst_len, gw, oif);
+  }
+
+  return 0;
+}
+
+pub fn route(var &opts) -> i32
+{
+  try
+  {
+    switch (opts.commands[0])
+    {
+      case "show":
+        show(opts);
+
+      else:
+        std::fprint(std::stderr, "ip: unknown command '", opts.commands[0], "'");
+    }
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ip: ", rc);
+  }
+
+  return 0;
+}

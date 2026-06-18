@@ -4,7 +4,7 @@
 
 import std.stdio;
 import std.circular_buffer;
-import vm : virtaddr;
+import vm;
 import io;
 import vfs;
 import mutex as _ : mutex;
@@ -41,10 +41,10 @@ struct endpoint
   io::response readable;
   io::response writeable;
 
-  vfs::node node;
-
   endpoint mut *other;
   std::circular_buffer<message, N:128> buffer;
+
+  vfs::node node_;
 
   endpoint() = default;
   ~endpoint() = default;
@@ -54,8 +54,8 @@ pub struct channel
 {
   mutex lock;
 
-  endpoint lhs;
-  endpoint rhs;
+  endpoint inout;
+  endpoint outin;
 
   i32 nextid;
   std::flat_hash_map<i32, transaction> transactions;
@@ -65,70 +65,24 @@ pub struct channel
     return std::allocator::new<channel>();
   }
 
-  fn has_lhs(this &) -> bool
+  fn has_inout(this &) -> bool
   {
-    return this.lhs.channel;
+    return this.inout.channel;
   }
 
-  fn has_rhs(this &) -> bool
+  fn has_outin(this &) -> bool
   {
-    return this.rhs.channel;
+    return this.outin.channel;
   }
 
-  pub fn lhs_node(this mut &) -> Rc<vfs::node>
+  pub fn inout_node(this mut &) -> Rc<vfs::node>
   {
-    var guard = std::lock_guard(&mut this.lock);
-
-    if (this.has_lhs)
-      return &this.lhs.node;
-
-    this.ref();
-    this.lhs.channel = &this;
-    this.lhs.other = &this.rhs;
-
-    if (!this.has_rhs)
-    {
-      io::initiate(&mut this.lhs.writeable.cb, 1);
-    }
-    else
-    {
-      io::complete(&mut this.rhs.writeable.cb, 0);
-    }
-
-    if (this.lhs.buffer.len == 0)
-      io::initiate(&mut this.lhs.readable.cb, 1);
-
-    vfs::node::init(&this.lhs.node, vfs::node::type::channel, vfs::node::ops::stream(&impl this.lhs));
-
-    return &this.lhs.node;
+    return &this.inout.node_;
   }
 
-  pub fn rhs_node(this mut &) -> Rc<vfs::node>
+  pub fn outin_node(this mut &) -> Rc<vfs::node>
   {
-    var guard = std::lock_guard(&mut this.lock);
-
-    if (this.has_rhs)
-      return &this.rhs.node;
-
-    this.ref();
-    this.rhs.channel = &this;
-    this.rhs.other = &this.lhs;
-
-    if (!this.has_lhs)
-    {
-      io::initiate(&mut this.rhs.writeable.cb, 1);
-    }
-    else
-    {
-      io::complete(&mut this.lhs.writeable.cb, 0);
-    }
-
-    if (this.rhs.buffer.len == 0)
-      io::initiate(&mut this.rhs.readable.cb, 1);
-
-    vfs::node::init(&this.rhs.node, vfs::node::type::channel, vfs::node::ops::stream(&impl this.rhs));
-
-    return &this.rhs.node;
+    return &this.outin.node_;
   }
 
   pub fn ref(this mut &) -> void
@@ -151,7 +105,7 @@ pub struct channel
 fn pickup(endpoint mut &endpoint, message mut &msg) -> vfs::result
 {
   if (endpoint.buffer.len == 0 && endpoint.other.channel)
-    return vfs::result::would_block;
+    return would_block;
 
   if (endpoint.buffer.len == 0)
     return cast(0);
@@ -170,10 +124,10 @@ fn pickup(endpoint mut &endpoint, message mut &msg) -> vfs::result
 fn deliver(endpoint mut &endpoint, message &&msg) -> vfs::result
 {
   if (!endpoint.other.channel)
-    return vfs::result::broken_pipe;
+    return broken_pipe;
 
   if (endpoint.other.buffer.len == endpoint.other.buffer.capacity)
-    return vfs::result::would_block;
+    return would_block;
 
   endpoint.other.buffer.push_back(&move msg);
 
@@ -191,6 +145,27 @@ pub fn create_channel() -> Rc<channel>
   return channel::create();
 }
 
+pub fn setup_channel(Rc<channel> mut &channel) -> vfs::result
+{
+  channel.ref();
+  channel.inout.channel = channel;
+  channel.inout.other = &channel.outin;
+
+  io::initiate(&mut channel.inout.readable.cb, 1);
+
+  vfs::node::init(&channel.inout.node_, vfs::node::type::channel, vfs::node::ops::stream(&impl channel.inout));
+
+  channel.ref();
+  channel.outin.channel = channel;
+  channel.outin.other = &channel.inout;
+
+  io::initiate(&mut channel.outin.readable.cb, 1);
+
+  vfs::node::init(&channel.outin.node_, vfs::node::type::channel, vfs::node::ops::stream(&impl channel.outin));
+
+  return ok;
+}
+
 pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
 {
   return ok;
@@ -198,8 +173,8 @@ pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flag
 
 pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   stat.size = 0;
 
@@ -216,7 +191,7 @@ pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
 
 pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
 {
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   readable = endpoint.readable.cb;
   writeable = endpoint.writeable.cb;
@@ -226,8 +201,8 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
 
 pub fn read(vfs::node mut *node, i32 mut &sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> vfs::result
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   var guard = std::lock_guard(&mut channel.lock);
 
@@ -260,8 +235,8 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -
 
 pub fn write(vfs::node mut *node, i32 sid, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   var guard = std::lock_guard(&mut channel.lock);
 
@@ -285,7 +260,7 @@ pub fn write(vfs::node mut *node, i32 sid, std::vector<u8> &&bytes, std::vector<
           io::complete(&mut tx.response.cb, 0);
 
         else:
-          return vfs::result::broken_pipe;
+          return broken_pipe;
       }
   }
 
@@ -309,8 +284,8 @@ pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) 
 
 pub fn begin_transaction(vfs::node mut *node, std::vector<u8> &&bytes, std::vector<vfs::fd> &&fds) -> vfs::result
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   var guard = std::lock_guard(&mut channel.lock);
 
@@ -337,8 +312,8 @@ pub fn begin_transaction(vfs::node mut *node, std::vector<u8> &&bytes, std::vect
 
 pub fn query_transaction(vfs::node mut *node, i32 sid, std::vector<u8> mut &bytes, std::vector<vfs::fd> mut &fds) -> io::response
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var mut &endpoint = *cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   var guard = std::lock_guard(&mut channel.lock);
 
@@ -364,15 +339,15 @@ pub fn query_transaction(vfs::node mut *node, i32 sid, std::vector<u8> mut &byte
 
 fn destroy(vfs::node mut *node) -> void
 {
-  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node)).channel;
-  var endpoint = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node));
+  var channel = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_)).channel;
+  var endpoint = cast<endpoint mut *>(cast<uintptr>(node) - offsetof(endpoint::node_));
 
   channel.lock.lock();
 
-  io::complete(&mut channel.lhs.readable.cb, 0);
-  io::complete(&mut channel.lhs.writeable.cb, 0);
-  io::complete(&mut channel.rhs.readable.cb, 0);
-  io::complete(&mut channel.rhs.writeable.cb, 0);
+  io::complete(&mut channel.inout.readable.cb, 0);
+  io::complete(&mut channel.inout.writeable.cb, 0);
+  io::complete(&mut channel.outin.readable.cb, 0);
+  io::complete(&mut channel.outin.writeable.cb, 0);
 
   for (var mut &tx : channel.transactions)
   {

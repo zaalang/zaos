@@ -25,7 +25,7 @@ pub struct iovec
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, iovec &iovec) throws(std::error) -> void
 {
-  ctx.written += std::format_to(&mut os, "iovec{{ length: {} }}", iovec.length);
+  ctx.written += std::format_to(&mut os, "iovec {{ length: {} }}", iovec.length);
 }
 
 pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback) -> void

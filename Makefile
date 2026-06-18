@@ -2,7 +2,7 @@
 
 include ./mkspec.mk
 
-TOOLCHAIN := 20260505
+TOOLCHAIN := 20260618
 
 default:
 ifneq ($(file < $(BUILDROOT)/toolchain/version), $(TOOLCHAIN))
@@ -10,13 +10,13 @@ ifneq ($(file < $(BUILDROOT)/toolchain/version), $(TOOLCHAIN))
 endif
 	@$(MAKE) image
 
-kernel: 
+kernel:
 	@cd kernel; $(MAKE)
 
-system: 
+system:
 	@cd system; $(MAKE)
 
-toolchain: 
+toolchain:
 	@cd toolchain; $(MAKE)
 	@ln -sf ../bin/launch $(BUILDROOT)/launch
 	@echo $(TOOLCHAIN) > $(BUILDROOT)/toolchain/version

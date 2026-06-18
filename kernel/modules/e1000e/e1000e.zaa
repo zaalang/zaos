@@ -13,9 +13,6 @@ import dev;
 import net;
 import scheduler;
 import heap;
-import thread as _ : thread;
-import process as _ : process;
-import semaphore as _ : semaphore;
 import support.rc : Rc;
 import e1000e.emdev;
 
@@ -63,7 +60,7 @@ enum rctl : u32
   const rdmts_shift = 8;
   const mo_mask = 0x3;
   const mo_shift = 12;
-  const bam =	0x8000;
+  const bam = 0x8000;
   const sz_2048 = 0x00000000;
   const sz_1024 = 0x00010000;
   const sz_512 = 0x00020000;
@@ -71,7 +68,7 @@ enum rctl : u32
   const sz_16384 = 0x02010000;
   const sz_8192 = 0x02020000;
   const sz_4096 = 0x02030000;
-  const vfe =	0x40000;
+  const vfe = 0x40000;
   const cfien = 0x80000;
   const cfi = 0x100000;
   const dpf = 0x400000;
@@ -160,13 +157,13 @@ enum cmd : u8
 
 struct e1000_tx_desc
 {
-	physaddr addr;
+  physaddr addr;
   u16 length;
-	u8 cso;
-	u8 cmd;
-	u8 status;
-	u8 css;
-	u16 special;
+  u8 cso;
+  u8 cmd;
+  u8 status;
+  u8 css;
+  u16 special;
 
   const max_payload = 16288;
 
@@ -268,27 +265,27 @@ pub struct adaptor
   }
 
   fn link_speed(this mut &) -> std::string_literal
-	{
+  {
     var regs = this.regs;
 
     switch (std::volatile_load(&regs.status) & status::speed)
     {
       case 0x0:
-  			return "10 Mbps";
+        return "10 Mbps";
 
-		  case 0x40:
+      case 0x40:
         return "100 Mbps";
 
-		  case 0x80:
-		  case 0xc0:
+      case 0x80:
+      case 0xc0:
         return "1000 Mbps";
     }
 
-		return "unknown";
-	}
+    return "unknown";
+  }
 
   fn link_duplex(this mut &) -> std::string_literal
-	{
+  {
     var regs = this.regs;
 
     switch (std::volatile_load(&regs.status) & status::fd)
@@ -320,10 +317,7 @@ pub struct adaptor
   tx_queue mut *txq;
   rx_queue mut *rxq;
 
-  thread mut *packet_handler;
-  semaphore packet_handler_doorbell;
-
-  Rc<net::netdev> interface;
+  Rc<net::netdev> link;
 
   u8 irq;
   e1000_regs mut *regs;
@@ -414,16 +408,28 @@ fn read_mdic(u32 mut *mdic, u32 offset) -> u16
 
 fn store_rar(e1000_regs mut *regs, usize i, macaddr &addr) -> void
 {
-	var ral = cast<u32>(addr[0]) | cast<u32>(addr[1]) << 8 | cast<u32>(addr[2]) << 16 | cast<u32>(addr[3]) << 24;
-	var rah = cast<u32>(addr[4]) | cast<u32>(addr[5]) << 8;
+  var ral = cast<u32>(addr[0]) | cast<u32>(addr[1]) << 8 | cast<u32>(addr[2]) << 16 | cast<u32>(addr[3]) << 24;
+  var rah = cast<u32>(addr[4]) | cast<u32>(addr[5]) << 8;
 
-	if (ral != 0 || rah != 0)
-		rah |= 0x80000000;
+  if (ral != 0 || rah != 0)
+    rah |= 0x80000000;
 
-	std::volatile_store(&regs.ral(i), ral);
+  std::volatile_store(&regs.ral(i), ral);
   std::volatile_load(&regs.status);
   std::volatile_store(&regs.rah(i), rah);
   std::volatile_load(&regs.status);
+}
+
+fn e1000_link_handler(adaptor mut *adaptor) -> void
+{
+  switch (adaptor.regs.status & status::lu)
+  {
+    case status::lu:
+      std::atomic_or(&adaptor.link.flags, net::flags::lower_up);
+
+    else:
+      std::atomic_and(&adaptor.link.flags, ~net::flags::lower_up);
+  }
 }
 
 fn e1000_txq_handler(tx_queue mut *txq) -> void
@@ -458,38 +464,19 @@ fn e1000_io_handler(adaptor mut *adaptor) -> void
   var icr = adaptor.regs.icr;
   std::volatile_store(&adaptor.regs.icr, icr);
 
+  if (icr & interrupts::lsc != 0)
+  {
+    e1000_link_handler(adaptor);
+  }
+
   if (icr & interrupts::txdw != 0)
   {
     e1000_txq_handler(adaptor.txq);
   }
 
-  if (icr & (interrupts::rxt0 | interrupts::rxo) != 0)
+  if (icr & interrupts::rxt0 != 0)
   {
-    adaptor.packet_handler_doorbell.release();
-  }
-}
-
-fn e1000_packet_handler(adaptor mut *adaptor) -> void
-{
-  for (;;)
-  {
-    var pkt = net::packet();
-
-    while (adaptor.interface.retrieve(0, &pkt))
-    {
-      //std::print("*packet* ", pkt);
-
-      for (var range : pkt.host)
-      {
-        if (var result = adaptor.interface.emplace(0, range); !result)
-          std::print("lost packet buffer");
-      }
-
-      pkt.length = 0;
-      pkt.host.clear();
-    }
-
-    adaptor.packet_handler_doorbell.wait();
+    adaptor.link.packet_handler_doorbell.release();
   }
 }
 
@@ -538,6 +525,8 @@ fn initialise(rx_queue mut &rxq) -> result
   rctl = rctl | rctl::bam;
   rctl = rctl & ~rctl::sbp;
   rctl = rctl & ~rctl::lpe;
+  rctl = rctl | rctl::mpe;
+  rctl = rctl & ~rctl::upe;
   rctl = rctl | rctl::secrc;
   rctl = rctl & ~(rctl::mo_mask << rctl::mo_shift);
   rctl = rctl & ~rctl::vfe;
@@ -545,8 +534,6 @@ fn initialise(rx_queue mut &rxq) -> result
   rctl = rctl | rctl::en;
 
   std::volatile_store(&regs.rctl, rctl);
-
-  rxq.adaptor.emplace(vm::physrange(vm::allocate_physical(cast<usize>(rxq.entries - 1) * 2048).addr, cast<usize>(rxq.entries - 1) * 2048));
 
   return ok;
 }
@@ -601,8 +588,12 @@ fn initialise(adaptor mut &adaptor) -> result
   if (var result = adaptor.enable(); !result)
     return result;
 
+  adaptor.link = net::netdev::create<emdev>(&mut adaptor, adaptor.addr);
+
   if (std::volatile_load(&regs.status) & status::lu != 0)
   {
+    adaptor.link.flags |= net::flags::lower_up;
+
     std::print("e1000e ", adaptor.name, " link up, ", adaptor.link_speed, " ", adaptor.link_duplex);
   }
 
@@ -610,12 +601,6 @@ fn initialise(adaptor mut &adaptor) -> result
   std::volatile_load(&regs.icr);
 
   io::install_handler(irq, &cast<(adaptor mut *) -> void>(e1000_io_handler), &adaptor);
-
-  adaptor.interface = net::netdev::create<emdev>(&mut adaptor, adaptor.addr);
-
-  adaptor.packet_handler = create_thread(process::current, &cast<(adaptor mut *) -> void>(e1000_packet_handler), &adaptor);
-
-  scheduler::enqueue(adaptor.packet_handler, thread::priority::normal + 2);
 
   return ok;
 }
@@ -627,40 +612,7 @@ pub fn initialise(pci::device &device) -> void
   if (var result = adaptor.initialise(); !result)
     std::print("e1000 error initialising adaptor - ", result);
 
-  dev::register(dev::dev_t(), adaptor.interface);
-
-/*
-var pkt = net::packet();
-var data = std::vector<u8>();
-
-data.append([ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
-data.append(adaptor.addr);
-//data.append([ 0, 0, 0, 0 ]);
-data.append([ 0x08, 0x06 ]);
-data.append([ 0, 0x01, 0x08, 0 ]);
-data.append([ 6, 4 ]);
-data.append([ 0, 1 ]);
-data.append(adaptor.addr);
-data.append([ 10, 0, 2, 15 ]);
-data.append([ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff ]);
-data.append([ 10, 0, 2, 2 ]);
-data.append([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]);
-data.append([ 0, 0, 0, 0]);
-
-var response = io::response();
-
-io::initiate(&mut response.cb, 1);
-
-vm::lock(vm::virtrange(data.data, data.len), vm::protection::readonly, &mut pkt.host);
-
-pkt.length = data.len;
-pkt.cb = response.cb;
-
-net::transmit(dev, 0, &pkt);
-response.wait();
-
-vm::unlock(pkt.host);
-*/
+  dev::register(dev::dev_t(), adaptor.link);
 }
 
 fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, e1000_tx_desc *txds, usize n) -> result
@@ -670,7 +622,7 @@ fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, e10
   var tail = txq.sq_tail;
   var mask = txq.sq_mask;
 
-  if ((tail + mask + 1 - std::volatile_load(&txq.sq_head)) & mask + cast(n) > mask)
+  if (std::sub_with_borrow(tail, std::volatile_load(&txq.sq_head)).0 + cast(n) > mask)
     return device_busy;
 
   for (var i = 0; i < n; ++i)
@@ -710,7 +662,7 @@ fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, e1000_rx_desc *rxds, usize n
   var tail = rxq.sq_tail;
   var mask = rxq.sq_mask;
 
-  if ((tail + mask + 1 - std::volatile_load(&rxq.sq_head)) & mask + cast(n) > mask)
+  if (std::sub_with_borrow(tail, std::volatile_load(&rxq.sq_head)).0 + cast(n) > mask)
     return device_busy;
 
   for (var i = 0; i < n; ++i)
@@ -731,45 +683,6 @@ fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, e1000_rx_desc *rxds, usize n
   std::atomic_thread_fence();
 
   std::volatile_store(&adaptor.regs.rdt(rxq.index), tail & mask);
-
-  return ok;
-}
-
-pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
-{
-  var txds = std::vector<e1000_tx_desc, N:4>();
-
-  for (var host : packet.host)
-  {
-    for (var addr = host.addr; addr < host.end; addr += e1000_tx_desc::max_payload)
-    {
-      var mut &txd = txds.push_back();
-
-      txd.addr = addr;
-      txd.length = cast<u16>(std::min(host.end - addr, e1000_tx_desc::max_payload));
-    }
-  }
-
-  if (var result = adaptor.enqueue(adaptor.txq, packet, txds.data, txds.len); !result)
-    return result;
-
-  return ok;
-}
-
-pub fn emplace(adaptor mut &adaptor, vm::physrange buffer) -> result
-{
-  var rxds = std::vector<e1000_rx_desc, N:4>();
-
-  for (var addr = buffer.addr; addr < buffer.end; addr += 2048)
-  {
-    var mut &rxd = rxds.push_back();
-
-    rxd.addr = addr;
-    rxd.length = 2048;
-  }
-
-  if (var result = adaptor.enqueue(adaptor.rxq, rxds.data, rxds.len); !result)
-    return result;
 
   return ok;
 }
@@ -806,9 +719,86 @@ fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut *packet) -> 
   return ok;
 }
 
-pub fn retrieve(adaptor mut &adaptor, net::packet mut *packet) -> result
+pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
+{
+  var txds = std::vector<e1000_tx_desc, N:4>();
+
+  packet.foreach_region(|region| {
+    for (var addr = region.addr; addr < region.end; addr += e1000_tx_desc::max_payload)
+    {
+      var mut &txd = txds.push_back();
+
+      txd.addr = addr;
+      txd.length = cast<u16>(std::min(region.end - addr, e1000_tx_desc::max_payload));
+    }
+  });
+
+  if (var result = adaptor.enqueue(adaptor.txq, packet, txds.data, txds.len); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn retrieve(adaptor mut &adaptor, u16 rxqid, net::packet mut *packet) -> result
 {
   if (var result = adaptor.dequeue(adaptor.rxq, packet); !result)
+    return result;
+
+  packet.type = net::packet::type::eth;
+
+  return ok;
+}
+
+pub fn refill(adaptor mut &adaptor, u16 rxqid) -> result
+{
+  var head = adaptor.rxq.sq_head;
+  var tail = adaptor.rxq.sq_tail;
+  var mask = adaptor.rxq.sq_mask;
+
+  var rxds = std::vector<e1000_rx_desc, N:64>();
+
+  var n = cast<usize>(mask - std::sub_with_borrow(tail, head).0);
+
+  for (; n >= 1; )
+  {
+    var mut &reclaim = adaptor.link.reclaim;
+
+    if (reclaim.empty)
+      break;
+
+    if (reclaim.front.cb && reclaim.front.cb.outstanding != 0)
+      break;
+
+    if (reclaim.front.host.len > n)
+      break;
+
+    for (var host : reclaim.front.host)
+    {
+      var mut &rxd = rxds.push_back();
+
+      rxd.addr = host.addr;
+      rxd.length = 2048;
+      n -= 1;
+    }
+
+    reclaim.pop_front();
+  }
+
+  for (; n >= PAGE_SIZE / 2048; )
+  {
+    var page = vm::allocate_physical_page();
+
+    for (var offset = 0; offset < PAGE_SIZE; offset += 2048)
+    {
+      var mut &rxd = rxds.push_back();
+
+      rxd.addr = vm::lock(page).addr + offset;
+      rxd.length = 2048;
+      n -= 1;
+    }
+  }
+
+  if (var result = adaptor.enqueue(adaptor.rxq, rxds.data, rxds.len); !result)
     return result;
 
   return ok;

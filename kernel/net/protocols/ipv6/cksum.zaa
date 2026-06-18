@@ -1,0 +1,37 @@
+//
+// ipv6 checksum
+//
+
+import std.stdlib;
+import net.packet;
+import net.protocols.ipv6 as ipv6;
+
+using net::in6addr;
+using ipv6::protocol;
+
+pub fn checksum(protocol protocol, in6addr &src, in6addr &dst, net::packet &pkt) -> u8[2]
+{
+  var checksum = u32(0);
+
+  for (var i = 0; i < src.len; i += 2)
+    checksum += cast<u32>(src[i]) << 8 | cast<u32>(src[i + 1]);
+
+  for (var i = 0; i < dst.len; i += 2)
+    checksum += cast<u32>(dst[i]) << 8 | cast<u32>(dst[i + 1]);
+
+  checksum += cast<u32>(protocol);
+  checksum += cast<u32>(pkt.length);
+
+  var payload = pkt.as<u8>(pkt.length);
+
+  for (var i = 0; i < pkt.length; i += 2)
+    checksum += cast<u32>(*(payload + i)) << 8 | cast<u32>(*(payload + i + 1));
+
+  if (pkt.length & 1 != 0)
+    checksum += cast<u32>(*(payload + pkt.length - 1)) << 8;
+
+  while (checksum >> 16 != 0)
+    checksum = (checksum & 0xffff) + (checksum >> 16);
+
+  return [ ~cast<u8>(checksum >> 8), ~cast<u8>(checksum & 0xff) ];
+}

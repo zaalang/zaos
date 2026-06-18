@@ -1,0 +1,68 @@
+//
+// ethernet
+//
+
+import std.stdlib;
+import net;
+import net.packet;
+import io;
+import support.rc : Rc;
+
+using net::netdev;
+using net::macaddr;
+using net::hwaddr;
+
+pub enum ether_type : u16
+{
+  arp = 0x0608,
+  ipv4 = 0x0008,
+  ipv6 = 0xdd86,
+}
+
+#[packed]
+pub struct ether_header
+{
+  macaddr destination;
+  macaddr source;
+  ether_type type;
+}
+
+pub fn deframe(netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<ether_header>();
+  if (!hdr)
+    return protocol_error;
+
+  rx.src = hdr.source;
+  rx.dst = hdr.destination;
+
+  switch (hdr.type)
+  {
+    case arp:
+      pkt.type = net::packet::type::arp;
+
+    case ipv4:
+      pkt.type = net::packet::type::ipv4;
+
+    case ipv6:
+      pkt.type = net::packet::type::ipv6;
+
+    else:
+      return protocol_not_supported;
+  }
+
+  pkt.strip(sizeof<ether_header>);
+
+  return ok;
+}
+
+pub fn send(netdev mut *link, Rc<io::iocb> mut &cb, ether_type type, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+{
+  var hdr = pkt.prepend<ether_header>();
+
+  hdr.destination = dst;
+  hdr.source = src;
+  hdr.type = type;
+
+  net::transmit(link, &mut cb, &pkt);
+}

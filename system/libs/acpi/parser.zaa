@@ -3980,6 +3980,8 @@ pub fn execute(namespace mut &ns, acpi::method &method, value mut &dst, std::spa
 
   ctx.namespace.leave(method);
 
+  std::launder(dst);
+
   return ok;
 }
 
@@ -4005,6 +4007,8 @@ pub fn execute<Args>(namespace mut &ns, acpi::method &method, value mut &dst, Ar
     dst = ctx.stack.take_back().value;
 
   ctx.namespace.leave(method);
+
+  std::launder(dst);
 
   return ok;
 }

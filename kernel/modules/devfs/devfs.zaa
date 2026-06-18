@@ -713,8 +713,6 @@ pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
     else:
       return no_such_device;
   }
-
-  return not_supported;
 }
 
 pub fn mmap(vfs::node mut *node, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> vfs::result

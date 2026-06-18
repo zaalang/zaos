@@ -1,0 +1,103 @@
+//
+// network route
+//
+
+import std.stdio;
+import std.vector;
+import net.result;
+import mutex as _ : shared_mutex;
+import support.rc : Rc;
+
+using net::netdev;
+using net::inaddr;
+using net::hwaddr;
+
+pub struct route
+{
+  pub inaddr destination;
+  pub usize prefixlen;
+
+  pub inaddr nexthop;
+  pub Rc<net::netdev> dev;
+
+  pub u32 flags;
+  pub u32 mtu;
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub route(inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *dev)
+    : destination(destination), prefixlen(prefixlen), nexthop(nexthop), dev(dev)
+  {
+  }
+
+  pub ~route() = default;
+}
+
+pub struct route_table
+{
+  shared_mutex lock;
+
+  std::vector<Rc<route>> routes;
+
+  pub route_table() = default;
+  pub route_table(#route_table &) = default;
+  pub ~route_table() = default;
+}
+
+fn destroy(route mut *route) -> void
+{
+  std::allocator::delete(route);
+}
+
+pub fn add_route(route_table mut &table, inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *link) -> net::result
+{
+  var guard = std::lock_guard(&mut table.lock);
+
+  for (var &route : table.routes)
+    if (route.destination == destination && route.prefixlen == prefixlen)
+      return already_exists;
+
+  table.routes.push_back(std::allocator::new<route>(destination, prefixlen, nexthop, link));
+
+  return ok;
+}
+
+pub fn find_route(route_table mut &table, inaddr &addr) -> Rc<route>
+{
+  var guard = std::lock_shared_guard(&mut table.lock);
+
+  for (var &route : table.routes)
+  {
+    if (route.destination.kind != addr.kind)
+      continue;
+
+    if (route.destination != addr.masked(route.prefixlen))
+      continue;
+
+    if (route.dev.flags & net::flags::lower_up != net::flags::lower_up)
+      continue;
+
+    return route;
+  }
+
+  return null;
+}
+
+pub fn enumerate_routes(route_table mut &table, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut table.lock);
+
+  for (var &route : table.routes)
+    callback(route);
+}

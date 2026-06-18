@@ -2883,7 +2883,7 @@ fn execute(machine mut &vm) -> result
   }
 }
 
-#[lifetime(launder(vm))]
+#[lifetime(launder(vm), poison(vm))]
 fn reset(machine mut &vm) -> void
 {
   vm.stack.clear();

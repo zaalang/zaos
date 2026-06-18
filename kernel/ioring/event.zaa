@@ -16,7 +16,7 @@ enum flags
 
 pub fn sys_event_create(process mut *process, ioring_ctx mut &ctx, u64 value, u64 maxvalue, u64 flags) -> result
 {
-  var event = create_event(process);
+  var event = create_event();
 
   if (var result = setup_event(&mut event, value, maxvalue); !result)
     return result;

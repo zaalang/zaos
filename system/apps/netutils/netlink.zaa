@@ -1,0 +1,171 @@
+//
+// netlink
+//
+
+pub const NLM_F_REQUEST = 1;
+
+pub const NLMSG_NOOP = 0x1;
+pub const NLMSG_ERROR = 0x2;
+pub const NLMSG_DONE = 0x3;
+pub const NLMSG_OVERRUN = 0x4;
+
+pub const RTM_GETLINK = 18;
+pub const RTM_SETLINK = 19;
+
+pub const RTM_NEWADDR = 20;
+pub const RTM_DELADDR = 21;
+pub const RTM_GETADDR = 22;
+
+pub const RTM_NEWROUTE = 24;
+pub const RTM_DELROUTE = 25;
+pub const RTM_GETROUTE = 26;
+
+pub const RTM_NEWNEIGH = 28;
+pub const RTM_DELNEIGH = 29;
+pub const RTM_GETNEIGH = 30;
+
+pub const IFF_UP = 0x1;
+pub const IFF_BROADCAST = 0x2;
+pub const IFF_DEBUG = 0x4;
+pub const IFF_LOOPBACK = 0x8;
+pub const IFF_POINTOPOINT = 0x10;
+pub const IFF_NOTRAILERS = 0x20;
+pub const IFF_RUNNING = 0x40;
+pub const IFF_NOARP = 0x80;
+pub const IFF_PROMISC = 0x100;
+pub const IFF_ALLMULTI = 0x200;
+pub const IFF_MASTER = 0x400;
+pub const IFF_SLAVE = 0x800;
+pub const IFF_MULTICAST = 0x1000;
+pub const IFF_PORTSEL = 0x2000;
+pub const IFF_AUTOMEDIA = 0x4000;
+pub const IFF_DYNAMIC = 0x8000;
+pub const IFF_LOWER_UP = 0x10000;
+pub const IFF_DORMANT = 0x20000;
+pub const IFF_ECHO = 0x40000;
+
+pub const AF_INET4 = 2;
+pub const AF_INET6 = 10;
+
+pub const IFA_ADDRESS = 1;
+pub const IFA_LOCAL = 2;
+pub const IFA_LABEL = 3;
+pub const IFA_BROADCAST = 4;
+pub const IFA_ANYCAST = 5;
+pub const IFA_CACHEINFO = 6;
+pub const IFA_MULTICAST = 7;
+pub const IFA_FLAGS = 8;
+pub const IFA_RT_PRIORITY = 9;
+
+pub const NUD_INCOMPLETE = 0x01;
+pub const NUD_REACHABLE = 0x02;
+pub const NUD_STALE = 0x04;
+pub const NUD_DELAY = 0x08;
+pub const NUD_PROBE = 0x10;
+pub const NUD_FAILED = 0x20;
+pub const NUD_NOARP = 0x40;
+pub const NUD_PERMANENT = 0x80;
+
+pub const NDA_DST = 1;
+pub const NDA_LLADDR = 2;
+pub const NDA_CACHEINFO = 3;
+
+pub const RT_TABLE_MAIN = 254;
+pub const RT_TABLE_LOCAL = 255;
+
+pub const RTA_DST = 1;
+pub const RTA_SRC = 2;
+pub const RTA_IIF = 3;
+pub const RTA_OIF = 4;
+pub const RTA_GATEWAY = 5;
+
+pub struct nlmsghdr
+{
+  pub u32 nlmsg_len;
+  pub u16 nlmsg_type;
+  pub u16 nlmsg_flags;
+  pub u32 nlmsg_seq;
+  pub u32 nlmsg_pid;
+
+  pub nlmsghdr() = default;
+  pub nlmsghdr(nlmsghdr &) = default;
+  pub fn =(nlmsghdr mut &, nlmsghdr &) -> nlmsghdr mut & = default;
+  pub ~nlmsghdr() = default;
+}
+
+pub struct ifinfomsg
+{
+  pub u8 ifi_family;
+  pub u16 ifi_type;
+  pub i32 ifi_index;
+  pub u32 ifi_flags;
+  pub u32 ifi_change;
+
+  pub ifinfomsg() = default;
+  pub ifinfomsg(ifinfomsg &) = default;
+  pub fn =(ifinfomsg mut &, ifinfomsg &) -> ifinfomsg mut & = default;
+  pub ~ifinfomsg() = default;
+}
+
+pub struct ifaddrmsg
+{
+  pub u8 ifa_family;
+  pub u8 ifa_prefixlen;
+  pub u8 ifa_flags;
+  pub u8 ifa_scope;
+  pub i32 ifa_index;
+
+  pub ifaddrmsg() = default;
+  pub ifaddrmsg(ifaddrmsg &) = default;
+  pub fn =(ifaddrmsg mut &, ifaddrmsg &) -> ifaddrmsg mut & = default;
+  pub ~ifaddrmsg() = default;
+}
+
+pub struct ifndmsg
+{
+  pub u8 ndm_family;
+  pub i32 ndm_ifindex;
+  pub u16 ndm_state;
+  pub u8 ndm_flags;
+  pub u8 ndm_type;
+
+  pub ifndmsg() = default;
+  pub ifndmsg(ifndmsg &) = default;
+  pub fn =(ifndmsg mut &, ifndmsg &) -> ifndmsg mut & = default;
+  pub ~ifndmsg() = default;
+}
+
+pub struct rtmsg
+{
+  pub u8 rtm_family;
+  pub u8 rtm_dst_len;
+  pub u8 rtm_src_len;
+  pub u8 rtm_tos;
+
+	pub u8 rtm_table;
+	pub u8 rtm_protocol;
+	pub u8 rtm_scope;
+	pub u8 rtm_type;
+
+	pub u32 rtm_flags;
+
+  pub rtmsg() = default;
+  pub rtmsg(rtmsg &) = default;
+  pub fn =(rtmsg mut &, rtmsg &) -> rtmsg mut & = default;
+  pub ~rtmsg() = default;
+}
+
+pub struct rtattr
+{
+  pub u16 rta_len;
+  pub u16 rta_type;
+  pub u8[0] rta_value;
+}
+
+pub struct nda_cacheinfo
+{
+  pub u32 ndm_confirmed;
+  pub u32 ndm_used;
+  pub u32 ndm_updated;
+  pub u32 ndm_refcnt;
+}

@@ -1,0 +1,76 @@
+//
+// ip
+//
+
+import std.stdio;
+import std.env;
+import ip-link : link;
+import ip-address : address;
+import ip-route : route;
+import ip-neighbour : neighbour;
+import aargh;
+
+struct opts
+{
+  #[arg(free, required, long="object", help="object")]
+  std::string object;
+
+  #[arg(free, long="command", help="command")]
+  std::vector<std::string> commands;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  switch (opts.object)
+  {
+    case "link":
+      if (opts.commands.empty)
+        opts.commands.push_back("show");
+
+      if (var result = link(opts); result != 0)
+        return result;
+
+    case "addr":
+    case "address":
+      if (opts.commands.empty)
+        opts.commands.push_back("show");
+
+      if (var result = address(opts); result != 0)
+        return result;
+
+    case "route":
+      if (opts.commands.empty)
+        opts.commands.push_back("show");
+
+      if (var result = route(opts); result != 0)
+        return result;
+
+    case "neigh":
+    case "neighbour":
+      if (opts.commands.empty)
+        opts.commands.push_back("show");
+
+      if (var result = neighbour(opts); result != 0)
+        return result;
+
+    else:
+      std::fprint(std::stderr, "ip: unknown object '", opts.object, "'");
+  }
+
+  return 0;
+}

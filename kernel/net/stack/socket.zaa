@@ -1,0 +1,116 @@
+//
+// network socket
+//
+
+import std.stdio;
+import std.circular_buffer;
+import vm;
+import net.result;
+import net.protocols.ipv6.socket as ipv6.socket;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+
+pub fn open(socket mut *socket) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::open(socket);
+
+//    case SOCK_DGRAM:
+//      return udp::open(socket);
+//
+//    case SOCK_STREAM:
+//      return tcp::open(socket);
+  }
+
+  return ok;
+}
+
+pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::bind(socket, addr, alen);
+
+//    case SOCK_DGRAM:
+//      return ipv6::bind(socket, addr, alen);
+//
+//    case SOCK_STREAM:
+//      return ipv6::bind(socket, addr, alen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::ioctl(socket, op, iovec);
+
+//    case SOCK_DGRAM:
+//      return ipv6::ioctl(socket, op, iovec);
+//
+//    case SOCK_STREAM:
+//      return ipv6::ioctl(socket, op, iovec);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ctrlhdr mut *ctrl, usize ctrllen) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::read(socket, iovec, offset, length, ctrl, ctrllen);
+
+//    case SOCK_DGRAM:
+//      return udp::read(socket, iovec, offset, length, ctrl, ctrllen);
+//
+//    case SOCK_STREAM:
+//      return tcp::read(socket, iovec, offset, length, ctrl, ctrllen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::write(socket, iovec, offset, length, ctrl, ctrllen);
+
+//    case SOCK_DGRAM:
+//      return udp::write(socket, iovec, offset, length, ctrl, ctrllen);
+//
+//    case SOCK_STREAM:
+//      return tcp::write(socket, iovec, offset, length, ctrl, ctrllen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn close(socket mut *socket) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ipv6::close(socket);
+
+//    case SOCK_DGRAM:
+//      return udp::close(socket);
+//
+//    case SOCK_STREAM:
+//      return tcp::close(socket);
+  }
+
+  return ok;
+}

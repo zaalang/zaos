@@ -64,7 +64,7 @@ OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-tablet"
 
 #OPTS="$OPTS -netdev id=net0,type=user,hostfwd=udp::5555-:5555"
 #OPTS="$OPTS -netdev id=net0,type=socket,connect=:1234"
-#OPTS="$OPTS -device e1000e,netdev=net0"
+#OPTS="$OPTS -device e1000e,netdev=net0,mac=52:54:00:11:22:33"
 #OPTS="$OPTS -device virtio-net-pci,netdev=net0,romfile="
 #OPTS="$OPTS -object filter-dump,id=cap0,netdev=net0,file=net.pcap"
 

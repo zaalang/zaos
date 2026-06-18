@@ -11,11 +11,21 @@ pub enum result : i32
   no_such_device = -6,
   would_block = -11,
   device_busy = -16,
+  already_exists = -17,
   invalid_argument = -22,
+  protocol_error = -71,
+  address_required = -89,
+  protocol_wrong_type = -91,
+  protocol_not_supported = -93,
   not_supported = -95,
+  network_unreachable = -101,
+  no_buffer_space = -105,
+  host_down = -112,
+  host_unreachable = -113,
   shutdown = -108,
   timed_out = -110,
   cancelled = -125,
+  overflow = -139,
 
   pub fn bool(result code) -> bool
   {

@@ -2,10 +2,11 @@
 // syscall result
 //
 
+import vm.result;
 import blk.result;
 import chr.result;
 import vfs.result;
-import vm.result;
+import net.result;
 import ioring;
 
 pub enum result : i32
@@ -38,6 +39,11 @@ pub enum result : i32
   }
 
   pub fn result(vfs::result result) -> result
+  {
+    return cast(result);
+  }
+
+  pub fn result(net::result result) -> result
   {
     return cast(result);
   }

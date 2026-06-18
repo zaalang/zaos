@@ -1,0 +1,169 @@
+//
+// socket
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import socket : create_socket, setup_socket;
+import process as _ : process;
+import result as _ : result;
+
+enum flags
+{
+}
+
+struct iov
+{
+  virtaddr data;
+  usize len;
+
+  iov() = default;
+  iov(iov &) = default;
+  ~iov() = default;
+}
+
+struct ctrlhdr
+{
+  u32 ctrl_len;
+  u32 ctrl_flags;
+
+  ctrlhdr() = default;
+  ctrlhdr(ctrlhdr &) = default;
+  ~ctrlhdr() = default;
+}
+
+pub fn sys_socket(process mut *process, ioring_ctx mut &ctx, i32 family, i32 type, i32 protocol) -> result
+{
+  var socket = create_socket();
+
+  if (var result = setup_socket(&mut socket, family, type, protocol); !result)
+    return result;
+
+  var fd = vfs::file_descriptor::create(socket.node);
+
+  if (var result = vfs::open(socket.node, &mut fd, process, 0, 0); !result)
+    return result;
+
+  return process.new_fd(fd);
+}
+
+pub fn sys_socket_bind(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr addrbuf, usize addrlen) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::socket)
+    return vfs::result::bad_descriptor;
+
+  if (addrbuf == 0 || addrlen == 0 || addrlen > 128)
+    return invalid_argument;
+
+  var sockaddr = std::vector<u8, N:256>::with_size(addrlen);
+
+  if (var result = vm::read_process_memory(process, addrbuf, sockaddr.data, sockaddr.len); !result)
+    return result;
+
+  if (var result = socket::bind(file.node, cast(sockaddr.data), sockaddr.len); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn sys_socket_read(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr iovbuf, usize iovlen, virtaddr ctrlbuf, usize ctrllen, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  var iovs = std::vector<iov, N:8>::with_size(iovlen);
+
+  if (var result = vm::read_process_memory(process, iovbuf, iovs.data, iovs.len * sizeof<iov>); !result)
+    return result;
+
+  var iovec = vm::iovec();
+
+  for (var &iov : iovs)
+  {
+    if (!vm::is_user_address(iov.data))
+      return vm::result::invalid_argument;
+
+    if (var result = vm::lock(process, vm::virtrange(iov.data, iov.len), vm::protection::readwrite, &mut iovec); !result)
+      return result;
+  }
+
+  var length = iovec.length;
+
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  if (ctrlbuf == 0 || ctrllen < sizeof<ctrlhdr> || ctrllen > 8192)
+    return invalid_argument;
+
+  var ctrl = std::vector<u8>::with_uninitialised_size(ctrllen);
+
+  var ctrlhdr = cast<ctrlhdr mut *>(ctrl.data);
+  ctrlhdr.ctrl_len = sizeof<ctrlhdr>;
+  ctrlhdr.ctrl_flags = 0;
+
+  var result = socket::read(file.node, iovec, 0, length, cast(ctrl.data), ctrl.len);
+
+  if (!result)
+    return result;
+
+  if (var result = vm::write_process_memory(process, ctrlbuf, ctrl.data, cast(ctrlhdr.ctrl_len)); !result)
+    return result;
+
+  return result;
+}
+
+pub fn sys_socket_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr iovbuf, usize iovlen, virtaddr ctrlbuf, usize ctrllen, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::socket)
+    return vfs::result::bad_descriptor;
+
+  var iovs = std::vector<iov, N:8>::with_size(iovlen);
+
+  if (var result = vm::read_process_memory(process, iovbuf, iovs.data, iovs.len * sizeof<iov>); !result)
+    return result;
+
+  var iovec = vm::iovec();
+
+  for (var &iov : iovs)
+  {
+    if (!vm::is_user_address(iov.data))
+      return vm::result::invalid_argument;
+
+    if (var result = vm::lock(process, vm::virtrange(iov.data, iov.len), vm::protection::readonly, &mut iovec); !result)
+      return result;
+  }
+
+  var length = iovec.length;
+
+  if (length > 2_147_483_647)
+    return invalid_argument;
+
+  if (ctrlbuf == 0 || ctrllen < sizeof<ctrlhdr> || ctrllen > 8192)
+    return invalid_argument;
+
+  var ctrl = std::vector<u8>::with_uninitialised_size(ctrllen);
+
+  if (var result = vm::read_process_memory(process, ctrlbuf, ctrl.data, ctrl.len); !result)
+    return result;
+
+  var result = socket::write(file.node, iovec, 0, length, cast(ctrl.data), ctrl.len);
+
+  if (!result)
+    return result;
+
+  return result;
+}

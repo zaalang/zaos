@@ -1,0 +1,267 @@
+//
+// ipv6 state
+//
+
+import std.stdlib;
+import std.vector;
+import std.flat_hash_map;
+import std.atomic;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6.ndp as ndp;
+import vm;
+import io;
+import cpu;
+import mutex as _ : shared_mutex;
+import support.rc : Rc;
+
+using net::netdev;
+using net::in6addr;
+using net::hwaddr;
+
+pub struct ifaddr
+{
+  pub in6addr addr;
+  pub usize prefixlen;
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  i32 refcnt;
+
+  pub ifaddr(in6addr &addr, usize prefixlen)
+    : addr(addr), prefixlen(prefixlen)
+  {
+  }
+
+  pub ~ifaddr() = default;
+}
+
+pub struct neighbour
+{
+  pub enum state
+  {
+    incomplete = 0x01,
+    reachable = 0x02,
+    stale = 0x04,
+    delay = 0x08,
+    probe = 0x10,
+    failed = 0x20,
+  }
+
+  pub in6addr ip;
+  pub hwaddr dst;
+  pub state state;
+  pub u64 timestamp;
+
+  u64 last_solicit;
+
+  std::vector<Rc<io::iocb>> notifys;
+
+  pub neighbour() = default;
+  pub neighbour(neighbour &&) = default;
+  pub fn =(neighbour mut &, neighbour &) -> neighbour mut & = default;
+  pub ~neighbour() = default;
+}
+
+pub struct ifstate
+{
+  shared_mutex lock;
+
+  std::vector<Rc<ifaddr>> addrs;
+  std::flat_hash_map<in6addr, neighbour> neighbours;
+
+  pub ifstate() = default;
+  pub ~ifstate() = default;
+}
+
+fn destroy(ifaddr mut *ifa) -> void
+{
+  std::allocator::delete(ifa);
+}
+
+pub fn add_addr(ifstate mut &state, in6addr &addr, usize prefixlen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  for (var &ifa : state.addrs)
+    if (ifa.addr == addr)
+      return already_exists;
+
+  state.addrs.push_back(std::allocator::new<ifaddr>(addr, prefixlen));
+
+  return ok;
+}
+
+pub fn find_ifa(ifstate mut &state, in6addr &addr) -> Rc<ifaddr>
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &ifa : state.addrs)
+  {
+    if (ifa.addr == addr)
+      return ifa;
+  }
+
+  return null;
+}
+
+pub fn remove_ifa(ifstate mut &state, ifaddr *ifa) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.addrs.erase(ifa);
+}
+
+pub fn enumerate_addrs(ifstate mut &state, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &ifa : state.addrs)
+    callback(ifa);
+}
+
+pub fn select_source(ifstate mut &state, in6addr &dst_ip, in6addr mut &src_ip) -> net::result
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  var candidates = std::vector<in6addr, N:8>();
+
+  for (var &ifa : state.addrs)
+  {
+    if (ifa.addr.masked(ifa.prefixlen) == dst_ip.masked(ifa.prefixlen))
+      candidates.push_back(ifa.addr);
+  }
+
+  if (candidates.empty)
+    return network_unreachable;
+
+  src_ip = candidates.front;
+
+  return ok;
+}
+
+pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut &cb, in6addr &dst_ip, in6addr &src_ip, hwaddr mut &dst) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  var mut &neighbour = state.neighbours.emplace(dst_ip);
+
+  switch (neighbour.state)
+  {
+    case cast<neighbour::state>(0):
+      neighbour.timestamp = cpu::system_time;
+      neighbour.state = neighbour::state::incomplete;
+
+    case incomplete:
+      if (cpu::system_time > neighbour.timestamp + 3_000_000_000)
+        neighbour.state = neighbour::state::failed;
+
+    case reachable:
+      if (cpu::system_time > neighbour.timestamp + 30_000_000_000)
+        neighbour.state = neighbour::state::stale;
+
+    case probe:
+      if (cpu::system_time >  neighbour.timestamp + 10_000_000_000)
+        neighbour.state = neighbour::state::failed;
+
+    case delay:
+      if (cpu::system_time > neighbour.timestamp + 5_000_000_000)
+        neighbour.state = neighbour::state::probe;
+
+    case stale:
+      neighbour.timestamp = cpu::system_time;
+      neighbour.state = neighbour::state::delay;
+  }
+
+  switch (neighbour.state)
+  {
+    case incomplete:
+
+      if (neighbour.notifys.find(cb) == neighbour.notifys.end)
+      {
+        io::initiate(&mut cb, 1);
+
+        neighbour.notifys.push_back(cb);
+      }
+
+      if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
+      {
+        if (var result = ndp::solicit(link, dst_ip, src_ip); !result)
+          return result;
+
+        neighbour.last_solicit = cpu::system_time;
+      }
+
+      return would_block;
+
+    case probe:
+
+      if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
+      {
+        if (var result = ndp::solicit(link, dst_ip, src_ip, neighbour.dst); !result)
+          return result;
+
+        neighbour.last_solicit = cpu::system_time;
+      }
+
+    case failed:
+      state.neighbours.erase(dst_ip);
+
+      return host_unreachable;
+  }
+
+  dst = neighbour.dst;
+
+  return ok;
+}
+
+pub fn learn_neighbour(ifstate mut &state, in6addr &ip, hwaddr &dst) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  var mut &neighbour = state.neighbours.emplace(ip);
+
+  neighbour.ip = ip;
+  neighbour.dst = dst;
+  neighbour.timestamp = cpu::system_time;
+  neighbour.state = neighbour::state::stale;
+
+  for (var mut &cb : neighbour.notifys)
+    io::complete(&mut cb, 0);
+
+  neighbour.notifys.clear();
+}
+
+pub fn confirm_neighbour(ifstate mut &state, in6addr &ip) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  switch (state.neighbours.get(ip))
+  {
+    case Some[neighbour]:
+      switch (neighbour.state)
+      {
+        case stale:
+        case probe:
+          neighbour.timestamp = cpu::system_time;
+          neighbour.state = neighbour::state::reachable;
+      }
+  }
+}
+
+pub fn enumerate_neighbours(ifstate mut &state, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &neighbour : state.neighbours)
+    callback(neighbour.value);
+}

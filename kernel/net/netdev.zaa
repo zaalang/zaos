@@ -6,20 +6,97 @@ import std.atomic;
 import std.function;
 import net.result;
 import net.packet;
+import net.netlink.link as netlink.link;
+import net.protocols.ipv6.conf as ipv6.conf;
+import net.protocols.ipv6.state as ipv6.state;
 import io;
 import vm;
 import vfs : fd;
 import process as _ : process;
+import thread as _ : thread;
+import semaphore as _ : semaphore;
 import support.rc : Rc;
 
 pub enum query
 {
+  name,
+  type,
   address,
   device_path,
 }
 
+pub enum flags : u64
+{
+  up = 0x1,
+  lower_up = 0x10000,
+
+  pub const fn ~(flags lhs) -> flags { return cast<flags>(~cast<u64>(lhs)); }
+  pub const fn &(flags lhs, flags rhs) -> flags { return cast<flags>(cast<u64>(lhs) & cast<u64>(rhs)); }
+  pub const fn |(flags lhs, flags rhs) -> flags { return cast<flags>(cast<u64>(lhs) | cast<u64>(rhs)); }
+}
+
+pub struct hwaddr : pub u8[64]
+{
+  pub usize len;
+
+  pub hwaddr(u8 *data, usize len)
+  {
+    this.len = len;
+    std::memcpy(this.data, data, len);
+  }
+
+  pub hwaddr<N>(u8[N] &addr)
+  {
+    this.len = addr.len;
+    std::memcpy(this.data, addr.data, addr.len);
+  }
+
+  pub fn =<N>(this mut &, u8[N] &addr) -> hwaddr mut &
+  {
+    this.len = addr.len;
+    std::memcpy(this.data, &addr, addr.len);
+
+    return &this;
+  }
+
+  pub fn bool(this &) -> bool
+  {
+    return this.len != 0;
+  }
+
+  pub fn ==(hwaddr &lhs, hwaddr &rhs) -> bool
+  {
+    return lhs.len == rhs.len && std::span(lhs.data, lhs.len) == std::span(rhs.data, rhs.len);
+  }
+
+  pub hwaddr() = default;
+  pub hwaddr(hwaddr &) = default;
+  pub fn =(hwaddr mut &, hwaddr &) -> hwaddr mut & = default;
+  pub ~hwaddr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, hwaddr &addr) throws(std::error) -> void
+{
+  if (addr.len != 0)
+  {
+    ctx.written += std::format_to(&mut os, "{:02x}", addr[0]);
+
+    for (var i = 1; i < addr.len; ++i)
+      ctx.written += std::format_to(&mut os, ":{:02x}", addr[i]);
+  }
+}
+
 pub struct netdev
 {
+  pub flags flags;
+
+  pub hwaddr hwaddr;
+  pub ipv6::ifstate ipv6;
+
+  pub thread mut *packet_handler;
+  pub semaphore packet_handler_doorbell;
+
+  pub std::list<net::packet> reclaim;
 
   pub fn create<T>(var && ...args) -> Rc<T>
   {
@@ -41,6 +118,16 @@ pub struct netdev
 
   pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
   {
+    if (flags & 0x3 != 0)
+    {
+      var link = netlink::link::create(Rc(&this));
+
+      fd = vfs::file_descriptor::create(link);
+
+      if (var result = link.node_operations.open(link, &mut fd, process, flags, mode); !result)
+        return cast(result);
+    }
+
     return ok;
   }
 
@@ -49,14 +136,14 @@ pub struct netdev
     return this.ops.transmit(&mut this, txqid, packet);
   }
 
-  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) -> net::result
-  {
-    return this.ops.emplace(&mut this, rxqid, buffer);
-  }
-
   pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result
   {
     return this.ops.retrieve(&mut this, rxqid, packet);
+  }
+
+  pub fn refill(this mut &, u16 rxqid) -> net::result
+  {
+    return this.ops.refill(&mut this, rxqid);
   }
 
   pub netdev(device_operations &ops)
@@ -87,9 +174,8 @@ pub vtable device_operations
   pub fn query(this &, net::query query, std::string mut &result) -> net::result;
 
   pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) -> net::result;
-
-  pub fn emplace(this mut &, u16 rxqid, vm::physrange buffer) -> net::result;
   pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result;
+  pub fn refill(this mut &, u16 rxqid) -> net::result;
 }
 
 fn destroy(netdev mut *device) -> void

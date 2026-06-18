@@ -5,7 +5,7 @@
 import std.stdlib;
 import vm : virtaddr, virtrange;
 import vfs;
-import ioring : create_ioring, setup_ioring, destroy_ioring;
+import ioring : create_ioring, setup_ioring;
 import result as _ : result;
 import process as _ : process;
 
@@ -64,7 +64,7 @@ extern fn sys_ioring_destroy(i32 fd) -> result
   if (file.node.type != vfs::node::type::ioring)
     return vfs::result::bad_descriptor;
 
-  if (var result = destroy_ioring(file.node); !result)
+  if (var result = ioring::destroy(file.node); !result)
     return result;
 
   process::current.free_fd(fd);

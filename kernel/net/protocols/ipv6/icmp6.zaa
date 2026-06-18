@@ -1,0 +1,92 @@
+//
+// ipv6 icmp
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6.ndp as ndp;
+import net.protocols.ipv6.cksum as ipv6.cksum;
+import vm;
+import io;
+
+using net::in6addr;
+
+pub enum type : u8
+{
+  destination_unreachable = 1,
+  packet_too_big = 2,
+  time_exceeded = 3,
+  parameter_problem = 4,
+  echo_request = 128,
+  echo_reply = 129,
+  router_solicitation = 133,
+  router_advertisement = 134,
+  neighbour_solicitation = 135,
+  neighbour_advertisement = 136,
+  redirect = 137,
+}
+
+#[packed]
+pub struct icmp6_header
+{
+  pub type type;
+  pub u8 code;
+  pub u8[2] cksum;
+  pub u8[4] dataum;
+}
+
+pub fn receive_echo_request(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<icmp6_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (rx.dst_ip.in6.is_multicast)
+    return ok;
+
+  var mut &pkt = link.reclaim.push_back(pkt.take);
+
+  hdr.type = type::echo_reply;
+  hdr.code = 0;
+  hdr.cksum = [0, 0];
+
+  hdr.cksum = ipv6::checksum(ipv6::protocol::icmp6, rx.dst_ip.in6, rx.src_ip.in6, pkt);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, rx.dst_ip.in6, rx.src, link.hwaddr, &mut pkt);
+
+  return ok;
+}
+
+pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<icmp6_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (ipv6::checksum(ipv6::protocol::icmp6, rx.src_ip.in6, rx.dst_ip.in6, pkt) != [0, 0])
+   return protocol_error;
+
+  switch (hdr.type)
+  {
+    case echo_request:
+      receive_echo_request(link, &mut rx, &mut pkt);
+
+    case router_solicitation:
+    case router_advertisement:
+    case neighbour_solicitation:
+    case neighbour_advertisement:
+    case redirect:
+      if (var result = ndp::receive(link, &mut rx, &mut pkt); !result)
+        return result;
+
+    else:
+      return protocol_not_supported;
+  }
+
+  return ok;
+}

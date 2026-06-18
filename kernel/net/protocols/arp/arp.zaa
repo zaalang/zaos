@@ -1,0 +1,108 @@
+//
+// arp
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.result;
+import net.protocols.ethernet as ethernet;
+import io;
+import vm;
+import support.rc : Rc;
+
+using net::in4addr;
+using net::macaddr;
+using net::hwaddr;
+
+pub enum opcode : u16
+{
+  request = 0x0100,
+  reply = 0x0200,
+}
+
+pub enum hardware_type : u16
+{
+  ethernet = 0x0100,
+}
+
+pub enum protocol_type : u16
+{
+  ipv4 = 0x0008,
+}
+
+#[packed]
+pub struct arp_header
+{
+  pub hardware_type hardware_type;
+  pub protocol_type protocol_type;
+  pub u8 hardware_length;
+  pub u8 protocol_length;
+  pub opcode opcode;
+
+  pub macaddr hardware_sender;
+  pub in4addr protocol_sender;
+  pub macaddr hardware_target;
+  pub in4addr protocol_target;
+}
+
+pub fn receive_arp_request(net::netdev mut *link, net::packet mut &pkt) -> net::result
+{
+  return ok;
+}
+
+pub fn receive_arp_reply(net::netdev mut *link, net::packet mut &pkt) -> net::result
+{
+  return ok;
+}
+
+pub fn receive(net::netdev mut *link, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<arp_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (hdr.hardware_type != hardware_type::ethernet)
+    return protocol_wrong_type;
+
+  if (hdr.protocol_type != protocol_type::ipv4)
+    return protocol_wrong_type;
+
+  if (hdr.hardware_length != 6)
+    return protocol_wrong_type;
+
+  if (hdr.protocol_length != 4)
+    return protocol_wrong_type;
+
+  switch (hdr.opcode)
+  {
+    case request:
+      receive_arp_request(link, &mut pkt);
+
+    case reply:
+      receive_arp_reply(link, &mut pkt);
+
+    else:
+      return protocol_not_supported;
+  }
+
+  return ok;
+}
+
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, opcode op, in4addr &dst_ip, in4addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+{
+  var hdr = pkt.prepend<arp_header>();
+
+  hdr.hardware_type = hardware_type::ethernet;
+  hdr.protocol_type = protocol_type::ipv4;
+  hdr.hardware_length = sizeof<macaddr>;
+  hdr.protocol_length = sizeof<in4addr>;
+  hdr.opcode = op;
+
+  hdr.hardware_sender = src;
+  hdr.protocol_sender = src_ip;
+  hdr.hardware_target = dst;
+  hdr.protocol_target = dst_ip;
+
+  ethernet::send(link, &mut cb, ethernet::ether_type::arp, dst, src, &mut pkt);
+}

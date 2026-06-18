@@ -1,0 +1,114 @@
+//
+// ipv6
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6.icmp6 as icmp6;
+import net.protocols.ipv6.socket as socket;
+import net.protocols.ethernet as ethernet;
+import io;
+import support.rc : Rc;
+
+using net::in6addr;
+using net::macaddr;
+using net::hwaddr;
+
+const AF_INET6 = 10;
+
+pub enum protocol : u8
+{
+  icmp6 = 58,
+}
+
+#[packed]
+pub struct ipv6_header
+{
+  u8[8] head;
+
+  pub fn version(this &) -> u8
+  {
+    return this.head[0] >> 4;
+  }
+
+  pub fn traffic_class(this &) -> u8
+  {
+    return cast<u8>(this.head[0] & 0xf) << 4 | cast<u8>(this.head[1] >> 4);
+  }
+
+  pub fn flow_label(this &) -> u32
+  {
+    return cast<u32>(this.head[1] & 0xf) << 16 | cast<u32>(this.head[2]) << 8 | cast<u32>(this.head[3]);
+  }
+
+  pub fn payload_length(this &) -> usize
+  {
+    return cast<usize>(this.head[4]) << 8 | cast<usize>(this.head[5]);
+  }
+
+  pub fn next_header(this &) -> protocol
+  {
+    return cast<protocol>(this.head[6]);
+  }
+
+  pub fn hop_limit(this &) -> u8
+  {
+    return this.head[7];
+  }
+
+  pub in6addr source;
+  pub in6addr destination;
+}
+
+pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<ipv6_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (hdr.version != 6)
+    return protocol_error;
+
+  if (pkt.length < hdr.payload_length)
+    return protocol_error;
+
+  rx.src_ip = hdr.source;
+  rx.dst_ip = hdr.destination;
+
+  pkt.strip(sizeof<ipv6_header>);
+  pkt.trim(hdr.payload_length);
+
+  socket::raw_rcv(AF_INET6, cast(hdr.next_header), rx, pkt);
+
+  switch (hdr.next_header)
+  {
+    case icmp6:
+      if (var result = icmp6::receive(link, &mut rx, &mut pkt); !result)
+        return result;
+
+    else:
+      return protocol_not_supported;
+  }
+
+  return ok;
+}
+
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+{
+  var hdr = pkt.prepend<ipv6_header>();
+
+  hdr.head[0] = 6 << 4;
+  hdr.head[1] = 0;
+  hdr.head[2] = 0;
+  hdr.head[3] = 0;
+  hdr.head[4] = cast<u8>((pkt.length - sizeof<ipv6_header>) >> 8);
+  hdr.head[5] = cast<u8>((pkt.length - sizeof<ipv6_header>) & 0xff);
+  hdr.head[6] = cast(protocol);
+  hdr.head[7] = 255;
+
+  hdr.source = src_ip;
+  hdr.destination = dst_ip;
+
+  ethernet::send(link, &mut cb, ethernet::ether_type::ipv6, dst, src, &mut pkt);
+}

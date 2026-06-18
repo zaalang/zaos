@@ -1,9 +1,10 @@
 //
-// mac address
+// net mac
 //
 
 import std.stdio;
 import std.fmt;
+import net.netdev;
 
 pub struct macaddr : pub u8[6]
 {
@@ -13,14 +14,33 @@ pub struct macaddr : pub u8[6]
   }
 
   pub macaddr(u16[3] &addr)
-    : super([ cast<u8>(addr[0] & 0xff), cast<u8>(addr[0] >> 8), cast<u8>(addr[1] & 0xff), cast<u8>(addr[1] >> 8), cast<u8>(addr[2] & 0xff), cast<u8>(addr[2] >> 8) ])
+    : super([
+        cast<u8>(addr[0] & 0xff), cast<u8>(addr[0] >> 8),
+        cast<u8>(addr[1] & 0xff), cast<u8>(addr[1] >> 8),
+        cast<u8>(addr[2] & 0xff), cast<u8>(addr[2] >> 8),
+      ])
   {
   }
+
+  pub macaddr(net::hwaddr &addr)
+  {
+    std::memcpy(this.data, addr.data, addr.len);
+  }
+
+  pub fn =(this mut &, net::hwaddr &addr) -> macaddr mut &
+  {
+    std::memcpy(this.data, addr.data, addr.len);
+
+    return &this;
+  }
+
+  pub fn ==(macaddr &, macaddr &) -> bool = default;
+  pub fn <=>(macaddr &, macaddr &) -> int = default;
 
   pub macaddr() = default;
   pub macaddr(macaddr &) = default;
   pub fn =(macaddr mut &, macaddr &) -> macaddr mut & = default;
-  pub ~macaddr() = default; 
+  pub ~macaddr() = default;
 }
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, macaddr &addr) throws(std::error) -> void

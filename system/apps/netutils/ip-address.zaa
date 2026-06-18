@@ -1,0 +1,52 @@
+//
+// ip-address
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import netlink;
+import json;
+
+using netlink;
+
+fn show(var &opts) throws(std::error) -> i32
+{
+  var linklist = json::load_from_file("/sys/net/list");
+
+  if (linklist.error)
+    throw std::system_error(std::errc::format_error);
+
+  for (var &link : linklist.value.as_array)
+  {
+    std::printf("{}: <{}>\n", link["device"].as_str, link["flags"].as_array.transform(|flag| flag.as_str).join(","));
+
+    std::printf("  link/{} {}\n", link["type"].as_str, link["address"].as_str);
+
+    for (var &addr : link["inet6"]["addresses"].as_array)
+      std::printf("  inet6 {}\n", addr.as_str);
+  }
+
+  return 0;
+}
+
+pub fn address(var &opts) -> i32
+{
+  try
+  {
+    switch (opts.commands[0])
+    {
+      case "show":
+        show(opts);
+
+      else:
+        std::fprint(std::stderr, "ip: unknown command '", opts.commands[0], "'");
+    }
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ip: ", rc);
+  }
+
+  return 0;
+}

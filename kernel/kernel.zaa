@@ -91,7 +91,7 @@ fn kernel_main(void*) -> void
   pty::initialise();
   video::initialise();
   console::initialise();
-//  net::initialise();
+  net::initialise();
   cfg::initialise();
 
   cfg::coldplug();

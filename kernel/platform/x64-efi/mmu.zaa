@@ -105,7 +105,7 @@ enum pdbits : u64
   present = 0x1,
   writeable = 0x2,
   user = 0x4,
-  write_through	= 0x8,
+  write_through = 0x8,
   caching_disabled = 0x10,
   accessed = 0x20,
   dirty = 0x40,

@@ -1,0 +1,360 @@
+//
+// watchset
+//
+
+import std.stdlib;
+import std.circular_buffer;
+import std.list;
+import vm;
+import io;
+import vfs;
+import mutex as _ : mutex;
+import thread as _ : thread;
+import process as _ : process;
+import support.rc : Rc;
+
+pub enum mask
+{
+  pub const access = 0x1;
+  pub const attrib = 0x2;
+  pub const close_write = 0x4;
+  pub const close_nowrite = 0x8;
+  pub const mkdir = 0x10;
+  pub const create = 0x20;
+  pub const unlink = 0x40;
+  pub const modify = 0x100;
+  pub const moved = 0x400;
+  pub const rename = 0x1000;
+  pub const open = 0x2000;
+
+  pub const dropped = 0x10000000;
+
+  pub const filesystem = 1 << 56;
+
+  pub const reserved = 1 << 63;
+}
+
+pub enum flags
+{
+  pub const filesystem = 0o1000000;
+}
+
+pub struct watchevt
+{
+  pub u32 len;
+  pub u32 pad;
+  pub u64 mask;
+  pub uintptr user_data;
+
+  pub struct info
+  {
+    pub const id = 1;
+    pub const dir = 2;
+    pub const name = 3;
+
+    pub u16 type;
+    pub u16 len;
+  }
+
+  pub struct id_info : pub info
+  {
+    pub uintptr id;
+  }
+
+  pub struct dir_info : pub info
+  {
+    pub uintptr id;
+  }
+
+  pub struct name_info : pub info
+  {
+    pub u8[0] name;
+  }
+}
+
+pub struct watchset
+{
+  struct watch
+  {
+    u64 mask;
+    uintptr user_data;
+
+    vfs::watcher watcher;
+    watchset mut *watchset;
+
+    watch() = default;
+    ~watch() = default;
+  }
+
+  struct event
+  {
+    u64 mask;
+    uintptr user_data;
+
+    uintptr id;
+    uintptr dir;
+    std::string name;
+
+    event() = default;
+    event(event &&) = default;
+    fn =(event mut &, event &&) -> event mut & = default;
+    ~event() = default;
+  }
+
+  mutex lock;
+  std::list<watch> watches;
+  std::circular_buffer<event, N:64> events;
+
+  io::response readable;
+
+  vfs::node node_;
+
+  fn create() -> Rc<watchset>
+  {
+    return std::allocator::new<watchset>();
+  }
+
+  pub fn node(this mut &) -> Rc<vfs::node>
+  {
+    return &this.node_;
+  }
+
+  pub fn ref(this mut &) -> void
+  {
+    this.node_.ref();
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    this.node_.unref();
+  }
+
+  pub watchset() = default;
+  pub ~watchset() = default;
+}
+
+fn callback(vfs::watcher *watcher, u64 mask, uintptr id, uintptr dir, std::string_view name) -> void
+{
+  var watch = cast<watchset::watch mut *>(cast<uintptr>(watcher) - offsetof(watchset::watch::watcher));
+
+  var guard = std::lock_guard(&mut watch.watchset.lock);
+
+  if (watch.watchset.events.full)
+  {
+    var mut &back = watch.watchset.events.back;
+
+    back.mask = mask::dropped;
+
+    return;
+  }
+
+  var event = watchset::event();
+
+  event.id = id;
+  event.dir = dir;
+  event.name = name;
+  event.mask = mask;
+  event.user_data = watch.user_data;
+
+  watch.watchset.events.push_back(event);
+
+  if (watch.watchset.events.len == 1)
+    io::complete(&mut watch.watchset.readable.cb, 0);
+}
+
+pub fn create_watchset() -> Rc<watchset>
+{
+  return watchset::create();
+}
+
+pub fn setup_watchset(Rc<watchset> mut &watchset) -> vfs::result
+{
+  io::initiate(&mut watchset.readable.cb, 1);
+
+  vfs::node::init(&watchset.node_, vfs::node::type::watchset, vfs::node::ops::stream(&impl *watchset));
+
+  return ok;
+}
+
+pub fn add(watchset mut &watchset, vfs::node mut *target, u64 mask, uintptr user_data, u64 flags) -> vfs::result
+{
+  var guard = std::lock_guard(&mut watchset.lock);
+
+  if ((mask & 0x0000_ffff_ffff_ffff == 0) || (mask & 0xffff_0000_0000_0000 != 0))
+    return invalid_argument;
+
+  if (var j = watchset.watches.find_if(|watch| watch.watcher.node == target); j != watchset.watches.end)
+    return already_exists;
+
+  var mut &watch = watchset.watches.push_back();
+
+  watch.mask = mask;
+  watch.user_data = user_data;
+  watch.watchset = &watchset;
+
+  if (flags & flags::filesystem == flags::filesystem)
+    watch.mask |= mask::filesystem;
+
+  vfs::watch(target, &watch.watcher, &cast<(vfs::watcher *, u64, uintptr, uintptr, std::string_view) -> void>(callback), watch.mask);
+
+  return ok;
+}
+
+pub fn remove(watchset mut &watchset, vfs::node mut *target) -> vfs::result
+{
+  var guard = std::lock_guard(&mut watchset.lock);
+
+  var j = watchset.watches.find_if(|watch| watch.watcher.node == target);
+
+  if (j == watchset.watches.end)
+    return not_found;
+
+  var mut &watch = watchset.watches[j];
+
+  vfs::unwatch(&watch.watcher);
+
+  watchset.watches.erase(j);
+
+  return ok;
+}
+
+pub fn trigger(watchset mut *watchset) -> void
+{
+  io::complete(&mut watchset.readable.cb, 0);
+}
+
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> vfs::result
+{
+  var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node_));
+
+  readable = this.readable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+{
+  var mut &this = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node_));
+
+  var guard = std::lock_guard(&mut this.lock);
+
+  var count = 0;
+  var event = std::vector<u8>::with_size(512);
+
+  while (count <= length)
+  {
+    if (this.events.empty)
+      break;
+
+    var mut &evt = this.events.front;
+
+    var bytes = sizeof<watchevt>;
+    var watchevt = cast<watchevt mut *>(event.data);
+
+    if (evt.id != 0)
+    {
+      var id_info = cast<watchevt::id_info mut *>(event.data + bytes);
+
+      id_info.type = watchevt::info::id;
+      id_info.len = sizeof<watchevt::id_info>;
+      id_info.id = evt.id;
+
+      bytes += cast(id_info.len);
+    }
+
+    if (evt.dir != 0)
+    {
+      var dir_info = cast<watchevt::dir_info mut *>(event.data + bytes);
+
+      dir_info.type = watchevt::info::dir;
+      dir_info.len = sizeof<watchevt::dir_info>;
+      dir_info.id = evt.dir;
+
+      bytes += cast(dir_info.len);
+    }
+
+    if (evt.name.len != 0)
+    {
+      var name_info = cast<watchevt::name_info mut *>(event.data + bytes);
+
+      name_info.type = watchevt::info::name;
+      name_info.len = sizeof<watchevt::name_info> + cast(evt.name.len);
+      std::memcpy(event.data + bytes + sizeof<watchevt::name_info>, evt.name.data, evt.name.len);
+
+      bytes += cast(name_info.len);
+    }
+
+    watchevt.mask = evt.mask;
+    watchevt.user_data = evt.user_data;
+    watchevt.len = cast(bytes);
+
+    if (count + bytes > length)
+      break;
+
+    if (var result = vm::memcpy(iovec, offset, event.data, bytes); !result)
+      return cast(result);
+
+    this.events.pop_front();
+
+    if (this.events.len == 0)
+      io::initiate(&mut this.readable.cb, 1);
+
+    count += bytes;
+    offset += bytes;
+  }
+
+  if (count == 0)
+    return would_block;
+
+  return cast(count);
+}
+
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) override -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) override -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) override -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn add(vfs::node mut *node, vfs::node mut *target, u64 mask, uintptr user_data, u64 flags) -> vfs::result
+{
+  var mut &watchset = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node_));
+
+  if (var result = watchset.add(target, mask, user_data, flags); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn remove(vfs::node mut *node, vfs::node mut *target) -> vfs::result
+{
+  var mut &watchset = *cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node_));
+
+  if (var result = watchset.remove(target); !result)
+    return result;
+
+  return ok;
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var watchset = cast<watchset mut *>(cast<uintptr>(node) - offsetof(watchset::node_));
+
+  for (var mut &watch : watchset.watches)
+    vfs::unwatch(&watch.watcher);
+
+  std::allocator::delete(watchset);
+}

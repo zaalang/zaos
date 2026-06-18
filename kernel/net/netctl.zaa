@@ -1,0 +1,75 @@
+//
+// net ctldev
+//
+
+import std.stdio;
+import std.atomic;
+import io;
+import vm;
+import vfs;
+import dev;
+import chr.chrdev;
+import net.netlink.route as netlink.route;
+import process as _ : process;
+import support.rc : Rc;
+
+pub struct ctldev : pub chr::chrdev
+{
+  pub ctldev()
+    : super(&impl this)
+  {
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = "net/0";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
+  {
+    if (flags & 0x3 != 0)
+    {
+      var route = netlink::route::create();
+
+      fd = vfs::file_descriptor::create(route);
+
+      if (var result = route.node_operations.open(route, &mut fd, process, flags, mode); !result)
+        return cast(result);
+    }
+
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub ~ctldev() = default;
+}

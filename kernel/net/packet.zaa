@@ -11,12 +11,111 @@ import support.rc : Rc;
 
 pub struct packet
 {
+  pub enum type
+  {
+    eth,
+    arp,
+    ipv4,
+    ipv6,
+    udp,
+    tcp,
+  }
+
+  pub type type;
+
+  pub usize start;
   pub usize length;
 
   pub std::vector<vm::physrange, N:8> host;
 
   pub Rc<io::iocb> cb;
 
+  pub fn take(this mut &) -> packet
+  {
+    var pkt = &move this;
+
+    std::launder(this);
+
+    return pkt;
+  }
+
   pub packet() = default;
+  pub packet(packet &&) = default;
+  pub fn =(packet mut &, packet &&) -> packet mut & = default;
   pub ~packet() = default;
+}
+
+pub fn as<T>(packet &pkt, usize size = sizeof<T>) -> T *
+{
+  if (pkt.length < size)
+    return null;
+
+  std::assert(pkt.start + size <= pkt.host[0].size);
+
+  return cast<T*>((pkt.host[0].addr + pkt.start).ptr);
+}
+
+pub fn as<T>(packet mut &pkt, usize size = sizeof<T>) -> T mut *
+{
+  if (pkt.length < size)
+    return null;
+
+  std::assert(pkt.start + size <= pkt.host[0].size);
+
+  return cast<T mut *>((pkt.host[0].addr + pkt.start).ptr);
+}
+
+pub fn foreach_region(packet &pkt, var &&callback) -> void
+{
+  var start = pkt.start;
+  var remaining = pkt.length;
+
+  for (var i = pkt.host.begin; i != pkt.host.end && remaining != 0; ++i)
+  {
+    var bytes = std::min((*i).size - start, remaining);
+
+    callback(vm::physrange((*i).addr + start, bytes));
+
+    remaining -= bytes;
+    start = 0;
+  }
+}
+
+pub fn inset(packet mut &pkt, vm::physrange range) -> void
+{
+  pkt.start = range.size;
+  pkt.host.insert(pkt.host.begin, range);
+}
+
+pub fn prepend<T>(packet mut &pkt, usize size = sizeof<T>) -> T mut *
+{
+  pkt.start -= size;
+  pkt.length += size;
+
+  return cast<T mut *>((pkt.host[0].addr + pkt.start).ptr);
+}
+
+pub fn append(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> void
+{
+  pkt.length += length;
+
+  iovec.foreach_region_in(offset, length, |region| {
+    pkt.host.push_back(region);
+  });
+}
+
+pub fn strip(packet mut &pkt, usize size) -> void
+{
+  pkt.start += size;
+  pkt.length -= size;
+}
+
+pub fn extend(packet mut &pkt, usize size) -> void
+{
+  pkt.length += size;
+}
+
+pub fn trim(packet mut &pkt, usize size) -> void
+{
+  pkt.length = size;
 }

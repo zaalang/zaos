@@ -7,7 +7,7 @@ import ioring : ioring_ctx;
 import vm : virtaddr;
 import io;
 import vfs;
-import channel : create_channel;
+import channel : create_channel, setup_channel;
 import process as _ : process;
 import result as _ : result;
 
@@ -23,7 +23,7 @@ struct msg
   usize nfds;
 
   msg() = default;
-  msg(msg&) = default;
+  msg(msg &) = default;
   ~msg() = default;
 }
 
@@ -31,10 +31,13 @@ pub fn sys_channel_create(process mut *process, ioring_ctx mut &ctx, virtaddr fd
 {
   var channel = create_channel();
 
+  if (var result = setup_channel(&mut channel); !result)
+    return result;
+
   var fds = [0, 0];
 
-  fds[0] = process.new_fd(vfs::file_descriptor::create(channel.lhs_node));
-  fds[1] = process.new_fd(vfs::file_descriptor::create(channel.rhs_node));
+  fds[0] = process.new_fd(vfs::file_descriptor::create(channel.inout_node));
+  fds[1] = process.new_fd(vfs::file_descriptor::create(channel.outin_node));
 
   if (var result = vm::write_process_memory(process, fdsbuf, fds.data, fds.len * sizeof<i32>); !result)
     return result;

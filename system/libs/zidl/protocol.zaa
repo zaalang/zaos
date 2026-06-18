@@ -199,10 +199,6 @@ pub fn recv<zidl_protocol_t, Callback>(i32 fd, Callback &&callback) -> result
   request.fds = handles.data;
   request.nfds = handles.len;
 
-  var response = os::cmsg();
-  response.bytes = bytes.data;
-  response.fds = handles.data;
-
   var txid = 0;
   var inbytes = 0;
   var infds = 0;

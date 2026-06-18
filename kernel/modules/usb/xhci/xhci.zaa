@@ -102,8 +102,8 @@ enum xcap
   const legsup_biosowned = 0x10000;
 
   const legctlsts = 0x04;
-  const legctlsts_reserved_bits	= 0x0e1fee;
-  const legctlsts_readonly_bits	= 0x110000;
+  const legctlsts_reserved_bits = 0x0e1fee;
+  const legctlsts_readonly_bits = 0x110000;
 
   const next = 0xff00;
 }
@@ -522,7 +522,7 @@ enum context
   const slot_state_mask = 0x1f;
   const slot_state_shift = 27;
 
-  const endpoint_state_disabled	= 0;
+  const endpoint_state_disabled = 0;
   const endpoint_state_running = 1;
   const endpoint_state_halted = 2;
   const endpoint_state_stopped = 3;

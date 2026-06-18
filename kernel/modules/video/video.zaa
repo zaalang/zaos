@@ -74,9 +74,10 @@ pub struct bootfb : pub chr::chrdev
           return cast(result);
 
         return ok;
-    }
 
-    return not_supported;
+      else:
+        return not_supported;
+    }
   }
 
   pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result

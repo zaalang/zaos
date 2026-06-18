@@ -1,0 +1,390 @@
+//
+// link
+//
+
+import std.stdio;
+import io;
+import vm;
+import vfs;
+import dev;
+import net;
+import net.netlink.msg as netlink;
+import process as _ : process;
+import support.rc : Rc;
+
+using netlink;
+
+const AF_INET4 = 2;
+const AF_INET6 = 10;
+
+const RTM_GETLINK = 18;
+const RTM_SETLINK = 19;
+
+const RTM_NEWADDR = 20;
+const RTM_DELADDR = 21;
+const RTM_GETADDR = 22;
+
+const RTM_NEWNEIGH = 28;
+const RTM_DELNEIGH = 29;
+const RTM_GETNEIGH = 30;
+
+const IFF_UP = 0x1;
+const IFF_BROADCAST = 0x2;
+const IFF_DEBUG = 0x4;
+const IFF_LOOPBACK = 0x8;
+const IFF_POINTOPOINT = 0x10;
+const IFF_NOTRAILERS = 0x20;
+const IFF_RUNNING = 0x40;
+const IFF_NOARP = 0x80;
+const IFF_PROMISC = 0x100;
+const IFF_ALLMULTI = 0x200;
+const IFF_MASTER = 0x400;
+const IFF_SLAVE = 0x800;
+const IFF_MULTICAST = 0x1000;
+const IFF_PORTSEL = 0x2000;
+const IFF_AUTOMEDIA = 0x4000;
+const IFF_DYNAMIC = 0x8000;
+const IFF_LOWER_UP = 0x10000;
+const IFF_DORMANT = 0x20000;
+const IFF_ECHO = 0x40000;
+
+const IFA_ADDRESS = 1;
+const IFA_LOCAL = 2;
+const IFA_LABEL = 3;
+const IFA_BROADCAST = 4;
+const IFA_ANYCAST = 5;
+const IFA_CACHEINFO = 6;
+const IFA_MULTICAST = 7;
+const IFA_FLAGS = 8;
+const IFA_RT_PRIORITY = 9;
+
+const NUD_INCOMPLETE = 0x01;
+const NUD_REACHABLE = 0x02;
+const NUD_STALE = 0x04;
+const NUD_DELAY = 0x08;
+const NUD_PROBE = 0x10;
+const NUD_FAILED = 0x20;
+const NUD_NOARP = 0x40;
+const NUD_PERMANENT = 0x80;
+
+const NDA_DST = 1;
+const NDA_LLADDR = 2;
+const NDA_CACHEINFO = 3;
+
+struct ifinfomsg
+{
+  u8 ifi_family;
+  u16 ifi_type;
+  i32 ifi_index;
+  u32 ifi_flags;
+  u32 ifi_change;
+}
+
+struct ifaddrmsg
+{
+  u8 ifa_family;
+  u8 ifa_prefixlen;
+  u8 ifa_flags;
+  u8 ifa_scope;
+  i32 ifa_index;
+}
+
+struct ifndmsg
+{
+  u8 ndm_family;
+  i32 ndm_ifindex;
+  u16 ndm_state;
+  u8 ndm_flags;
+  u8 ndm_type;
+}
+
+struct rtattr
+{
+  u16 rta_len;
+  u16 rta_type;
+  u8[0] rta_value;
+}
+
+struct nda_cacheinfo
+{
+  u32 ndm_confirmed;
+  u32 ndm_used;
+  u32 ndm_updated;
+  u32 ndm_refcnt;
+}
+
+pub struct link : pub vfs::node
+{
+  Rc<net::netdev> dev;
+
+  netlink::nlmsg_queue queue;
+
+  pub fn create(Rc<net::netdev> &dev) -> Rc<vfs::node>
+  {
+    return std::allocator::new<link>(dev);
+  }
+
+  pub link(Rc<net::netdev> &&dev)
+    : dev(&&dev)
+  {
+    vfs::node::init(&this, vfs::node::type::netlink, vfs::node::ops::stream(&impl this));
+  }
+
+  pub ~link() = default;
+}
+
+fn ack(link mut &this, std::vector<u8> &request, i32 result) -> void
+{
+  var response = std::vector<u8>::with_capacity(512);
+
+  var hdr = cast<nlmsghdr mut *>(response.end);
+
+  hdr.nlmsg_type = NLMSG_ERROR;
+  hdr.nlmsg_flags = 0;
+  hdr.nlmsg_seq = cast<nlmsghdr *>(request.data).nlmsg_seq;
+  hdr.nlmsg_pid = 0;
+
+  response.append_from_capacity(sizeof(*hdr));
+
+  var code = cast<i32 mut *>(response.end);
+
+  *code = result;
+
+  response.append_from_capacity(sizeof(*code));
+
+  hdr.nlmsg_len = cast(response.len);
+
+  this.queue.push(response.data, response.len);
+}
+
+fn done(link mut &this, std::vector<u8> &request) -> void
+{
+  var response = std::vector<u8>::with_capacity(512);
+
+  var hdr = cast<nlmsghdr mut *>(response.end);
+
+  hdr.nlmsg_type = NLMSG_DONE;
+  hdr.nlmsg_flags = 0;
+  hdr.nlmsg_seq = cast<nlmsghdr *>(request.data).nlmsg_seq;
+  hdr.nlmsg_pid = 0;
+
+  response.append_from_capacity(sizeof(*hdr));
+
+  hdr.nlmsg_len = cast(response.len);
+
+  this.queue.push(response.data, response.len);
+}
+
+fn getlink(link mut &this, std::vector<u8> &request) -> void
+{
+  var response = std::vector<u8>::with_capacity(512);
+
+  var hdr = cast<nlmsghdr mut *>(response.end);
+
+  hdr.nlmsg_type = RTM_GETLINK;
+  hdr.nlmsg_flags = 0;
+  hdr.nlmsg_seq = cast<nlmsghdr *>(request.data).nlmsg_seq;
+  hdr.nlmsg_pid = 0;
+
+  response.append_from_capacity(sizeof(*hdr));
+
+  var info = cast<ifinfomsg mut *>(response.end);
+
+  info.ifi_family = 0;
+  info.ifi_type = 1;
+  info.ifi_index = std::bit_cast<i32>(dev::lookup(this.dev));
+  info.ifi_flags = cast(this.dev.flags);
+  info.ifi_change = 0;
+
+  response.append_from_capacity(sizeof(*info));
+
+  hdr.nlmsg_len = cast(response.len);
+
+  this.queue.push(response.data, response.len);
+}
+
+fn setlink(link mut &this, std::vector<u8> &request) -> void
+{
+  var code = 0;
+  var info = cast<ifinfomsg mut *>(request.data + sizeof<nlmsghdr>);
+
+  if (info.ifi_change & IFF_UP == IFF_UP)
+  {
+    if (info.ifi_flags & IFF_UP == IFF_UP)
+      net::up_link(this.dev);
+    else
+      net::down_link(this.dev);
+  }
+
+  ack(&mut this, request, code);
+}
+
+fn getaddr(link mut &this, std::vector<u8> &request) -> void
+{
+  this.dev.ipv6.enumerate_addrs(|ifa| {
+    var response = std::vector<u8>::with_capacity(512);
+
+    var hdr = cast<nlmsghdr mut *>(response.end);
+
+    hdr.nlmsg_type = RTM_NEWADDR;
+    hdr.nlmsg_flags = 0;
+    hdr.nlmsg_seq = cast<nlmsghdr *>(request.data).nlmsg_seq;
+    hdr.nlmsg_pid = 0;
+
+    response.append_from_capacity(sizeof(*hdr));
+
+    var addr = cast<ifaddrmsg mut *>(response.end);
+
+    addr.ifa_family = AF_INET6;
+    addr.ifa_prefixlen = cast(ifa.prefixlen);
+    addr.ifa_flags = 0;
+    addr.ifa_scope = 0;
+    addr.ifa_index = std::bit_cast<i32>(dev::lookup(this.dev));
+
+    response.append_from_capacity(sizeof(*addr));
+
+    var rta0 = cast<rtattr mut *>(response.end);
+
+    rta0.rta_type = IFA_ADDRESS;
+    rta0.rta_len = sizeof<rtattr> + sizeof<net::in6addr>;
+    std::memcpy(rta0.rta_value.data, ifa.addr.data, ifa.addr.len);
+
+    response.append_from_capacity(cast(std::align_up(rta0.rta_len, 4)));
+
+    hdr.nlmsg_len = cast(response.len);
+
+    this.queue.push(response.data, response.len);
+  });
+
+  done(&mut this, request);
+}
+
+fn getneighbour(link mut &this, std::vector<u8> &request) -> void
+{
+  this.dev.ipv6.enumerate_neighbours(|neighbour| {
+    var response = std::vector<u8>::with_capacity(512);
+
+    var hdr = cast<nlmsghdr mut *>(response.end);
+
+    hdr.nlmsg_type = RTM_NEWNEIGH;
+    hdr.nlmsg_flags = 0;
+    hdr.nlmsg_seq = cast<nlmsghdr *>(request.data).nlmsg_seq;
+    hdr.nlmsg_pid = 0;
+
+    response.append_from_capacity(sizeof(*hdr));
+
+    var nd = cast<ifndmsg mut *>(response.end);
+
+    nd.ndm_family = AF_INET6;
+    nd.ndm_ifindex = std::bit_cast<i32>(dev::lookup(this.dev));
+    nd.ndm_state = 0;
+    nd.ndm_flags = 0;
+    nd.ndm_type = 0;
+
+    response.append_from_capacity(sizeof(*nd));
+
+    {
+      var rta = cast<rtattr mut *>(response.end);
+
+      rta.rta_type = NDA_DST;
+      rta.rta_len = sizeof<rtattr> + sizeof<net::in6addr>;
+      std::memcpy(rta.rta_value.data, neighbour.ip.data, neighbour.ip.len);
+
+      response.append_from_capacity(cast(std::align_up(rta.rta_len, 4)));
+    }
+
+    if (neighbour.dst)
+    {
+      var rta = cast<rtattr mut *>(response.end);
+
+      rta.rta_type = NDA_LLADDR;
+      rta.rta_len = sizeof<rtattr> + cast(neighbour.dst.len);
+      std::memcpy(rta.rta_value.data, neighbour.dst.data, neighbour.dst.len);
+      std::memset(rta.rta_value.data + cast(rta.rta_len), 0, cast(std::align_up(rta.rta_len, 4) - rta.rta_len));
+
+      response.append_from_capacity(cast(std::align_up(rta.rta_len, 4)));
+    }
+
+    hdr.nlmsg_len = cast(response.len);
+
+    this.queue.push(response.data, response.len);;
+  });
+
+  done(&mut this, request);
+}
+
+pub fn open(vfs::node mut *node, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> vfs::result
+{
+  return ok;
+}
+
+pub fn getstat(vfs::node mut *node, vfs::stat mut &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn putstat(vfs::node mut *node, vfs::stat &stat, u64 mask) -> vfs::result
+{
+  return not_supported;
+}
+
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) -> vfs::result
+{
+  var mut &this = cast<link mut &>(*node);
+
+  readable = this.queue.readable.cb;
+
+  return ok;
+}
+
+pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<link mut &>(*node);
+
+  var count = 0;
+
+  if (var result = this.queue.pop(iovec, offset, length, &mut count); !result)
+    return cast(result);
+
+  return cast(count);
+}
+
+pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
+{
+  var mut &this = cast<link mut &>(*node);
+
+  if (length < sizeof<nlmsghdr> || length > 512)
+    return invalid_argument;
+
+  var request = std::vector<u8>::with_uninitialised_size(length);
+
+  if (var result = vm::memcpy(request.data, iovec, offset, length); !result)
+    return cast(result);
+
+  switch (cast<nlmsghdr*>(request.data).nlmsg_type)
+  {
+    case RTM_GETLINK:
+      getlink(&mut this, request);
+
+    case RTM_SETLINK:
+      setlink(&mut this, request);
+
+    case RTM_GETADDR:
+      getaddr(&mut this, request);
+
+    case RTM_GETNEIGH:
+      getneighbour(&mut this, request);
+
+    else:
+      return invalid_argument;
+  }
+
+  return cast(length);
+}
+
+fn destroy(vfs::node mut *node) -> void
+{
+  var link = cast<link mut *>(node);
+
+  std::allocator::delete(link);
+}

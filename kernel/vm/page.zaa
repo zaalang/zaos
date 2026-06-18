@@ -346,6 +346,8 @@ pub struct page_cache
 
 pub fn bootstrap(page_allocator mut &this, page mut *base, usize count) -> void
 {
+  std::assert(cast<uintptr>(base) & 64 == 0);
+
   this.pages = std::mutable_span(base, count);
 }
 
@@ -515,7 +517,7 @@ pub struct page_allocation : pub std::mutable_span<page>
 }
 
 pub fn allocate(page_allocator mut &this, usize size) -> page_allocation
-{ 
+{
   var result = page_allocation();
 
   var order = order_for_size(size);

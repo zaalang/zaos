@@ -1,0 +1,129 @@
+//
+// ip-neighbour
+//
+
+import std.stdio;
+import std.string : String;
+import std.env;
+import net.ip;
+import netlink;
+import json;
+
+using netlink;
+
+pub struct hwaddr : pub u8[64]
+{
+	pub usize len;
+
+  pub hwaddr(u8 *data, usize len)
+  {
+    this.len = len;
+    std::memcpy(this.data, data, len);
+  }
+
+  pub hwaddr() = default;
+  pub hwaddr(hwaddr &) = default;
+  pub fn =(hwaddr mut &, hwaddr &) -> hwaddr mut & = default;
+  pub ~hwaddr() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, hwaddr &addr) throws(std::error) -> void
+{
+  if (addr.len != 0)
+  {
+    ctx.written += std::format_to(&mut os, "{:02x}", addr[0]);
+
+    for (var i = 1; i < addr.len; ++i)
+      ctx.written += std::format_to(&mut os, ":{:02x}", addr[i]);
+  }
+}
+
+fn show(var &opts) throws(std::error) -> i32
+{
+  var linklist = json::load_from_file("/sys/net/list");
+
+  if (linklist.error)
+    throw std::system_error(std::errc::format_error);
+
+  for (var &link : linklist.value.as_array)
+  {
+    std::printf("{}: <{}>\n", link["device"].as_str, link["flags"].as_array.transform(|flag| flag.as_str).join(","));
+
+    var devname = std::format("/dev/{}", link["device"].as_str);
+
+    var fd = std::file::open(devname, std::fd::oflags::open, std::fd::rights::read | std::fd::rights::write);
+
+    struct req
+    {
+      nlmsghdr nlh;
+      ifinfomsg ifi;
+
+      req() = default;
+      ~req() = default;
+    }
+
+    var req = req();
+    req.nlh.nlmsg_len = sizeof<req>;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST;
+    req.nlh.nlmsg_type = RTM_GETNEIGH;
+
+    fd.write(cast<u8 mut *>(&req), cast<usize>(req.nlh.nlmsg_len));
+
+    for (;;)
+    {
+      var buf = [<u8>: void; 4096];
+      var bytes = fd.read(buf.data, buf.len);
+
+      var hdr = cast<nlmsghdr*>(buf.data);
+
+      if (hdr.nlmsg_type != RTM_NEWNEIGH)
+        break;
+
+      var msg = cast<ifndmsg*>(buf.data + sizeof<nlmsghdr>);
+
+      var ip = net::ipv6addr();
+      var hw = hwaddr();
+
+      for (var offset = sizeof<nlmsghdr> + sizeof<ifndmsg>; offset < hdr.nlmsg_len; )
+      {
+        var rta = cast<rtattr*>(buf.data + cast<usize>(offset));
+
+        switch (rta.rta_type)
+        {
+          case NDA_DST:
+            ip = net::ipv6addr(rta.rta_value.data, cast(rta.rta_len) - sizeof<rtattr>);
+
+          case NDA_LLADDR:
+            hw = hwaddr(rta.rta_value.data, cast(rta.rta_len) - sizeof<rtattr>);
+        }
+
+        offset += cast(std::align_up(rta.rta_len, 4));
+      }
+
+      std::printf("  {} lladdr {}\n", ip, hw);
+    }
+  }
+
+  return 0;
+}
+
+pub fn neighbour(var &opts) -> i32
+{
+  try
+  {
+    switch (opts.commands[0])
+    {
+      case "show":
+        show(opts);
+
+      else:
+        std::fprint(std::stderr, "ip: unknown command '", opts.commands[0], "'");
+    }
+  }
+  catch (std::error rc)
+  {
+    std::fprint(std::stderr, "ip: ", rc);
+  }
+
+  return 0;
+}

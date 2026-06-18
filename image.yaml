@@ -229,6 +229,12 @@ image:
             src: build/system/apps/coreutils/shutdown
             dest: /bin/shutdown
         - cp:
+            src: build/system/apps/netutils/ip
+            dest: /bin/ip
+        - cp:
+            src: build/system/apps/netutils/ping
+            dest: /bin/ping
+        - cp:
             src: build/system/apps/edit/edit
             dest: /bin/edit
         - cp:
@@ -264,5 +270,3 @@ image:
         - cp:
             src: system/servers/coco/samples/calc.b09
             dest: /root/calc.b09
-
-

@@ -43,7 +43,7 @@ pub struct namespace : pub blk::blkdev
     switch (query)
     {
       case device_path:
-        result = std::format("disk/{}", this.name);
+        result = std::format("blk/{}", this.name);
 
       case device_part:
         result = "0";

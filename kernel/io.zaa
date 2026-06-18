@@ -9,10 +9,10 @@ import cpu;
 import platform;
 import scheduler;
 import ioring;
-import ioring.poll;
 import mutex as _ : mutex;
 import thread as _ : thread;
 import slab : slab_allocator;
+import pollset as _ : pollset;
 import waitqueue as _ : wait_queue;
 import support.rc : Rc;
 
@@ -138,7 +138,7 @@ pub struct iocb
 
   std::spin_lock lock;
   wait_queue waiters;
-  std::vector<ioring::pollset mut *> pollsets;
+  std::vector<pollset mut *> pollsets;
 
   u8[0] reserved;
 
@@ -157,6 +157,11 @@ pub struct iocb
   pub fn result(this &) -> i32
   {
     return std::atomic_load(&this.result);
+  }
+
+  pub fn outstanding(this &) -> i32
+  {
+    return std::atomic_load(&this.outstanding);
   }
 
   pub fn ref(this mut &) -> void
@@ -247,11 +252,11 @@ pub fn wait_until(response mut &rq, u64 abstime, bool interruptible = false) -> 
   return rq.cb.waiters.wait_until(&mut rq.cb.lock, abstime, interruptible);
 }
 
-pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void
+pub fn add_notify(Rc<iocb> mut &cb, pollset mut *pollset) -> void
 {
   for (;;)
   {
-    var tmp = std::vector<ioring::pollset mut *>::with_size(cb.pollsets.len + 1);
+    var tmp = std::vector<pollset mut *>::with_size(cb.pollsets.len + 1);
 
     {
       var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
@@ -259,7 +264,7 @@ pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void
       if (tmp.len != cb.pollsets.len + 1)
         continue;
 
-      std::memcpy(tmp.data, cb.pollsets.data, cb.pollsets.len * sizeof<ioring::pollset mut *>);
+      std::memcpy(tmp.data, cb.pollsets.data, cb.pollsets.len * sizeof<pollset mut *>);
 
       std::swap(&mut cb.pollsets, &mut tmp);
 
@@ -270,9 +275,9 @@ pub fn add_notify(Rc<iocb> mut &cb, ioring::pollset mut *pollset) -> void
   }
 }
 
-pub fn remove_notify(Rc<iocb> mut &cb, ioring::pollset *pollset) -> void
+pub fn remove_notify(Rc<iocb> mut &cb, pollset *pollset) -> void
 {
-  var tmp = std::vector<ioring::pollset mut *>();
+  var tmp = std::vector<pollset mut *>();
 
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
@@ -307,7 +312,7 @@ pub fn complete(Rc<iocb> mut &cb, var result) -> void
     var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
 
     for (var mut &pollset : cb.pollsets)
-      ioring::trigger(pollset);
+      pollset.trigger();
 
     ioring::workman.trigger();
 
