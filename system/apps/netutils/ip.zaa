@@ -38,6 +38,7 @@ pub fn main() -> i32
 
   switch (opts.object)
   {
+    case "l":
     case "link":
       if (opts.commands.empty)
         opts.commands.push_back("show");
@@ -45,6 +46,7 @@ pub fn main() -> i32
       if (var result = link(opts); result != 0)
         return result;
 
+    case "a":
     case "addr":
     case "address":
       if (opts.commands.empty)
@@ -53,6 +55,7 @@ pub fn main() -> i32
       if (var result = address(opts); result != 0)
         return result;
 
+    case "r":
     case "route":
       if (opts.commands.empty)
         opts.commands.push_back("show");
@@ -60,6 +63,7 @@ pub fn main() -> i32
       if (var result = route(opts); result != 0)
         return result;
 
+    case "n":
     case "neigh":
     case "neighbour":
       if (opts.commands.empty)

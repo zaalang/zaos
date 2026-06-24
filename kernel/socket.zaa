@@ -3,7 +3,7 @@
 //
 
 import std.stdio;
-import net.stack;
+import net.socket;
 import net.result;
 import vm;
 import io;

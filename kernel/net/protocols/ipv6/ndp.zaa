@@ -6,6 +6,7 @@ import std.stdlib;
 import net.netdev;
 import net.packet;
 import net.protocols.ipv6 as ipv6;
+import net.protocols.ipv6.conf as ipv6.conf;
 import net.protocols.ipv6.cksum as ipv6.cksum;
 import vm;
 import io;
@@ -53,12 +54,23 @@ pub const ND_OPT_REDIRECTED_HEADER = 4;
 pub const ND_OPT_MTU = 5;
 
 #[packed]
-pub struct router_advertisement_header
+pub struct router_discovery_header
 {
   pub type type;
   pub u8 code;
   pub u8[2] cksum;
   pub u8[4] dataum;
+  pub u8[0] opt;
+}
+
+#[packed]
+pub struct router_advertisement_header
+{
+  pub type type;
+  pub u8 code;
+  pub u8[2] cksum;
+  pub u8[2] dataum;
+  pub u16 router_lifetime;
   pub u32 reachable_time;
   pub u32 retransmit_timer;
   pub u8[0] opt;
@@ -91,7 +103,7 @@ pub fn receive_neighbour_solicitation(net::netdev mut *link, net::rx mut &rx, ne
   if (!ifa)
     return not_found;
 
-  var mut &pkt = link.reclaim.push_back(pkt.take);
+  var mut &pkt = link.reclaim.push_back(std::exchange(&mut pkt, net::packet()));
 
   pkt.trim(sizeof<neighbour_discovery_header>);
 
@@ -147,6 +159,39 @@ pub fn receive_neighbour_advertisment(net::netdev mut *link, net::rx mut &rx, ne
   return ok;
 }
 
+pub fn receive_router_advertisment(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<router_advertisement_header>();
+  if (!hdr)
+    return protocol_error;
+
+  var optlen = pkt.length - sizeof(*hdr);
+
+  for (var offset = 0; offset + sizeof<neighbour_discovery_opt_header> <= optlen; )
+  {
+    var opthdr = cast<neighbour_discovery_opt_header*>(hdr.opt.data + offset);
+
+    if (opthdr.type == ND_OPT_SOURCE_LINKADDR && opthdr.length == 1 && offset + 8 <= optlen)
+    {
+      var src = hwaddr(cast<u8*>(opthdr + 1), 6);
+
+      link.ipv6.learn_neighbour(rx.src_ip.in6, src);
+    }
+
+    if (opthdr.type == ND_OPT_PREFIX_INFORMATION && opthdr.length == 4 && offset + 32 <= optlen)
+    {
+      var prefixlen = *cast<u8*>(opthdr + 1);
+      var prefix = in6addr(cast<u8*>(opthdr + 1) + 14, 16);
+
+      ipv6::configure_router(link, rx.src_ip.in6, prefix, cast(prefixlen));
+    }
+
+    offset += cast<usize>(opthdr.length) << 3;
+  }
+
+  return ok;
+}
+
 pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
 {
   var type = pkt.as<type>();
@@ -161,6 +206,9 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
     case neighbour_advertisement:
       receive_neighbour_advertisment(link, &mut rx, &mut pkt);
 
+    case router_advertisement:
+      receive_router_advertisment(link, &mut rx, &mut pkt);
+
     else:
       return protocol_not_supported;
   }
@@ -168,7 +216,7 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   return ok;
 }
 
-pub fn solicit(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
+pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
 {
   var hdrvec = vm::iovec();
 
@@ -205,20 +253,75 @@ pub fn solicit(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr 
   return ok;
 }
 
-pub fn solicit(net::netdev mut *link, in6addr &target, in6addr &src_ip, hwaddr &dst) -> net::result
+pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip, hwaddr &dst) -> net::result
 {
-  if (var result = solicit(link, target, target, src_ip, dst, link.hwaddr); !result)
+  if (var result = neighbour_solicitation(link, target, target, src_ip, dst, link.hwaddr); !result)
     return result;
 
   return ok;
 }
 
-pub fn solicit(net::netdev mut *link, in6addr &target, in6addr &src_ip) -> net::result
+pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip) -> net::result
 {
   var dst_l3 = in6addr([0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xff, target[13], target[14], target[15]]);
   var dst_l2 = hwaddr([0x33, 0x33, 0xff, target[13], target[14], target[15]]);
 
-  if (var result = solicit(link, target, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
+  if (var result = neighbour_solicitation(link, target, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
+{
+  var hdrvec = vm::iovec();
+
+  if (var result = vm::lock(vm::allocate_physical_page(), &mut hdrvec); !result)
+    return cast(result);
+
+  var pkt = net::packet();
+
+  pkt.inset(hdrvec.host[0]);
+
+  var hdr = pkt.prepend<router_discovery_header>(sizeof<router_discovery_header> + 8);
+
+  hdr.type = type::router_solicitation;
+  hdr.code = 0;
+  hdr.cksum = [0, 0];
+  hdr.dataum = [0, 0, 0, 0];
+
+  *(hdr.opt.data + 0) = ND_OPT_SOURCE_LINKADDR;
+  *(hdr.opt.data + 1) = 1;
+  std::memcpy(hdr.opt.data + 2, src.data, src.len);
+
+  hdr.cksum = ipv6::checksum(ipv6::protocol::icmp6, src_ip, dst_ip, pkt);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return ok;
+}
+
+pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst) -> net::result
+{
+  if (var result = router_solicitation(link, dst_ip, src_ip, dst, link.hwaddr); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn router_solicitation(net::netdev mut *link, in6addr &src_ip) -> net::result
+{
+  var dst_l3 = in6addr([0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+  var dst_l2 = hwaddr([0x33, 0x33, 0, 0, 0, 2]);
+
+  if (var result = router_solicitation(link, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
     return result;
 
   return ok;

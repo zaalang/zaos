@@ -3,7 +3,6 @@
 //
 
 import std.stdio;
-import std.circular_buffer;
 import vm;
 import net.result;
 import net.protocols.ipv6.socket as ipv6.socket;

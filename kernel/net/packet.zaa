@@ -30,15 +30,6 @@ pub struct packet
 
   pub Rc<io::iocb> cb;
 
-  pub fn take(this mut &) -> packet
-  {
-    var pkt = &move this;
-
-    std::launder(this);
-
-    return pkt;
-  }
-
   pub packet() = default;
   pub packet(packet &&) = default;
   pub fn =(packet mut &, packet &&) -> packet mut & = default;

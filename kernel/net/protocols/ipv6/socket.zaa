@@ -200,12 +200,17 @@ pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
       if (!route.dev)
         return network_unreachable;
 
+      var nexthop = dst_ip;
+
+      if (route.nexthop)
+        nexthop = route.nexthop.in6;
+
       var sockaddr = sockaddr_storage();
       var sockaddr = cast<sockaddr_in6 mut *>(&sockaddr);
 
       sockaddr.sa_family = AF_INET6;
 
-      if (var result = route.dev.ipv6.select_source(dst_ip, &mut sockaddr.sin6_addr); !result)
+      if (var result = route.dev.ipv6.select_source(nexthop, &mut sockaddr.sin6_addr); !result)
         return result;
 
       if (var result = vm::memcpy(iovec, 0, sockaddr, sizeof<sockaddr_in6>); !result)
@@ -296,14 +301,19 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
   if (!route.dev)
     return network_unreachable;
 
+  var nexthop = dst_ip;
+
+  if (route.nexthop)
+    nexthop = route.nexthop.in6;
+
   var src_ip = in6addr();
 
-  if (var result = route.dev.ipv6.select_source(dst_ip, &mut src_ip); !result)
+  if (var result = route.dev.ipv6.select_source(nexthop, &mut src_ip); !result)
     return result;
 
   var dst = net::hwaddr();
 
-  if (var result = route.dev.ipv6.resolve_neighbour(route.dev, &mut socket.writeable.cb, dst_ip, src_ip, &mut dst); !result)
+  if (var result = route.dev.ipv6.resolve_neighbour(route.dev, &mut socket.writeable.cb, nexthop, src_ip, &mut dst); !result)
     return result;
 
   var hdrvec = vm::iovec();

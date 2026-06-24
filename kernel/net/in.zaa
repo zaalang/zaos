@@ -20,6 +20,11 @@ pub struct in4addr : pub u8[4]
   {
   }
 
+  pub in4addr(u8 *data, usize len)
+  {
+    std::memcpy(this.data, data, len);
+  }
+
   pub fn is_unspecified(this &) -> bool
   {
     return (this.super == [ 0, 0, 0, 0 ]);
@@ -71,6 +76,11 @@ pub struct in6addr : pub u8[16]
         cast<u8>(addr[7] >> 8), cast<u8>(addr[7] & 0xff),
       ])
   {
+  }
+
+  pub in6addr(u8 *data, usize len)
+  {
+    std::memcpy(this.data, data, len);
   }
 
   pub fn segments(this &) -> u16[8]

@@ -7,6 +7,7 @@ import std.atomic;
 import net.netctl;
 import net.netdev;
 import net.result;
+import net.route;
 import net.mac;
 import net.in;
 import io;
@@ -19,11 +20,12 @@ import thread as _ : thread;
 import mutex as _ : mutex;
 import scheduler;
 import support.rc : Rc;
-import net.stack.route;
-import net.stack.socket;
+import net.protocols.rx;
+import net.protocols.arp as arp;
 import net.protocols.ipv6 as ipv6;
+import net.protocols.ipv6.conf as ipv6.conf;
+import net.protocols.ethernet as ethernet;
 import net.netlink.route as netlink.route;
-import net.stack as stack;
 
 struct network_manager
 {
@@ -50,17 +52,57 @@ fn netman()
   return &network_manager::instance;
 }
 
-pub fn open(netdev mut *device, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
+pub fn open(netdev mut *link, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
 {
-  return device.open(&mut fd, process, flags, mode);
+  return link.open(&mut fd, process, flags, mode);
 }
 
-pub fn transmit(netdev mut *device, Rc<io::iocb> mut &cb, net::packet mut *packet) -> void
+pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut *packet) -> void
 {
   packet.cb = cb;
 
-  if (var result = device.transmit(0, packet); !result)
+  if (var result = link.transmit(0, packet); !result)
     io::complete(&mut packet.cb, result);
+}
+
+pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
+{
+  var rx = rx();
+
+  switch (pkt.type)
+  {
+    case eth:
+      if (var result = ethernet::deframe(link, &mut rx, &mut pkt); !result)
+        return result;
+  }
+
+  switch (pkt.type)
+  {
+    case arp:
+      if (var result = arp::receive(link, &mut pkt); !result)
+        return result;
+
+    //case ipv4:
+    //  if (var result = ipv4::receive(link, &mut pkt); !result)
+    //    return result;
+
+    case ipv6:
+      if (var result = ipv6::receive(link, &mut rx, &mut pkt); !result)
+        return result;
+  }
+
+  switch (pkt.type)
+  {
+    case udp:
+//      if (var result = udp::receive(link, &mut rx, &mut pkt); !result)
+//        return result;
+
+    case tcp:
+//      if (var result = tcp::receive(link, &mut rx, &mut pkt); !result)
+//        return result;
+  }
+
+  return ok;
 }
 
 fn packet_handler(netdev mut *link) -> void
@@ -78,7 +120,7 @@ fn packet_handler(netdev mut *link) -> void
       if (!link.retrieve(rxqid, &pkt))
         break;
 
-      stack::receive(link, &mut pkt);
+      receive(link, &mut pkt);
 
       vm::unlock(pkt.host);
     }
@@ -136,7 +178,7 @@ pub fn find_route(inaddr &addr) -> Rc<route>
 
 pub fn enumerate_routes(var &&callback) -> void
 {
-  enumerate_routes(&mut netman.routes, &&callback);
+  netman.routes.enumerate_routes(&&callback);
 }
 
 pub fn add_listener(netlink::route mut *node) -> void

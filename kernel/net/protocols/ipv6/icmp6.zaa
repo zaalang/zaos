@@ -45,7 +45,7 @@ pub fn receive_echo_request(net::netdev mut *link, net::rx mut &rx, net::packet 
   if (rx.dst_ip.in6.is_multicast)
     return ok;
 
-  var mut &pkt = link.reclaim.push_back(pkt.take);
+  var mut &pkt = link.reclaim.push_back(std::exchange(&mut pkt, net::packet()));
 
   hdr.type = type::echo_reply;
   hdr.code = 0;

@@ -195,7 +195,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
 
       if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
       {
-        if (var result = ndp::solicit(link, dst_ip, src_ip); !result)
+        if (var result = ndp::neighbour_solicitation(link, dst_ip, src_ip); !result)
           return result;
 
         neighbour.last_solicit = cpu::system_time;
@@ -207,7 +207,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
 
       if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
       {
-        if (var result = ndp::solicit(link, dst_ip, src_ip, neighbour.dst); !result)
+        if (var result = ndp::neighbour_solicitation(link, dst_ip, src_ip, neighbour.dst); !result)
           return result;
 
         neighbour.last_solicit = cpu::system_time;

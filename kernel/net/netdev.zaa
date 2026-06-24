@@ -7,7 +7,6 @@ import std.function;
 import net.result;
 import net.packet;
 import net.netlink.link as netlink.link;
-import net.protocols.ipv6.conf as ipv6.conf;
 import net.protocols.ipv6.state as ipv6.state;
 import io;
 import vm;

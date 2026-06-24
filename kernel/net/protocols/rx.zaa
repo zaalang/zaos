@@ -1,0 +1,19 @@
+//
+// net rx
+//
+
+import net;
+
+pub struct rx
+{
+  pub net::hwaddr src;
+  pub net::hwaddr dst;
+
+  pub net::inaddr src_ip;
+  pub net::inaddr dst_ip;
+
+  pub rx() = default;
+  pub rx(rx &&) = default;
+  pub fn =(rx mut &, rx &&) -> rx mut & = default;
+  pub ~rx() = default;
+}
