@@ -44,7 +44,7 @@ struct rawpkt
   net::inaddr src_ip;
   net::inaddr dst_ip;
 
-  std::vector<vm::physrange, N:8> host;
+  vm::iovec iovec;
 
   rawpkt() = default;
   rawpkt(rawpkt &&) = default;
@@ -128,7 +128,8 @@ fn deliver(socket mut *socket, net::rx &rx, net::packet &pkt) -> net::result
   rawpkt.dst_ip = rx.dst_ip;
 
   pkt.foreach_region(|region| {
-    rawpkt.host.push_back(vm::lock(region));
+    rawpkt.iovec.length += region.size;
+    rawpkt.iovec.host.push_back(vm::lock(region));
   });
 
   if (state.buffer.len == 1)
@@ -137,13 +138,13 @@ fn deliver(socket mut *socket, net::rx &rx, net::packet &pkt) -> net::result
   return cast(1);
 }
 
-pub fn raw_rcv(i32 family, i32 protocol, net::rx &rx, net::packet &pkt) -> net::result
+pub fn raw_rcv(i32 protocol, net::rx &rx, net::packet &pkt) -> net::result
 {
   var guard = std::lock_shared_guard(&mut shared_state::instance.lock);
 
   for (var mut &socket : shared_state::instance.raw_sockets)
   {
-    if (socket.family == family && socket.protocol == protocol)
+    if (socket.protocol == protocol)
       deliver(socket, rx, pkt);
   }
 
@@ -200,17 +201,12 @@ pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
       if (!route.dev)
         return network_unreachable;
 
-      var nexthop = dst_ip;
-
-      if (route.nexthop)
-        nexthop = route.nexthop.in6;
-
       var sockaddr = sockaddr_storage();
       var sockaddr = cast<sockaddr_in6 mut *>(&sockaddr);
 
       sockaddr.sa_family = AF_INET6;
 
-      if (var result = route.dev.ipv6.select_source(nexthop, &mut sockaddr.sin6_addr); !result)
+      if (var result = route.dev.ipv6.select_source(dst_ip, &mut sockaddr.sin6_addr); !result)
         return result;
 
       if (var result = vm::memcpy(iovec, 0, sockaddr, sizeof<sockaddr_in6>); !result)
@@ -254,7 +250,7 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
 
   var count = 0;
 
-  for (var host : pkt.host)
+  for (var host : pkt.iovec.host)
   {
     if (var result = vm::memcpy(iovec, offset, host.addr.ptr, host.size); !result)
       break;
@@ -262,8 +258,6 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
     count += host.size;
     offset += host.size;
   }
-
-  vm::unlock(pkt.host);
 
   if (ctrl != null)
   {
@@ -308,7 +302,7 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
 
   var src_ip = in6addr();
 
-  if (var result = route.dev.ipv6.select_source(nexthop, &mut src_ip); !result)
+  if (var result = route.dev.ipv6.select_source(dst_ip, &mut src_ip); !result)
     return result;
 
   var dst = net::hwaddr();
@@ -347,9 +341,6 @@ pub fn close(socket mut *socket) -> net::result
     case SOCK_RAW:
       remove_raw_socket(socket);
   }
-
-  for (var mut &pkt : state.buffer)
-    vm::unlock(pkt.host);
 
   std::allocator::delete(cast<state mut *>(socket.state));
 

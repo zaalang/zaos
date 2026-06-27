@@ -129,22 +129,134 @@ pub fn enumerate_addrs(ifstate mut &state, var &&callback) -> void
     callback(ifa);
 }
 
+struct ipattr
+{
+	u8 scope;
+	u8 precedence;
+	u8 label;
+
+  ipattr() = default;
+  ipattr(ipattr &) = default;
+  fn =(ipattr mut &, ipattr &) -> ipattr mut & = default;
+  ~ipattr() = default;
+}
+
+fn classify(in6addr &ip) -> ipattr
+{
+  var attr = ipattr();
+
+  if (ip.is_loopback || ip.is_linklocal)
+    attr.scope = 2;
+	else if (ip.is_multicast)
+    attr.scope = (ip[1] & 0xf);
+  else
+	  attr.scope = 14;
+
+  if (ip.masked(128) == [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ])
+  {
+    attr.precedence = 50;
+    attr.label = 0;
+    return attr;
+  }
+
+  if (ip.masked(96) == [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 35;
+    attr.label = 4;
+    return attr;
+  }
+
+  if (ip.masked(96) == [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 1;
+    attr.label = 3;
+    return attr;
+  }
+
+  if (ip.masked(32) == [ 0x20, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 5;
+    attr.label = 5;
+    return attr;
+  }
+
+  if (ip.masked(16) == [ 0x20, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 30;
+    attr.label = 2;
+    return attr;
+  }
+
+  if (ip.masked(16) == [ 0x3f, 0xfe, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 1;
+    attr.label = 12;
+    return attr;
+  }
+
+  if (ip.masked(10) == [ 0xfe, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 1;
+    attr.label = 11;
+    return attr;
+  }
+
+  if (ip.masked(7) == [ 0xfc, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ])
+  {
+    attr.precedence = 3;
+    attr.label = 13;
+    return attr;
+  }
+
+  attr.precedence = 40;
+  attr.label = 1;
+  return attr;
+}
+
+pub fn cmp((in6addr, ipattr) &sa, (in6addr, ipattr) &sb, (in6addr, ipattr) &d) -> bool
+{
+  if (sa.0 == d.0)
+    return true;
+
+  if (sb.0 == d.0)
+    return false;
+
+  if (sa.1.scope < sb.1.scope)
+		return !(sa.1.scope < d.1.scope);
+
+  if (sb.1.scope < sa.1.scope)
+		return (sb.1.scope < d.1.scope);
+
+  if (sa.1.label == d.1.label && sb.1.label != d.1.label)
+		return true;
+
+  if (sb.1.label == d.1.label && sa.1.label != d.1.label)
+		return false;
+
+  return false;
+}
+
 pub fn select_source(ifstate mut &state, in6addr &dst_ip, in6addr mut &src_ip) -> net::result
 {
   var guard = std::lock_shared_guard(&mut state.lock);
 
-  var candidates = std::vector<in6addr, N:8>();
+  var d = (dst_ip, classify(dst_ip));
+  var candidates = std::vector<(in6addr, ipattr), N:8>();
 
   for (var &ifa : state.addrs)
   {
-    if (ifa.addr.masked(ifa.prefixlen) == dst_ip.masked(ifa.prefixlen))
-      candidates.push_back(ifa.addr);
+    if (ifa.addr.is_linklocal && !dst_ip.is_linklocal)
+      continue;
+
+    candidates.push_back(ifa.addr, classify(ifa.addr));
   }
 
   if (candidates.empty)
     return network_unreachable;
 
-  src_ip = candidates.front;
+  std::partial_sort(&mut candidates, candidates.begin + 1, |sa, sb| cmp(sa, sb, d));
+
+  src_ip = candidates.front.0;
 
   return ok;
 }

@@ -52,6 +52,37 @@ fn netman()
   return &network_manager::instance;
 }
 
+fn packet_handler(netdev mut *link) -> void
+{
+  var rxqid = 0;
+
+  for (;;)
+  {
+    var bufcnt = 32;
+
+    for (; bufcnt != 0; bufcnt -= 1)
+    {
+      var pkt = net::packet();
+
+      if (!link.retrieve(rxqid, &pkt))
+        break;
+
+      receive(link, &mut pkt);
+
+      vm::unlock(pkt.host);
+    }
+
+    link.refill(rxqid);
+
+    if (bufcnt == 0)
+      continue;
+
+    link.packet_handler_doorbell.wait();
+  }
+
+  link.unref();
+}
+
 pub fn open(netdev mut *link, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
 {
   return link.open(&mut fd, process, flags, mode);
@@ -103,37 +134,6 @@ pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
   }
 
   return ok;
-}
-
-fn packet_handler(netdev mut *link) -> void
-{
-  var rxqid = 0;
-
-  for (;;)
-  {
-    var bufcnt = 32;
-
-    for (; bufcnt != 0; bufcnt -= 1)
-    {
-      var pkt = net::packet();
-
-      if (!link.retrieve(rxqid, &pkt))
-        break;
-
-      receive(link, &mut pkt);
-
-      vm::unlock(pkt.host);
-    }
-
-    link.refill(rxqid);
-
-    if (bufcnt == 0)
-      continue;
-
-    link.packet_handler_doorbell.wait();
-  }
-
-  link.unref();
 }
 
 pub fn up_link(netdev mut *link) -> void

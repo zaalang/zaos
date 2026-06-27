@@ -17,6 +17,22 @@ pub struct iovec
   {
   }
 
+  pub iovec(iovec &&other)
+    where __is_rvalue<typeof(other)>
+  {
+    std::swap(&mut this.length, &mut other.length);
+    std::swap(&mut this.host, &mut other.host);
+  }
+
+  pub fn =(iovec mut &this, iovec &&other) -> iovec mut &
+    where __is_rvalue<typeof(other)>
+  {
+    std::swap(&mut this.length, &mut other.length);
+    std::swap(&mut this.host, &mut other.host);
+
+    return &this;
+  }
+
   pub ~iovec()
   {
     vm::unlock(host);
