@@ -163,13 +163,13 @@ fn getroute(route mut &this, std::vector<u8> &request) -> void
       response.append_from_capacity(cast(std::align_up(rta.rta_len, 4)));
     }
 
-    if (route.dev)
+    if (route.link)
     {
       var rta = cast<rtattr mut *>(response.end);
 
       rta.rta_type = RTA_OIF;
       rta.rta_len = sizeof<rtattr> + sizeof<i32>;
-      *cast<i32 mut *>(rta.rta_value.data) = std::bit_cast<i32>(dev::lookup(route.dev));
+      *cast<i32 mut *>(rta.rta_value.data) = std::bit_cast<i32>(dev::lookup(route.link));
 
       response.append_from_capacity(cast(std::align_up(rta.rta_len, 4)));
     }

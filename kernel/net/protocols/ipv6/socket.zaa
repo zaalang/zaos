@@ -198,7 +198,7 @@ pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
       if (!route)
         return network_unreachable;
 
-      if (!route.dev)
+      if (!route.link)
         return network_unreachable;
 
       var sockaddr = sockaddr_storage();
@@ -206,7 +206,7 @@ pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
 
       sockaddr.sa_family = AF_INET6;
 
-      if (var result = route.dev.ipv6.select_source(dst_ip, &mut sockaddr.sin6_addr); !result)
+      if (var result = route.link.ipv6.select_source(dst_ip, &mut sockaddr.sin6_addr); !result)
         return result;
 
       if (var result = vm::memcpy(iovec, 0, sockaddr, sizeof<sockaddr_in6>); !result)
@@ -292,7 +292,7 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
   if (!route)
     return network_unreachable;
 
-  if (!route.dev)
+  if (!route.link)
     return network_unreachable;
 
   var nexthop = dst_ip;
@@ -302,12 +302,12 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
 
   var src_ip = in6addr();
 
-  if (var result = route.dev.ipv6.select_source(dst_ip, &mut src_ip); !result)
+  if (var result = route.link.ipv6.select_source(dst_ip, &mut src_ip); !result)
     return result;
 
   var dst = net::hwaddr();
 
-  if (var result = route.dev.ipv6.resolve_neighbour(route.dev, &mut socket.writeable.cb, nexthop, src_ip, &mut dst); !result)
+  if (var result = route.link.ipv6.resolve_neighbour(route.link, &mut socket.writeable.cb, nexthop, src_ip, &mut dst); !result)
     return result;
 
   var hdrvec = vm::iovec();
@@ -324,7 +324,7 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(route.dev, &mut response.cb, cast(socket.protocol), dst_ip, src_ip, dst, route.dev.hwaddr, &mut pkt);
+  ipv6::send(route.link, &mut response.cb, cast(socket.protocol), dst_ip, src_ip, dst, route.link.hwaddr, &mut pkt);
 
   if (response.wait(); !response)
     return cast(response.result);

@@ -18,7 +18,7 @@ pub struct route
   pub usize prefixlen;
 
   pub inaddr nexthop;
-  pub Rc<net::netdev> dev;
+  pub Rc<net::netdev> link;
 
   pub u32 flags;
   pub u32 mtu;
@@ -36,9 +36,10 @@ pub struct route
 
   i32 refcnt;
 
-  pub route(inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *dev)
-    : destination(destination), prefixlen(prefixlen), nexthop(nexthop), dev(dev)
+  pub route(inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *link)
+    : destination(destination), prefixlen(prefixlen), nexthop(nexthop), link(link)
   {
+    std::assert(destination.masked(prefixlen) == destination);
   }
 
   pub ~route() = default;
@@ -85,7 +86,7 @@ pub fn find_route(route_table mut &table, inaddr &addr) -> Rc<route>
     if (route.destination != addr.masked(route.prefixlen))
       continue;
 
-    if (route.dev.flags & net::flags::lower_up != net::flags::lower_up)
+    if (route.link.flags & net::flags::lower_up != net::flags::lower_up)
       continue;
 
     return route;

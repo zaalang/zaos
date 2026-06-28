@@ -117,29 +117,33 @@ pub union Value
 
 pub fn ==(Value &lhs, Value &rhs) -> bool
 {
-  if (lhs.kind == rhs.kind)
+  switch ((lhs.kind, rhs.kind))
   {
-    switch (cast<int>(lhs.kind))
-    {
-      #{
-        #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
-          -> { case ${k}: return lhs.${k} == rhs.${k}; }
+    #{
+      #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
+      {
+        -> {
+          case (cast<typeof(lhs.kind)>(${k}), cast<typeof(rhs.kind)>(${k})):
+            return lhs.${k} == rhs.${k};
+        }
       }
     }
   }
 
-  return lhs.kind == rhs.kind;
+  return false;
 }
 
 pub fn <=>(Value &lhs, Value &rhs) -> int
 {
-  if (lhs.kind == rhs.kind)
+  switch ((lhs.kind, rhs.kind))
   {
-    switch (cast<int>(lhs.kind))
-    {
-      #{
-        #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
-          -> { case ${k}: return lhs.${k} <=> rhs.${k}; }
+    #{
+      #for (const k = 1; k != std::meta::fields_of($Value).len; ++k)
+      {
+        -> {
+          case (cast<typeof(lhs.kind)>(${k}), cast<typeof(rhs.kind)>(${k})):
+            return lhs.${k} <=> rhs.${k};
+        }
       }
     }
   }
