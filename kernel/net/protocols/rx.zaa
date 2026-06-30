@@ -6,6 +6,8 @@ import net;
 
 pub struct rx
 {
+  pub u64 timestamp;
+
   pub net::hwaddr src;
   pub net::hwaddr dst;
 

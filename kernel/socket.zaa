@@ -49,9 +49,9 @@ pub struct ctrlhdr
 
 pub struct ctrlattr
 {
-  pub u32 cta_len;
-  pub i32 cta_level;
+  pub u16 cta_len;
   pub u16 cta_type;
+  pub i32 cta_level;
   pub u8[0] cta_value;
 }
 

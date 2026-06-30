@@ -14,6 +14,7 @@ import io;
 import vm;
 import vfs;
 import dev;
+import cpu;
 import chr.chrdev;
 import process as _ : process;
 import thread as _ : thread;
@@ -99,6 +100,8 @@ pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut *packet)
 pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
 {
   var rx = rx();
+
+  rx.timestamp = cpu::system_time;
 
   switch (pkt.type)
   {

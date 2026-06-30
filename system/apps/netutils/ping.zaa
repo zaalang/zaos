@@ -191,6 +191,9 @@ pub fn main() -> i32
       if (cast<ping_pkt*>(buffer.data).sequence != seq)
         continue;
 
+      var dp = os::timespec(void);
+      os::clock_gettime(os::clock::monotonic, &dp);
+
       var srcip = net::ipv6addr();
 
       for (var offset = sizeof<os::ctrlhdr>; offset < ctrl.ctrl_len; )
@@ -199,14 +202,17 @@ pub fn main() -> i32
 
         switch (cta.cta_type)
         {
-          case IPV6_SRCIP:
+          case SCM_TIMESTAMP:
+            std::memcpy(&dp, cta.cta_value.data, sizeof(dp));
+
+          case SCM_IPV6_SRCIP:
             srcip = net::ipv6addr(cta.cta_value.data, cast(cta.cta_len) - sizeof<os::ctrlattr>);
         }
 
         offset += cast(std::align_up(cta.cta_len, 4));
       }
 
-      std::printf("{} bytes from {}\n", bytes, srcip);
+      std::printf("{} bytes from {} icmp_seq={} time={:.3} ms\n", bytes, srcip, seq, cast<float>(dp - tp) / 1000000.0);
 
       os::sleep(&mut thread_ring, tp + 1_000_000_000);
 
