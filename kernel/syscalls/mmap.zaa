@@ -34,7 +34,7 @@ struct mmvec
   u32 prot;
 
   mmvec() = default;
-  mmvec(mmvec&) = default;
+  mmvec(mmvec &) = default;
   ~mmvec() = default;
 }
 

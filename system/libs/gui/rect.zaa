@@ -254,7 +254,7 @@ pub struct rect
   pub fn ==(rect &lhs, rect &rhs) -> bool = default;
 
   pub rect() = default;
-  pub rect(rect&) = default;
+  pub rect(rect &) = default;
   pub fn =(rect mut &, rect &) -> rect mut & = default;
   pub ~rect() = default;
 }

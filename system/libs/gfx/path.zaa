@@ -20,7 +20,7 @@ pub union vertex
     {
     }
 
-    move_to_node(move_to_node&) = default;
+    move_to_node(move_to_node &) = default;
     ~move_to_node() = default;
   }
 
@@ -34,7 +34,7 @@ pub union vertex
     {
     }
 
-    line_to_node(line_to_node&) = default;
+    line_to_node(line_to_node &) = default;
     ~line_to_node() = default;
   }
 
@@ -50,7 +50,7 @@ pub union vertex
     {
     }
 
-    quad_to_node(quad_to_node&) = default;
+    quad_to_node(quad_to_node &) = default;
     ~quad_to_node() = default;
   }
 
@@ -68,7 +68,7 @@ pub union vertex
     {
     }
 
-    cubic_to_node(cubic_to_node&) = default;
+    cubic_to_node(cubic_to_node &) = default;
     ~cubic_to_node() = default;
   }
 
@@ -85,7 +85,7 @@ pub union vertex
     {
     }
 
-    conic_to_node(conic_to_node&) = default;
+    conic_to_node(conic_to_node &) = default;
     ~conic_to_node() = default;
   }
 
@@ -96,7 +96,7 @@ pub union vertex
   pub conic_to(conic_to_node),
   pub close,
 
-  pub vertex(vertex&) = default;
+  pub vertex(vertex &) = default;
   pub fn =(vertex mut &, vertex &&) -> vertex mut & = default;
   pub ~vertex() = default;
 }

@@ -83,7 +83,7 @@ struct termios
   u32 __c_ospeed;
 
   termios() = default;
-  termios(termios&) = default;
+  termios(termios &) = default;
   fn =(termios mut &, termios &) -> termios mut & = default;
   ~termios() = default;
 }
@@ -96,7 +96,7 @@ struct winsize
   u16 ws_ypixel;
 
   winsize() = default;
-  winsize(winsize&) = default;
+  winsize(winsize &) = default;
   fn =(winsize mut &, winsize &) -> winsize mut & = default;
   ~winsize() = default;
 }

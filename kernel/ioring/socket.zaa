@@ -62,12 +62,12 @@ pub fn sys_socket_bind(process mut *process, ioring_ctx mut &ctx, i32 fd, virtad
   if (addrbuf == 0 || addrlen == 0 || addrlen > 128)
     return invalid_argument;
 
-  var sockaddr = std::vector<u8, N:256>::with_size(addrlen);
+  var addr = std::vector<u8, N:256>::with_size(addrlen);
 
-  if (var result = vm::read_process_memory(process, addrbuf, sockaddr.data, sockaddr.len); !result)
+  if (var result = vm::read_process_memory(process, addrbuf, addr.data, addr.len); !result)
     return result;
 
-  if (var result = socket::bind(file.node, cast(sockaddr.data), sockaddr.len); !result)
+  if (var result = socket::bind(file.node, cast(addr.data), addr.len); !result)
     return result;
 
   return ok;
@@ -166,4 +166,20 @@ pub fn sys_socket_write(process mut *process, ioring_ctx mut &ctx, i32 fd, virta
     return result;
 
   return result;
+}
+
+pub fn sys_socket_shutdown(process mut *process, ioring_ctx mut &ctx, i32 fd, u64 how) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::socket)
+    return vfs::result::bad_descriptor;
+
+  if (var result = socket::shutdown(file.node, how); !result)
+    return result;
+
+  return ok;
 }

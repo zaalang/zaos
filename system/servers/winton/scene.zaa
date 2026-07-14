@@ -12,7 +12,7 @@ pub struct layer
   pub std::vector<std::box<node>> children;
 
   pub layer() = default;
-  pub layer(layer&&) = default;
+  pub layer(layer &&) = default;
   pub ~layer() = default;
 }
 
@@ -41,7 +41,7 @@ pub struct window
   pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   window() = default;
-  window(window&&) = default;
+  window(window &&) = default;
   pub ~window() = default;
 }
 
@@ -60,7 +60,7 @@ pub struct cursor
   pub fn bound(this &) { return bound::from(vec2(0.0, 0.0), vec2(cast(this.width), cast(this.height))); }
 
   cursor() = default;
-  cursor(cursor&&) = default;
+  cursor(cursor &&) = default;
   pub ~cursor() = default;
 }
 
@@ -104,7 +104,7 @@ pub union node
   }
 
   node() = default;
-  pub node(node&&) = default;
+  pub node(node &&) = default;
   pub ~node() = default;
 }
 
@@ -131,7 +131,7 @@ pub struct scene
   }
 
   pub scene() = default;
-  pub scene(scene&&) = default;
+  pub scene(scene &&) = default;
   pub ~scene() = default;
 }
 

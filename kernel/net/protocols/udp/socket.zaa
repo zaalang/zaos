@@ -1,0 +1,341 @@
+//
+// udp socket
+//
+
+import std.stdio;
+import vm;
+import io;
+import net.in;
+import net.packet;
+import net.result;
+import net.protocols.ip as ip;
+import net.protocols.ip.socket as ip.socket;
+import net.protocols.udp as udp;
+import mutex as _ : mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+import support.rc : Rc;
+
+using net::hwaddr;
+using net::inaddr;
+using ip::sockaddr_in4;
+using ip::sockaddr_in6;
+
+enum cta
+{
+  const pktsrc = 1;
+  const pktdst = 2;
+  const timestamp = 3;
+  const ipv6_hoplimit = 52;
+  const ipv6_pathmtu = 62;
+}
+
+enum sio
+{
+  const soerror = 0x80030004;
+  const getsockname = 0x8003001b;
+  const getpeername = 0x8003001c;
+  const setpeername = 0x8003011c;
+}
+
+struct udppkt
+{
+  net::rx rx;
+  u16 source_port;
+  u16 destination_port;
+
+  vm::iovec iovec;
+
+  udppkt() = default;
+  udppkt(udppkt &&) = default;
+  fn =(udppkt mut &, udppkt &&) -> udppkt mut & = default;
+  ~udppkt() = default;
+}
+
+struct state
+{
+  mutex lock;
+
+  std::circular_buffer<udppkt, N:128> buffer;
+
+  i32 soerror;
+
+  state() = default;
+  ~state() = default;
+}
+
+pub fn pickup(socket mut *socket, udppkt mut &udppkt) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (state.buffer.len == 0)
+    return would_block;
+
+  udppkt = state.buffer.take_front();
+
+  if (state.buffer.len == 0)
+    io::initiate(&mut socket.readable.cb, 1);
+
+  return cast(1);
+}
+
+pub fn deliver(socket mut *socket, net::rx &rx, u16 source_port, u16 destination_port, net::packet mut &pkt) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var udppkt = udppkt();
+
+  udppkt.rx = rx;
+  udppkt.source_port = source_port;
+  udppkt.destination_port = destination_port;
+
+  pkt.foreach_region(|region| {
+    udppkt.iovec.length += region.size;
+    udppkt.iovec.host.push_back(region);
+  });
+
+  pkt.host.clear();
+
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.buffer.push_back(&move udppkt);
+
+  if (state.buffer.len == 1)
+    io::complete(&mut socket.readable.cb, 0);
+
+  return cast(1);
+}
+
+pub fn deliver_error(socket mut *socket, net::result status) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.soerror = cast<i32>(status);
+
+  if (!socket.queryable.ready)
+    io::complete(&mut socket.queryable.cb, 0);
+
+  return ok;
+}
+
+pub fn open(socket mut *socket) -> net::result
+{
+  socket.protocol = IPPROTO_UDP;
+
+  socket.state = std::allocator::new<state>();
+
+  return ok;
+}
+
+pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (socket.sockname.ss_family != 0)
+    return invalid_argument;
+
+  if (var result = net::stack.udp.bind(socket, addr, alen); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut state.lock);
+
+  switch (op)
+  {
+    case sio::soerror:
+
+      if (var result = vm::memcpy(iovec, 0, &state.soerror, sizeof<i32>); !result)
+        return cast(result);
+
+      state.soerror = cast(0);
+
+      return cast(sizeof<i32>);
+
+    case sio::getsockname:
+
+      if (var result = vm::memcpy(iovec, 0, &socket.sockname, sizeof<sockaddr_in6>); !result)
+        return cast(result);
+
+      return cast(sizeof<sockaddr_in6>);
+
+    case sio::getpeername:
+
+      if (socket.peername.ss_family != AF_INET6)
+        return not_connected;
+
+      if (var result = vm::memcpy(iovec, 0, &socket.peername, sizeof<sockaddr_in6>); !result)
+        return cast(result);
+
+      return cast(sizeof<sockaddr_in6>);
+
+    case sio::setpeername:
+
+      if (iovec.length != sizeof<sockaddr_in6>)
+        return invalid_argument;
+
+      if (var result = vm::memcpy(&socket.peername, iovec, 0, sizeof<sockaddr_in6>); !result)
+        return cast(result);
+
+      socket.writeable = io::response();
+
+      return ok;
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ctrlhdr mut *ctrl, usize ctrllen) -> net::result
+{
+  var pkt = udppkt();
+
+  if (var result = pickup(socket, &mut pkt); !result)
+    return result;
+
+  var count = 0;
+
+  for (var host : pkt.iovec.host)
+  {
+    if (var result = vm::memcpy(iovec, offset, host.addr.ptr, host.size); !result)
+      break;
+
+    count += host.size;
+    offset += host.size;
+  }
+
+  if (ctrl != null)
+  {
+    if (pkt.rx.timestamp != 0)
+    {
+      if (ctrllen < cast(ctrl.ctrl_len) + sizeof<ctrlattr> + sizeof<u64>)
+        return invalid_argument;
+
+      var cta = cast<ctrlattr mut *>(cast<uintptr>(ctrl) + cast<usize>(ctrl.ctrl_len));
+
+      cta.cta_type = cta::timestamp;
+      cta.cta_len = sizeof<ctrlattr> + sizeof<u64>;
+      cta.cta_level = IPPROTO_IPV6;
+      std::memcpy(cta.cta_value.data, &pkt.rx.timestamp, sizeof<u64>);
+
+      ctrl.ctrl_len += cast(std::align_up(cta.cta_len, 4));
+    }
+
+    if (pkt.rx.src_ip)
+    {
+      var addr = sockaddr_storage();
+      var addr = cast<sockaddr_in6 mut *>(&addr);
+
+      addr.sa_family = AF_INET6;
+      addr.sin6_addr = pkt.rx.src_ip.in6;
+      addr.sin6_port = pkt.source_port;
+
+      if (ctrllen < cast(ctrl.ctrl_len) + sizeof<ctrlattr> + sizeof<sockaddr_in6>)
+        return invalid_argument;
+
+      var cta = cast<ctrlattr mut *>(cast<uintptr>(ctrl) + cast<usize>(ctrl.ctrl_len));
+
+      cta.cta_type = cta::pktsrc;
+      cta.cta_len = sizeof<ctrlattr> + sizeof<sockaddr_in6>;
+      cta.cta_level = IPPROTO_IPV6;
+      std::memcpy(cta.cta_value.data, addr, sizeof<sockaddr_in6>);
+
+      ctrl.ctrl_len += cast(std::align_up(cta.cta_len, 4));
+    }
+  }
+
+  return cast(count);
+}
+
+pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt, ctrlhdr *ctrl, usize ctrllen) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var dst_port = 0;
+
+  for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < ctrllen; )
+  {
+    var cta = cast<ctrlattr*>(cast<uintptr>(ctrl) + cast<usize>(offset));
+
+    switch (cta.cta_type)
+    {
+      case cta::pktdst:
+        if (socket.peername.ss_family != 0)
+          return invalid_argument;
+
+        if (cta.cta_len < sizeof<ctrlattr> + sizeof<sockaddr>)
+          return invalid_argument;
+
+        switch (cast<sockaddr *>(cta.cta_value.data).sa_family)
+        {
+          case AF_INET6:
+            if (cta.cta_len < sizeof<ctrlattr> + sizeof<sockaddr_in6>)
+              return invalid_argument;
+
+            dst_port = cast<sockaddr_in6 *>(cta.cta_value.data).sin6_port;
+        }
+    }
+
+    offset += cast(std::align_up(cta.cta_len, 4));
+  }
+
+  switch (socket.peername.ss_family)
+  {
+    case AF_INET6:
+      dst_port = cast<sockaddr_in6 &>(socket.peername).sin6_port;
+  }
+
+  if (dst_port == 0)
+    return address_required;
+
+  var src_port = 0;
+
+  switch (socket.sockname.ss_family)
+  {
+    case AF_INET6:
+      src_port = cast<sockaddr_in6 &>(socket.sockname).sin6_port;
+  }
+
+  if (src_port == 0)
+    return address_not_available;
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  udp::send(link, &mut response.cb, dst_port, src_port, dst_ip.in6, src_ip.in6, dst, link.hwaddr, &mut pkt);
+
+  if (response.wait(); !response)
+    return cast(response.result);
+
+  return cast(pkt.length);
+}
+
+pub fn shutdown(socket mut *socket, u64 how) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  if (how == SHUT_RD || how == SHUT_RDWR)
+    net::stack.udp.unbind(socket);
+
+  return ok;
+}
+
+pub fn destroy(socket mut *socket) -> net::result
+{
+  var mut &state = *cast<state mut *>(socket.state);
+
+  std::allocator::delete(cast<state mut *>(socket.state));
+
+  return ok;
+}

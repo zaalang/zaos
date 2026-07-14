@@ -14,7 +14,7 @@ pub struct cursor
   pub compositor::sprite sprite;
 
   pub cursor() = default;
-  pub cursor(cursor&&) = default;
+  pub cursor(cursor &&) = default;
   pub fn =(cursor mut &, cursor &&) -> cursor mut & = default;
   pub ~cursor() = default;
 }
@@ -24,7 +24,7 @@ pub struct theme
   pub cursor[10] cursors;
 
   pub theme() = default;
-  pub theme(theme&&) = default;
+  pub theme(theme &&) = default;
   pub ~theme() = default;
 }
 

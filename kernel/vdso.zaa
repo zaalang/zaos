@@ -60,7 +60,7 @@ struct vdso<name>
   }
 
   vdso() = default;
-  vdso(#vdso&) = default;
+  vdso(#vdso &) = default;
   ~vdso() = default;
 }
 

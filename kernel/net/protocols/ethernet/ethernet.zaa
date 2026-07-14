@@ -22,9 +22,9 @@ pub enum ether_type : u16
 #[packed]
 pub struct ether_header
 {
-  macaddr destination;
-  macaddr source;
-  ether_type type;
+  pub macaddr destination;
+  pub macaddr source;
+  pub ether_type type;
 }
 
 pub fn deframe(netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result

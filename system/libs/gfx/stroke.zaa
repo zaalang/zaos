@@ -50,7 +50,7 @@ pub struct pen
     return this.width != 0.0;
   }
 
-  pub pen(pen&) = default;
+  pub pen(pen &) = default;
   pub fn =(pen mut &, pen &) -> pen mut & = default;
   pub ~pen() = default;
 }

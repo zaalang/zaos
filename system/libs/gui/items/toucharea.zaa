@@ -30,7 +30,7 @@ pub struct item_pointer_event
   }
 
   pub item_pointer_event() = default;
-  pub item_pointer_event(item_pointer_event&) = default;
+  pub item_pointer_event(item_pointer_event &) = default;
   pub fn =(item_pointer_event mut &, item_pointer_event &) -> item_pointer_event mut & = default;
   pub ~item_pointer_event() = default;
 }
@@ -48,7 +48,7 @@ pub struct item_wheel_event
   }
 
   pub item_wheel_event() = default;
-  pub item_wheel_event(item_wheel_event&) = default;
+  pub item_wheel_event(item_wheel_event &) = default;
   pub fn =(item_wheel_event mut &, item_wheel_event &) -> item_wheel_event mut & = default;
   pub ~item_wheel_event() = default;
 }

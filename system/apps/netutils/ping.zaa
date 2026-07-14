@@ -89,6 +89,8 @@ pub fn main() -> i32
     return 1;
   }
 
+  var errfd = os::socket(&mut thread_ring, AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+
   std::printf("PING {} {} data bytes\n", destination, sizeof<ping_pkt>);
 
   for (var seq = 1; seq <= 4; ++seq)
@@ -113,9 +115,9 @@ pub fn main() -> i32
     checksum += cast<u32>(58);
     checksum += cast<u32>(sizeof(pkt));
 
-    var payload = cast<u8 *>(&pkt);
+    var payload = cast<u8*>(&pkt);
 
-    for (var i = 0; i < sizeof(pkt); i += 2)
+    for (var i = 0; i + 1 < sizeof(pkt); i += 2)
       checksum += cast<u32>(*(payload + i)) << 8 | cast<u32>(*(payload + i + 1));
 
     if (sizeof(pkt) & 1 != 0)
@@ -173,10 +175,55 @@ pub fn main() -> i32
 
       if (bytes < 0)
       {
+        if (bytes == EAGAIN)
+        {
+          var reason = 0;
+
+          for (;;)
+          {
+            var bytes = os::read(&mut thread_ring, errfd, buffer.data, buffer.len);
+
+            if (bytes <= 0)
+              break;
+
+            if (buffer[0] != 1 && buffer[0] != 2 && buffer[0] != 3 && buffer[0] != 4)
+              continue;
+
+            if (cast<ping_pkt*>(buffer.data + 48).type != 128)
+              continue;
+
+            if (cast<ping_pkt*>(buffer.data + 48).ident != pkt.ident)
+              continue;
+
+            if (cast<ping_pkt*>(buffer.data + 48).sequence != pkt.sequence)
+              continue;
+
+            reason = buffer[0];
+
+            break;
+          }
+
+          switch (reason)
+          {
+            case 1:
+              std::print("ping: receive - destination unreachable");
+
+            case 2:
+              std::print("ping: receive - packet too big");
+
+            case 3:
+              std::print("ping: receive - time exceeded");
+
+            else:
+              std::print("ping: receive - timeout");
+          }
+
+          break;
+        }
+
         std::print("ping: receive - ", cast<std::errc>(-bytes));
 
-        if (bytes == EAGAIN)
-          break;
+        break;
       }
 
       if (bytes < sizeof<ping_pkt>)
@@ -185,34 +232,34 @@ pub fn main() -> i32
       if (cast<ping_pkt*>(buffer.data).type != 129)
         continue;
 
-      if (cast<ping_pkt*>(buffer.data).ident != cast<u16>(thread_id & 0xffff))
+      if (cast<ping_pkt*>(buffer.data).ident != pkt.ident)
         continue;
 
-      if (cast<ping_pkt*>(buffer.data).sequence != seq)
+      if (cast<ping_pkt*>(buffer.data).sequence != pkt.sequence)
         continue;
 
       var dp = os::timespec(void);
       os::clock_gettime(os::clock::monotonic, &dp);
 
-      var srcip = net::ipv6addr();
+      var src = os::sockaddr_in6();
 
-      for (var offset = sizeof<os::ctrlhdr>; offset < ctrl.ctrl_len; )
+      for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < ctrl.ctrl_len; )
       {
-        var cta = cast<os::ctrlattr*>(ctrlbuf.data + cast<usize>(offset));
+        var cta = cast<ctrlattr*>(ctrlbuf.data + cast<usize>(offset));
 
         switch (cta.cta_type)
         {
-          case SCM_TIMESTAMP:
+          case IP_TIMESTAMP:
             std::memcpy(&dp, cta.cta_value.data, sizeof(dp));
 
-          case SCM_IPV6_SRCIP:
-            srcip = net::ipv6addr(cta.cta_value.data, cast(cta.cta_len) - sizeof<os::ctrlattr>);
+          case IP_PKTSRC:
+            std::memcpy(&src, cta.cta_value.data, cast(cta.cta_len) - sizeof<ctrlattr>);
         }
 
         offset += cast(std::align_up(cta.cta_len, 4));
       }
 
-      std::printf("{} bytes from {} icmp_seq={} time={:.3} ms\n", bytes, srcip, seq, cast<float>(dp - tp) / 1000000.0);
+      std::printf("{} bytes from {} icmp_seq={} time={:.3} ms\n", bytes, net::ipv6addr(src.sin6_addr), seq, cast<float>(dp - tp) / 1000000.0);
 
       os::sleep(&mut thread_ring, tp + 1_000_000_000);
 

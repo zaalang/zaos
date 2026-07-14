@@ -28,7 +28,7 @@ pub struct guid
   }
 
   pub guid() = default;
-  pub guid(guid&) = default;
+  pub guid(guid &) = default;
   pub fn =(guid mut &, guid &) -> guid mut & = default;
   pub ~guid() = default;
 }
@@ -52,7 +52,7 @@ pub struct partition
   pub u64 end_block;
 
   pub partition() = default;
-  pub partition(partition&&) = default;
+  pub partition(partition &&) = default;
   pub ~partition() = default;
 }
 

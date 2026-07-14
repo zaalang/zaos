@@ -26,7 +26,7 @@ pub union cursor
   }
 
   pub cursor() = default;
-  pub cursor(cursor&&) = default;
+  pub cursor(cursor &&) = default;
   pub fn =(cursor mut &, cursor &) -> cursor mut & = default;
   pub ~cursor() = default;
 }

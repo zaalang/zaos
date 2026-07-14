@@ -324,8 +324,6 @@ fn decode(hiddev mut &this) -> usb::result
     byte += (bits >> 3);
   }
 
-  io::reset(&mut this.readable.cb);
-
   return ok;
 }
 

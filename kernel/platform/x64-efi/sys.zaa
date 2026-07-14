@@ -19,7 +19,7 @@ struct thread
   fn tss(this mut &) { return &*cast<tss mut *>(__asm("mov $0, fs:0x0; lea $0, [$0 - tss@tpoff]", "=r")); }
 
   thread() = default;
-  thread(#thread&) = default;
+  thread(#thread &) = default;
   ~thread() = default;
 }
 
@@ -35,7 +35,7 @@ struct system
   }
 
   system() = default;
-  system(#system&) = default;
+  system(#system &) = default;
   ~system() = default;
 }
 
@@ -212,7 +212,7 @@ struct gdt
   u64[8] entries;
 
   gdt() = default;
-  gdt(#gdt&) = default;
+  gdt(#gdt &) = default;
   ~gdt() = default;
 }
 
@@ -241,7 +241,7 @@ struct idt
   u64[2][256] entries;
 
   idt() = default;
-  idt(#gdt&) = default;
+  idt(#gdt &) = default;
   ~idt() = default;
 }
 

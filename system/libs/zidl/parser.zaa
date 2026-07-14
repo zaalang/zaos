@@ -14,7 +14,7 @@ pub struct ast
   pub std::vector<decl> decls;
 
   pub ast() = default;
-  pub ast(ast&&) = default;
+  pub ast(ast &&) = default;
   pub ~ast() = default;
 }
 
@@ -24,7 +24,7 @@ pub struct constant
   pub std::string value;
 
   pub constant() = default;
-  pub constant(constant&&) = default;
+  pub constant(constant &&) = default;
   pub ~constant() = default;
 }
 
@@ -34,7 +34,7 @@ pub struct protocol
   pub std::vector<decl> methods;
 
   pub protocol() = default;
-  pub protocol(protocol&&) = default;
+  pub protocol(protocol &&) = default;
   pub ~protocol() = default;
 }
 
@@ -54,7 +54,7 @@ pub struct method
   pub std::vector<decl> returns;
 
   pub method() = default;
-  pub method(method&&) = default;
+  pub method(method &&) = default;
   pub ~method() = default;
 }
 
@@ -65,7 +65,7 @@ pub struct variable
   pub usize constraint;
 
   pub variable() = default;
-  pub variable(variable&&) = default;
+  pub variable(variable &&) = default;
   pub ~variable() = default;
 }
 
@@ -75,7 +75,7 @@ pub struct bits
   pub std::vector<decl> constants;
 
   pub bits() = default;
-  pub bits(bits&&) = default;
+  pub bits(bits &&) = default;
   pub ~bits() = default;
 }
 
@@ -85,7 +85,7 @@ pub struct enumerator
   pub std::vector<decl> constants;
 
   pub enumerator() = default;
-  pub enumerator(enumerator&&) = default;
+  pub enumerator(enumerator &&) = default;
   pub ~enumerator() = default;
 }
 
@@ -95,7 +95,7 @@ pub struct structure
   pub std::vector<decl> fields;
 
   pub structure() = default;
-  pub structure(structure&&) = default;
+  pub structure(structure &&) = default;
   pub ~structure() = default;
 }
 
@@ -115,7 +115,7 @@ pub union decl
   }
 
   pub decl() = default;
-  pub decl(decl&&) = default;
+  pub decl(decl &&) = default;
   pub ~decl() = default;
 }
 

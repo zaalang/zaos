@@ -122,7 +122,7 @@ pub struct tables
     return host_address<sdt>(this.physical_base, *(cast<uintptr*>(this.xsdt + 1) + index));
   }
 
-  pub tables(tables&) = default;
+  pub tables(tables &) = default;
   pub ~tables() = default;
 }
 

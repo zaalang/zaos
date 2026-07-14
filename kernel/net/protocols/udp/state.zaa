@@ -1,0 +1,140 @@
+//
+// udp state
+//
+
+import std.stdlib;
+import std.vector;
+import net.result;
+import net.protocols.ip as ip;
+import net.protocols.udp as udp;
+import mutex as _ : shared_mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+import support.rc : Rc;
+
+using net::inaddr;
+using ip::sockaddr_in4;
+using ip::sockaddr_in6;
+
+pub struct state
+{
+  shared_mutex lock;
+
+  std::flat_hash_map<u16, std::vector<socket mut *>> sockets;
+
+  u16 next_ephemeral = 49152;
+
+  pub state() = default;
+  pub state(#state &) = default;
+  pub ~state() = default;
+}
+
+pub fn bind(state mut &state, socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (alen != sizeof<sockaddr_in6>)
+    return invalid_argument;
+
+  if (addr.sa_family != AF_INET6)
+    return invalid_argument;
+
+  var addr = sockaddr_storage(addr, alen);
+  var addr = cast<sockaddr_in6 mut *>(&addr);
+
+  if (addr.sin6_port == 0)
+  {
+    for (var k = 0; k < 16384; ++k)
+    {
+      addr.sin6_port = std::native_to_be(++state.next_ephemeral);
+
+      if (state.next_ephemeral == 65535)
+        state.next_ephemeral = 49152;
+
+      if (!state.sockets.contains(addr.sin6_port))
+        break;
+    }
+  }
+
+  if (state.sockets.contains(addr.sin6_port))
+    return address_in_use;
+
+  if (var result = ip::bind(socket, cast<sockaddr*>(addr), alen); !result)
+    return result;
+
+  state.sockets.emplace(addr.sin6_port).push_back(socket);
+
+  return ok;
+}
+
+pub fn unbind(state mut &state, socket mut *socket) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (socket.sockname.ss_family != AF_INET6)
+    return;
+
+  var port = cast<sockaddr_in6 mut &>(socket.sockname).sin6_port;
+
+  switch (state.sockets.get(port))
+  {
+    case Some[sockets]:
+      sockets.erase(socket);
+
+      if (sockets.empty)
+        state.sockets.erase(port);
+  }
+}
+
+pub fn find(state mut &state, inaddr &dst, u16 dst_port, inaddr &src, u16 src_port) -> Rc<socket>
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  var j = state.sockets.find(dst_port);
+
+  if (j == state.sockets.end)
+    return null;
+
+  rof (var &socket : state.sockets[j].value)
+  {
+    switch (src)
+    {
+      case in6:
+        if (socket.peername.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.peername).sin6_addr != src.in6 || cast<sockaddr_in6 &>(socket.peername).sin6_port != src_port)
+          continue;
+
+      else:
+        if (socket.peername.ss_family != 0)
+          continue;
+    }
+
+    switch (dst)
+    {
+      case in6:
+        if (socket.sockname.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.sockname).sin6_addr != dst.in6)
+          continue;
+    }
+
+    if (!socket.try_ref())
+      return null;
+
+    return Rc::adopt(socket);
+  }
+
+  return null;
+}
+
+pub fn enumerate_sockets(state mut &state, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &[port, sockets] : state.sockets)
+    for (var &socket : sockets)
+      callback(socket);
+}
+
+pub fn initialise(state mut &state) -> net::result
+{
+  net::stack.ip.install_error_handler(IPPROTO_UDP, &cast<(net::netdev mut *, net::rx &, net::packet &) -> net::result>(udp::receive_error_reply));
+
+  return ok;
+}

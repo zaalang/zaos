@@ -75,7 +75,7 @@ struct fd_result
   usize length;
 
   fd_result() = default;
-  fd_result(fd_result&) = default;
+  fd_result(fd_result &) = default;
   ~fd_result() = default;
 }
 

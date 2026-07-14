@@ -45,7 +45,7 @@ pub struct image
   pub struct entry_iterator
   {
     pub entry_iterator() = default;
-    pub entry_iterator(entry_iterator&) = default;
+    pub entry_iterator(entry_iterator &) = default;
     pub fn =(entry_iterator mut &this, entry_iterator &that) -> entry_iterator mut & = default;
     pub ~entry_iterator() = default;
 
@@ -55,7 +55,7 @@ pub struct image
 
       return &this;
     }
-    
+
     pub fn --(entry_iterator mut &this) -> entry_iterator mut &
     {
       this.entry = cast<gpt::entry*>(cast<uintptr>(this.entry) - cast(this.header.entry_size));

@@ -74,7 +74,7 @@ struct session
   }
 
   session() = default;
-  session(#session&) = default;
+  session(#session &) = default;
   ~session() = default;
 }
 

@@ -9,6 +9,7 @@ LIBS := -lzrt
 BINS=\
 $(BUILD)/ip\
 $(BUILD)/ping\
+$(BUILD)/nc\
 
 default: $(BINS)
 

@@ -147,7 +147,7 @@ struct table_record
   u32 length;
 
   table_record() = default;
-  table_record(table_record&&) = default;
+  table_record(table_record &&) = default;
   fn =(table_record mut &, table_record &) -> table_record mut & = default;
   ~table_record() = default;
 }
@@ -170,7 +170,7 @@ struct name_record
   u16 offset;
 
   name_record() = default;
-  name_record(name_record&&) = default;
+  name_record(name_record &&) = default;
   fn =(name_record mut &, name_record &) -> name_record mut & = default;
   ~name_record() = default;
 }
@@ -183,7 +183,7 @@ struct encoding_record
   u32 offset;
 
   encoding_record() = default;
-  encoding_record(encoding_record&&) = default;
+  encoding_record(encoding_record &&) = default;
   fn =(encoding_record mut &, encoding_record &) -> encoding_record mut & = default;
   ~encoding_record() = default;
 }
@@ -311,7 +311,7 @@ struct long_hor_metric
   i16 leftside_bearing;
 
   long_hor_metric() = default;
-  long_hor_metric(long_hor_metric&&) = default;
+  long_hor_metric(long_hor_metric &&) = default;
   fn =(long_hor_metric mut &, long_hor_metric &) -> long_hor_metric mut & = default;
   ~long_hor_metric() = default;
 }
@@ -480,7 +480,7 @@ struct range_record
   u16 value;
 
   range_record() = default;
-  range_record(range_record&&) = default;
+  range_record(range_record &&) = default;
   fn =(range_record mut &, range_record &) -> range_record mut & = default;
   ~range_record() = default;
 }
@@ -503,7 +503,7 @@ struct value_record
   }
 
   value_record() = default;
-  value_record(value_record&&) = default;
+  value_record(value_record &&) = default;
   fn =(value_record mut &, value_record &) -> value_record mut & = default;
   ~value_record() = default;
 }
@@ -516,7 +516,7 @@ struct pairvalue_record
   value_record value2;
 
   pairvalue_record() = default;
-  pairvalue_record(pairvalue_record&&) = default;
+  pairvalue_record(pairvalue_record &&) = default;
   fn =(pairvalue_record mut &, pairvalue_record &) -> pairvalue_record mut & = default;
   ~pairvalue_record() = default;
 }
@@ -528,7 +528,7 @@ struct entryexit_record
   u16 exit_anchor_offset;
 
   entryexit_record() = default;
-  entryexit_record(entryexit_record&&) = default;
+  entryexit_record(entryexit_record &&) = default;
   fn =(entryexit_record mut &, entryexit_record &) -> entryexit_record mut & = default;
   ~entryexit_record() = default;
 }
@@ -540,7 +540,7 @@ struct mark_record
   u16 mark_anchor_offset;
 
   mark_record() = default;
-  mark_record(mark_record&&) = default;
+  mark_record(mark_record &&) = default;
   fn =(mark_record mut &, mark_record &) -> mark_record mut & = default;
   ~mark_record() = default;
 }
@@ -989,7 +989,7 @@ struct stream
   }
 
   stream() = default;
-  stream(stream&) = default;
+  stream(stream &) = default;
   ~stream() = default;
 }
 
@@ -1047,7 +1047,7 @@ struct view<T>
   }
 
   view() = default;
-  view(view&) = default;
+  view(view &) = default;
   ~view() = default;
 }
 
@@ -1124,7 +1124,7 @@ pub struct metric
   pub i16 leftside_bearing;
 
   pub metric() = default;
-  pub metric(metric&&) = default;
+  pub metric(metric &&) = default;
   pub fn =(metric mut &, metric &) -> metric mut & = default;
   pub ~metric() = default;
 }
@@ -1354,7 +1354,7 @@ pub struct anchor
   pub u16 y_device_offset;
 
   pub anchor() = default;
-  pub anchor(anchor&&) = default;
+  pub anchor(anchor &&) = default;
   pub fn =(anchor mut &, anchor &) -> anchor mut & = default;
   pub ~anchor() = default;
 }
@@ -1386,7 +1386,7 @@ pub struct layout
   pub anchor[2] anchor;
 
   pub layout() = default;
-  pub layout(layout&&) = default;
+  pub layout(layout &&) = default;
   pub fn =(layout mut &, layout &) -> layout mut & = default;
   pub ~layout() = default;
 }
@@ -1741,7 +1741,7 @@ pub struct substitution
   pub glyphid[8] glyphs;
 
   pub substitution() = default;
-  pub substitution(substitution&&) = default;
+  pub substitution(substitution &&) = default;
   pub fn =(substitution mut &, substitution &) -> substitution mut & = default;
   pub ~substitution() = default;
 }
@@ -2328,7 +2328,7 @@ pub struct component
   pub f16dot16[6] transform;
 
   pub component() = default;
-  pub component(component&) = default;
+  pub component(component &) = default;
   pub ~component() = default;
 }
 
@@ -2473,7 +2473,7 @@ pub struct point
   }
 
   pub point() = default;
-  pub point(point&) = default;
+  pub point(point &) = default;
   pub fn =(point mut &, point &) -> point mut & = default;
   pub ~point() = default;
 }

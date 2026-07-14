@@ -66,8 +66,8 @@ pub struct compile_result
   }
 
   pub compile_result() = default;
-  pub compile_result(compile_result&) = default;
-  pub fn =(compile_result mut &, compile_result&) -> compile_result mut & = default;
+  pub compile_result(compile_result &) = default;
+  pub fn =(compile_result mut &, compile_result &) -> compile_result mut & = default;
   pub ~compile_result() = default;
 }
 

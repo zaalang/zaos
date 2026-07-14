@@ -27,7 +27,7 @@ struct system
   u8[512] cmdline;
 
   system() = default;
-  system(#system&) = default;
+  system(#system &) = default;
   ~system() = default;
 }
 
@@ -82,7 +82,7 @@ pub struct frame_buffer
   pub physaddr_t address;
 
   pub frame_buffer() = default;
-  pub frame_buffer(frame_buffer&) = default;
+  pub frame_buffer(frame_buffer &) = default;
   pub ~frame_buffer() = default;
 }
 
@@ -162,7 +162,7 @@ struct msg_queue
     std::delegate<() -> void> delegate;
 
     msg() = default;
-    msg(#msg&) = default;
+    msg(#msg &) = default;
     ~msg() = default;
   }
 
@@ -230,7 +230,7 @@ struct msg_queue
   }
 
   msg_queue() = default;
-  msg_queue(#msg_queue&) = default;
+  msg_queue(#msg_queue &) = default;
   ~msg_queue() = default;
 }
 

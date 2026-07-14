@@ -16,7 +16,7 @@ pub struct address_space
   pub std::spin_lock lock;
 
   pub address_space() = default;
-  pub address_space(#address_space&) = default;
+  pub address_space(#address_space &) = default;
   pub ~address_space() = default;
 }
 

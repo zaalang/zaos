@@ -115,7 +115,7 @@ fn done(route mut &this, std::vector<u8> &request) -> void
 
 fn getroute(route mut &this, std::vector<u8> &request) -> void
 {
-  net::enumerate_routes(|route| {
+  net::routes.enumerate(|route| {
     var response = std::vector<u8>::with_capacity(512);
 
     var hdr = cast<nlmsghdr mut *>(response.end);

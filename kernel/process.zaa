@@ -335,7 +335,7 @@ struct process_manager
   }
 
   process_manager() = default;
-  process_manager(#process_manager&) = default;
+  process_manager(#process_manager &) = default;
   ~process_manager() = default;
 }
 

@@ -1,0 +1,101 @@
+//
+// udp
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6 as ipv6;
+import net.protocols.ipv6.icmp6 as icmp6;
+import net.protocols.udp.socket as udp.socket;
+import io;
+import support.rc : Rc;
+
+using net::inaddr;
+using net::in6addr;
+using net::hwaddr;
+
+#[packed]
+pub struct udp_header
+{
+  pub u16 source_port;
+	pub u16 destination_port;
+	pub u16 length;
+	pub u8[2] cksum;
+}
+
+pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<udp_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (ipv6::checksum(ipv6::protocol::udp, rx.src_ip.in6, rx.dst_ip.in6, pkt) != [0, 0])
+   return protocol_error;
+
+  var length = cast<usize>(std::be_to_native(hdr.length));
+
+  if (length < sizeof<udp_header>)
+    return protocol_error;
+
+  if (pkt.length < length)
+    return protocol_error;
+
+  pkt.trim(length);
+  pkt.strip(sizeof<udp_header>);
+
+  var socket = net::stack.udp.find(rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port);
+
+  if (!socket)
+    socket = net::stack.udp.find(rx.dst_ip, hdr.destination_port, inaddr(), 0);
+
+  if (!socket)
+    socket = net::stack.udp.find(inaddr(in6addr_any), hdr.destination_port, rx.src_ip, hdr.source_port);
+
+  if (!socket)
+    socket = net::stack.udp.find(inaddr(in6addr_any), hdr.destination_port, inaddr(), 0);
+
+  if (!socket)
+  {
+    icmp6::error_reply(link, icmp6::type::destination_unreachable, icmp6::code::destination_unreachable_port, rx, &mut pkt);
+
+    return not_found;
+  }
+
+  udp::deliver(socket, rx, hdr.source_port, hdr.destination_port, &mut pkt);
+
+  return ok;
+}
+
+pub fn receive_error_reply(net::netdev mut *link, net::rx &rx, net::packet &pkt) -> net::result
+{
+  var hdr = pkt.as<udp_header>();
+  if (!hdr)
+    return protocol_error;
+
+  var socket = net::stack.udp.find(rx.src_ip, hdr.source_port, rx.dst_ip, hdr.destination_port);
+
+  if (!socket)
+    socket = net::stack.udp.find(inaddr(in6addr_any), hdr.source_port, rx.dst_ip, hdr.destination_port);
+
+  if (!socket)
+    return not_found;
+
+  udp::deliver_error(socket, net::result::host_unreachable);
+
+  return ok;
+}
+
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_port, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+{
+	var hdr = pkt.prepend<udp_header>();
+
+  hdr.source_port = src_port;
+  hdr.destination_port = dst_port;
+	hdr.length = std::native_to_be(cast<u16>(pkt.length));
+  hdr.cksum = [0, 0];
+
+  hdr.cksum = ipv6::checksum(ipv6::protocol::udp, dst_ip, src_ip, pkt);
+
+  ipv6::send(link, &mut cb, ipv6::protocol::udp, dst_ip, src_ip, dst, src, &mut pkt);
+}

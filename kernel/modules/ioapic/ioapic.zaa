@@ -54,7 +54,7 @@ struct interrupt_controller
   }
 
   interrupt_controller() = default;
-  interrupt_controller(#interrupt_controller&) = default;
+  interrupt_controller(#interrupt_controller &) = default;
   ~interrupt_controller() = default;
 }
 

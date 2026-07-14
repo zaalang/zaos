@@ -19,7 +19,7 @@ pub struct vec2
   }
 
   pub vec2() = default;
-  pub vec2(vec2&) = default;
+  pub vec2(vec2 &) = default;
   pub fn =(vec2 mut &, vec2 &) -> vec2 mut & = default;
   pub ~vec2() = default;
 }
@@ -39,7 +39,7 @@ pub struct vec3
   }
 
   pub vec3() = default;
-  pub vec3(vec3&) = default;
+  pub vec3(vec3 &) = default;
   pub fn =(vec3 mut &, vec3 &) -> vec3 mut & = default;
   pub ~vec3() = default;
 }
@@ -60,7 +60,7 @@ pub struct vec4
   }
 
   pub vec4() = default;
-  pub vec4(vec4&) = default;
+  pub vec4(vec4 &) = default;
   pub fn =(vec4 mut &, vec4 &) -> vec4 mut & = default;
   pub ~vec4() = default;
 }
@@ -107,7 +107,7 @@ pub struct transform
   pub fn ==(transform &lhs, transform &rhs) -> bool = default;
 
   pub transform() = default;
-  pub transform(transform&) = default;
+  pub transform(transform &) = default;
   pub fn =(transform mut &, transform &) -> transform mut & = default;
   pub ~transform() = default;
 }
@@ -238,7 +238,7 @@ pub struct bound
   }
 
   pub bound() = default;
-  pub bound(bound&) = default;
+  pub bound(bound &) = default;
   pub fn =(bound mut &, bound &) -> bound mut & = default;
   pub ~bound() = default;
 }

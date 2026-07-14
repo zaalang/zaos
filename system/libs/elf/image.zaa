@@ -68,7 +68,7 @@ pub struct image
   pub struct section_header_iterator
   {
     pub section_header_iterator() = default;
-    pub section_header_iterator(section_header_iterator&) = default;
+    pub section_header_iterator(section_header_iterator &) = default;
     pub fn =(section_header_iterator mut &this, section_header_iterator &that) -> section_header_iterator mut & = default;
     pub ~section_header_iterator() = default;
 
@@ -146,7 +146,7 @@ pub struct image
   pub struct program_header_iterator
   {
     pub program_header_iterator() = default;
-    pub program_header_iterator(program_header_iterator&) = default;
+    pub program_header_iterator(program_header_iterator &) = default;
     pub fn =(program_header_iterator mut &this, program_header_iterator &that) -> program_header_iterator mut & = default;
     pub ~program_header_iterator() = default;
 

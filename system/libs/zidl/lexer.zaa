@@ -18,7 +18,7 @@ pub struct source_location
   }
 
   pub source_location() = default;
-  pub source_location(source_location&) = default;
+  pub source_location(source_location &) = default;
   pub fn =(source_location mut &, source_location &) -> source_location mut & = default;
   pub ~source_location() = default;
 }
@@ -106,7 +106,7 @@ pub struct token
   pub std::string_view text;
 
   pub token() = default;
-  pub token(token&) = default;
+  pub token(token &) = default;
   pub fn =(token mut &, token &) -> token mut & = default;
   pub ~token() = default;
 }
@@ -123,7 +123,7 @@ pub struct lex_cursor
   pub usize position = 0;
 
   pub lex_cursor() = default;
-  pub lex_cursor(lex_cursor&) = default;
+  pub lex_cursor(lex_cursor &) = default;
   pub fn =(lex_cursor mut &, lex_cursor &) -> lex_cursor mut & = default;
   pub ~lex_cursor() = default;
 }

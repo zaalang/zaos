@@ -39,7 +39,7 @@ struct memory_manager
   }
 
   memory_manager() = default;
-  memory_manager(#memory_manager&) = default;
+  memory_manager(#memory_manager &) = default;
   ~memory_manager() = default;
 }
 

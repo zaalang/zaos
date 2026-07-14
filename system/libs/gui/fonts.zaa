@@ -29,7 +29,7 @@ pub struct face
   {
   }
 
-  pub face(face&&) = default;
+  pub face(face &&) = default;
   pub ~face() = default;
 }
 
@@ -41,7 +41,7 @@ pub struct family
   {
   }
 
-  pub family(family&&) = default;
+  pub family(family &&) = default;
   pub ~family() = default;
 }
 
@@ -125,7 +125,7 @@ pub struct fontfile
   {
   }
 
-  pub fontfile(fontfile&&) = default;
+  pub fontfile(fontfile &&) = default;
   pub ~fontfile() = default;
 }
 
@@ -188,7 +188,7 @@ pub struct fonts
   }
 
   fonts() = default;
-  fonts(#fonts&) = default;
+  fonts(#fonts &) = default;
   ~fonts() = default;
 }
 

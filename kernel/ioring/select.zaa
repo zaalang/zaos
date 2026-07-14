@@ -8,6 +8,7 @@ import vm : virtaddr;
 import io;
 import cpu;
 import vfs;
+import socket;
 import thread as _ : thread;
 import process as _ : process;
 import result as _ : result;
@@ -21,29 +22,26 @@ enum type
 enum events
 {
   const pollin = 0x001;
+  const pollpri = 0x002;
   const pollout = 0x004;
 }
 
 struct pollevt
 {
   i32 id;
-  u16 type;
-  u16 mask;
+  u8 type;
+  u8 mask;
+  u16 revents;
   uintptr user_data;
-
-  pollevt(i32 id, u16 type, u16 mask, uintptr user_data)
-    : id(id), type(type), mask(mask), user_data(user_data)
-  {
-  }
 
   pollevt() = default;
   pollevt(pollevt &) = default;
   ~pollevt() = default;
 }
 
-pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, usize n, u64 abstime) -> result
+pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, usize evtslen, u64 abstime) -> result
 {
-  var evts = std::vector<pollevt, N:8>::with_size(n);
+  var evts = std::vector<pollevt, N:8>::with_size(evtslen);
 
   if (var result = vm::read_process_memory(process, evtsbuf, evts.data, evts.len * sizeof<pollevt>); !result)
     return result;
@@ -58,6 +56,7 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
     var revents = 0;
     var readable = io::response();
     var writeable = io::response();
+    var queryable = std::optional<io::response>();
 
     switch (event.type)
     {
@@ -73,7 +72,6 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
           case vfs::node::type::event:
           case vfs::node::type::buffer:
           case vfs::node::type::channel:
-          case vfs::node::type::socket:
           case vfs::node::type::netlink:
           case vfs::node::type::watchset:
           case vfs::node::type::pollset:
@@ -81,6 +79,13 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
           case vfs::node::type::device:
 
             if (var result = node.stream_operations.poll(node, &mut readable.cb, &mut writeable.cb); !result)
+              return result;
+
+          case vfs::node::type::socket:
+
+            queryable = io::response();
+
+            if (var result = socket::poll(node, &mut readable.cb, &mut writeable.cb, &mut queryable?!.cb); !result)
               return result;
 
           else:
@@ -112,6 +117,9 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
     if (event.mask & events::pollout == events::pollout && writeable.ready)
       revents |= events::pollout;
 
+    if (event.mask & events::pollpri == events::pollpri && queryable && queryable?!.ready)
+      revents |= events::pollpri;
+
     if (revents == 0)
     {
       if (event.mask & events::pollin == events::pollin && !readable.ready)
@@ -119,14 +127,17 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
 
       if (event.mask & events::pollout == events::pollout && !writeable.ready)
         ctx.blockers.push_back(&move writeable);
+
+      if (event.mask & events::pollpri == events::pollpri && queryable && !queryable?!.ready)
+        ctx.blockers.push_back(&move queryable?!);
     }
+
+    event.revents = revents;
 
     if (revents != 0)
     {
-      evts[count].id = event.id;
-      evts[count].type = event.type;
-      evts[count].mask = revents;
-      evts[count].user_data = event.user_data;
+      if (revents & events::pollpri == events::pollpri)
+        io::reset(&mut queryable?!.cb, 1);
 
       count += 1;
     }
@@ -145,7 +156,7 @@ pub fn sys_select(process mut *process, ioring_ctx mut &ctx, virtaddr evtsbuf, u
     return ioring::result::should_block;
   }
 
-  if (var result = vm::write_process_memory(process, evtsbuf, evts.data, count * sizeof<pollevt>); !result)
+  if (var result = vm::write_process_memory(process, evtsbuf, evts.data, evts.len * sizeof<pollevt>); !result)
     return result;
 
   return cast(count);

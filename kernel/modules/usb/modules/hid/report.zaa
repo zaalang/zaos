@@ -332,8 +332,8 @@ pub struct report_descriptor_result
   pub std::vector<collection> collections;
 
   pub report_descriptor_result() = default;
-  pub report_descriptor_result(report_descriptor_result&) = default;
-  pub fn =(report_descriptor_result mut &, report_descriptor_result&) -> report_descriptor_result mut & = default;
+  pub report_descriptor_result(report_descriptor_result &) = default;
+  pub fn =(report_descriptor_result mut &, report_descriptor_result &) -> report_descriptor_result mut & = default;
   pub ~report_descriptor_result() = default;
 }
 

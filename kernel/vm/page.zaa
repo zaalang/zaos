@@ -120,7 +120,7 @@ pub struct physrange : pub platform::physrange_t
   }
 
   pub physrange() = default;
-  pub physrange(physrange&) = default;
+  pub physrange(physrange &) = default;
   pub fn =(physrange mut &, physrange &) -> physrange mut & = default;
   pub ~physrange() = default;
 }
@@ -251,7 +251,7 @@ pub struct virtrange : pub platform::virtrange_t
   }
 
   pub virtrange() = default;
-  pub virtrange(virtrange&) = default;
+  pub virtrange(virtrange &) = default;
   pub fn =(virtrange mut &, virtrange &) -> virtrange mut & = default;
   pub ~virtrange() = default;
 }
@@ -300,7 +300,7 @@ pub struct page_allocator
   std::mutable_span<page> pages;
 
   pub page_allocator() = default;
-  pub page_allocator(#page_allocator&) = default;
+  pub page_allocator(#page_allocator &) = default;
   pub ~page_allocator() = default;
 }
 
@@ -340,7 +340,7 @@ pub struct page_cache
   page mut *head;
 
   pub page_cache() = default;
-  pub page_cache(#page_cache&) = default;
+  pub page_cache(#page_cache &) = default;
   pub ~page_cache() = default;
 }
 
@@ -511,7 +511,7 @@ pub struct page_allocation : pub std::mutable_span<page>
   }
 
   pub page_allocation() = default;
-  pub page_allocation(page_allocation&) = default;
+  pub page_allocation(page_allocation &) = default;
   pub fn =(page_allocation mut &, page_allocation &) -> page_allocation mut & = default;
   pub ~page_allocation() = default;
 }

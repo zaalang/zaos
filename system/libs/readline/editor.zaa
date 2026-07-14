@@ -19,8 +19,8 @@ pub union status
   pub ignored,
 
   status() = default;
-  pub status(status&&) = default;
-  pub fn =(status mut &, status&&) -> status mut & = default;
+  pub status(status &&) = default;
+  pub fn =(status mut &, status &&) -> status mut & = default;
   pub ~status() = default;
 }
 
@@ -32,8 +32,8 @@ pub union signal
   pub end_of_file,
 
   signal() = default;
-  pub signal(signal&&) = default;
-  pub fn =(signal mut &, signal&&) -> signal mut & = default;
+  pub signal(signal &&) = default;
+  pub fn =(signal mut &, signal &&) -> signal mut & = default;
   pub ~signal() = default;
 }
 

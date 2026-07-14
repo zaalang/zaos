@@ -12,7 +12,7 @@ struct glyph
   u8[32] data;
 
   glyph() = default;
-  glyph(glyph&) = default;
+  glyph(glyph &) = default;
   ~glyph() = default;
 }
 

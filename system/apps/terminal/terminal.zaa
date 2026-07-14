@@ -68,7 +68,7 @@ pub struct window : pub gui::window
     vt::attrs attrs;
 
     cell() = default;
-    cell(cell&&) = default;
+    cell(cell &&) = default;
     ~cell() = default;
   }
 
@@ -293,10 +293,13 @@ pub struct window : pub gui::window
               post(&mut this, "\x1b[13;2u".data, 7);
 
             else:
-              var buf = [0; 16];
-              var str = std::ctoa(buf.begin, buf.end, evt.sym);
+              if (evt.sym != 0)
+              {
+                var buf = [0; 16];
+                var str = std::ctoa(buf.begin, buf.end, evt.sym);
 
-              post(&mut this, str.ptr, str.len);
+                post(&mut this, str.ptr, str.len);
+              }
           }
 
         case gui::modifiers::none:
@@ -376,10 +379,13 @@ pub struct window : pub gui::window
               post(&mut this, "\x1b[24~".data, 5);
 
             else:
-              var buf = [0; 16];
-              var str = std::ctoa(buf.begin, buf.end, evt.sym);
+              if (evt.sym != 0)
+              {
+                var buf = [0; 16];
+                var str = std::ctoa(buf.begin, buf.end, evt.sym);
 
-              post(&mut this, str.ptr, str.len);
+                post(&mut this, str.ptr, str.len);
+              }
           }
       }
     }

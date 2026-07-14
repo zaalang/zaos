@@ -92,5 +92,5 @@ pub struct Rc<T> : pub T mut *
       this.super.unref();
   }
 
-  pub Rc(#Rc&) = default;
+  pub Rc(#Rc &) = default;
 }

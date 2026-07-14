@@ -22,7 +22,7 @@ struct ctx
   os::ioring ring;
 
   ctx() = default;
-  ctx(ctx&) = default;
+  ctx(ctx &) = default;
   ~ctx() = default;
 }
 
@@ -40,7 +40,7 @@ struct obj
   usize pltrelent;
 
   obj() = default;
-  obj(obj&) = default;
+  obj(obj &) = default;
   ~obj() = default;
 }
 

@@ -76,7 +76,7 @@ pub struct token
   }
 
   pub token() = default;
-  pub token(token&) = default;
+  pub token(token &) = default;
   pub fn =(token mut &, token &) -> token mut & = default;
   pub ~token() = default;
 }

@@ -61,7 +61,7 @@ fn destroy(route mut *route) -> void
   std::allocator::delete(route);
 }
 
-pub fn add_route(route_table mut &table, inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *link) -> net::result
+pub fn add(route_table mut &table, inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *link) -> net::result
 {
   var guard = std::lock_guard(&mut table.lock);
 
@@ -74,7 +74,7 @@ pub fn add_route(route_table mut &table, inaddr &destination, usize prefixlen, i
   return ok;
 }
 
-pub fn find_route(route_table mut &table, inaddr &addr) -> Rc<route>
+pub fn find(route_table mut &table, inaddr &addr) -> Rc<route>
 {
   var guard = std::lock_shared_guard(&mut table.lock);
 
@@ -95,7 +95,7 @@ pub fn find_route(route_table mut &table, inaddr &addr) -> Rc<route>
   return null;
 }
 
-pub fn enumerate_routes(route_table mut &table, var &&callback) -> void
+pub fn enumerate(route_table mut &table, var &&callback) -> void
 {
   var guard = std::lock_shared_guard(&mut table.lock);
 

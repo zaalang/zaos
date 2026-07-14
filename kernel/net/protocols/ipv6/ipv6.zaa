@@ -5,18 +5,19 @@
 import std.stdlib;
 import net.netdev;
 import net.packet;
+import net.protocols.ip as ip;
 import net.protocols.ipv6.icmp6 as icmp6;
-import net.protocols.ipv6.socket as socket;
 import net.protocols.ethernet as ethernet;
 import io;
 import support.rc : Rc;
 
-using net::in6addr;
-using net::macaddr;
 using net::hwaddr;
+using net::in6addr;
 
 pub enum protocol : u8
 {
+  tcp = 6,
+  udp = 17,
   icmp6 = 58,
 }
 
@@ -77,13 +78,19 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   pkt.strip(sizeof<ipv6_header>);
   pkt.trim(hdr.payload_length);
 
-  socket::raw_rcv(cast(hdr.next_header), rx, pkt);
+  ip::receive(link, cast(hdr.next_header), rx, pkt);
 
   switch (hdr.next_header)
   {
     case icmp6:
       if (var result = icmp6::receive(link, &mut rx, &mut pkt); !result)
         return result;
+
+    case udp:
+      pkt.type = net::packet::type::udp;
+
+    case tcp:
+      pkt.type = net::packet::type::tcp;
 
     else:
       return protocol_not_supported;

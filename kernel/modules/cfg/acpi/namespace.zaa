@@ -396,7 +396,7 @@ pub struct namespace
   {
     for (var idx = 0; idx < cfg.events.len; ++idx)
       gpe_disable(&mut cfg, idx);
-      
+
     return ok;
   }
 
@@ -554,7 +554,7 @@ pub struct namespace
   }
 
   namespace() = default;
-  namespace(#namespace&) = default;
+  namespace(#namespace &) = default;
   ~namespace() = default;
 }
 

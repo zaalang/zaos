@@ -45,7 +45,7 @@ struct pollset
     return 0;
   }
 
-  fn add(this mut &pollset, i32 id, u16 type, u16 mask, uintptr user_data, u64 flags) -> i32
+  fn add(this mut &pollset, i32 id, u8 type, u8 mask, uintptr user_data, u64 flags) -> i32
   {
     if (var rc = os::poll_add(&mut thread_ring, pollset.fd, id, type, mask, user_data, flags); rc < 0)
       return rc;
@@ -53,7 +53,7 @@ struct pollset
     return 0;
   }
 
-  fn remove(this mut &pollset, i32 id, u16 type) -> i32
+  fn remove(this mut &pollset, i32 id, u8 type) -> i32
   {
     if (var rc = os::poll_remove(&mut thread_ring, pollset.fd, id, type); rc < 0)
       return rc;
@@ -69,14 +69,14 @@ struct pollset
 
   fn wait(this mut &pollset, u64 timeout) -> i32
   {
-    var count = os::poll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
+    var evtcnt = os::poll_wait(&mut thread_ring, pollset.fd, &pollset.events[pollset.count], pollset.events.len - pollset.count, timeout);
 
-    if (count < 0)
-      return count;
+    if (evtcnt < 0)
+      return evtcnt;
 
-    pollset.count += cast(count);
+    pollset.count += cast(evtcnt);
 
-    return count;
+    return cast(pollset.count);
   }
 
   fn pop(this mut &pollset, os::pollevt mut &evt) -> bool
@@ -129,8 +129,8 @@ pub struct loop
   pub struct wait_t
   {
     i32 id;
-    u16 type;
-    u16 mask;
+    u8 type;
+    u8 mask;
 
     pub fn (*callback)(loop mut &, wait_t mut *) -> void;
 
@@ -161,7 +161,7 @@ pub struct loop
     return this.state;
   }
 
-  pub fn begin_wait(this mut &loop, i32 id, u16 type, u16 mask, wait_t mut *handler) -> i32
+  pub fn begin_wait(this mut &loop, i32 id, u8 type, u8 mask, wait_t mut *handler) -> i32
   {
     handler.id = id;
     handler.type = type;

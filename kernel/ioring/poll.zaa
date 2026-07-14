@@ -22,7 +22,7 @@ pub fn sys_poll_create(process mut *process, ioring_ctx mut &ctx, u64 flags) -> 
   return process.new_fd(vfs::file_descriptor::create(pollset.node));
 }
 
-pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u16 type, u16 mask, uintptr user_data, u64 flags) -> result
+pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u8 type, u8 mask, uintptr user_data, u64 flags) -> result
 {
   var file = process.fd(fd);
 
@@ -38,7 +38,7 @@ pub fn sys_poll_add(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u
   return ok;
 }
 
-pub fn sys_poll_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u16 type) -> result
+pub fn sys_poll_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id, u8 type) -> result
 {
   var file = process.fd(fd);
 
@@ -54,7 +54,7 @@ pub fn sys_poll_remove(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 id
   return ok;
 }
 
-pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr evtsbuf, usize n, u64 abstime) -> result
+pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr evtsbuf, usize evtslen, u64 abstime) -> result
 {
   var file = process.fd(fd);
 
@@ -66,7 +66,7 @@ pub fn sys_poll_wait(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr
 
   var evts = std::vector<pollset::pollevt>();
 
-  var response = pollset::query(file.node, &mut evts, n);
+  var response = pollset::query(file.node, &mut evts, evtslen);
 
   if (evts.len == 0)
   {

@@ -74,6 +74,7 @@ const NDA_CACHEINFO = 3;
 struct ifinfomsg
 {
   u8 ifi_family;
+  u8 reserved1;
   u16 ifi_type;
   i32 ifi_index;
   u32 ifi_flags;
@@ -92,6 +93,8 @@ struct ifaddrmsg
 struct ifndmsg
 {
   u8 ndm_family;
+  u8 reserved1;
+  u16 reserved2;
   i32 ndm_ifindex;
   u16 ndm_state;
   u8 ndm_flags;
@@ -191,6 +194,7 @@ fn getlink(link mut &this, std::vector<u8> &request) -> void
   var info = cast<ifinfomsg mut *>(response.end);
 
   info.ifi_family = 0;
+  info.reserved1 = 0;
   info.ifi_type = 1;
   info.ifi_index = std::bit_cast<i32>(dev::lookup(this.dev));
   info.ifi_flags = cast(this.dev.flags);
@@ -276,6 +280,8 @@ fn getneighbour(link mut &this, std::vector<u8> &request) -> void
     var nd = cast<ifndmsg mut *>(response.end);
 
     nd.ndm_family = AF_INET6;
+    nd.reserved1 = 0;
+    nd.reserved2 = 0;
     nd.ndm_ifindex = std::bit_cast<i32>(dev::lookup(this.dev));
     nd.ndm_state = 0;
     nd.ndm_flags = 0;

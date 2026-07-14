@@ -12,6 +12,7 @@ import mutex as _ : mutex;
 import process as _ : process;
 import support.rc : Rc;
 
+pub const AF_INET4 = 2;
 pub const AF_INET6 = 10;
 
 pub const SOCK_STREAM = 1;
@@ -25,6 +26,10 @@ pub const IPPROTO_UDP = 17;
 pub const IPPROTO_IPV6 = 41;
 pub const IPPROTO_ICMPV6 = 58;
 
+pub const SHUT_RD = 1;
+pub const SHUT_WR = 2;
+pub const SHUT_RDWR = 3;
+
 pub struct sockaddr
 {
   pub u16 sa_family;
@@ -36,6 +41,11 @@ pub struct sockaddr_storage
   u8[6] __ss_pad1;
   u64 __ss_pad2;
   u8[112] __ss_pad3;
+
+  pub sockaddr_storage(sockaddr *addr, usize alen)
+  {
+    std::memcpy(&this, addr, alen);
+  }
 
   pub sockaddr_storage() = default;
   pub ~sockaddr_storage() = default;
@@ -66,6 +76,7 @@ pub struct socket
 
   pub io::response readable;
   pub io::response writeable;
+  pub io::response queryable;
 
   pub void mut *state;
 
@@ -84,6 +95,11 @@ pub struct socket
   pub fn ref(this mut &) -> void
   {
     this.node_.ref();
+  }
+
+  pub fn try_ref(this mut &) -> bool
+  {
+    return this.node_.try_ref();
   }
 
   pub fn unref(this mut &) -> void
@@ -107,6 +123,7 @@ pub fn setup_socket(Rc<socket> mut &socket, i32 family, i32 type, i32 protocol) 
   socket.protocol = protocol;
 
   io::initiate(&mut socket.readable.cb, 1);
+  io::initiate(&mut socket.queryable.cb, 1);
 
   vfs::node::init(&socket.node_, vfs::node::type::socket, vfs::node::ops::stream(&impl *socket));
 
@@ -142,6 +159,17 @@ pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &w
 
   readable = socket.readable.cb;
   writeable = socket.writeable.cb;
+
+  return ok;
+}
+
+pub fn poll(vfs::node mut *node, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable, Rc<io::iocb> mut &queryable) -> vfs::result
+{
+  var mut &socket = *cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  readable = socket.readable.cb;
+  writeable = socket.writeable.cb;
+  queryable = socket.queryable.cb;
 
   return ok;
 }
@@ -222,9 +250,17 @@ pub fn accept(vfs::node mut *node) -> net::result
   return not_supported;
 }
 
-pub fn shutdown(vfs::node mut *node) -> net::result
+pub fn shutdown(vfs::node mut *node, u64 how) -> net::result
 {
-  return not_supported;
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      net::shutdown(socket, how);
+  }
+
+  return ok;
 }
 
 fn destroy(vfs::node mut *node) -> void
@@ -234,7 +270,8 @@ fn destroy(vfs::node mut *node) -> void
   switch (socket.family)
   {
     case AF_INET6:
-      net::close(socket);
+      net::shutdown(socket, SHUT_RDWR);
+      net::destroy(socket);
   }
 
   std::allocator::delete(socket);

@@ -24,7 +24,7 @@ struct arg
   }
 
   arg() = default;
-  arg(arg&) = default;
+  arg(arg &) = default;
   ~arg() = default;
 }
 
@@ -42,7 +42,7 @@ struct attr
   uintptr value;
 
   attr() = default;
-  attr(attr&) = default;
+  attr(attr &) = default;
   ~attr() = default;
 }
 

@@ -32,7 +32,7 @@ pub struct auxval
   {
   }
 
-  pub auxval(auxval&) = default;
+  pub auxval(auxval &) = default;
   pub fn =(auxval mut &, auxval &) -> auxval mut & = default;
   pub ~auxval() = default;
 }

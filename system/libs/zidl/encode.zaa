@@ -103,8 +103,8 @@ pub struct encode_result
   pub zidl::errc error;
 
   pub encode_result() = default;
-  pub encode_result(encode_result&) = default;
-  pub fn =(encode_result mut &, encode_result&) -> encode_result mut & = default;
+  pub encode_result(encode_result &) = default;
+  pub fn =(encode_result mut &, encode_result &) -> encode_result mut & = default;
   pub ~encode_result() = default;
 }
 

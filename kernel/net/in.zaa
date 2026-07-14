@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import std.byteconv;
 import std.fmt;
 
 pub struct in4addr : pub u8[4]
@@ -51,6 +52,9 @@ pub struct in4addr : pub u8[4]
   pub fn =(in4addr mut &, in4addr &) -> in4addr mut & = default;
   pub ~in4addr() = default;
 }
+
+pub const in4addr_any = in4addr([0,0,0,0]);
+pub const in4addr_loopback = in4addr([255,255,255,255]);
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, in4addr &addr) throws(std::error) -> void
 {
@@ -149,6 +153,9 @@ pub struct in6addr : pub u8[16]
   pub ~in6addr() = default;
 }
 
+pub const in6addr_any = in6addr([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
+pub const in6addr_loopback = in6addr([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]);
+
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, in6addr &addr) throws(std::error) -> void
 {
   var segments = addr.segments;
@@ -184,6 +191,21 @@ pub union inaddr
   pub fn bool(this &) -> bool
   {
     return this.kind != cast(0);
+  }
+
+  pub fn is_unspecified(this &) -> bool
+  {
+    switch (this)
+    {
+      case in4:
+        return this.in4.is_unspecified;
+
+      case in6:
+        return this.in6.is_unspecified;
+
+      else:
+        return true;
+    }
   }
 
   pub fn masked(this &, usize prefixlen) -> inaddr

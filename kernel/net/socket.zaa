@@ -5,19 +5,27 @@
 import std.stdio;
 import vm;
 import net.result;
-import net.protocols.ipv6.socket as ipv6.socket;
+import net.protocols.ip.socket as ip.socket;
+import net.protocols.udp.socket as udp.socket;
 import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+
+using net::inaddr;
+using ip::sockaddr_in4;
+using ip::sockaddr_in6;
+
+const IP_PKTSRC = 1;
+const IP_PKTDST = 2;
 
 pub fn open(socket mut *socket) -> net::result
 {
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::open(socket);
+      return ip::open(socket);
 
-//    case SOCK_DGRAM:
-//      return udp::open(socket);
-//
+    case SOCK_DGRAM:
+      return udp::open(socket);
+
 //    case SOCK_STREAM:
 //      return tcp::open(socket);
   }
@@ -30,13 +38,13 @@ pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::bind(socket, addr, alen);
+      return ip::bind(socket, addr, alen);
 
-//    case SOCK_DGRAM:
-//      return ipv6::bind(socket, addr, alen);
-//
+    case SOCK_DGRAM:
+      return udp::bind(socket, addr, alen);
+
 //    case SOCK_STREAM:
-//      return ipv6::bind(socket, addr, alen);
+//      return tcp::bind(socket, addr, alen);
 
     else:
       return not_supported;
@@ -48,13 +56,13 @@ pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::ioctl(socket, op, iovec);
+      return ip::ioctl(socket, op, iovec);
 
-//    case SOCK_DGRAM:
-//      return ipv6::ioctl(socket, op, iovec);
-//
+    case SOCK_DGRAM:
+      return udp::ioctl(socket, op, iovec);
+
 //    case SOCK_STREAM:
-//      return ipv6::ioctl(socket, op, iovec);
+//      return tcp::ioctl(socket, op, iovec);
 
     else:
       return not_supported;
@@ -66,11 +74,11 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::read(socket, iovec, offset, length, ctrl, ctrllen);
+      return ip::read(socket, iovec, offset, length, ctrl, ctrllen);
 
-//    case SOCK_DGRAM:
-//      return udp::read(socket, iovec, offset, length, ctrl, ctrllen);
-//
+    case SOCK_DGRAM:
+      return udp::read(socket, iovec, offset, length, ctrl, ctrllen);
+
 //    case SOCK_STREAM:
 //      return tcp::read(socket, iovec, offset, length, ctrl, ctrllen);
 
@@ -81,34 +89,132 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
 
 pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> net::result
 {
+  var dst_ip = inaddr();
+
+  for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < ctrllen; )
+  {
+    var cta = cast<ctrlattr*>(cast<uintptr>(ctrl) + cast<usize>(offset));
+
+    switch (cta.cta_type)
+    {
+      case IP_PKTDST:
+        if (socket.peername.ss_family != 0)
+          return invalid_argument;
+
+        if (cta.cta_len < sizeof<ctrlattr> + sizeof<sockaddr>)
+          return invalid_argument;
+
+        switch (cast<sockaddr *>(cta.cta_value.data).sa_family)
+        {
+          case AF_INET6:
+            if (cta.cta_len < sizeof<ctrlattr> + sizeof<sockaddr_in6>)
+              return invalid_argument;
+
+            dst_ip = cast<sockaddr_in6 *>(cta.cta_value.data).sin6_addr;
+        }
+    }
+
+    offset += cast(std::align_up(cta.cta_len, 4));
+  }
+
+  switch (socket.peername.ss_family)
+  {
+    case AF_INET6:
+      dst_ip = cast<sockaddr_in6 &>(socket.peername).sin6_addr;
+  }
+
+  if (dst_ip.is_unspecified)
+    return address_required;
+
+  var route = net::routes.find(dst_ip);
+
+  if (!route)
+    return host_unreachable;
+
+  if (!route.link)
+    return host_unreachable;
+
+  var nexthop = dst_ip;
+
+  if (route.nexthop)
+    nexthop = route.nexthop;
+
+  var src_ip = inaddr();
+
+  switch (socket.sockname.ss_family)
+  {
+    case AF_INET6:
+      src_ip = cast<sockaddr_in6 &>(socket.sockname).sin6_addr;
+  }
+
+  if (src_ip.is_unspecified)
+  {
+    src_ip = inaddr::in6();
+
+    if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut src_ip.in6); !result)
+      return result;
+  }
+
+  var dst = net::hwaddr();
+
+  if (var result = route.link.ipv6.resolve_neighbour(route.link, &mut socket.writeable.cb, nexthop.in6, src_ip.in6, &mut dst); !result)
+    return result;
+
+  var hdrvec = vm::iovec();
+
+  if (var result = vm::lock(vm::allocate_physical_page(), &mut hdrvec); !result)
+    return cast(result);
+
+  var pkt = net::packet();
+
+  pkt.inset(hdrvec.host[0]);
+  pkt.append(iovec, offset, length);
+
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::write(socket, iovec, offset, length, ctrl, ctrllen);
+      return ip::write(socket, route.link, dst_ip.in6, src_ip.in6, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
 
-//    case SOCK_DGRAM:
-//      return udp::write(socket, iovec, offset, length, ctrl, ctrllen);
-//
+    case SOCK_DGRAM:
+      return udp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
+
 //    case SOCK_STREAM:
-//      return tcp::write(socket, iovec, offset, length, ctrl, ctrllen);
+//      return tcp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
 
     else:
       return not_supported;
   }
 }
 
-pub fn close(socket mut *socket) -> net::result
+pub fn shutdown(socket mut *socket, u64 how) -> net::result
 {
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ipv6::close(socket);
+      return ip::shutdown(socket, how);
 
-//    case SOCK_DGRAM:
-//      return udp::close(socket);
-//
+    case SOCK_DGRAM:
+      return udp::shutdown(socket, how);
+
 //    case SOCK_STREAM:
-//      return tcp::close(socket);
+//      return tcp::shutdown(socket, how);
+  }
+
+  return ok;
+}
+
+pub fn destroy(socket mut *socket) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_RAW:
+      return ip::destroy(socket);
+
+    case SOCK_DGRAM:
+      return udp::destroy(socket);
+
+//    case SOCK_STREAM:
+//      return tcp::destroy(socket);
   }
 
   return ok;

@@ -22,16 +22,20 @@ pub fn checksum(protocol protocol, in6addr &src, in6addr &dst, net::packet &pkt)
   checksum += cast<u32>(protocol);
   checksum += cast<u32>(pkt.length);
 
-  var payload = pkt.as<u8>(pkt.length);
+  pkt.foreach_region(|region| {
+    var ch = cast<u8*>(region.addr.ptr);
 
-  for (var i = 0; i < pkt.length; i += 2)
-    checksum += cast<u32>(*(payload + i)) << 8 | cast<u32>(*(payload + i + 1));
+    for (var i = 0; i + 1 < region.size; i += 2, ch += 2)
+      checksum += cast<u32>(*(ch + 0)) << 8 | cast<u32>(*(ch + 1));
 
-  if (pkt.length & 1 != 0)
-    checksum += cast<u32>(*(payload + pkt.length - 1)) << 8;
+    if (region.size & 1 != 0)
+      checksum += cast<u32>(*ch) << 8;
+  });
 
   while (checksum >> 16 != 0)
+  {
     checksum = (checksum & 0xffff) + (checksum >> 16);
+  }
 
   return [ ~cast<u8>(checksum >> 8), ~cast<u8>(checksum & 0xff) ];
 }

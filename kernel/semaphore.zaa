@@ -43,7 +43,7 @@ pub struct semaphore
 
     if (current == 0)
       return false;
-        
+
     return std::atomic_cmpxchg_weak(&this.value, current, std::min(current, this.maxvalue) - 1);
   }
 
@@ -94,7 +94,7 @@ pub struct semaphore
   }
 
   pub semaphore() = default;
-  pub semaphore(#semaphore&) = default;
+  pub semaphore(#semaphore &) = default;
   pub ~semaphore() = default;
 
   std::spin_lock spinlock;

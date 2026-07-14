@@ -98,7 +98,7 @@ struct cell
   fn ==(cell &, cell &) -> bool = default;
 
   cell() = default;
-  cell(cell&) = default;
+  cell(cell &) = default;
   fn =(cell mut &, cell &) -> cell mut & = default;
   ~cell() = default;
 }
@@ -110,7 +110,7 @@ struct line
   fn ==(line &, line &) -> bool = default;
 
   line() = default;
-  line(line&) = default;
+  line(line &) = default;
   fn =(line mut &, line &) -> line mut & = default;
   ~line() = default;
 }

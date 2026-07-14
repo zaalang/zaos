@@ -15,8 +15,8 @@ pub union event
   pub end_of_file,
 
   pub event() = default;
-  pub event(event&&) = default;
-  pub fn =(event mut &, event&&) -> event mut & = default;
+  pub event(event &&) = default;
+  pub fn =(event mut &, event &&) -> event mut & = default;
   pub ~event() = default;
 }
 
@@ -60,7 +60,7 @@ pub union key_code
   }
 
   pub key_code() = default;
-  pub key_code(key_code&) = default;
+  pub key_code(key_code &) = default;
   pub fn =(key_code mut &, key_code &) -> key_code mut & = default;
   pub ~key_code() = default;
 }
@@ -98,7 +98,7 @@ pub struct key_event
   {
   }
 
-  key_event(key_event&) = default;
+  key_event(key_event &) = default;
   ~key_event() = default;
 }
 
@@ -127,7 +127,7 @@ pub struct mouse_event
   {
   }
 
-  mouse_event(mouse_event&) = default;
+  mouse_event(mouse_event &) = default;
   ~mouse_event() = default;
 }
 

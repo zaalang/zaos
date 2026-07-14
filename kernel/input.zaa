@@ -68,7 +68,7 @@ pub struct event
   pub i32 value;
 
   pub event() = default;
-  pub event(event&) = default;
+  pub event(event &) = default;
   pub fn =(event mut &, event &) -> event mut & = default;
   pub ~event() = default;
 }

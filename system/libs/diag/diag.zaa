@@ -116,7 +116,7 @@ pub struct diag
     this.leader = &&leader;
   }
 
-  pub diag(diag&) = default;
+  pub diag(diag &) = default;
   pub fn =(diag mut &, diag &) -> diag mut & = default;
   pub ~diag() = default;
 }

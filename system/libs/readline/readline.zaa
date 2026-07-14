@@ -19,8 +19,8 @@ pub union result
   pub end_of_file,
 
   result() = default;
-  pub result(result&&) = default;
-  pub fn =(result mut &, result&&) -> result mut & = default;
+  pub result(result &&) = default;
+  pub fn =(result mut &, result &&) -> result mut & = default;
   pub ~result() = default;
 }
 

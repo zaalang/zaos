@@ -63,7 +63,7 @@ pub struct image
     pub u8 *gdt;
 
     pub volume() = default;
-    pub volume(volume&) = default;
+    pub volume(volume &) = default;
     pub fn =(volume mut &, volume &) -> volume mut & = default;
     pub ~volume() = default;
   }
@@ -108,7 +108,7 @@ pub struct image
     pub fn filesize(this &) -> u64 { return this.desc.size; }
 
     pub inode() = default;
-    pub inode(inode&) = default;
+    pub inode(inode &) = default;
     pub fn =(inode mut &, inode &) -> inode mut & = default;
     pub ~inode() = default;
   }
@@ -119,7 +119,7 @@ pub struct image
     pub u8 file_type;
 
     pub dirent() = default;
-    pub dirent(dirent&) = default;
+    pub dirent(dirent &) = default;
     pub fn =(dirent mut &, dirent &) -> dirent mut & = default;
     pub ~dirent() = default;
   }

@@ -130,7 +130,7 @@ pub struct terminal
     vt::attrs attrs;
 
     cell() = default;
-    cell(cell&&) = default;
+    cell(cell &&) = default;
     ~cell() = default;
   }
 
@@ -552,13 +552,11 @@ pub fn pump(terminal mut &terminal, chrono::nanoseconds timeout = chrono::nanose
       os::pollevt(seat.plugfd, os::POLLFD, os::POLLIN, 0),
     ];
 
-    var cnt = os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8);
+    if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000 / 8); rc < 0)
+      return rc;
 
-    for (var i = 0; i < cnt; ++i)
-    {
-      if (pollset[cast<usize>(i)].id == seat.plugfd)
-        seat::hotplug(&mut seat);
-    }
+    if (pollset[2].revents != 0)
+      seat::hotplug(&mut seat);
   }
 }
 

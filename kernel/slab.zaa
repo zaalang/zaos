@@ -103,7 +103,7 @@ pub struct slab_allocator<T>
   kmem_slab mut *slabs;
 
   pub slab_allocator() = default;
-  pub slab_allocator(#slab_allocator&) = default;
+  pub slab_allocator(#slab_allocator &) = default;
   pub ~slab_allocator() = default;
 }
 
@@ -158,7 +158,7 @@ pub struct slab_cache<T>
   slab_allocator<T>::kmem_slab_entry mut *head;
 
   pub slab_cache() = default;
-  pub slab_cache(#slab_cache&) = default;
+  pub slab_cache(#slab_cache &) = default;
   pub ~slab_cache() = default;
 }
 

@@ -14,6 +14,8 @@ pub struct rx
   pub net::inaddr src_ip;
   pub net::inaddr dst_ip;
 
+  pub usize inhdr;
+
   pub rx() = default;
   pub rx(rx &&) = default;
   pub fn =(rx mut &, rx &&) -> rx mut & = default;

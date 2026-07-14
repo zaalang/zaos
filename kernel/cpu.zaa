@@ -26,7 +26,7 @@ pub struct cpu_logical_core
   pub usize process_counter_user_allocated_pages;
 
   cpu_logical_core() = default;
-  cpu_logical_core(#cpu_logical_core&) = default;
+  cpu_logical_core(#cpu_logical_core &) = default;
   ~cpu_logical_core() = default;
 }
 
@@ -52,7 +52,7 @@ pub struct irq_lock
   }
 
   irq_lock() = default;
-  irq_lock(#irq_lock&) = default;
+  irq_lock(#irq_lock &) = default;
   ~irq_lock() = default;
 }
 

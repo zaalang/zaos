@@ -72,8 +72,8 @@ pub struct page_table
   }
 
   pub page_table() = default;
-  pub page_table(page_table&) = default;
-  pub fn =(page_table mut &, page_table&) -> page_table mut & = default;
+  pub page_table(page_table &) = default;
+  pub fn =(page_table mut &, page_table &) -> page_table mut & = default;
   pub ~page_table() = default;
 }
 
@@ -95,7 +95,7 @@ pub struct page_table_query
   {
   }
 
-  pub page_table_query(page_table_query&) = default;
+  pub page_table_query(page_table_query &) = default;
   pub fn =(page_table_query mut &, page_table_query &) ->page_table_query mut & = default;
   pub ~page_table_query() = default;
 }

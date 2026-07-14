@@ -21,7 +21,7 @@ struct screeninfo
   usize pitch;
 
   screeninfo() = default;
-  screeninfo(screeninfo&) = default;
+  screeninfo(screeninfo &) = default;
   ~screeninfo() = default;
 }
 
@@ -52,7 +52,7 @@ pub struct bitmap
   pub u8 *bits;
 
   pub bitmap() = default;
-  pub bitmap(bitmap&) = default;
+  pub bitmap(bitmap &) = default;
   pub fn =(bitmap mut &, bitmap &) -> bitmap mut & = default;
   pub ~bitmap() = default;
 }

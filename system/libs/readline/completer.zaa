@@ -24,7 +24,7 @@ pub vtable completer
     }
 
     pub suggestion() = default;
-    pub suggestion(suggestion&&) = default;
+    pub suggestion(suggestion &&) = default;
     pub fn =(suggestion mut &, suggestion &&) -> suggestion mut & = default;
     pub ~suggestion() = default;
   }

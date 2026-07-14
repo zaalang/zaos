@@ -16,7 +16,7 @@ struct clk_result
   u64 timespec;
 
   clk_result() = default;
-  clk_result(clk_result&) = default;
+  clk_result(clk_result &) = default;
   ~clk_result() = default;
 }
 

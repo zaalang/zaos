@@ -486,7 +486,7 @@ pub struct namespace
   pub struct iterator
   {
     pub iterator() = default;
-    pub iterator(iterator&) = default;
+    pub iterator(iterator &) = default;
     pub fn =(iterator mut &this, iterator &that) -> iterator mut & = default;
     pub ~iterator() = default;
 

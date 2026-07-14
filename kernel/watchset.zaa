@@ -124,6 +124,11 @@ pub struct watchset
     this.node_.ref();
   }
 
+  pub fn try_ref(this mut &) -> bool
+  {
+    return this.node_.try_ref();
+  }
+
   pub fn unref(this mut &) -> void
   {
     this.node_.unref();

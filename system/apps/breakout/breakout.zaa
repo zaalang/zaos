@@ -40,7 +40,7 @@ struct brick
   {
   }
 
-  brick(brick&) = default;
+  brick(brick &) = default;
   ~brick() = default;
 }
 

@@ -89,7 +89,7 @@ pub struct attrs
   pub fn ==(attrs &, attrs &) -> bool = default;
 
   pub attrs() = default;
-  pub attrs(attrs&) = default;
+  pub attrs(attrs &) = default;
   pub fn =(attrs mut &, attrs &) -> attrs mut & = default;
   pub ~attrs() = default;
 }

@@ -16,7 +16,7 @@ pub struct mcfg : pub acpi::sdt
   pub struct config_iterator
   {
     pub config_iterator() = default;
-    pub config_iterator(config_iterator&) = default;
+    pub config_iterator(config_iterator &) = default;
     pub fn =(config_iterator mut &this, config_iterator &that) -> config_iterator mut & = default;
     pub ~config_iterator() = default;
 

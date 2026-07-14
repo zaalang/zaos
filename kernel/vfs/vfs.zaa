@@ -32,7 +32,7 @@ struct virtual_file_system
   }
 
   virtual_file_system() = default;
-  virtual_file_system(#virtual_file_system&) = default;
+  virtual_file_system(#virtual_file_system &) = default;
   ~virtual_file_system() = default;
 }
 
@@ -49,7 +49,7 @@ pub struct mount
   pub file_system mut *fs;
 
   mount() = default;
-  pub mount(mount&&) = default;
+  pub mount(mount &&) = default;
   pub ~mount() = default;
 }
 

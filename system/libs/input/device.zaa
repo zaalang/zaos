@@ -70,7 +70,7 @@ pub struct mouse
     calibration[4] = 1.0 / 65535.0;
   }
 
-  pub mouse(mouse&) = default;
+  pub mouse(mouse &) = default;
   pub fn =(mouse mut &, mouse &&) -> mouse mut & = default;
   pub ~mouse() = default;
 }

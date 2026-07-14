@@ -760,8 +760,8 @@ pub struct parse_result
   }
 
   pub parse_result() = default;
-  pub parse_result(parse_result&) = default;
-  pub fn =(parse_result mut &, parse_result&) -> parse_result mut & = default;
+  pub parse_result(parse_result &) = default;
+  pub fn =(parse_result mut &, parse_result &) -> parse_result mut & = default;
   pub ~parse_result() = default;
 }
 

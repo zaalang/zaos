@@ -24,7 +24,7 @@ struct buffer
   u8 mut *data;
 
   buffer() = default;
-  buffer(buffer&) = default;
+  buffer(buffer &) = default;
   fn =(buffer mut &, buffer &) -> buffer mut & = default;
   ~buffer() = default;
 }

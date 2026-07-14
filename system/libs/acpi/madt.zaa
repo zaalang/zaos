@@ -136,7 +136,7 @@ pub struct madt : pub acpi::sdt
   pub struct apic_iterator
   {
     pub apic_iterator() = default;
-    pub apic_iterator(apic_iterator&) = default;
+    pub apic_iterator(apic_iterator &) = default;
     pub fn =(apic_iterator mut &this, apic_iterator &that) -> apic_iterator mut & = default;
     pub ~apic_iterator() = default;
 

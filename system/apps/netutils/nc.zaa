@@ -1,0 +1,295 @@
+//
+// nc
+//
+
+import std.stdio;
+import std.env;
+import net.ip;
+import os.zaos.fcntl;
+import os.zaos.socket;
+import os.zaos.time;
+import std.byteconv;
+import aargh;
+
+using os;
+
+struct opts
+{
+  #[arg(free, long="destination", help="destination")]
+  std::string destination;
+
+  #[arg(free, long="port", help="port")]
+  u16 port;
+
+  #[arg(value, short='s', help="source address")]
+  net::ipv6addr source_address;
+
+  #[arg(value, short='p', help="source port")]
+  u16 source_port;
+
+  #[arg(flag, short='u', help="udp mode")]
+  bool udp = false;
+
+  #[arg(flag, short='l', help="listen")]
+  bool listen = false;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn sendto(i32 fd, void *buffer, usize len, u64 flags, sockaddr *addr, usize alen) -> i32
+{
+  var iov = os::ciovec();
+  iov.data = buffer;
+  iov.len = len;
+
+  var ctrlbuf = [<u8>: void; 1024];
+  var ctrl = cast<ctrlhdr mut *>(ctrlbuf.data);
+
+  ctrl.ctrl_len = sizeof<ctrlhdr>();
+  ctrl.ctrl_flags = 0;
+
+  var cta = cast<ctrlattr mut *>(cast<uintptr>(ctrl) + cast<usize>(ctrl.ctrl_len));
+
+  cta.cta_type = IP_PKTDST;
+  cta.cta_len = sizeof<ctrlattr> + cast(alen);
+  cta.cta_level = IPPROTO_IPV6;
+  std::memcpy(cta.cta_value.data, addr, alen);
+
+  ctrl.ctrl_len += cast(std::align_up(cta.cta_len, 4));
+
+  var bytes = os::socket_write(&mut thread_ring, fd, &iov, 1, ctrl, cast(ctrl.ctrl_len), 0);
+
+  while (bytes == EAGAIN)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+    bytes = os::socket_write(&mut thread_ring, fd, &iov, 1, ctrl, cast(ctrl.ctrl_len), 0);
+  }
+
+  return bytes;
+}
+
+fn recvfrom(i32 fd, void mut *buffer, usize len, u64 flags, sockaddr mut *addr, usize mut &alen) -> i32
+{
+  var iov = os::iovec();
+  iov.data = buffer;
+  iov.len = len;
+
+  var ctrlbuf = [<u8>: void; 1024];
+  var ctrl = cast<ctrlhdr mut *>(ctrlbuf.data);
+
+  var bytes = os::socket_read(&mut thread_ring, fd, &iov, 1, ctrl, ctrlbuf.len, 0);
+
+  while (bytes == EAGAIN)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+
+    bytes = os::socket_read(&mut thread_ring, fd, &iov, 1, ctrl, ctrlbuf.len, 0);
+  }
+
+  for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < ctrl.ctrl_len; )
+  {
+    var cta = cast<ctrlattr*>(ctrlbuf.data + cast<usize>(offset));
+
+    switch (cta.cta_type)
+    {
+      case IP_PKTSRC:
+        alen = cast(cta.cta_len) - sizeof<ctrlattr>;
+        std::memcpy(addr, cta.cta_value.data, alen);
+    }
+
+    offset += cast(std::align_up(cta.cta_len, 4));
+  }
+
+  return bytes;
+}
+
+fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
+{
+  var src = os::sockaddr_in6();
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_GETSOCKNAME, &src, sizeof(src)); rc < 0)
+    return rc;
+
+  std::printf("nc: listening on {} port {}\n", net::ipv6addr(src.sin6_addr), std::be_to_native(src.sin6_port));
+
+  var buffer = [<u8>: void; 4096];
+
+  var bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen);
+
+  if (bytes < 0)
+    return bytes;
+
+  std::print(std::string_view(buffer.data, cast<usize>(bytes)));
+
+  return 0;
+}
+
+fn readwrite(i32[2] fds, opts &opts) -> i32
+{
+  var buffer = [u8(0); 32768];
+
+  for (;;)
+  {
+    var pollset = [
+      os::pollevt(fds[0], POLLFD, POLLIN, 0),
+      os::pollevt(fds[1], POLLFD, POLLIN | POLLPRI, 1),
+    ];
+
+    if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, ~0); rc < 0)
+      return rc;
+
+    for (var &event : std::filter(pollset, |event| event.revents != 0))
+    {
+      var fin = fds[event.user_data];
+      var fout = fds[event.user_data ^ 1];
+
+      var nin = os::read(&mut thread_ring, fin, buffer.data, buffer.len);
+
+      if (nin <= 0)
+      {
+        if (fin == fds[1])
+          os::socket_shutdown(&mut thread_ring, fin, SHUT_WR);
+
+        if (fin == fds[0])
+          return 0;
+
+        continue;
+      }
+
+      var nout = os::write(&mut thread_ring, fout, buffer.data, cast(nin));
+
+      while (nout == EAGAIN)
+      {
+        var tp = os::timespec(void);
+        os::clock_gettime(os::clock::monotonic, &tp);
+
+        var pollset = [ os::pollevt(fout, POLLFD, POLLOUT, 0) ];
+
+        os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+        nout = os::write(&mut thread_ring, fout, buffer.data, cast(nin));
+      }
+
+      if (nout < 0)
+        return nout;
+    }
+
+    var soerror = i32();
+    if (os::ioctl(&mut thread_ring, fds[1], SIO_SOERROR, &soerror, sizeof(soerror)); soerror < 0)
+      return soerror;
+  }
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var fd = os::socket(&mut thread_ring, AF_INET6, SOCK_DGRAM, 0);
+
+  if (fd < 0)
+  {
+    std::fprint(std::stderr, "nc: socket creation failed - ", cast<std::errc>(-fd));
+
+    return 1;
+  }
+
+  var sockname = os::sockaddr_in6();
+  sockname.sa_family = AF_INET6;
+  sockname.sin6_addr = opts.source_address;
+  sockname.sin6_port = std::native_to_be(opts.source_port);
+
+  if (var rc = os::socket_bind(&mut thread_ring, fd, &sockname, sizeof(sockname)); rc < 0)
+  {
+    std::fprint(std::stderr, "nc: bind - ", cast<std::errc>(-rc));
+
+    return 1;
+  }
+
+  var peername = os::sockaddr_in6();
+
+  if (opts.destination != "")
+  {
+    if (opts.listen)
+    {
+      std::fprint(std::stderr, "nc: destination not required");
+
+      return 1;
+    }
+
+    var dst_ip = net::ipv6addr();
+
+    if (var result = std::sscan(opts.destination, &mut dst_ip); result.error || result.len != opts.destination.len)
+    {
+      std::fprint(std::stderr, "nc: invalid destination");
+
+      return 1;
+    }
+
+    peername.sa_family = AF_INET6;
+    peername.sin6_addr = dst_ip;
+    peername.sin6_port = std::native_to_be(opts.port);
+  }
+
+  if (opts.listen)
+  {
+    var alen = 0;
+
+    if (var rc = listen(fd, &peername, &mut alen, opts); rc < 0)
+    {
+      std::fprint(std::stderr, "nc: listen - ", cast<std::errc>(-rc));
+
+      return 1;
+    }
+  }
+
+  if (peername.sin6_addr == os::in6addr_any)
+  {
+    std::fprint(std::stderr, "nc: destination required");
+
+    return 1;
+  }
+
+  if (peername.sin6_port == 0)
+  {
+    std::fprint(std::stderr, "nc: port required");
+
+    return 1;
+  }
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_SETPEERNAME, &peername, sizeof(peername)); rc < 0)
+  {
+    std::fprint(std::stderr, "nc: setpeername - ", cast<std::errc>(-rc));
+
+    return 1;
+  }
+
+  if (var rc = readwrite([0, fd], opts); rc < 0)
+  {
+    std::fprint(std::stderr, "nc: readwrite - ", cast<std::errc>(-rc));
+  }
+
+  os::close(&mut thread_ring, fd);
+
+  return 0;
+}

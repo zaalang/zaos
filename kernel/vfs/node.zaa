@@ -165,6 +165,22 @@ pub struct node
     std::atomic_add(&this.refcnt, 1);
   }
 
+  pub fn try_ref(this mut &) -> bool
+  {
+    for (;;)
+    {
+      var refcnt = std::volatile_load(&this.refcnt);
+
+      if (refcnt == 0)
+        return false;
+
+      if (std::atomic_cmpxchg_weak(&this.refcnt, refcnt, refcnt + 1))
+        break;
+    }
+
+    return true;
+  }
+
   pub fn unref(this mut &) -> void
   {
     if (std::atomic_sub(&this.refcnt, 1) == 1)

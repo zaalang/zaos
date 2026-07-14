@@ -12,7 +12,8 @@ import net.protocols.ipv6.ndp as ndp;
 import vm;
 import io;
 import cpu;
-import mutex as _ : shared_mutex;
+import mutex as _ : shared_mutex, mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
 import support.rc : Rc;
 
 using net::netdev;
@@ -216,7 +217,7 @@ pub fn select_source(ifstate mut &state, in6addr &dst_ip, in6addr mut &src_ip) -
   }
 
   if (candidates.empty)
-    return network_unreachable;
+    return host_unreachable;
 
   std::partial_sort(&mut candidates, candidates.begin + 1, |sa, sb| cmp(sa, sb, d));
 
@@ -246,7 +247,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
         neighbour.state = neighbour::state::stale;
 
     case probe:
-      if (cpu::system_time >  neighbour.timestamp + 10_000_000_000)
+      if (cpu::system_time > neighbour.timestamp + 10_000_000_000)
         neighbour.state = neighbour::state::failed;
 
     case delay:
@@ -264,7 +265,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
 
       if (neighbour.notifys.find(cb) == neighbour.notifys.end)
       {
-        io::initiate(&mut cb, 1);
+        io::reset(&mut cb, 1);
 
         neighbour.notifys.push_back(cb);
       }
@@ -290,7 +291,11 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
       }
 
     case failed:
-      state.neighbours.erase(dst_ip);
+
+      if (cpu::system_time > neighbour.timestamp + 5_000_000_000)
+      {
+        state.neighbours.erase(dst_ip);
+      }
 
       return host_unreachable;
   }

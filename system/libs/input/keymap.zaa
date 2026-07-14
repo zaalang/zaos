@@ -15,7 +15,7 @@ pub struct keymap
   pub char[5][128] syms;
 
   pub keymap() = default;
-  pub keymap(keymap&) = default;
+  pub keymap(keymap &) = default;
   pub fn =(keymap mut &, keymap &&) -> keymap mut & = default;
   pub ~keymap() = default;
 }

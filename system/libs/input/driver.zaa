@@ -50,7 +50,7 @@ pub union event
   pub pointer_button(button_event),
   pub pointer_wheel(pointer_event),
 
-  pub event(event&&) = default;
+  pub event(event &&) = default;
   pub fn =(event mut &, event &&) -> event mut & = default;
   pub ~event() = default;
 }
@@ -73,7 +73,7 @@ pub struct key_event
   {
   }
 
-  key_event(key_event&) = default;
+  key_event(key_event &) = default;
   ~key_event() = default;
 }
 
@@ -94,7 +94,7 @@ pub struct button_event
   {
   }
 
-  button_event(button_event&) = default;
+  button_event(button_event &) = default;
   ~button_event() = default;
 }
 
@@ -109,7 +109,7 @@ pub struct pointer_event
   {
   }
 
-  pointer_event(pointer_event&) = default;
+  pointer_event(pointer_event &) = default;
   ~pointer_event() = default;
 }
 
@@ -225,15 +225,14 @@ pub fn dispatch(driver mut &driver) -> i32
   }
 
   var evts = [ os::pollevt(); 32 ];
+  var evtcnt = os::poll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, 0);
 
-  var count = os::poll_wait(&mut thread_ring, driver.fd, evts.data, evts.len, 0);
-
-  if (count < 0)
-    return count;
+  if (evtcnt < 0)
+    return evtcnt;
 
   var input = input_event(void);
 
-  for (var i = 0; i < cast(count); ++i)
+  for (var i = 0; i < cast(evtcnt); ++i)
   {
     var device = cast<device mut *>(evts[i].user_data);
 
@@ -377,7 +376,7 @@ pub fn next_event(driver mut &driver) -> event
   return driver.pop_event();
 }
 
-pub fn wait(driver mut &driver, u64 timeout = ~0) -> int
+pub fn wait(driver mut &driver, u64 timeout = ~0) -> i32
 {
   if (driver.events.len == 0)
   {
@@ -387,8 +386,8 @@ pub fn wait(driver mut &driver, u64 timeout = ~0) -> int
 
     var pollset = [ os::pollevt(driver.fd, os::POLLFD, os::POLLIN, 0) ];
 
-    return os::select(&mut thread_ring, pollset.data, pollset.len, tp + timeout);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + timeout);
   }
 
-  return 0;
+  return cast(driver.events.len);
 }

@@ -36,7 +36,7 @@ pub fn configure(net::netdev mut *link) -> net::result
 
   link.ipv6.add_addr(linklocal, 64);
 
-  net::add_route(inaddr(linklocal.masked(64)), 64, inaddr(), link);
+  net::routes.add(inaddr(linklocal.masked(64)), 64, inaddr(), link);
 
   if (var result = ndp::router_solicitation(link, linklocal); !result)
     return result;
@@ -59,8 +59,8 @@ pub fn configure_router(net::netdev mut *link, in6addr &gw, in6addr &prefix, usi
 
   link.ipv6.add_addr(sitelocal, prefixlen);
 
-  net::add_route(inaddr(prefix), prefixlen, inaddr(), link);
-  net::add_route(inaddr(in6addr()), 0, inaddr(gw), link);
+  net::routes.add(inaddr(prefix), prefixlen, inaddr(), link);
+  net::routes.add(inaddr(in6addr()), 0, inaddr(gw), link);
 
   return ok;
 }

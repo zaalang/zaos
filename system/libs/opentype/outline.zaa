@@ -52,7 +52,7 @@ pub union vertex
   pub line_to(line_to_data),
   pub quad_to(quad_to_data),
 
-  vertex(vertex&) = default;
+  vertex(vertex &) = default;
   pub ~vertex() = default;
 }
 

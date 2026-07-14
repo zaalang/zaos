@@ -110,8 +110,8 @@ pub struct decode_result
   pub zidl::errc error;
 
   pub decode_result() = default;
-  pub decode_result(decode_result&) = default;
-  pub fn =(decode_result mut &, decode_result&) -> decode_result mut & = default;
+  pub decode_result(decode_result &) = default;
+  pub fn =(decode_result mut &, decode_result &) -> decode_result mut & = default;
   pub ~decode_result() = default;
 }
 

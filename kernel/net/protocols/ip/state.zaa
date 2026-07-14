@@ -1,0 +1,75 @@
+//
+// ip state
+//
+
+import std.stdlib;
+import std.vector;
+import net.result;
+import mutex as _ : shared_mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+import support.rc : Rc;
+
+pub struct state
+{
+  shared_mutex lock;
+
+  std::vector<socket mut *> sockets;
+
+  std::flat_hash_map<i32, fn (*)(net::netdev mut *, net::rx &, net::packet &) -> net::result> handlers;
+
+  pub state() = default;
+  pub state(#state &) = default;
+  pub ~state() = default;
+}
+
+pub fn install_error_handler(state mut &state, i32 protocol, fn (*handler)(net::netdev mut *, net::rx &, net::packet &) -> net::result) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.handlers.insert(protocol, handler);
+}
+
+pub fn remove_error_handler(state mut &state, i32 protocol) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.handlers.erase(protocol);
+}
+
+pub fn enumerate_error_handlers(state mut &state, i32 protocol, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  switch (state.handlers.get(protocol))
+  {
+    case Some[handler]:
+      callback(handler);
+  }
+}
+
+pub fn add_socket(state mut &state, socket mut *socket) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.sockets.push_back(socket);
+}
+
+pub fn remove_socket(state mut &state, socket mut *socket) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  state.sockets.erase(socket);
+}
+
+pub fn enumerate_sockets(state mut &state, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &socket : state.sockets)
+    callback(socket);
+}
+
+pub fn initialise(state mut &state) -> net::result
+{
+  return ok;
+}

@@ -181,7 +181,7 @@ pub struct run_queue
   }
 
   pub run_queue() = default;
-  pub run_queue(#run_queue&) = default;
+  pub run_queue(#run_queue &) = default;
   pub ~run_queue() = default;
 }
 

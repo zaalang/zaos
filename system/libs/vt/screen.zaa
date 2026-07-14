@@ -14,7 +14,7 @@ struct cell
   attrs attrs;
 
   cell() = default;
-  cell(cell&) = default;
+  cell(cell &) = default;
   fn =(cell mut &, cell &) -> cell mut & = default;
   ~cell() = default;
 }
@@ -24,7 +24,7 @@ struct line
   std::vector<cell> cells;
 
   line() = default;
-  line(line&) = default;
+  line(line &) = default;
   fn =(line mut &, line &) -> line mut & = default;
   ~line() = default;
 }

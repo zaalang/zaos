@@ -13,7 +13,7 @@ pub struct mark
   pub usize position;
 
   pub mark() = default;
-  pub mark(mark&) = default;
+  pub mark(mark &) = default;
   pub fn =(mark mut &, mark &&) -> mark mut & = default;
   pub ~mark() = default;
 }
@@ -191,7 +191,7 @@ pub struct token
   pub mark loc;
 
   pub token() = default;
-  pub token(token&&) = default;
+  pub token(token &&) = default;
   pub fn =(token mut &, token &&) -> token mut & = default;
   pub ~token() = default;
 }

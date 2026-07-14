@@ -20,7 +20,7 @@ pub struct color_stop
   }
 
   pub color_stop() = default;
-  pub color_stop(color_stop&) = default;
+  pub color_stop(color_stop &) = default;
   pub fn =(color_stop mut &, color_stop &) -> color_stop mut & = default;
   pub ~color_stop() = default;
 }
@@ -54,7 +54,7 @@ pub struct gradient
   }
 
   gradient() = default;
-  gradient(gradient&) = default;
+  gradient(gradient &) = default;
   fn =(gradient mut &, gradient &) -> gradient mut & = default;
   ~gradient() = default;
 }
@@ -72,7 +72,7 @@ pub struct linear_gradient : pub gradient
   }
 
   pub linear_gradient() = default;
-  pub linear_gradient(linear_gradient&) = default;
+  pub linear_gradient(linear_gradient &) = default;
   pub fn =(linear_gradient mut &, linear_gradient &) -> linear_gradient mut & = default;
   pub ~linear_gradient() = default;
 }
@@ -111,7 +111,7 @@ pub struct radial_gradient : pub gradient
   }
 
   pub radial_gradient() = default;
-  pub radial_gradient(radial_gradient&) = default;
+  pub radial_gradient(radial_gradient &) = default;
   pub fn =(radial_gradient mut &, radial_gradient &) -> radial_gradient mut & = default;
   pub ~radial_gradient() = default;
 }

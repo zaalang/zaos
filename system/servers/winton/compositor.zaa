@@ -179,7 +179,7 @@ pub struct sprite
   std::arc<buffer> buffer;
 
   pub sprite() = default;
-  pub sprite(sprite&&) = default;
+  pub sprite(sprite &&) = default;
   pub fn =(sprite mut &, sprite &&) -> sprite mut & = default;
   pub ~sprite() = default;
 }

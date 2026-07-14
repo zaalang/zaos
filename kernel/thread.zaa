@@ -96,16 +96,8 @@ pub struct thread
 
     var thread = threadman.threads[j].value;
 
-    for (;;)
-    {
-      var refcnt = std::volatile_load(&thread.refcnt);
-
-      if (refcnt == 0)
-        return null;
-
-      if (std::atomic_cmpxchg_weak(&thread.refcnt, refcnt, refcnt + 1))
-        break;
-    }
+    if (!thread.try_ref())
+      return null;
 
     return Rc::adopt(thread);
   }
@@ -164,6 +156,22 @@ pub struct thread
     std::atomic_add(&this.refcnt, 1);
   }
 
+  pub fn try_ref(this mut &) -> bool
+  {
+    for (;;)
+    {
+      var refcnt = std::volatile_load(&this.refcnt);
+
+      if (refcnt == 0)
+        return false;
+
+      if (std::atomic_cmpxchg_weak(&this.refcnt, refcnt, refcnt + 1))
+        break;
+    }
+
+    return true;
+  }
+
   pub fn unref(this mut &) -> void
   {
     if (std::atomic_sub(&this.refcnt, 1) == 1)
@@ -207,7 +215,7 @@ struct thread_manager
   }
 
   thread_manager() = default;
-  thread_manager(#thread_manager&) = default;
+  thread_manager(#thread_manager &) = default;
   ~thread_manager() = default;
 }
 
@@ -316,8 +324,7 @@ fn initialise(thread mut *this) -> void
   this.cpu_time = 0;
   std::atomic_add(&this.refcnt, 2);
 
-  io::reset(&mut this.rval.cb);
-  io::initiate(&mut this.rval.cb, 1);
+  io::reset(&mut this.rval.cb, 1);
 
   platform::task_init(&mut this.task);
 }

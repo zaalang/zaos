@@ -23,7 +23,7 @@ pub struct guid
   }
 
   pub guid() = default;
-  pub guid(guid&) = default;
+  pub guid(guid &) = default;
   pub fn =(guid mut &, guid &) -> guid mut & = default;
   pub ~guid() = default;
 }

@@ -3,8 +3,6 @@
 //
 
 import std.stdlib;
-import std.circular_buffer;
-import std.list;
 import ioring : io_ring, ioring_ctx;
 import vm : virtaddr;
 import io;

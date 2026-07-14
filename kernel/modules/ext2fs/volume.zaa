@@ -158,8 +158,8 @@ struct inode_info
   }
 
   inode_info() = default;
-  inode_info(inode_info&) = default;
-  fn =(inode_info mut &, inode_info&) -> inode_info mut & = default;
+  inode_info(inode_info &) = default;
+  fn =(inode_info mut &, inode_info &) -> inode_info mut & = default;
   ~inode_info() = default;
 }
 
@@ -195,8 +195,8 @@ struct inode_result : pub inode_info
   }
 
   inode_result() = default;
-  inode_result(inode_result&) = default;
-  fn =(inode_result mut &, inode_result&) -> inode_result mut & = default;
+  inode_result(inode_result &) = default;
+  fn =(inode_result mut &, inode_result &) -> inode_result mut & = default;
   ~inode_result() = default;
 }
 
@@ -230,8 +230,8 @@ struct block_info
   }
 
   block_info() = default;
-  block_info(block_info&) = default;
-  fn =(block_info mut &, block_info&) -> block_info mut & = default;
+  block_info(block_info &) = default;
+  fn =(block_info mut &, block_info &) -> block_info mut & = default;
   ~block_info() = default;
 }
 
@@ -374,8 +374,8 @@ struct block_result : pub block_info
   }
 
   block_result() = default;
-  block_result(block_result&) = default;
-  fn =(block_result mut &, block_result&) -> block_result mut & = default;
+  block_result(block_result &) = default;
+  fn =(block_result mut &, block_result &) -> block_result mut & = default;
   ~block_result() = default;
 }
 
@@ -880,8 +880,8 @@ struct entry_result
   }
 
   entry_result() = default;
-  entry_result(entry_result&) = default;
-  fn =(entry_result mut &, entry_result&) -> entry_result mut & = default;
+  entry_result(entry_result &) = default;
+  fn =(entry_result mut &, entry_result &) -> entry_result mut & = default;
   ~entry_result() = default;
 }
 

@@ -24,7 +24,7 @@ pub struct LockCell<T, Lock = mutex>
   }
 
   pub LockCell() = default;
-  pub LockCell(#LockCell&) = default;
+  pub LockCell(#LockCell &) = default;
   pub ~LockCell() = default;
 }
 

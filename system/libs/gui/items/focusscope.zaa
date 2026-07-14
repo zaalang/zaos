@@ -30,7 +30,7 @@ pub struct item_key_event
   }
 
   pub item_key_event() = default;
-  pub item_key_event(item_key_event&) = default;
+  pub item_key_event(item_key_event &) = default;
   pub fn =(item_key_event mut &, item_key_event &) -> item_key_event mut & = default;
   pub ~item_key_event() = default;
 }

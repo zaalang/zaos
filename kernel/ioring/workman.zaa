@@ -50,7 +50,7 @@ struct ring_queue
   }
 
   ring_queue() = default;
-  ring_queue(#ring_queue&) = default;
+  ring_queue(#ring_queue &) = default;
   ~ring_queue() = default;
 }
 
@@ -70,7 +70,7 @@ struct worker
   thread mut *kworkd;
 
   worker() = default;
-  worker(#worker&) = default;
+  worker(#worker &) = default;
   ~worker() = default;
 }
 
@@ -90,7 +90,7 @@ struct work_manager
   }
 
   work_manager() = default;
-  work_manager(#work_manager&) = default;
+  work_manager(#work_manager &) = default;
   ~work_manager() = default;
 }
 

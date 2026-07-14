@@ -103,7 +103,7 @@ pub struct cursor
     pub std::span<u32> data;
 
     pub pixels() = default;
-    pub pixels(pixels&) = default;
+    pub pixels(pixels &) = default;
     pub fn =(pixels mut &, pixels &) -> pixels mut & = default;
     pub ~pixels() = default;
   }
@@ -151,7 +151,7 @@ pub struct cursor
   }
 
   pub cursor() = default;
-  pub cursor(cursor&&) = default;
+  pub cursor(cursor &&) = default;
   pub fn =(cursor mut &, cursor &&) -> cursor mut & = default;
   pub ~cursor() = default;
 }

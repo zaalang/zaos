@@ -30,9 +30,20 @@ pub struct packet
 
   pub Rc<io::iocb> cb;
 
+  pub packet(usize start, usize length, std::vector<vm::physrange, N:8> &&host)
+    where __is_rvalue<typeof(host)>
+  {
+    this.start = start;
+    this.length = length;
+    this.host = &&host;
+  }
+
+  pub fn release(this mut &) -> std::vector<vm::physrange, N:8>
+  {
+    return this.host.take(this.host.begin, this.host.end);
+  }
+
   pub packet() = default;
-  pub packet(packet &&) = default;
-  pub fn =(packet mut &, packet &&) -> packet mut & = default;
   pub ~packet() = default;
 }
 

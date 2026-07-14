@@ -34,7 +34,7 @@ struct vector
   handler mut *head;
 
   vector() = default;
-  vector(#vector&) = default;
+  vector(#vector &) = default;
   ~vector() = default;
 }
 
@@ -52,7 +52,7 @@ struct interrupt_manager
   }
 
   interrupt_manager() = default;
-  interrupt_manager(#interrupt_manager&) = default;
+  interrupt_manager(#interrupt_manager &) = default;
   ~interrupt_manager() = default;
 }
 
@@ -190,7 +190,7 @@ pub struct response
 {
   pub fn bool(this &) -> bool
   {
-    return this.result >= 0 && this.outstanding == 0;
+    return this.result >= 0 && this.outstanding <= 0;
   }
 
   pub fn ready(this &) -> bool
@@ -307,7 +307,7 @@ pub fn complete(Rc<iocb> mut &cb, var result) -> void
       break;
   }
 
-  if (std::atomic_sub(&cb.outstanding, 1) == 1)
+  if (std::atomic_sub(&cb.outstanding, 1) <= 1)
   {
     var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
 
@@ -325,8 +325,8 @@ pub fn cancel(Rc<iocb> mut &cb, var result = i32(-125)) -> void
   std::atomic_store(&cb.result, cast(result));
 }
 
-pub fn reset(Rc<iocb> mut &cb, var result = i32(0)) -> void
+pub fn reset(Rc<iocb> mut &cb, usize count) -> void
 {
-  std::atomic_store(&cb.result, cast(result));
-  std::atomic_store(&cb.outstanding, 0);
+  std::atomic_store(&cb.result, 0);
+  std::atomic_store(&cb.outstanding, cast(count));
 }

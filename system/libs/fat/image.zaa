@@ -74,7 +74,7 @@ pub struct image
     pub u8 media_descriptor;
 
     pub volume() = default;
-    pub volume(volume&) = default;
+    pub volume(volume &) = default;
     pub fn =(volume mut &, volume &) -> volume mut & = default;
     pub ~volume() = default;
   }
@@ -166,7 +166,7 @@ pub struct image
     pub fn filesize(this &) -> u32 { return this.dentry.filesize; }
 
     pub inode() = default;
-    pub inode(inode&) = default;
+    pub inode(inode &) = default;
     pub fn =(inode mut &, inode &) -> inode mut & = default;
     pub ~inode() = default;
   }
@@ -186,7 +186,7 @@ pub struct image
     pub u32 filesize;
 
     pub dentry() = default;
-    pub dentry(dentry&) = default;
+    pub dentry(dentry &) = default;
     pub fn =(dentry mut &, dentry &) -> dentry mut & = default;
     pub ~dentry() = default;
   }

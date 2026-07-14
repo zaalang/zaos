@@ -1,0 +1,36 @@
+//
+// ip
+//
+
+import std.stdlib;
+import net.netdev;
+import net.packet;
+import net.protocols.ip.socket as ip.socket;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+import support.rc : Rc;
+
+using net::inaddr;
+
+pub fn receive(net::netdev mut *link, i32 protocol, net::rx &rx, net::packet &pkt) -> net::result
+{
+  net::stack.ip.enumerate_sockets(|socket| {
+    if (socket.protocol != protocol)
+      return;
+
+    if (socket.peername.ss_family == AF_INET6 && cast<sockaddr_in6 &>(socket.peername).sin6_addr != rx.src_ip.in6)
+      return;
+
+    ip::deliver(socket, rx, pkt);
+  });
+
+  return ok;
+}
+
+pub fn receive_error_reply(net::netdev mut *link, i32 protocol, net::rx &rx, net::packet &pkt) -> net::result
+{
+  net::stack.ip.enumerate_error_handlers(protocol, |handler| {
+    handler(link, rx, pkt);
+  });
+
+  return ok;
+}

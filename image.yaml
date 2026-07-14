@@ -235,6 +235,9 @@ image:
             src: build/system/apps/netutils/ping
             dest: /bin/ping
         - cp:
+            src: build/system/apps/netutils/nc
+            dest: /bin/nc
+        - cp:
             src: build/system/apps/edit/edit
             dest: /bin/edit
         - cp:

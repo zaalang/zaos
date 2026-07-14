@@ -11,7 +11,7 @@ struct mem_result
   void mut *addr;
 
   mem_result() = default;
-  mem_result(mem_result&) = default;
+  mem_result(mem_result &) = default;
   ~mem_result() = default;
 }
 

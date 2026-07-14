@@ -32,7 +32,7 @@ struct cmos_time
   u8 century;
 
   cmos_time() = default;
-  cmos_time(cmos_time&) = default;
+  cmos_time(cmos_time &) = default;
   fn =(cmos_time mut &, cmos_time &) -> cmos_time mut & = default;
   fn ==(cmos_time &, cmos_time &) -> bool = default;
   ~cmos_time() = default;

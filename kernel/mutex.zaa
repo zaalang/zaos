@@ -78,7 +78,7 @@ pub struct mutex
   }
 
   pub mutex() = default;
-  pub mutex(#mutex&) = default;
+  pub mutex(#mutex &) = default;
   pub ~mutex() = default;
 
   u32 holder;
@@ -193,7 +193,7 @@ pub struct shared_mutex
   }
 
   pub shared_mutex() = default;
-  pub shared_mutex(#shared_mutex&) = default;
+  pub shared_mutex(#shared_mutex &) = default;
   pub ~shared_mutex() = default;
 
   i32 pending;

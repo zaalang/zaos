@@ -83,7 +83,7 @@ pub struct device
   pci_header *header;
 
   device() = default;
-  pub device(device&) = default;
+  pub device(device &) = default;
   pub ~device() = default;
 }
 
@@ -99,7 +99,7 @@ struct pci_manager
   }
 
   pci_manager() = default;
-  pci_manager(#pci_manager&) = default;
+  pci_manager(#pci_manager &) = default;
   ~pci_manager() = default;
 }
 

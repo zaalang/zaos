@@ -53,7 +53,7 @@ struct bitmap
   }
 
   bitmap() = default;
-  bitmap(#bitmap&) = default;
+  bitmap(#bitmap &) = default;
   ~bitmap() = default;
 }
 
@@ -78,7 +78,7 @@ pub struct heap_allocator
   }
 
   heap_allocator() = default;
-  heap_allocator(#heap_allocator&) = default;
+  heap_allocator(#heap_allocator &) = default;
   ~heap_allocator() = default;
 }
 
@@ -274,7 +274,7 @@ pub struct heap_allocation
   }
 
   pub heap_allocation() = default;
-  pub heap_allocation(heap_allocation&) = default;
+  pub heap_allocation(heap_allocation &) = default;
   pub fn =(heap_allocation mut &, heap_allocation &) -> heap_allocation mut & = default;
   pub ~heap_allocation() = default;
 }

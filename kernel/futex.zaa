@@ -17,7 +17,7 @@ struct futex
   wait_queue waiters;
 
   futex() = default;
-  futex(futex&) = default;
+  futex(futex &) = default;
   ~futex() = default;
 }
 
@@ -35,7 +35,7 @@ struct futex_table
   }
 
   futex_table() = default;
-  futex_table(#futex_table&) = default;
+  futex_table(#futex_table &) = default;
   ~futex_table() = default;
 }
 

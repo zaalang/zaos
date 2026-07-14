@@ -1750,7 +1750,7 @@ fn ctx()
     u8[1024] buffer;
 
     state() = default;
-    state(#state&) = default;
+    state(#state &) = default;
     ~state() = default;
   }
 

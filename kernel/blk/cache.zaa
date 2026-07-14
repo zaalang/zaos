@@ -37,7 +37,7 @@ struct cache_key
 
   fn ==(cache_key &, cache_key &) -> bool = default;
 
-  cache_key(cache_key&) = default;
+  cache_key(cache_key &) = default;
   ~cache_key() = default;
 }
 
@@ -263,7 +263,7 @@ struct block_cache
   }
 
   block_cache() = default;
-  block_cache(#block_cache&) = default;
+  block_cache(#block_cache &) = default;
   ~block_cache() = default;
 }
 
@@ -428,7 +428,7 @@ pub fn reap() -> void
 fn plumber(void*) -> void
 {
   for (;;)
-  {   
+  {
     scheduler::sleep_until(cpu::system_time + 1_000_000_000);
 
     std::atomic_add(&pagecache.serving, 1);

@@ -30,7 +30,7 @@ pub struct dev_t
   pub fn ==(dev_t &, dev_t &) -> bool = default;
 
   pub dev_t() = default;
-  pub dev_t(dev_t&) = default;
+  pub dev_t(dev_t &) = default;
   pub fn =(dev_t mut &, dev_t &) -> dev_t mut & = default;
   pub ~dev_t() = default;
 }
@@ -93,7 +93,7 @@ pub struct attr_t
   }
 
   pub attr_t() = default;
-  pub attr_t(attr_t&) = default;
+  pub attr_t(attr_t &) = default;
   pub fn =(attr_t mut &, attr_t &) -> attr_t mut & = default;
   pub ~attr_t() = default;
 }
@@ -108,7 +108,7 @@ pub struct bus
   }
 
   bus() = default;
-  pub bus(bus&) = default;
+  pub bus(bus &) = default;
   pub fn =(bus mut &, bus &) -> bus mut & = default;
   pub ~bus() = default;
 }
@@ -139,7 +139,7 @@ pub union device
   }
 
   device() = default;
-  pub device(device&&) = default;
+  pub device(device &&) = default;
   pub fn =(device mut &, device &&) -> device mut & = default;
   pub ~device() = default;
 }
@@ -155,7 +155,7 @@ struct device_manager
     dev_t parent;
 
     node() = default;
-    node(node&) = default;
+    node(node &) = default;
     fn =(node mut &, node &&) -> node mut & = default;
     ~node() = default;
   }
@@ -170,7 +170,7 @@ struct device_manager
   }
 
   device_manager() = default;
-  device_manager(#device_manager&) = default;
+  device_manager(#device_manager &) = default;
   ~device_manager() = default;
 }
 
