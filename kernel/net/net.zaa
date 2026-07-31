@@ -158,14 +158,13 @@ pub fn up_link(netdev mut *link) -> void
   if (std::atomic_or(&link.flags, net::flags::up) & net::flags::up == net::flags::up)
     return;
 
-  if (var result = ipv6::configure(link); !result)
-    std::print("net: error configuring ipv6 - ", result);
-
   link.ref();
 
   link.packet_handler = create_thread(process::current, &cast<(netdev mut *) -> void>(packet_handler), link);
 
   scheduler::enqueue(link.packet_handler, thread::priority::normal + 2);
+
+  ipv6::configure(link);
 }
 
 pub fn down_link(netdev mut *link) -> void

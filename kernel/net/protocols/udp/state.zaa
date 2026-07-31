@@ -56,7 +56,13 @@ pub fn bind(state mut &state, socket mut *socket, sockaddr *addr, usize alen) ->
   }
 
   if (state.sockets.contains(addr.sin6_port))
-    return address_in_use;
+  {
+    for (var &socket : state.sockets[addr.sin6_port])
+    {
+      if (socket.sockname.ss_family == AF_INET6 && cast<sockaddr_in6 &>(socket.sockname).sin6_addr == addr.sin6_addr)
+        return address_in_use;
+    }
+  }
 
   if (var result = ip::bind(socket, cast<sockaddr*>(addr), alen); !result)
     return result;

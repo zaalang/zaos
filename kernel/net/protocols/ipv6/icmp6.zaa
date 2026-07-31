@@ -63,15 +63,19 @@ pub fn receive_echo_request(net::netdev mut *link, net::rx mut &rx, net::packet 
   hdr.type = type::echo_reply;
   hdr.code = code::none;
   hdr.cksum = [0, 0];
-  hdr.dataum = [0, 0, 0, 0];
 
-  hdr.cksum = ipv6::checksum(ipv6::protocol::icmp6, rx.dst_ip.in6, rx.src_ip.in6, pkt);
+  var src_ip = in6addr();
+
+  if (var result = link.ipv6.select_source(rx.src_ip.in6, &mut src_ip); !result)
+    return result;
+
+  hdr.cksum = ipv6::checksum(ipv6::protocol::icmp6, src_ip, rx.src_ip.in6, pkt);
 
   var response = io::response();
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, rx.dst_ip.in6, rx.src, link.hwaddr, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, src_ip, rx.src, link.hwaddr, &mut pkt);
 
   return ok;
 }

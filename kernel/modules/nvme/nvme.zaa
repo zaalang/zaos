@@ -116,9 +116,19 @@ struct nvme_sqe
   physaddr[2] prpp; // Data Pointer
   u32[6] cdw;       // command-specific
 
+  fn op(this &) -> cmd
+  {
+    return cast<cmd>(this.cdw0 & 0xff);
+  }
+
   fn opc=(this mut &, cmd op) -> void
   {
     this.cdw0 |= cast(op);
+  }
+
+  fn cid(this &) -> usize
+  {
+    return cast<usize>((this.cdw0 >> 16) & 0xffff);
   }
 
   fn cid=(this mut &, usize cid) -> void
@@ -287,6 +297,8 @@ pub struct queue
     this.sq = vm::allocate_physical(sizeof<nvme_sqe> * cast(entries)).addr;
     this.sq_mask = entries - 1;
     this.sq_bell = doorbells + (2*index + 0) * controller.doorbell_stride;
+
+    std::memset(this.sq.ptr, 0, sizeof<nvme_sqe> * cast(entries));
 
     this.cq = vm::allocate_physical(sizeof<nvme_cqe> * cast(entries)).addr;
     this.cq_mask = entries - 1;

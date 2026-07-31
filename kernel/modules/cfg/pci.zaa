@@ -13,6 +13,7 @@ import ahci;
 import nvme;
 import usb.xhci as xhci;
 import e1000e;
+import rtl81xx;
 
 pub fn coldplug(pci::device &device) -> void
 {
@@ -30,6 +31,13 @@ pub fn coldplug(pci::device &device) -> void
     case [0, 0, 2]:
       switch (device.vendor_id)
       {
+        case 0x10ec:
+          switch (device.device_id)
+          {
+            case 0x8125:
+              rtl81xx::initialise(device);
+          }
+
         case 0x8086:
           switch (device.device_id)
           {

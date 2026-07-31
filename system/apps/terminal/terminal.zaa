@@ -302,7 +302,7 @@ pub struct window : pub gui::window
               }
           }
 
-        case gui::modifiers::none:
+        else:
           switch (evt.key)
           {
             case Key::Home:

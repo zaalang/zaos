@@ -1,0 +1,72 @@
+//
+// rtl81xx interface
+//
+
+import std.stdio;
+import std.atomic;
+import net;
+import rtl81xx;
+import vm;
+
+pub struct rtldev : pub net::netdev
+{
+  pub rtldev(rtl81xx::adaptor mut &adaptor, net::macaddr &address)
+    : super(&impl this),
+      adaptor(&adaptor)
+  {
+    this.hwaddr = address;
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return this.adaptor.name;
+  }
+
+  pub fn query(this &, net::query query, std::string mut &result) override -> net::result
+  {
+    switch (query)
+    {
+      case name:
+        result = std::format("");
+
+      case type:
+        result = std::format("ether");
+
+      case address:
+        result = std::format("{}", this.hwaddr);
+
+      case device_path:
+        result = std::format("net/{}/0", this.name);
+    }
+
+    return ok;
+  }
+
+  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) override -> net::result
+  {
+    if (var result = this.adaptor.transmit(packet); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) override -> net::result
+  {
+    if (var result = this.adaptor.retrieve(rxqid, packet); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub fn refill(this mut &, u16 rxqid) override -> net::result
+  {
+    if (var result = this.adaptor.refill(rxqid); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub ~rtldev() = default;
+
+  rtl81xx::adaptor mut &adaptor;
+}

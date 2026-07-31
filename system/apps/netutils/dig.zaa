@@ -1,0 +1,312 @@
+//
+// dig
+//
+
+import std.stdio;
+import std.env;
+import net.ip;
+import os.zaos.fcntl;
+import os.zaos.socket;
+import os.zaos.time;
+import std.byteconv;
+import aargh;
+
+using os;
+
+struct opts
+{
+  #[arg(free)]
+  std::vector<std::string> args;
+
+  #[arg(flag, help="display this help and exit")]
+  bool help = false;
+
+  opts() = default;
+  ~opts() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+struct dns_header
+{
+  u16 id;
+  u8[2] flags;
+  u16 question_count;
+  u16 answer_count;
+  u16 authority_count;
+  u16 additional_count;
+}
+
+fn send(i32 fd, void *buffer, usize len, u64 flags) -> i32
+{
+  var bytes = os::write(&mut thread_ring, fd, buffer, len);
+
+  while (bytes == EAGAIN)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+    bytes = os::write(&mut thread_ring, fd, buffer, len);
+  }
+
+  return bytes;
+}
+
+fn recv(i32 fd, void mut *buffer, usize len, u64 flags) -> i32
+{
+  var bytes = os::read(&mut thread_ring, fd, buffer, len);
+
+  if (bytes == EAGAIN)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+    bytes = os::read(&mut thread_ring, fd, buffer, len);
+  }
+
+  return bytes;
+}
+
+pub fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  if (opts.help)
+  {
+    aargh::usage<opts>();
+
+    return 0;
+  }
+
+  var name = std::string();
+  var type = std::string("AAAA");
+  var server = std::string("2620:119:35::35");
+
+  for (var &arg : opts.args)
+  {
+    switch (arg[0])
+    {
+      case '@':
+        server = arg[1 .. arg.len];
+
+      case '+':
+        // queryopt
+
+      else:
+        if (name.empty)
+          name = arg;
+        else
+          type = arg;
+    }
+  }
+
+  var dst_ip = net::ipv6addr();
+
+  if (var result = std::sscan(server, &mut dst_ip); result.error || result.len != server.len)
+  {
+    std::fprint(std::stderr, "dig: invalid server ip");
+
+    return 1;
+  }
+
+  var fd = os::socket(&mut thread_ring, AF_INET6, SOCK_DGRAM, 0);
+
+  if (fd < 0)
+  {
+    std::fprint(std::stderr, "nc: socket creation failed - ", cast<std::errc>(-fd));
+
+    return 1;
+  }
+
+  var sockname = os::sockaddr_in6();
+  sockname.sa_family = AF_INET6;
+  sockname.sin6_addr = in6addr_any;
+  sockname.sin6_port = 0;
+
+  if (var rc = os::socket_bind(&mut thread_ring, fd, &sockname, sizeof(sockname)); rc < 0)
+  {
+    std::fprint(std::stderr, "dig: bind - ", cast<std::errc>(-rc));
+
+    return 1;
+  }
+
+  var peername = os::sockaddr_in6();
+  peername.sa_family = AF_INET6;
+  peername.sin6_addr = dst_ip;
+  peername.sin6_port = std::native_to_be(53);
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_SETPEERNAME, &peername, sizeof(peername)); rc < 0)
+  {
+    std::fprint(std::stderr, "dig: setpeername - ", cast<std::errc>(-rc));
+
+    return 1;
+  }
+
+  var buffer = [<u8>: void; 4096];
+  var hdr = cast<dns_header mut *>(buffer.data);
+
+  hdr.id = std::native_to_be(1);
+  hdr.flags[0] = 1 << 0;
+  hdr.flags[1] = 0;
+  hdr.question_count = std::native_to_be(1);
+  hdr.answer_count = 0;
+  hdr.authority_count = 0;
+  hdr.additional_count = 0;
+
+  var position = sizeof<dns_header>;
+
+  for (var &segment : name.split("."))
+  {
+    buffer[position] = cast<u8>(segment.len);
+    std::memcpy(buffer.data + position + 1, segment.data, segment.len);
+
+    position += segment.len + 1;
+  }
+
+  buffer[position++] = 0;
+
+  switch (type)
+  {
+    case "A":
+      buffer[position++] = 0;
+      buffer[position++] = 0x01;
+
+    case "AAAA":
+      buffer[position++] = 0;
+      buffer[position++] = 0x1c;
+
+    case "MX":
+      buffer[position++] = 0;
+      buffer[position++] = 0x0f;
+
+    case "CNAME":
+      buffer[position++] = 0;
+      buffer[position++] = 0x05;
+
+    else:
+      buffer[position++] = 0;
+      buffer[position++] = 0x02;
+  }
+
+  buffer[position++] = 0;
+  buffer[position++] = 1;
+
+  if (var rc = send(fd, buffer.data, position, 0); rc < 0)
+  {
+    std::fprint(std::stderr, "dig: send - ", cast<std::errc>(-rc));
+
+    return 1;
+  }
+
+  var bytes = recv(fd, buffer.data, buffer.len, 0);
+
+  if (bytes < 0)
+  {
+    std::fprint(std::stderr, "dig: recv - ", cast<std::errc>(-bytes));
+
+    return 1;
+  }
+
+  var position = sizeof<dns_header>;
+
+  std::printf("\n");
+  std::printf(";; Got answer:\n");
+  std::printf(";; ->> HEADER <<- opcode {}, status {}, id: {}\n", (hdr.flags[0] >> 3) & 0xf, (hdr.flags[1] >> 0) & 0xf, std::be_to_native(hdr.id));
+  std::printf(";; QUERY: {}, ANSWER: {}, AUTHORITY {}, ADDITIONAL: {}\n", std::be_to_native(hdr.question_count), std::be_to_native(hdr.answer_count), std::be_to_native(hdr.authority_count), std::be_to_native(hdr.additional_count));
+
+  if (var qc = std::be_to_native(hdr.question_count); qc != 0)
+  {
+    std::printf("\n");
+    std::printf(";; QUESTION SECTION:\n");
+
+    for (var i = 0; i < qc; ++i)
+    {
+      var name = std::string();
+
+      for (; buffer[position] != 0; )
+      {
+        name.append(std::string_view(buffer.data + position + 1, cast<usize>(buffer[position])));
+        name.append(".");
+
+        position += cast<usize>(buffer[position] + 1);
+      }
+
+      position += 1;
+
+      var type = std::load_be_u16(buffer.data + position + 0);
+      var klass = std::load_be_u16(buffer.data + position + 2);
+
+      position += 4;
+
+      std::printf(";{:20} {:4} {:4}\n", name, type, klass);
+    }
+  }
+
+  if (var ac = std::be_to_native(hdr.answer_count); ac != 0)
+  {
+    std::printf("\n");
+    std::printf(";; ANSWER SECTION:\n");
+
+    for (var i = 0; i < ac; ++i)
+    {
+      var name = std::string();
+
+      if (buffer[position] & 0xc0 == 0xc0)
+      {
+        for (var position = cast<usize>(buffer[position] & 0x3f) << 8 | cast<usize>(buffer[position + 1]); buffer[position] != 0; )
+        {
+          name.append(std::string_view(buffer.data + position + 1, cast<usize>(buffer[position])));
+          name.append(".");
+
+          position += cast<usize>(buffer[position] + 1);
+        }
+
+        position += 2;
+      }
+      else
+      {
+        for (; buffer[position] != 0; )
+        {
+          name.append(std::string_view(buffer.data + position + 1, cast<usize>(buffer[position])));
+          name.append(".");
+
+          position += cast<usize>(buffer[position] + 1);
+        }
+
+        position += 1;
+      }
+
+      var type = std::load_be_u16(buffer.data + position + 0);
+      var klass = std::load_be_u16(buffer.data + position + 2);
+      var ttl = std::load_be_u32(buffer.data + position + 4);
+      var rdlength = cast<usize>(std::load_be_u16(buffer.data + position + 8));
+
+      var data = std::string();
+
+      switch (type)
+      {
+        case 0x01:
+          data = std::format("{}", net::ipv4addr(buffer.data + position + 10, rdlength));
+
+        case 0x1c:
+          data = std::format("{}", net::ipv6addr(buffer.data + position + 10, rdlength));
+      }
+
+      position += 10 + rdlength;
+
+      std::printf("{:20}  {:4} {:4} {:4} {}\n", name, ttl, type, klass, data);
+    }
+  }
+
+  os::close(&mut thread_ring, fd);
+
+  return 0;
+}

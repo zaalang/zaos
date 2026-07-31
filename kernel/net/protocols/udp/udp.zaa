@@ -30,9 +30,6 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   if (!hdr)
     return protocol_error;
 
-  if (ipv6::checksum(ipv6::protocol::udp, rx.src_ip.in6, rx.dst_ip.in6, pkt) != [0, 0])
-   return protocol_error;
-
   var length = cast<usize>(std::be_to_native(hdr.length));
 
   if (length < sizeof<udp_header>)
@@ -42,6 +39,10 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
     return protocol_error;
 
   pkt.trim(length);
+
+  if (ipv6::checksum(ipv6::protocol::udp, rx.src_ip.in6, rx.dst_ip.in6, pkt) != [0, 0])
+   return protocol_error;
+
   pkt.strip(sizeof<udp_header>);
 
   var socket = net::stack.udp.find(rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port);

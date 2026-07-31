@@ -1,0 +1,1137 @@
+//
+// rtl81xx
+//
+
+import std.stdio;
+import std.atomic;
+import cpu;
+import ioapic;
+import pci;
+import msi;
+import vm;
+import io;
+import dev;
+import net;
+import scheduler;
+import heap;
+import support.rc : Rc;
+import rtl81xx.rtldev;
+
+using vm::physaddr;
+using net::macaddr;
+
+enum ctrl : u8
+{
+  const te = 0x0004;
+  const re = 0x0008;
+  const rst = 0x0010;
+  const stop = 0x0080;
+}
+
+enum status : u8
+{
+  const fd = 0x1;
+  const lu = 0x2;
+  const speed = 0x1c;
+}
+
+enum cfg9346 : u8
+{
+  const lock = 0x00;
+  const unlock = 0xc0;
+}
+
+enum interrupts : u32
+{
+  const rxok = 0x0001;
+  const rxerr = 0x0002;
+  const txok = 0x0004;
+  const txerr = 0x0008;
+  const rxo = 0x0010;
+  const lsc = 0x0020;
+  const txo = 0x0080;
+  const swint = 0x0100;
+  const pcstimeout = 0x4000;
+  const syserr = 0x8000;
+
+  const none = 0x0;
+  const all = 0x3f;
+}
+
+enum rctl : u32
+{
+  const accept_err = 0x20;
+  const accept_runt = 0x10;
+  const accept_broadcast = 0x08;
+  const accept_multicast = 0x04;
+  const accept_myphys = 0x02;
+  const accept_allphys = 0x01;
+}
+
+enum tctl : u32
+{
+  const auto_fifo = 0x80;
+}
+
+struct rtl_regs
+{
+  u32 mac0;
+  u32 mac4;
+  u32 mar0;
+  u32 mar4;
+  u8[16] reserved1;
+  u32 tdbal;
+  u32 tdbah;
+  u8[15] reserved2;
+  u8 ctrl;
+  u8 txpoll;
+  u8[3] reserved3;
+  u16 ims;
+  u16 icr;
+  u32 txcfg;
+  u32 rxcfg;
+  u8[8] reserved4;
+  u8 eecmd;
+  u8[6] eecfg;
+  u8[1] reserved5;
+  u8[7] reserved6;
+  u32 phyar;
+  u8[8] reserved7;
+  u8 phystat;
+  u8[108] reserved8;
+  u16 rxmaxsize;
+  u8[4] reserved9;
+  u16 cpluscmd;
+  u16 intrmit;
+  u32 rdbal;
+  u32 rdbah;
+
+  fn vendor8(this mut &, usize offset) -> u8 mut & { return &*cast<u8 mut *>(cast<uintptr>(&this) + offset); }
+  fn vendor16(this mut &, usize offset) -> u16 mut & { return &*cast<u16 mut *>(cast<uintptr>(&this) + offset); }
+  fn vendor32(this mut &, usize offset) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + offset); }
+
+  fn rtl8125_ims(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x38); }
+  fn rtl8125_icr(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x3c); }
+  fn rtl8125_pmch(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x6f); }
+  fn rtl8125_ephysar(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0x80); }
+  fn rtl8125_txpoll(this mut &) -> u16 mut & { return &*cast<u16 mut *>(cast<uintptr>(&this) + 0x90); }
+  fn rtl8125_macocp(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0xb0); }
+  fn rtl8125_phyocp(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0xb8); }
+  fn rtl8125_mcu(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0xd3); }
+  fn rtl8125_misc(this mut &) -> u32 mut & { return &*cast<u32 mut *>(cast<uintptr>(&this) + 0xf0); }
+  fn rtl8125_mac0bkp(this mut &) -> u8[6] mut & { return &*cast<u8[6] mut *>(cast<uintptr>(&this) + 0x19e0); }
+  fn rtl8125_eeetxidle(this mut &) -> u16 mut & { return &*cast<u16 mut *>(cast<uintptr>(&this) + 0x6048); }
+}
+
+enum cmd : u32
+{
+  const tcs = 0x00010000;     // tcp checksum enable
+  const ucs = 0x00020000;     // udp checksum enable
+  const ipcs = 0x00040000;    // ip header checksum enable
+  const lso = 0x08000000;     // tcp large send offload
+  const eof = 0x10000000;     // end of frame
+  const sof = 0x20000000;     // start of frame
+  const eor = 0x40000000;     // end of ring
+  const own = 0x80000000;     // chip owns descriptor
+
+  const length_mask = 0xffff; // fragment length
+  const length_shift = 0;
+
+  const mss_mask = 0x7ff;     // large send mss
+  const mss_shift = 16;
+}
+
+enum sts : u32
+{
+  const eof = 0x10000000;        // end of frame
+  const sof = 0x20000000;        // start of frame
+  const eor = 0x40000000;        // end of ring
+  const own = 0x80000000;        // chip owns descriptor
+
+  const fralign = 0x08000000;    // frame alignment error
+  const mcast = 0x04000000;      // multicast pkt received
+  const ucast = 0x02000000;      // unicast pkt received
+  const bcast = 0x01000000;      // broadcast pkt received
+  const overflow = 0x00800000;   // out of buffer space
+  const overrun = 0x00400000;    // fifo overrun
+  const giant = 0x00200000;      // pkt > 4096 bytes
+  const err = 0x00100000;        // error summary
+  const runt = 0x00080000;       // runt packet received
+  const crc = 0x00040000;        // crc error
+  const ipcsb = 0x00010000;      // ip header checksum bad
+  const ucsb = 0x00008000;       // udp checksum bad
+  const tcsb = 0x00004000;       // tcp checksum bad
+
+  const length_mask = 0x3fff;    // fragment length
+  const length_shift = 0;
+
+  const pid_mask = 0x03;         // Protocol type
+  const pid_shift = 17;
+}
+
+struct tx_desc
+{
+  u32 cdw0;
+  u32 cdw1;
+  physaddr addr;
+
+  const max_payload = 16288;
+
+  fn length(this &) -> u16
+  {
+    return cast<u16>((this.cdw0 >> cmd::length_shift) & cmd::length_mask);
+  }
+
+  fn length=(this mut &, u16 value) -> void
+  {
+    this.cdw0 = this.cdw0 & ~(cmd::length_mask << cmd::length_shift) | (cast<u32>(value) << cmd::length_shift);
+  }
+
+  tx_desc() = default;
+  tx_desc(tx_desc &) = default;
+  ~tx_desc() = default;
+}
+
+struct rx_desc
+{
+  u32 sts;
+  u32 vlanctl;
+  physaddr addr;
+
+  fn length(this &) -> u16
+  {
+    return cast<u16>((this.sts >> sts::length_shift) & sts::length_mask);
+  }
+
+  fn length=(this mut &, u16 value) -> void
+  {
+    this.sts = this.sts & ~(sts::length_mask << sts::length_shift) | (cast<u32>(value) << sts::length_shift);
+  }
+
+  rx_desc() = default;
+  rx_desc(rx_desc &) = default;
+  ~rx_desc() = default;
+}
+
+fn wait_until_set<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == mask)
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+fn wait_until_clear<T>(T *reg, T mask, u64 timeout) -> bool
+{
+  for (var k = 0; k < timeout; ++k)
+  {
+    if (std::volatile_load(reg) & mask == cast(0))
+      return true;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  return false;
+}
+
+pub enum result : i32
+{
+  ok = 0,
+  io_error = -5,
+  would_block = -11,
+  device_busy = -16,
+  invalid_argument = -22,
+  not_supported = -95,
+  timed_out = -110,
+
+  pub fn bool(result code) -> bool
+  {
+    return code >= ok;
+  }
+}
+
+pub struct adaptor
+{
+  pub adaptor(pci::device &device)
+    : device(&device)
+  {
+  }
+
+  fn reset(this mut &) -> result
+  {
+    std::print("rtl81xx ", this.name, " adaptor reset");
+
+    var regs = this.regs;
+
+    std::volatile_store(&regs.ctrl, ctrl::rst);
+
+    if (!wait_until_clear(&regs.ctrl, ctrl::rst, 1000))
+      return timed_out;
+
+    std::volatile_load(&regs.rtl8125_icr);
+
+    return ok;
+  }
+
+  fn enable(this mut &) -> result
+  {
+    var regs = this.regs;
+
+    std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::te | ctrl::re);
+
+    return ok;
+  }
+
+  fn link_speed(this mut &) -> std::string_literal
+  {
+    var regs = this.regs;
+
+    switch (std::volatile_load(&regs.phystat) & status::speed)
+    {
+      case 0x04:
+        return "10 Mbps";
+
+      case 0x08:
+        return "100 Mbps";
+
+      case 0x10:
+        return "1000 Mbps";
+    }
+
+    return "unknown";
+  }
+
+  fn link_duplex(this mut &) -> std::string_literal
+  {
+    var regs = this.regs;
+
+    switch (std::volatile_load(&regs.phystat) & 0x11)
+    {
+      case 0x0:
+        return "Half Duplex";
+
+      case 0x1:
+      case 0x10:
+        return "Full Duplex";
+    }
+
+    return "unknown";
+  }
+
+  pub fn rxq_free_slots(this mut &) -> usize
+  {
+    return cast<usize>((this.rxq.sq_tail + this.rxq.sq_mask + 1 - std::volatile_load(&this.regs.rdh(this.rxq.index))) & this.rxq.sq_mask);
+  }
+
+  pub fn name(this &) -> std::string
+  {
+    return std::format("{}:{}.{}", this.device.bus, this.device.dev, this.device.func);
+  }
+
+  pub ~adaptor() = default;
+
+  int hwrev;
+
+  macaddr addr;
+
+  tx_queue mut *txq;
+  rx_queue mut *rxq;
+
+  Rc<net::netdev> link;
+
+  u8 irq;
+  rtl_regs mut *regs;
+  pci::device &device;
+}
+
+pub struct tx_queue
+{
+  std::spin_lock lock;
+
+  pub tx_queue(adaptor mut &adaptor, usize index, u32 entries)
+    : adaptor(&adaptor), index(index), entries(entries)
+  {
+    std::assert(entries & (entries - 1) == 0);
+
+    this.sq = vm::allocate_physical(sizeof<tx_desc> * cast(entries)).addr;
+    this.sq_mask = entries - 1;
+
+    std::memset(this.sq.ptr, 0, sizeof<tx_desc> * cast(entries));
+
+    cast<tx_desc mut *>((this.sq + cast(entries - 1) * sizeof<tx_desc>).ptr).cdw0 = cmd::eor;
+
+    this.packets.resize(cast(entries));
+  }
+
+  pub tx_queue(tx_queue &&) = default;
+  pub ~tx_queue() = default;
+
+  u32 entries;
+
+  physaddr sq;
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+
+  std::vector<net::packet mut *> packets;
+
+  usize index;
+  adaptor mut &adaptor;
+}
+
+pub struct rx_queue
+{
+  std::spin_lock lock;
+
+  pub rx_queue(adaptor mut &adaptor, usize index, u32 entries)
+    : adaptor(&adaptor), index(index), entries(entries)
+  {
+    std::assert(entries & (entries - 1) == 0);
+
+    this.sq = vm::allocate_physical(sizeof<rx_desc> * cast(entries)).addr;
+    this.sq_mask = entries - 1;
+
+    std::memset(this.sq.ptr, 0, sizeof<rx_desc> * cast(entries));
+
+    cast<rx_desc mut *>((this.sq + cast(entries - 1) * sizeof<rx_desc>).ptr).sts = sts::eor;
+  }
+
+  pub rx_queue(rx_queue &&) = default;
+  pub ~rx_queue() = default;
+
+  u32 entries;
+
+  physaddr sq;
+  u32 sq_head;
+  u32 sq_tail;
+  u32 sq_mask;
+
+  usize index;
+  adaptor mut &adaptor;
+}
+
+fn read_phy(rtl_regs mut *regs, u32 offset) -> u16
+{
+  std::volatile_store(&regs.phyar, offset << 16);
+
+  if (!wait_until_set(&regs.phyar, 0x80000000, 1000))
+    return ~0;
+
+  var data = std::volatile_load(&regs.phyar);
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+
+  return cast<u16>(data & 0xffff);
+}
+
+fn write_phy(rtl_regs mut *regs, u32 offset, u16 data) -> void
+{
+  std::volatile_store(&regs.phyar, 0x80000000 | offset << 16 | cast<u32>(data));
+
+  if (!wait_until_clear(&regs.phyar, 0x80000000, 1000))
+    return;
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+}
+
+fn read_ephy(rtl_regs mut *regs, u32 offset) -> u16
+{
+  std::volatile_store(&regs.rtl8125_ephysar, offset << 16);
+
+  if (!wait_until_set(&regs.rtl8125_ephysar, 0x80000000, 1000))
+    return ~0;
+
+  var data = std::volatile_load(&regs.rtl8125_ephysar);
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+
+  return cast<u16>(data & 0xffff);
+}
+
+fn write_ephy(rtl_regs mut *regs, u32 offset, u16 data) -> void
+{
+  std::volatile_store(&regs.rtl8125_ephysar, 0x80000000 | offset << 16 | cast<u32>(data));
+
+  if (!wait_until_clear(&regs.rtl8125_ephysar, 0x80000000, 1000))
+    return;
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+}
+
+fn read_phy_ocp(rtl_regs mut *regs, u32 offset) -> u16
+{
+  std::volatile_store(&regs.rtl8125_phyocp, (offset >> 1) << 16);
+
+  if (!wait_until_set(&regs.rtl8125_phyocp, 0x80000000, 1000))
+    return ~0;
+
+  var data = std::volatile_load(&regs.rtl8125_phyocp);
+
+  return cast<u16>(data & 0xffff);
+}
+
+fn write_phy_ocp(rtl_regs mut *regs, u32 offset, u16 data) -> void
+{
+  std::volatile_store(&regs.rtl8125_phyocp, 0x80000000 | (offset >> 1) << 16 | cast<u32>(data));
+
+  if (!wait_until_clear(&regs.rtl8125_phyocp, 0x80000000, 1000))
+    return;
+}
+
+fn read_mac_ocp(rtl_regs mut *regs, u32 offset) -> u16
+{
+  std::volatile_store(&regs.rtl8125_macocp, (offset >> 1) << 16);
+
+  var data = std::volatile_load(&regs.rtl8125_macocp);
+
+  return cast<u16>(data & 0xffff);
+}
+
+fn write_mac_ocp(rtl_regs mut *regs, u32 offset, u16 data) -> void
+{
+  std::volatile_store(&regs.rtl8125_macocp, 0x80000000 | (offset >> 1) << 16 | cast<u32>(data));
+}
+
+fn phy_reg_addr(u32 base, u32 offset) -> u32
+{
+  return base + ((base == 0xa400) ? 2 * offset : 2 * (offset - 0x10));
+}
+
+fn read_phy_ocp_paged(rtl_regs mut *regs, u16 page, u32 offset) -> u16
+{
+  return read_phy_ocp(regs, phy_reg_addr(cast<u32>(page) << 4, offset));
+}
+
+fn write_phy_ocp_paged(rtl_regs mut *regs, u16 page, u32 offset, u16 value) -> void
+{
+  write_phy_ocp(regs, phy_reg_addr(cast<u32>(page) << 4, offset), value);
+}
+
+fn set_phy_ocp_param(rtl_regs mut *regs, u16 param, u16 mask, u16 value) -> void
+{
+  write_phy_ocp(regs, phy_reg_addr(0xa430, 0x13), param);
+  write_phy_ocp(regs, phy_reg_addr(0xa430, 0x14), read_phy_ocp(regs, phy_reg_addr(0xa430, 0x14)) & ~mask | value);
+}
+
+fn store_rar(rtl_regs mut *regs, macaddr &addr) -> void
+{
+  var ral = cast<u32>(addr[0]) | cast<u32>(addr[1]) << 8 | cast<u32>(addr[2]) << 16 | cast<u32>(addr[3]) << 24;
+  var rah = cast<u32>(addr[4]) | cast<u32>(addr[5]) << 8;
+
+  std::volatile_store(&regs.eecmd, cfg9346::unlock);
+
+  std::volatile_store(&regs.mac4, rah);
+  std::volatile_load(&regs.ctrl);
+
+  std::volatile_store(&regs.mac0, ral);
+  std::volatile_load(&regs.ctrl);
+
+  std::volatile_store(&regs.eecmd, cfg9346::lock);
+}
+
+fn rtl_hw_init_8125(adaptor mut &adaptor) -> result
+{
+  var regs = adaptor.regs;
+
+  std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::stop);
+  std::volatile_store(&regs.rtl8125_misc, regs.rtl8125_misc | 0x80000);
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+
+  if (!wait_until_set(&regs.txcfg, 0x800, 1000))
+    return timed_out;
+
+  if (!wait_until_set(&regs.rtl8125_mcu, 0x30, 1000))
+    return timed_out;
+
+  std::volatile_store(&regs.ctrl, regs.ctrl & ~(ctrl::te | ctrl::re));
+
+  std::volatile_store(&regs.rtl8125_mcu, regs.rtl8125_mcu & ~0x80);
+
+  write_mac_ocp(regs, 0xe8de, read_mac_ocp(regs, 0xe8de) & ~0x4000);
+
+  if (!wait_until_set(&regs.rtl8125_mcu, 0x02, 1000))
+    return timed_out;
+
+  write_mac_ocp(regs, 0xc0aa, 0x07d0);
+  write_mac_ocp(regs, 0xc0a6, 0x0150);
+  write_mac_ocp(regs, 0xc01e, 0x5555);
+
+  if (!wait_until_set(&regs.rtl8125_mcu, 0x02, 1000))
+    return timed_out;
+
+  return ok;
+}
+
+fn rtl_hw_init(adaptor mut &adaptor) -> result
+{
+  switch (adaptor.hwrev)
+  {
+    case 63:
+      rtl_hw_init_8125(&mut adaptor);
+  }
+
+  return ok;
+}
+
+fn rtl_hw_start_8125(adaptor mut &adaptor) -> result
+{
+  var regs = adaptor.regs;
+
+  std::volatile_store(&regs.eecfg[3], regs.eecfg[3] & ~0x02);
+
+  std::volatile_store(&regs.vendor16(0x382), 0x221b);
+  std::volatile_store(&regs.vendor8(0x4500), 0x00);
+  std::volatile_store(&regs.vendor16(0x4800), 0x0000);
+
+  write_mac_ocp(regs, 0xd40a, read_mac_ocp(regs, 0xd40a) & ~0x0010 | 0x0000);
+
+  std::volatile_store(&regs.eecfg[1], regs.eecfg[1] & ~0x10);
+
+  write_mac_ocp(regs, 0xc140, 0xffff);
+  write_mac_ocp(regs, 0xc142, 0xffff);
+
+  write_mac_ocp(regs, 0xd3e2, read_mac_ocp(regs, 0xd3e2) & ~0x0fff | 0x03a9);
+  write_mac_ocp(regs, 0xd3e4, read_mac_ocp(regs, 0xd3e4) & ~0x00ff | 0x0000);
+  write_mac_ocp(regs, 0xe860, read_mac_ocp(regs, 0xe860) & ~0x0000 | 0x0080);
+
+  write_mac_ocp(regs, 0xeb58, read_mac_ocp(regs, 0xeb58) & ~0x0001 | 0x0000);
+
+  write_mac_ocp(regs, 0xe614, read_mac_ocp(regs, 0xe614) & ~0x0700 | 0x0200);
+
+  write_mac_ocp(regs, 0xe63e, read_mac_ocp(regs, 0xe63e) & ~0x0c30 | 0x0000);
+
+  write_mac_ocp(regs, 0xc0b4, read_mac_ocp(regs, 0xc0b4) & ~0x0000 | 0x000c);
+  write_mac_ocp(regs, 0xeb6a, read_mac_ocp(regs, 0xeb6a) & ~0x00ff | 0x0033);
+  write_mac_ocp(regs, 0xeb50, read_mac_ocp(regs, 0xeb50) & ~0x03e0 | 0x0040);
+  write_mac_ocp(regs, 0xe056, read_mac_ocp(regs, 0xe056) & ~0x00f0 | 0x0000);
+  write_mac_ocp(regs, 0xe040, read_mac_ocp(regs, 0xe040) & ~0x1000 | 0x0000);
+  write_mac_ocp(regs, 0xea1c, read_mac_ocp(regs, 0xea1c) & ~0x0003 | 0x0001);
+  write_mac_ocp(regs, 0xea1c, read_mac_ocp(regs, 0xea1c) & ~0x0004 | 0x0000);
+  write_mac_ocp(regs, 0xe0c0, read_mac_ocp(regs, 0xe0c0) & ~0x4f0f | 0x4403);
+  write_mac_ocp(regs, 0xe052, read_mac_ocp(regs, 0xe052) & ~0x0080 | 0x0068);
+  write_mac_ocp(regs, 0xd430, read_mac_ocp(regs, 0xd430) & ~0x0fff | 0x047f);
+
+  write_mac_ocp(regs, 0xea1c, read_mac_ocp(regs, 0xea1c) & ~0x0004 | 0x0000);
+  write_mac_ocp(regs, 0xeb54, read_mac_ocp(regs, 0xeb54) & ~0x0000 | 0x0001);
+
+  scheduler::sleep_until(cpu::system_time + 20_000);
+
+  write_mac_ocp(regs, 0xeb54, read_mac_ocp(regs, 0xeb54) & ~0x0001 | 0x0000);
+
+  std::volatile_store(&regs.vendor16(0x1880), regs.vendor16(0x1880) & ~0x0030);
+
+  write_mac_ocp(regs, 0xe098, 0xc302);
+
+  for (var k = 0; k < 1000; ++k)
+  {
+    if (read_mac_ocp(regs, 0xe00e) & 0x2000 == 0)
+      break;
+
+    scheduler::sleep_until(cpu::system_time + 1_000_000);
+  }
+
+  std::volatile_store(&regs.rtl8125_eeetxidle, 1500 + 14 + 0x20);
+  write_mac_ocp(regs, 0xe040, read_mac_ocp(regs, 0xe040) & ~0x0000 | 0x0003);
+
+  std::volatile_store(&regs.rtl8125_misc, regs.rtl8125_misc & ~0x80000);
+
+  return ok;
+}
+
+fn rtl_hw_start_8125b(adaptor mut &adaptor) -> result
+{
+  var regs = adaptor.regs;
+
+  std::volatile_store(&regs.eecmd, cfg9346::unlock);
+
+  std::volatile_store(&regs.vendor8(0x34), 0);
+
+  for (var i = 0xa00; i < 0xa80; i += 4)
+    std::volatile_store(&regs.vendor32(i), 0);
+
+  std::volatile_store(&regs.vendor16(0x7a), 0x0000);
+
+  write_ephy(regs, 0x0b, read_ephy(regs, 0x0b) & ~0xffff | 0xa908);
+  write_ephy(regs, 0x1e, read_ephy(regs, 0x1e) & ~0xffff | 0x20eb);
+  write_ephy(regs, 0x4b, read_ephy(regs, 0x4b) & ~0xffff | 0xa908);
+  write_ephy(regs, 0x5e, read_ephy(regs, 0x5e) & ~0xffff | 0x20eb);
+  write_ephy(regs, 0x22, read_ephy(regs, 0x22) & ~0x0030 | 0x0020);
+  write_ephy(regs, 0x62, read_ephy(regs, 0x62) & ~0x0030 | 0x0020);
+
+  rtl_hw_start_8125(&mut adaptor);
+
+  std::volatile_store(&regs.eecmd, cfg9346::lock);
+
+  std::volatile_load(&regs.ctrl);
+
+  write_phy_ocp_paged(regs, 0xa44, 0x11, read_phy_ocp_paged(regs, 0xa44, 0x11) & ~0x0000 | 0x0800);
+  write_phy_ocp_paged(regs, 0xac4, 0x13, read_phy_ocp_paged(regs, 0xac4, 0x13) & ~0x00f0 | 0x0090);
+  write_phy_ocp_paged(regs, 0xad3, 0x11, read_phy_ocp_paged(regs, 0xad3, 0x11) & ~0x0003 | 0x0001);
+
+  write_phy_ocp_paged(regs, 0xb87, 0x16, 0x80f5);
+  write_phy_ocp_paged(regs, 0xb87, 0x17, 0x760e);
+  write_phy_ocp_paged(regs, 0xb87, 0x16, 0x8107);
+  write_phy_ocp_paged(regs, 0xb87, 0x17, 0x360e);
+  write_phy_ocp_paged(regs, 0xb87, 0x16, 0x8551);
+  write_phy_ocp_paged(regs, 0xb87, 0x17, read_phy_ocp_paged(regs, 0xb87, 0x17) & ~0xff00 | 0x0800);
+
+  write_phy_ocp_paged(regs, 0xbf0, 0x10, read_phy_ocp_paged(regs, 0xbf0, 0x10) & ~0xe000 | 0xa000);
+  write_phy_ocp_paged(regs, 0xbf4, 0x13, read_phy_ocp_paged(regs, 0xbf4, 0x13) & ~0x0f00 | 0x0300);
+
+  set_phy_ocp_param(regs, 0x8044, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x804a, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x8050, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x8056, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x805c, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x8062, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x8068, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x806e, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x8074, 0xffff, 0x2417);
+  set_phy_ocp_param(regs, 0x807a, 0xffff, 0x2417);
+
+  write_phy_ocp_paged(regs, 0xa4c, 0x15, read_phy_ocp_paged(regs, 0xa4c, 0x15) & ~0x0000 | 0x0040);
+  write_phy_ocp_paged(regs, 0xbf8, 0x12, read_phy_ocp_paged(regs, 0xbf8, 0x12) & ~0xe000 | 0xa000);
+  write_phy_ocp_paged(regs, 0xa5b, 0x12, read_phy_ocp_paged(regs, 0xa5b, 0x12) & ~0x8000 | 0x0000);
+
+  write_phy_ocp_paged(regs, 0xa6d, 0x12, read_phy_ocp_paged(regs, 0xa6d, 0x12) & ~0x0001 | 0x0000);
+  write_phy_ocp_paged(regs, 0xa6d, 0x14, read_phy_ocp_paged(regs, 0xa6d, 0x14) & ~0x0010 | 0x0000);
+  write_phy_ocp_paged(regs, 0xa42, 0x14, read_phy_ocp_paged(regs, 0xa42, 0x14) & ~0x0080 | 0x0000);
+  write_phy_ocp_paged(regs, 0xa4a, 0x11, read_phy_ocp_paged(regs, 0xa4a, 0x11) & ~0x0200 | 0x0000);
+
+  write_phy_ocp_paged(regs, 0xa40, 0x09, read_phy_ocp_paged(regs, 0xa40, 0x09) & ~0x0300 | 0x0200);
+  write_phy_ocp_paged(regs, 0xa40, 0x00, read_phy_ocp_paged(regs, 0xa40, 0x00) & ~0x1a00 | 0x1200);
+
+  return ok;
+}
+
+fn rtl_hw_start(adaptor mut &adaptor) -> result
+{
+  switch (adaptor.hwrev)
+  {
+    case 63:
+      rtl_hw_start_8125b(&mut adaptor);
+  }
+
+  return ok;
+}
+
+fn rtl81xx_link_handler(adaptor mut *adaptor) -> void
+{
+  switch (adaptor.regs.phystat & status::lu)
+  {
+    case status::lu:
+      std::atomic_or(&adaptor.link.flags, net::flags::lower_up);
+
+      adaptor.enable();
+
+    else:
+      std::atomic_and(&adaptor.link.flags, ~net::flags::lower_up);
+  }
+}
+
+fn rtl81xx_txq_handler(tx_queue mut *txq) -> void
+{
+  var guard = std::lock_guard(&mut txq.lock);
+
+  var head = txq.sq_head;
+
+  for (; head != txq.sq_tail; )
+  {
+    var index = cast<usize>(head & txq.sq_mask);
+
+    var txd = cast<tx_desc mut *>((txq.sq + index * sizeof<tx_desc>).ptr);
+
+    if (txd.cdw0 & cmd::own != 0)
+      break;
+
+    if (var packet = std::exchange(&mut txq.packets[index], null))
+      io::complete(&mut packet.cb, packet.length);
+
+    head = std::add_with_carry(head, 1).0;
+  }
+
+  if (head != txq.sq_head)
+  {
+    txq.sq_head = head;
+  }
+}
+
+fn rtl81xx_io_handler(adaptor mut *adaptor) -> void
+{
+  var icr = adaptor.regs.rtl8125_icr;
+  std::volatile_store(&adaptor.regs.rtl8125_icr, icr);
+
+  if (icr & interrupts::lsc != 0)
+  {
+    rtl81xx_link_handler(adaptor);
+  }
+
+  if (icr & (interrupts::txok | interrupts::txerr | interrupts::txo) != 0)
+  {
+    rtl81xx_txq_handler(adaptor.txq);
+  }
+
+  if (icr & (interrupts::rxok | interrupts::rxerr) != 0)
+  {
+    adaptor.link.packet_handler_doorbell.release();
+  }
+}
+
+fn initialise(tx_queue mut &txq) -> result
+{
+  var regs = txq.adaptor.regs;
+
+  std::volatile_store(&regs.eecmd, cfg9346::unlock);
+
+  std::volatile_store(&regs.tdbah, cast<u32>((cast<uintptr>(txq.sq) >> 32) & 0xffffffff));
+  std::volatile_store(&regs.tdbal, cast<u32>((cast<uintptr>(txq.sq) >> 0) & 0xffffffff));
+
+  std::volatile_store(&regs.txcfg, 0x03000700);
+
+  std::volatile_store(&regs.eecmd, cfg9346::lock);
+
+  return ok;
+}
+
+fn initialise(rx_queue mut &rxq) -> result
+{
+  var regs = rxq.adaptor.regs;
+
+  std::volatile_store(&regs.eecmd, cfg9346::unlock);
+
+  std::volatile_store(&regs.rdbah, cast<u32>((cast<uintptr>(rxq.sq) >> 32) & 0xffffffff));
+  std::volatile_store(&regs.rdbal, cast<u32>((cast<uintptr>(rxq.sq) >> 0) & 0xffffffff));
+
+  std::volatile_store(&regs.rxcfg, 0x40000f00);
+  std::volatile_store(&regs.rxmaxsize, 16384);
+
+  std::volatile_store(&regs.mar4, 0xffffffff);
+  std::volatile_store(&regs.mar0, 0xffffffff);
+
+  var rctl = regs.rxcfg;
+  rctl &= ~0x0f;
+  rctl |= rctl::accept_myphys;
+  rctl |= rctl::accept_broadcast;
+  rctl |= rctl::accept_multicast;
+
+  std::volatile_store(&regs.rxcfg, rctl);
+
+  std::volatile_store(&regs.intrmit, 0);
+
+  std::volatile_store(&regs.cpluscmd, regs.cpluscmd | 0x20 | 0x40);
+  std::volatile_load(&regs.cpluscmd);
+
+  std::volatile_store(&regs.eecmd, cfg9346::lock);
+
+  return ok;
+}
+
+fn initialise(adaptor mut &adaptor) -> result
+{
+  var &device = adaptor.device;
+
+  var base = device.read_base_address(2);
+  var size = device.read_size_register(2);
+  var mapped = heap::mmap(vm::physrange(base, size));
+
+  pci::write_command(device, device.read_command() & ~pci::command::io_space | pci::command::memory_space);
+  pci::write_command(device, device.read_command() | pci::command::master & ~pci::command::interrupt_disable);
+
+  var irq = ioapic::resolve(device.read_interrupt_line());
+
+  if (msi::count(device) != 0)
+  {
+    var vector = io::allocate_vectors(1);
+
+    if (msi::configure(device, vector))
+    {
+      msi::enable(device);
+
+      irq = vector.0;
+    }
+  }
+
+  if (irq == 0 || irq == 0xff)
+    return invalid_argument;
+
+  adaptor.irq = irq;
+  adaptor.regs = cast<rtl_regs mut *>(mapped.addr);
+
+  var regs = adaptor.regs;
+
+  switch ((regs.txcfg >> 20) & 0x7cf)
+  {
+    case 0x641:
+      adaptor.hwrev = 63;
+  }
+
+  if (adaptor.hwrev == 0)
+  {
+    return not_supported;
+  }
+
+  if (var offset = device.read_capability(pci::capabilities::pcie); offset != 0)
+  {
+    if (var lcsr = device.read_config<u16>(offset + 0x10); lcsr & 0x0103 != 0)
+      device.write_config(offset + 0x10, lcsr & ~0x0103);
+  }
+
+  if (var result = rtl_hw_init(&mut adaptor); !result)
+    return result;
+
+  if (var result = adaptor.reset(); !result)
+    return result;
+
+  adaptor.txq = std::allocator::new<tx_queue>(&mut adaptor, 0, 256);
+
+  if (var result = adaptor.txq.initialise(); !result)
+    return result;
+
+  adaptor.rxq = std::allocator::new<rx_queue>(&mut adaptor, 0, 256);
+
+  if (var result = adaptor.rxq.initialise(); !result)
+    return result;
+
+  adaptor.addr = macaddr(regs.rtl8125_mac0bkp);
+
+  store_rar(regs, adaptor.addr);
+
+  if (var result = rtl_hw_start(&mut adaptor); !result)
+    return result;
+
+  if (var result = adaptor.enable(); !result)
+    return result;
+
+  adaptor.link = net::netdev::create<rtldev>(&mut adaptor, adaptor.addr);
+
+  io::install_handler(irq, &cast<(adaptor mut *) -> void>(rtl81xx_io_handler), &adaptor);
+
+  std::volatile_store(&regs.rtl8125_ims, interrupts::all);
+
+  if (std::volatile_load(&regs.phystat) & status::lu != 0)
+  {
+    adaptor.link.flags |= net::flags::lower_up;
+
+    std::print("rtl81xx ", adaptor.name, " link up, ", adaptor.link_speed, " ", adaptor.link_duplex);
+  }
+
+  return ok;
+}
+
+pub fn initialise(pci::device &device) -> void
+{
+  var adaptor = std::allocator::new<adaptor>(device);
+
+  if (var result = adaptor.initialise(); !result)
+    std::print("rtl81xx error initialising adaptor - ", result);
+
+  dev::register(dev::dev_t(), adaptor.link);
+}
+
+fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, tx_desc *txds, usize n) -> result
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut txq.lock);
+
+  var tail = txq.sq_tail;
+  var mask = txq.sq_mask;
+
+  if (std::sub_with_borrow(tail, std::volatile_load(&txq.sq_head)).0 + cast(n) > mask)
+    return device_busy;
+
+  var first = cast<tx_desc mut *>((txq.sq + cast<usize>(tail & mask) * sizeof<tx_desc>).ptr);
+
+  for (var i = 0; i < n; ++i)
+  {
+    var index = cast<usize>(tail & mask);
+
+    var txd = cast<tx_desc mut *>((txq.sq + index * sizeof<tx_desc>).ptr);
+
+    txd.cdw1 = 0;
+    txd.addr = (txds + i).addr;
+    txd.length = (txds + i).length;
+
+    if (i != 0)
+    {
+      txd.cdw0 |= cmd::own;
+    }
+
+    if (i + 1 == n)
+    {
+      txd.cdw0 |= cmd::eof;
+
+      txq.packets[index] = packet;
+    }
+
+    tail = std::add_with_carry(tail, 1).0;
+  }
+
+  txq.sq_tail = tail;
+
+  std::atomic_thread_fence();
+
+  first.cdw0 |= cmd::own | cmd::sof;
+
+  std::atomic_thread_fence();
+
+  //std::volatile_store(&adaptor.regs.txpoll, 0x40);
+  std::volatile_store(&adaptor.regs.rtl8125_txpoll, 1);
+
+  return ok;
+}
+
+fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, rx_desc *rxds, usize n) -> result
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rxq.lock);
+
+  var tail = rxq.sq_tail;
+  var mask = rxq.sq_mask;
+
+  if (std::sub_with_borrow(tail, std::volatile_load(&rxq.sq_head)).0 + cast(n) > mask)
+    return device_busy;
+
+  for (var i = 0; i < n; ++i)
+  {
+    var index = cast<usize>(tail & mask);
+
+    var rxd = cast<rx_desc mut *>((rxq.sq + index * sizeof<rx_desc>).ptr);
+
+    rxd.addr = (rxds + i).addr;
+    rxd.length = (rxds + i).length;
+    rxd.vlanctl = 0;
+
+    std::atomic_thread_fence();
+
+    rxd.sts |= sts::own;
+
+    tail = std::add_with_carry(tail, 1).0;
+  }
+
+  rxq.sq_tail = tail;
+
+  std::atomic_thread_fence();
+
+  return ok;
+}
+
+fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut *packet) -> result
+{
+  var guard = std::lock_guard(&mut rxq.lock);
+
+  var head = rxq.sq_head;
+
+  for (;;)
+  {
+    if (head == rxq.sq_tail)
+      return would_block;
+
+    var index = cast<usize>(head & rxq.sq_mask);
+
+    var rxd = cast<rx_desc mut *>((rxq.sq + index * sizeof<rx_desc>).ptr);
+
+    if (rxd.sts & sts::own != 0)
+      return would_block;
+
+    packet.length += cast(rxd.length);
+    packet.host.push_back(vm::physrange(rxd.addr, 2048));
+
+    head = std::add_with_carry(head, 1).0;
+
+    if (rxd.sts & sts::eof != 0)
+      break;
+  }
+
+  rxq.sq_head = head;
+
+  return ok;
+}
+
+pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
+{
+  var txds = std::vector<tx_desc, N:4>();
+
+  packet.foreach_region(|region| {
+    for (var addr = region.addr; addr < region.end; addr += tx_desc::max_payload)
+    {
+      var mut &txd = txds.push_back();
+
+      txd.addr = addr;
+      txd.length = cast<u16>(std::min(region.end - addr, tx_desc::max_payload));
+    }
+  });
+
+  if (var result = adaptor.enqueue(adaptor.txq, packet, txds.data, txds.len); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn retrieve(adaptor mut &adaptor, u16 rxqid, net::packet mut *packet) -> result
+{
+  if (var result = adaptor.dequeue(adaptor.rxq, packet); !result)
+    return result;
+
+  packet.type = net::packet::type::eth;
+
+  return ok;
+}
+
+pub fn refill(adaptor mut &adaptor, u16 rxqid) -> result
+{
+  var head = adaptor.rxq.sq_head;
+  var tail = adaptor.rxq.sq_tail;
+  var mask = adaptor.rxq.sq_mask;
+
+  var rxds = std::vector<rx_desc, N:64>();
+
+  var n = cast<usize>(mask - std::sub_with_borrow(tail, head).0);
+
+  for (; n >= 1; )
+  {
+    var mut &reclaim = adaptor.link.reclaim;
+
+    if (reclaim.empty)
+      break;
+
+    if (reclaim.front.cb && reclaim.front.cb.outstanding != 0)
+      break;
+
+    if (reclaim.front.host.len > n)
+      break;
+
+    for (var host : reclaim.front.host)
+    {
+      var mut &rxd = rxds.push_back();
+
+      rxd.addr = host.addr;
+      rxd.length = 2048;
+      n -= 1;
+    }
+
+    reclaim.pop_front();
+  }
+
+  for (; n >= PAGE_SIZE / 2048; )
+  {
+    var page = vm::allocate_physical_page();
+
+    for (var offset = 0; offset < PAGE_SIZE; offset += 2048)
+    {
+      var mut &rxd = rxds.push_back();
+
+      rxd.addr = vm::lock(page).addr + offset;
+      rxd.length = 2048;
+      n -= 1;
+    }
+  }
+
+  if (var result = adaptor.enqueue(adaptor.rxq, rxds.data, rxds.len); !result)
+    return result;
+
+  return ok;
+}

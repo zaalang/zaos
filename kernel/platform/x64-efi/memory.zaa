@@ -90,6 +90,10 @@ pub fn initialise(EFI_HANDLE Image, EFI_SYSTEM_TABLE *SystemTable, BootInfo mut 
   if (max_physical_pages < 4)
     max_physical_pages = 4; // ensure apic in mapping
 
+  // phys page zero can confuse some hardware
+
+  bootinfo.remove_usable_memory(0, PAGE_SIZE);
+
   //
   // GDT
   //

@@ -63,9 +63,11 @@ pub fn insert_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t
 
   for (; i < bootinfo.usable_memory_len; ++i)
   {
-    if (bootinfo.usable_memory_spans[i].1 == begin)
+    var mut &span = bootinfo.usable_memory_spans[i];
+
+    if (span.1 == begin)
     {
-      bootinfo.usable_memory_spans[i].1 = end;
+      span.1 = end;
 
       break;
     }
@@ -76,8 +78,7 @@ pub fn insert_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t
     if (i == bootinfo.usable_memory_spans.len)
       return false;
 
-    bootinfo.usable_memory_spans[i].0 = begin;
-    bootinfo.usable_memory_spans[i].1 = end;
+    bootinfo.usable_memory_spans[i] = physrange_t(begin, end);
 
     bootinfo.usable_memory_len += 1;
   }
@@ -87,28 +88,30 @@ pub fn insert_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t
 
 pub fn remove_usable_memory(BootInfo mut &bootinfo, physaddr_t begin, physaddr_t end) -> bool
 {
-  for (var i = 0; i < bootinfo.usable_memory_len; ++i)
+  var i = 0;
+
+  for (; i < bootinfo.usable_memory_len; ++i)
   {
     var mut &span = bootinfo.usable_memory_spans[i];
 
-    if (begin < span.end && span.begin < end)
+    if (begin < span.1 && span.0 < end)
     {
-      if (begin < span.begin)
+      if (begin <= span.0)
       {
-        if (end < span.end)
-          span.begin = end;
+        if (end < span.1)
+          span.0 = end;
         else
-          span.begin = span.end;
+          span.0 = span.1;
       }
       else
       {
-        if (end < span.end)
+        if (end < span.1)
         {
-          if (!insert_usable_memory(bootinfo, end, span.end))
+          if (!insert_usable_memory(&mut bootinfo, end, span.1))
             return false;
         }
 
-        span.end = begin;
+        span.1 = begin;
       }
     }
   }

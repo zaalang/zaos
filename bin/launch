@@ -56,18 +56,23 @@ OPTS="$OPTS -device qemu-xhci -device usb-kbd -device usb-tablet"
 #OPTS="$OPTS -device qemu-xhci -device usb-hub,port=4,id=hub -device usb-mouse,port=4.1 -device usb-kbd,port=4.3"
 #OPTS="$OPTS -device virtio-keyboard -device virtio-tablet"
 
-# echo 0000:00:14.0 > /sys/bus/pci/drivers/xhci_hcd/unbind
 # modprobe vfio-pci
+# echo 0000:00:14.0 > /sys/bus/pci/drivers/xhci_hcd/unbind
 # echo 8086 1e31 > /sys/bus/pci/drivers/vfio-pci/new_id
 #OPTS="$OPTS -device ioh3420,bus=pcie.0,addr=1c.0,multifunction=on,port=1,chassis=1,id=root.1"
 #OPTS="$OPTS -device vfio-pci,host=00:14.0,bus=root.1,addr=00.0"
 
-OPTS="$OPTS -netdev id=net0,type=user"
+# modprobe vfio-pci
+# echo 0000:04:00.0 > /sys/bus/pci/devices/0000:04:00.0/driver/unbind
+# echo 10ec 8125 > /sys/bus/pci/drivers/vfio-pci/new_id
+#OPTS="$OPTS -device vfio-pci,host=04:00.0,id=net0"
+
+#OPTS="$OPTS -netdev id=net0,type=user"
 #OPTS="$OPTS -netdev id=net0,type=socket,connect=:1234"
 #OPTS="$OPTS -netdev id=net0,type=tap,ifname=tap0,script=no,downscript=no"
-OPTS="$OPTS -device e1000e,netdev=net0,mac=52:54:00:11:22:33"
+#OPTS="$OPTS -device e1000e,netdev=net0,mac=52:54:00:11:22:33"
 #OPTS="$OPTS -device virtio-net-pci,netdev=net0,romfile="
-OPTS="$OPTS -object filter-dump,id=cap0,netdev=net0,file=net.pcap"
+#OPTS="$OPTS -object filter-dump,id=cap0,netdev=net0,file=net.pcap"
 
 OPTS="$OPTS -device qxl-vga"
 #OPTS="$OPTS -device virtio-gpu-pci"

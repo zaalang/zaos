@@ -4,8 +4,9 @@
 
 import std.stdio;
 import acpi.mcfg;
-import sys;
 import vm : physaddr;
+import sys;
+import heap;
 import platform : PHYSICAL_BASE;
 
 pub enum command : u16
@@ -153,8 +154,13 @@ pub fn initialise() -> void
 
   for (var config : mcfg.entries)
   {
+//    var size = (cast<usize>(config.bus_end) - cast<usize>(config.bus_start) + 1) << 20;
+//    var mapped = heap::mmap(vm::physrange(cast<uintptr>(config.base_address), size));
+
     for (var bus = config.bus_start; bus != config.bus_end; ++bus)
     {
+//      var busentry = cast<pci_header*>(mapped.addr + cast<uintptr>(bus) << 20);
+
       var busentry = cast<pci_header*>(physaddr(cast<uintptr>(config.base_address) + cast<uintptr>(bus) << 20).ptr);
 
       if (busentry.device_id == 0 || busentry.device_id == 0xffff)
@@ -194,7 +200,9 @@ pub fn initialise() -> void
   std::print("pci bus: ", pci.devices.len, " devices");
 
   for (var &device : pci.devices)
+  {
     std::printf("  {}:{}.{} {:04x} {:04x} {}\n", device.bus, device.dev, device.func, device.vendor_id, device.device_id, device.class_code);
+  }
 }
 
 pub fn read_config<T>(device &device, var offset) -> T
@@ -253,6 +261,10 @@ pub fn read_base_address(device &device, usize bar) -> physaddr
 
 pub fn read_size_register(device &device, usize bar) -> usize
 {
+  var cmd = read_command(device);
+
+  write_command(device, cmd & ~command::io_space & ~command::memory_space);
+
   var base = read_base_register(device, bar);
 
   std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar], 0xffffffff);
@@ -273,11 +285,17 @@ pub fn read_size_register(device &device, usize bar) -> usize
 
       std::volatile_store(&cast<pci_general_device mut *>(device.header).bar[bar + 1], basehi);
 
+      write_command(device, cmd);
+
       return (cast<usize>(~size | 0xf) | cast<usize>(~sizehi) << 32) + 1;
     }
 
+    write_command(device, cmd);
+
     return cast<usize>(~size | 0xf) + 1;
   }
+
+  write_command(device, cmd);
 
   return cast<usize>(~size | 0x3) + 1;
 }

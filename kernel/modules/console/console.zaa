@@ -11,8 +11,6 @@ import vfs;
 import process as _ : process;
 import support.rc : Rc;
 
-using std::fd_result;
-
 pub struct console : pub chr::chrdev
 {
   pub console()
@@ -73,9 +71,9 @@ pub struct console : pub chr::chrdev
 
 extern fn dbgln(uintptr fd, u8 *buffer, usize length) -> void;
 
-extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> fd_result
+extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> std::fd_result
 {
-  var result = fd_result();
+  var result = std::fd_result();
 
   //import kprint;
   //kprint::kprintf("{}", std::string_view(buffer, length));

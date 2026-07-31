@@ -4,6 +4,7 @@
 
 import std.stdio;
 import std.vector;
+import pci;
 import io;
 import dev;
 import chr.chrdev;
