@@ -4,9 +4,11 @@
 
 import std.stdio;
 import std.atomic;
+import vm;
+import io;
 import net;
 import rtl81xx;
-import vm;
+import support.rc : Rc;
 
 pub struct rtldev : pub net::netdev
 {
@@ -14,6 +16,8 @@ pub struct rtldev : pub net::netdev
     : super(&impl this),
       adaptor(&adaptor)
   {
+    this.type = net::type::ether;
+
     this.hwaddr = address;
   }
 
@@ -42,17 +46,17 @@ pub struct rtldev : pub net::netdev
     return ok;
   }
 
-  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) override -> net::result
+  pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) override -> net::result
   {
-    if (var result = this.adaptor.transmit(packet); !result)
+    if (var result = this.adaptor.transmit(&mut cb, packet); !result)
       return cast<net::result>(result);
 
     return ok;
   }
 
-  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) override -> net::result
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut &packet) override -> net::result
   {
-    if (var result = this.adaptor.retrieve(rxqid, packet); !result)
+    if (var result = this.adaptor.retrieve(rxqid, &mut packet); !result)
       return cast<net::result>(result);
 
     return ok;

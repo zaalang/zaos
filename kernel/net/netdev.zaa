@@ -6,6 +6,7 @@ import std.atomic;
 import std.function;
 import net.result;
 import net.packet;
+import net.qdisc;
 import net.netlink.link as netlink.link;
 import net.protocols.ipv6.state as ipv6.state;
 import io;
@@ -24,9 +25,25 @@ pub enum query
   device_path,
 }
 
+pub enum type : u64
+{
+  other = 0x01,
+  ether = 0x06,
+  ppp = 0x17,
+  loop = 0x18,
+  modem = 0x30,
+  tunnel = 0x83,
+  bridge = 0xd1,
+
+  pub const fn ~(type lhs) -> type { return cast<type>(~cast<u64>(lhs)); }
+  pub const fn &(type lhs, type rhs) -> type { return cast<type>(cast<u64>(lhs) & cast<u64>(rhs)); }
+  pub const fn |(type lhs, type rhs) -> type { return cast<type>(cast<u64>(lhs) | cast<u64>(rhs)); }
+}
+
 pub enum flags : u64
 {
   up = 0x1,
+  loopback = 0x8,
   lower_up = 0x10000,
 
   pub const fn ~(flags lhs) -> flags { return cast<flags>(~cast<u64>(lhs)); }
@@ -87,15 +104,15 @@ pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, hwaddr &addr) t
 
 pub struct netdev
 {
+  pub type type;
   pub flags flags;
 
   pub hwaddr hwaddr;
+  pub net::qdisc qdisc;
   pub ipv6::ifstate ipv6;
 
   pub thread mut *packet_handler;
   pub semaphore packet_handler_doorbell;
-
-  pub std::list<net::packet> reclaim;
 
   pub fn create<T>(var && ...args) -> Rc<T>
   {
@@ -130,14 +147,14 @@ pub struct netdev
     return ok;
   }
 
-  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) -> net::result
+  pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) -> net::result
   {
-    return this.ops.transmit(&mut this, txqid, packet);
+    return this.ops.transmit(&mut this, txqid, &mut cb, &mut packet);
   }
 
-  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut &packet) -> net::result
   {
-    return this.ops.retrieve(&mut this, rxqid, packet);
+    return this.ops.retrieve(&mut this, rxqid, &mut packet);
   }
 
   pub fn refill(this mut &, u16 rxqid) -> net::result
@@ -172,8 +189,8 @@ pub vtable device_operations
 {
   pub fn query(this &, net::query query, std::string mut &result) -> net::result;
 
-  pub fn transmit(this mut &, u16 txqid, net::packet mut *packet) -> net::result;
-  pub fn retrieve(this mut &, u16 rxqid, net::packet mut *packet) -> net::result;
+  pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) -> net::result;
+  pub fn retrieve(this mut &, u16 rxqid, net::packet mut &packet) -> net::result;
   pub fn refill(this mut &, u16 rxqid) -> net::result;
 }
 

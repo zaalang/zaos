@@ -1,29 +1,31 @@
 //
-// e1000e interface
+// lo interface
 //
 
 import std.stdio;
 import std.atomic;
 import vm;
 import io;
+import dev;
 import net;
-import e1000e;
 import support.rc : Rc;
 
-pub struct emdev : pub net::netdev
-{
-  pub emdev(e1000e::adaptor mut &adaptor, net::macaddr &address)
-    : super(&impl this),
-      adaptor(&adaptor)
-  {
-    this.type = net::type::ether;
+using net::inaddr;
+using net::in6addr;
 
-    this.hwaddr = address;
+pub struct lo : pub net::netdev
+{
+  pub lo()
+    : super(&impl this)
+  {
+    this.type = net::type::loop;
+    this.flags |= net::flags::loopback;
+    this.flags |= net::flags::lower_up;
   }
 
   pub fn name(this &) -> std::string
   {
-    return this.adaptor.name;
+    return "lo";
   }
 
   pub fn query(this &, net::query query, std::string mut &result) override -> net::result
@@ -34,13 +36,13 @@ pub struct emdev : pub net::netdev
         result = std::format("");
 
       case type:
-        result = std::format("ether");
+        result = std::format("loopback");
 
       case address:
         result = std::format("{}", this.hwaddr);
 
       case device_path:
-        result = std::format("net/{}/0", this.name);
+        result = std::format("net/lo");
     }
 
     return ok;
@@ -48,29 +50,31 @@ pub struct emdev : pub net::netdev
 
   pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) override -> net::result
   {
-    if (var result = this.adaptor.transmit(&mut cb, packet); !result)
-      return cast<net::result>(result);
+    net::receive(&this, &mut packet);
+
+    io::complete(&mut cb, 0);
 
     return ok;
   }
 
   pub fn retrieve(this mut &, u16 rxqid, net::packet mut &packet) override -> net::result
   {
-    if (var result = this.adaptor.retrieve(rxqid, &mut packet); !result)
-      return cast<net::result>(result);
-
-    return ok;
+    return not_supported;
   }
 
   pub fn refill(this mut &, u16 rxqid) override -> net::result
   {
-    if (var result = this.adaptor.refill(rxqid); !result)
-      return cast<net::result>(result);
-
     return ok;
   }
 
-  pub ~emdev() = default;
+  pub ~lo() = default;
+}
 
-  e1000e::adaptor mut &adaptor;
+pub fn initialise() -> net::result
+{
+  var dev = net::netdev::create<lo>();
+
+  dev::register(dev::dev_t(), dev);
+
+  return ok;
 }

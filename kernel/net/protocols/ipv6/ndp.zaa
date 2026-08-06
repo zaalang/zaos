@@ -103,8 +103,6 @@ pub fn receive_neighbour_solicitation(net::netdev mut *link, net::rx mut &rx, ne
   if (!ifa)
     return not_found;
 
-  var mut &pkt = link.reclaim.push_back(pkt.start, pkt.length, pkt.release());
-
   pkt.trim(sizeof<neighbour_discovery_header>);
 
   hdr.type = type::neighbour_advertisement;
@@ -218,14 +216,7 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
 
 pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
 {
-  var hdrvec = vm::iovec();
-
-  if (var result = vm::lock(vm::allocate_physical_page(), &mut hdrvec); !result)
-    return cast(result);
-
-  var pkt = net::packet();
-
-  pkt.inset(hdrvec.host[0]);
+  var pkt = net::packet::with_capacity(256, 2048);
 
   var hdr = pkt.prepend<neighbour_discovery_header>(sizeof<neighbour_discovery_header> + 8);
 
@@ -246,9 +237,6 @@ pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &d
   io::initiate(&mut response.cb, 1);
 
   ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt);
-
-  if (response.wait(); !response)
-    return cast(response.result);
 
   return ok;
 }
@@ -274,14 +262,7 @@ pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &s
 
 pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
 {
-  var hdrvec = vm::iovec();
-
-  if (var result = vm::lock(vm::allocate_physical_page(), &mut hdrvec); !result)
-    return cast(result);
-
-  var pkt = net::packet();
-
-  pkt.inset(hdrvec.host[0]);
+  var pkt = net::packet::with_capacity(256, 2048);
 
   var hdr = pkt.prepend<router_discovery_header>(sizeof<router_discovery_header> + 8);
 
@@ -301,9 +282,6 @@ pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_
   io::initiate(&mut response.cb, 1);
 
   ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt);
-
-  if (response.wait(); !response)
-    return cast(response.result);
 
   return ok;
 }

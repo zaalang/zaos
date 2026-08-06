@@ -226,6 +226,8 @@ pub struct net_list_node : pub sysfs::sysfs_file_node
         stream.begin("flags", '[');
         if (dev.flags & net::flags::up == net::flags::up)
           stream.append("UP");
+        if (dev.flags & net::flags::loopback == net::flags::loopback)
+          stream.append("LOOPBACK");
         if (dev.flags & net::flags::lower_up == net::flags::lower_up)
           stream.append("LOWER_UP");
         stream.end(']');

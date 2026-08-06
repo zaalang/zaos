@@ -29,6 +29,7 @@ import net.protocols.ip.state as ip.state;
 import net.protocols.udp.state as udp.state;
 import net.protocols.ethernet as ethernet;
 import net.netlink.route as netlink.route;
+import net.lo as lo;
 
 struct network_stack
 {
@@ -69,23 +70,35 @@ fn packet_handler(netdev mut *link) -> void
 
   for (;;)
   {
-    var bufcnt = 32;
+    var budget = 64;
 
-    for (; bufcnt != 0; bufcnt -= 1)
+    for (; budget > 31; budget -= 1)
     {
       var pkt = net::packet();
 
-      if (!link.retrieve(rxqid, &pkt))
+      if (!link.retrieve(rxqid, &mut pkt))
         break;
 
       receive(link, &mut pkt);
-
-      vm::unlock(pkt.host);
     }
 
     link.refill(rxqid);
 
-    if (bufcnt == 0)
+    for (; budget > 15; budget -= 1)
+    {
+      if (link.qdisc.run(link) < cast(1))
+        break;
+    }
+
+    for (; budget > 1; budget -= 1)
+    {
+      var pkt = net::packet();
+
+      if (!link.qdisc.dequeue(&mut pkt))
+        break;
+    }
+
+    if (budget < 32)
       continue;
 
     link.packet_handler_doorbell.wait();
@@ -99,12 +112,12 @@ pub fn open(netdev mut *link, vfs::fd mut &fd, process mut *process, u64 flags, 
   return link.open(&mut fd, process, flags, mode);
 }
 
-pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut *packet) -> void
+pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) -> void
 {
-  packet.cb = cb;
+  if (var result = link.qdisc.enqueue(link, &mut cb, &mut pkt); !result)
+    io::complete(&mut cb, result);
 
-  if (var result = link.transmit(0, packet); !result)
-    io::complete(&mut packet.cb, result);
+  link.qdisc.run(link);
 }
 
 pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
@@ -164,7 +177,14 @@ pub fn up_link(netdev mut *link) -> void
 
   scheduler::enqueue(link.packet_handler, thread::priority::normal + 2);
 
-  ipv6::configure(link);
+  switch (link.type)
+  {
+    case loop:
+      link.ipv6.add_addr(in6addr_loopback, 128);
+
+    case ether:
+      ipv6::configure(link);
+  }
 }
 
 pub fn down_link(netdev mut *link) -> void
@@ -207,6 +227,9 @@ pub fn initialise() -> void
   var dev = chr::chrdev::create<ctldev>();
 
   dev::register(dev::dev_t(), dev);
+
+  if (var result = lo::initialise(); !result)
+    std::panic("bad_lo_init");
 
   if (var result = ip::initialise(&mut stack.ip); !result)
     std::panic("bad_ip_init");

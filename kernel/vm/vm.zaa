@@ -689,14 +689,6 @@ pub fn lock(virtrange range, protection prot, vm::iovec mut &result) -> vm::resu
   return lock(&mut platform::pagetable, &mut address_space(range.addr), range, prot, &mut result.host);
 }
 
-pub fn lock(page mut *page, vm::iovec mut &result) -> vm::result
-{
-  result.length += PAGE_SIZE;
-  result.host.push_back(vm::lock(page));
-
-  return ok;
-}
-
 pub fn unlock(physrange range) -> void
 {
   for (var phys = range.begin; phys < range.end; phys = (phys + PAGE_SIZE) & ~PAGE_MASK)

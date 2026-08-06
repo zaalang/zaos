@@ -576,7 +576,7 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
   {
     target_cpu.runqueue.wake(thread);
 
-    if (target_cpu.current_thread.priority < thread.priority)
+    if (target_cpu.id != cpu::id && target_cpu.current_thread.priority < thread.priority)
     {
       var irqs = platform::disable_interrupts();
 

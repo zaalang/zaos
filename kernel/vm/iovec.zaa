@@ -74,10 +74,10 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
 
 pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
 {
+  var i = dst.host.begin;
+
   if (dst.length < offset + length)
     return overflow;
-
-  var i = dst.host.begin;
 
   if (offset != 0 && length != 0)
   {
@@ -113,10 +113,10 @@ pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
 
 pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::result
 {
+  var i = src.host.begin;
+
   if (src.length < offset + length)
     return overflow;
-
-  var i = src.host.begin;
 
   if (offset != 0 && length != 0)
   {

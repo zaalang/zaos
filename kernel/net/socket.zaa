@@ -147,39 +147,41 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, c
       src_ip = cast<sockaddr_in6 &>(socket.sockname).sin6_addr;
   }
 
-  if (src_ip.is_unspecified)
-  {
-    src_ip = inaddr::in6();
-
-    if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut src_ip.in6); !result)
-      return result;
-  }
-
   var dst = net::hwaddr();
 
-  if (var result = route.link.ipv6.resolve_neighbour(route.link, &mut socket.writeable.cb, nexthop.in6, src_ip.in6, &mut dst); !result)
-    return result;
+  switch (route.link.type)
+  {
+    case loop:
 
-  var hdrvec = vm::iovec();
+      if (src_ip.is_unspecified)
+      {
+        src_ip = dst_ip;
+      }
 
-  if (var result = vm::lock(vm::allocate_physical_page(), &mut hdrvec); !result)
-    return cast(result);
+    case ether:
 
-  var pkt = net::packet();
+      if (src_ip.is_unspecified)
+      {
+        src_ip = inaddr::in6();
 
-  pkt.inset(hdrvec.host[0]);
-  pkt.append(iovec, offset, length);
+        if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut src_ip.in6); !result)
+          return result;
+      }
+
+      if (var result = route.link.ipv6.resolve_neighbour(route.link, &mut socket.writeable.cb, nexthop.in6, src_ip.in6, &mut dst); !result)
+        return result;
+  }
 
   switch (socket.type)
   {
     case SOCK_RAW:
-      return ip::write(socket, route.link, dst_ip.in6, src_ip.in6, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
+      return ip::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, iovec, offset, length, ctrl, ctrllen);
 
     case SOCK_DGRAM:
-      return udp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
+      return udp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, iovec, offset, length, ctrl, ctrllen);
 
 //    case SOCK_STREAM:
-//      return tcp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, &mut pkt, ctrl, ctrllen);
+//      return tcp::write(socket, route.link, dst_ip, src_ip, dst, route.link.hwaddr, iovec, offset, length, ctrl, ctrllen);
 
     else:
       return not_supported;

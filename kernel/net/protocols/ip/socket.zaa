@@ -183,8 +183,15 @@ fn getsockname(socket mut *socket, sockaddr_in6 mut *addr) -> net::result
 
       addr.sa_family = AF_INET6;
 
-      if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut addr.sin6_addr); !result)
-        return result;
+      switch (route.link.type)
+      {
+        case loop:
+          addr.sin6_addr = dst_ip.in6;
+
+        case ether:
+          if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut addr.sin6_addr); !result)
+            return result;
+      }
 
     case AF_INET6:
 
@@ -300,18 +307,20 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
   return cast(count);
 }
 
-pub fn write(socket mut *socket, net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt, ctrlhdr *ctrl, usize ctrllen) -> net::result
+pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &src_ip, hwaddr &dst, hwaddr &src, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> net::result
 {
+  var pkt = net::packet::with_capacity(256, length);
+
+  if (var result = pkt.append(iovec, offset, length); !result)
+    return result;
+
   var response = io::response();
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, cast(socket.protocol), dst_ip, src_ip, dst, link.hwaddr, &mut pkt);
+  ipv6::send(link, &mut response.cb, cast(socket.protocol), dst_ip.in6, src_ip.in6, dst, link.hwaddr, &mut pkt);
 
-  if (response.wait(); !response)
-    return cast(response.result);
-
-  return cast(pkt.length);
+  return cast(length);
 }
 
 pub fn shutdown(socket mut *socket, u64 how) -> net::result

@@ -79,7 +79,6 @@ fn destroy(request mut *rq) -> void
   std::assert(!rq.device);
   std::assert(!rq.cb);
 
-  rq.status = request::status::pending;
   rq.host.clear();
 
   request::allocator.free(rq);

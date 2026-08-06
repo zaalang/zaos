@@ -166,6 +166,7 @@ pub fn read(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &i
   var rq = request::create();
   rq.device = device;
   rq.type = request::type::read;
+  rq.status = request::status::pending;
   rq.position = position;
   rq.length = length;
   rq.cb = cb;
@@ -197,6 +198,7 @@ pub fn write(blkdev mut *device, Rc<io::iocb> mut &cb, u64 position, vm::iovec &
   var rq = request::create();
   rq.device = device;
   rq.type = request::type::write;
+  rq.status = request::status::pending;
   rq.position = position;
   rq.length = length;
   rq.cb = cb;
@@ -217,6 +219,7 @@ pub fn sync(blkdev mut *device, Rc<io::iocb> mut &cb) -> void
   var rq = request::create();
   rq.device = device;
   rq.type = request::type::sync;
+  rq.status = request::status::pending;
   rq.cb = cb;
   rq.ref();
 

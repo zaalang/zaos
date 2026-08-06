@@ -115,5 +115,14 @@ pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6a
   hdr.source = src_ip;
   hdr.destination = dst_ip;
 
-  ethernet::send(link, &mut cb, ethernet::ether_type::ipv6, dst, src, &mut pkt);
+  pkt.type = net::packet::type::ipv6;
+
+  switch (link.type)
+  {
+    case loop:
+      net::transmit(link, &mut cb, &mut pkt);
+
+    case ether:
+      ethernet::send(link, &mut cb, ethernet::ether_type::ipv6, dst, src, &mut pkt);
+  }
 }

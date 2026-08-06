@@ -257,10 +257,8 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ct
   return cast(count);
 }
 
-pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt, ctrlhdr *ctrl, usize ctrllen) -> net::result
+pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &src_ip, hwaddr &dst, hwaddr &src, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> net::result
 {
-  var mut &state = *cast<state mut *>(socket.state);
-
   var dst_port = 0;
 
   for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < ctrllen; )
@@ -309,16 +307,20 @@ pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &
   if (src_port == 0)
     return address_not_available;
 
+  var mut &state = *cast<state mut *>(socket.state);
+
+  var pkt = net::packet::with_capacity(256, length);
+
+  if (var result = pkt.append(iovec, offset, length); !result)
+    return result;
+
   var response = io::response();
 
   io::initiate(&mut response.cb, 1);
 
   udp::send(link, &mut response.cb, dst_port, src_port, dst_ip.in6, src_ip.in6, dst, link.hwaddr, &mut pkt);
 
-  if (response.wait(); !response)
-    return cast(response.result);
-
-  return cast(pkt.length);
+  return cast(length);
 }
 
 pub fn shutdown(socket mut *socket, u64 how) -> net::result

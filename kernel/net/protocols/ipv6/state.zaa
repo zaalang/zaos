@@ -99,6 +99,11 @@ pub fn add_addr(ifstate mut &state, in6addr &addr, usize prefixlen) -> net::resu
 
   state.addrs.push_back(std::allocator::new<ifaddr>(addr, prefixlen));
 
+  net::enumerate(|id, link| {
+    if (link.type == net::type::loop)
+      net::routes.add(net::inaddr(addr), 128, net::inaddr(), link);
+  });
+
   return ok;
 }
 

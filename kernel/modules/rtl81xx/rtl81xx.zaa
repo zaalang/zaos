@@ -365,7 +365,7 @@ pub struct tx_queue
 
     cast<tx_desc mut *>((this.sq + cast(entries - 1) * sizeof<tx_desc>).ptr).cdw0 = cmd::eor;
 
-    this.packets.resize(cast(entries));
+    this.notifys.resize(cast(entries));
   }
 
   pub tx_queue(tx_queue &&) = default;
@@ -378,7 +378,7 @@ pub struct tx_queue
   u32 sq_tail;
   u32 sq_mask;
 
-  std::vector<net::packet mut *> packets;
+  std::vector<Rc<io::iocb>> notifys;
 
   usize index;
   adaptor mut &adaptor;
@@ -750,8 +750,10 @@ fn rtl81xx_txq_handler(tx_queue mut *txq) -> void
     if (txd.cdw0 & cmd::own != 0)
       break;
 
-    if (var packet = std::exchange(&mut txq.packets[index], null))
-      io::complete(&mut packet.cb, packet.length);
+    var sts = 0;
+
+    if (var notify = std::exchange(&mut txq.notifys[index], null))
+      io::complete(&mut notify, sts);
 
     head = std::add_with_carry(head, 1).0;
   }
@@ -934,7 +936,7 @@ pub fn initialise(pci::device &device) -> void
   dev::register(dev::dev_t(), adaptor.link);
 }
 
-fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, tx_desc *txds, usize n) -> result
+fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, Rc<io::iocb> mut &cb, tx_desc *txds, usize n) -> result
 {
   var guard = std::lock_guard(&mut cpu::irqlock, &mut txq.lock);
 
@@ -965,7 +967,7 @@ fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, net::packet mut *packet, tx_
     {
       txd.cdw0 |= cmd::eof;
 
-      txq.packets[index] = packet;
+      txq.notifys[index] = cb;
     }
 
     tail = std::add_with_carry(tail, 1).0;
@@ -1019,7 +1021,7 @@ fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, rx_desc *rxds, usize n) -> r
   return ok;
 }
 
-fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut *packet) -> result
+fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut &packet) -> result
 {
   var guard = std::lock_guard(&mut rxq.lock);
 
@@ -1051,7 +1053,7 @@ fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut *packet) -> 
   return ok;
 }
 
-pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
+pub fn transmit(adaptor mut &adaptor, Rc<io::iocb> mut &cb, net::packet &packet) -> result
 {
   var txds = std::vector<tx_desc, N:4>();
 
@@ -1065,15 +1067,15 @@ pub fn transmit(adaptor mut &adaptor, net::packet mut *packet) -> result
     }
   });
 
-  if (var result = adaptor.enqueue(adaptor.txq, packet, txds.data, txds.len); !result)
+  if (var result = adaptor.enqueue(adaptor.txq, &mut cb, txds.data, txds.len); !result)
     return result;
 
   return ok;
 }
 
-pub fn retrieve(adaptor mut &adaptor, u16 rxqid, net::packet mut *packet) -> result
+pub fn retrieve(adaptor mut &adaptor, u16 rxqid, net::packet mut &packet) -> result
 {
-  if (var result = adaptor.dequeue(adaptor.rxq, packet); !result)
+  if (var result = adaptor.dequeue(adaptor.rxq, &mut packet); !result)
     return result;
 
   packet.type = net::packet::type::eth;
@@ -1090,31 +1092,6 @@ pub fn refill(adaptor mut &adaptor, u16 rxqid) -> result
   var rxds = std::vector<rx_desc, N:64>();
 
   var n = cast<usize>(mask - std::sub_with_borrow(tail, head).0);
-
-  for (; n >= 1; )
-  {
-    var mut &reclaim = adaptor.link.reclaim;
-
-    if (reclaim.empty)
-      break;
-
-    if (reclaim.front.cb && reclaim.front.cb.outstanding != 0)
-      break;
-
-    if (reclaim.front.host.len > n)
-      break;
-
-    for (var host : reclaim.front.host)
-    {
-      var mut &rxd = rxds.push_back();
-
-      rxd.addr = host.addr;
-      rxd.length = 2048;
-      n -= 1;
-    }
-
-    reclaim.pop_front();
-  }
 
   for (; n >= PAGE_SIZE / 2048; )
   {

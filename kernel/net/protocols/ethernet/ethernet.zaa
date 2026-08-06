@@ -64,5 +64,7 @@ pub fn send(netdev mut *link, Rc<io::iocb> mut &cb, ether_type type, hwaddr &dst
   hdr.source = src;
   hdr.type = type;
 
-  net::transmit(link, &mut cb, &pkt);
+  pkt.type = net::packet::type::eth;
+
+  net::transmit(link, &mut cb, &mut pkt);
 }

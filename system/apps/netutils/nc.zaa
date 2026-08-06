@@ -133,7 +133,7 @@ fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
   if (bytes < 0)
     return bytes;
 
-  std::print(std::string_view(buffer.data, cast<usize>(bytes)));
+  std::stdout.write(buffer.data, cast<usize>(bytes));
 
   return 0;
 }
@@ -170,22 +170,29 @@ fn readwrite(i32[2] fds, opts &opts) -> i32
         continue;
       }
 
-      var nout = os::write(&mut thread_ring, fout, buffer.data, cast(nin));
-
-      while (nout == EAGAIN)
+      for (var n = nin; n != 0; )
       {
-        var tp = os::timespec(void);
-        os::clock_gettime(os::clock::monotonic, &tp);
+        var nout = os::write(&mut thread_ring, fout, buffer.data + cast(nin - n), cast(n));
 
-        var pollset = [ os::pollevt(fout, POLLFD, POLLOUT, 0) ];
+        while (nout == EAGAIN)
+        {
+          var tp = os::timespec(void);
+          os::clock_gettime(os::clock::monotonic, &tp);
 
-        os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+          var pollset = [ os::pollevt(fout, POLLFD, POLLOUT, 0) ];
 
-        nout = os::write(&mut thread_ring, fout, buffer.data, cast(nin));
+          os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+          nout = os::write(&mut thread_ring, fout, buffer.data + cast(nin - n), cast(n));
+        }
+
+        if (nout < 0)
+        {
+          return nout;
+        }
+
+        n -= nout;
       }
-
-      if (nout < 0)
-        return nout;
     }
 
     var soerror = i32();

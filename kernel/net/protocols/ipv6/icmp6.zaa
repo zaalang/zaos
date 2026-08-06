@@ -58,8 +58,6 @@ pub fn receive_echo_request(net::netdev mut *link, net::rx mut &rx, net::packet 
   if (!hdr)
     return protocol_error;
 
-  var mut &pkt = link.reclaim.push_back(pkt.start, pkt.length, pkt.release());
-
   hdr.type = type::echo_reply;
   hdr.code = code::none;
   hdr.cksum = [0, 0];
@@ -142,8 +140,6 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
 
 pub fn error_reply(net::netdev mut *link, type type, code code, net::rx &rx, net::packet mut &pkt) -> net::result
 {
-  var mut &pkt = link.reclaim.push_back(pkt.start, pkt.length, pkt.release());
-
   pkt.trim(std::min(pkt.length, 256));
   pkt.extend((pkt.start - rx.inhdr) + sizeof<icmp6_header>);
 

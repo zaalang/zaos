@@ -1,0 +1,181 @@
+//
+// net qdisc
+//
+
+import std.stdlib;
+import std.vector;
+import net.result;
+import io;
+import vm;
+import slab : slab_allocator;
+import mutex as _ : mutex;
+import support.rc : Rc;
+
+struct txpkt
+{
+  enum status
+  {
+    pending,
+    running,
+  }
+
+  status status;
+
+  net::packet pkt;
+
+  Rc<io::iocb> cb;
+
+  txpkt mut *next;
+
+  u8[48] reserved;
+
+  fn allocator()
+  {
+    static allocator = #slab_allocator<txpkt>();
+
+    return &allocator;
+  }
+
+  fn create() -> txpkt mut *
+  {
+    return allocator.allocate();
+  }
+
+  txpkt() = default;
+  ~txpkt() = default;
+}
+
+pub struct qdisc
+{
+  mutex lock;
+
+  usize len;
+
+  txpkt mut *head;
+  txpkt mut * mut *last;
+
+  fn append(this mut &, txpkt mut *tx) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    *this.last = tx;
+    this.last = &tx.next;
+
+    this.len += 1;
+  }
+
+  fn pop_pending(this mut &) -> txpkt mut *
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for (var curr = &this.head; *curr; curr = &curr.next)
+    {
+      var tx = *curr;
+
+      if (tx.status == txpkt::status::pending)
+      {
+        *curr = curr.next;
+
+        if (!*curr)
+          this.last = curr;
+
+        this.len -= 1;
+
+        tx.next = null;
+
+        return tx;
+      }
+    }
+
+    return null;
+  }
+
+  fn pop_ready(this mut &) -> txpkt mut *
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    for (var curr = &this.head; *curr; curr = &curr.next)
+    {
+      var tx = *curr;
+
+      if (tx.cb.outstanding <= 0)
+      {
+        *curr = curr.next;
+
+        if (!*curr)
+          this.last = curr;
+
+        this.len -= 1;
+
+        tx.next = null;
+
+        return tx;
+      }
+    }
+
+    return null;
+  }
+
+  pub qdisc()
+  {
+    this.last = &this.head;
+  }
+
+  pub ~qdisc() = default;
+}
+
+pub fn enqueue(qdisc mut &qdisc, net::netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) -> net::result
+{
+  if (qdisc.len > 1024)
+    return device_busy;
+
+  var tx = txpkt::create();
+  tx.pkt.type = pkt.type;
+  tx.pkt.start = pkt.start;
+  tx.pkt.length = pkt.length;
+  tx.pkt.host = pkt.release();
+  tx.status = txpkt::status::pending;
+  tx.cb = cb;
+
+  qdisc.append(tx);
+
+  return ok;
+}
+
+pub fn run(qdisc mut &qdisc, net::netdev mut *link) -> net::result
+{
+  var tx = qdisc.pop_pending();
+
+  if (!tx)
+    return cast(0);
+
+  switch (link.transmit(0, &mut tx.cb, &mut tx.pkt))
+  {
+    case net::result::ok:
+      tx.status = txpkt::status::running;
+  }
+
+  qdisc.append(tx);
+
+  return cast(1);
+}
+
+pub fn dequeue(qdisc mut &qdisc, net::packet mut &pkt) -> net::result
+{
+  var tx = qdisc.pop_ready();
+
+  if (!tx)
+    return would_block;
+
+  pkt.type = tx.pkt.type;
+  pkt.start = tx.pkt.start;
+  pkt.length = tx.pkt.length;
+  pkt.host = tx.pkt.release();
+
+  tx.cb = null;
+  tx.pkt.host.clear();
+
+  txpkt::allocator.free(tx);
+
+  return ok;
+}
