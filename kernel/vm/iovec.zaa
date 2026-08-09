@@ -33,6 +33,12 @@ pub struct iovec
     return &this;
   }
 
+  pub fn append(this mut &, vm::physrange range) -> void
+  {
+    this.length += range.size;
+    this.host.push_back(range);
+  }
+
   pub ~iovec()
   {
     vm::unlock(host);
@@ -48,14 +54,15 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
 {
   var i = this.host.begin;
 
+  for (; i != this.host.end && (*i).size <= offset; ++i)
+    offset -= (*i).size;
+
   if (offset != 0 && length != 0)
   {
-    for (; i != this.host.end && (*i).size <= offset; ++i)
-      offset -= (*i).size;
-
+    var addr = (*i).addr + offset;
     var bytes = std::min((*i).size - offset, length);
 
-    callback(vm::physrange((*i).addr + offset, bytes));
+    callback(vm::physrange(addr, bytes));
 
     length -= bytes;
     offset = 0;
@@ -64,9 +71,10 @@ pub fn foreach_region_in(iovec &this, usize offset, usize length, var &&callback
 
   for (; i != this.host.end && length != 0; ++i)
   {
+    var addr = (*i).addr;
     var bytes = std::min((*i).size, length);
 
-    callback(vm::physrange((*i).addr, bytes));
+    callback(vm::physrange(addr, bytes));
 
     length -= bytes;
   }
@@ -79,15 +87,15 @@ pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
   if (dst.length < offset + length)
     return overflow;
 
+  for (; i != dst.host.end && (*i).size <= offset; ++i)
+    offset -= (*i).size;
+
   if (offset != 0 && length != 0)
   {
-    for (; i != dst.host.end && (*i).size <= offset; ++i)
-      offset -= (*i).size;
-
-    var data = ((*i).addr + offset).ptr;
+    var addr = (*i).addr + offset;
     var bytes = std::min((*i).size - offset, length);
 
-    std::memcpy(data, src, bytes);
+    std::memcpy(addr.ptr, src, bytes);
 
     src = cast<void*>(cast<uintptr>(src) + bytes);
 
@@ -98,10 +106,10 @@ pub fn memcpy(iovec &dst, usize offset, void *src, usize length) -> vm::result
 
   for (; i != dst.host.end && length != 0; ++i)
   {
-    var data = (*i).addr.ptr;
+    var addr = (*i).addr;
     var bytes = std::min((*i).size, length);
 
-    std::memcpy(data, src, bytes);
+    std::memcpy(addr.ptr, src, bytes);
 
     src = cast<void*>(cast<uintptr>(src) + bytes);
 
@@ -118,15 +126,15 @@ pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::resu
   if (src.length < offset + length)
     return overflow;
 
+  for (; i != src.host.end && (*i).size <= offset; ++i)
+    offset -= (*i).size;
+
   if (offset != 0 && length != 0)
   {
-    for (; i != src.host.end && (*i).size <= offset; ++i)
-      offset -= (*i).size;
-
-    var data = ((*i).addr + offset).ptr;
+    var addr = (*i).addr + offset;
     var bytes = std::min((*i).size - offset, length);
 
-    std::memcpy(dst, data, bytes);
+    std::memcpy(dst, addr.ptr, bytes);
 
     dst = cast<void mut *>(cast<uintptr>(dst) + bytes);
 
@@ -137,13 +145,52 @@ pub fn memcpy(void mut *dst, iovec &src, usize offset, usize length) -> vm::resu
 
   for (; i != src.host.end && length != 0; ++i)
   {
-    var data = (*i).addr.ptr;
+    var addr = (*i).addr;
     var bytes = std::min((*i).size, length);
 
-    std::memcpy(dst, data, bytes);
+    std::memcpy(dst, addr.ptr, bytes);
 
     dst = cast<void mut *>(cast<uintptr>(dst) + bytes);
 
+    length -= bytes;
+  }
+
+  return ok;
+}
+
+pub fn memcpy(iovec &dst, usize offset, iovec &src, usize srcoffset, usize length) -> vm::result
+{
+  var i = dst.host.begin;
+
+  if (dst.length < offset + length)
+    return overflow;
+
+  for (; i != dst.host.end && (*i).size <= offset; ++i)
+    offset -= (*i).size;
+
+  if (offset != 0 && length != 0)
+  {
+    var addr = (*i).addr + offset;
+    var bytes = std::min((*i).size - offset, length);
+
+    if (var result = vm::memcpy(addr.ptr, src, srcoffset, bytes); !result)
+      return result;
+
+    srcoffset += bytes;
+    length -= bytes;
+    offset = 0;
+    i += 1;
+  }
+
+  for (; i != dst.host.end && length != 0; ++i)
+  {
+    var addr = (*i).addr;
+    var bytes = std::min((*i).size, length);
+
+    if (var result = vm::memcpy(addr.ptr, src, srcoffset, bytes); !result)
+      return result;
+
+    srcoffset += bytes;
     length -= bytes;
   }
 

@@ -26,87 +26,26 @@ pub struct packet
   pub usize start;
   pub usize length;
 
-  pub std::vector<vm::physrange, N:8> host;
-
-  pub packet()
-  {
-  }
-
-  pub packet(packet &&other)
-    where __is_rvalue<typeof(other)>
-  {
-    this.type = other.type;
-    this.start = other.start;
-    this.length = other.length;
-    this.host = &&other.host;
-  }
-
-  pub packet(usize start, usize length, std::vector<vm::physrange, N:8> &&host)
-    where __is_rvalue<typeof(host)>
-  {
-    this.start = start;
-    this.length = length;
-    this.host = &&host;
-  }
+  pub vm::iovec iovec;
 
   pub fn with_capacity(usize bck, usize fwd) -> packet
   {
-    var host = std::vector<vm::physrange, N:8>();
+    var pkt = packet();
 
-    for (var size = 0; size < bck + fwd; )
+    for (; pkt.iovec.length < bck + fwd; )
     {
-      host.push_back(vm::lock(vm::allocate_physical_page()));
-
-      size += host.back.size;
+      pkt.iovec.append(vm::lock(vm::allocate_physical_page()));
     }
 
-    return packet(bck, 0, &move host);
-  }
-
-  pub fn with_copy(usize bck, vm::iovec &iovec, usize offset, usize length) -> packet
-  {
-    var pkt = with_capacity(bck, length);
-
-    var start = bck;
-    var remaining = length;
-
-    for (var i = pkt.host.begin; i != pkt.host.end && remaining != 0; ++i)
-    {
-      var data = (*i).addr + start;
-      var bytes = std::min((*i).size - start, remaining);
-
-      vm::memcpy(data.ptr, iovec, offset, bytes);
-
-      offset += bytes;
-      remaining -= bytes;
-      start = 0;
-    }
-
-    pkt.length = length;
+    pkt.start = bck;
 
     return pkt;
   }
 
-  pub fn =(packet mut &this, packet &&other) -> packet mut &
-    where __is_rvalue<typeof(other)>
-  {
-    std::swap(&mut this.type, &mut other.type);
-    std::swap(&mut this.start, &mut other.start);
-    std::swap(&mut this.length, &mut other.length);
-    std::swap(&mut this.host, &mut other.host);
-
-    return &this;
-  }
-
-  pub fn release(this mut &) -> std::vector<vm::physrange, N:8>
-  {
-    return this.host.take(this.host.begin, this.host.end);
-  }
-
-  pub ~packet()
-  {
-    vm::unlock(host);
-  }
+  pub packet() = default;
+  pub packet(packet &&other) = default;
+  pub fn =(packet mut &, packet &&) -> packet mut & = default;
+  pub ~packet() = default;
 }
 
 pub fn as<T>(packet &pkt, usize size = sizeof<T>) -> T *
@@ -114,9 +53,9 @@ pub fn as<T>(packet &pkt, usize size = sizeof<T>) -> T *
   if (pkt.length < size)
     return null;
 
-  std::assert(pkt.start + size <= pkt.host[0].size);
+  std::assert(pkt.start + size <= pkt.iovec.host[0].size);
 
-  return cast<T*>((pkt.host[0].addr + pkt.start).ptr);
+  return cast<T*>((pkt.iovec.host[0].addr + pkt.start).ptr);
 }
 
 pub fn as<T>(packet mut &pkt, usize size = sizeof<T>) -> T mut *
@@ -124,9 +63,9 @@ pub fn as<T>(packet mut &pkt, usize size = sizeof<T>) -> T mut *
   if (pkt.length < size)
     return null;
 
-  std::assert(pkt.start + size <= pkt.host[0].size);
+  std::assert(pkt.start + size <= pkt.iovec.host[0].size);
 
-  return cast<T mut *>((pkt.host[0].addr + pkt.start).ptr);
+  return cast<T mut *>((pkt.iovec.host[0].addr + pkt.start).ptr);
 }
 
 pub fn foreach_region(packet &pkt, var &&callback) -> void
@@ -134,7 +73,7 @@ pub fn foreach_region(packet &pkt, var &&callback) -> void
   var start = pkt.start;
   var remaining = pkt.length;
 
-  for (var i = pkt.host.begin; i != pkt.host.end && remaining != 0; ++i)
+  for (var i = pkt.iovec.host.begin; i != pkt.iovec.host.end && remaining != 0; ++i)
   {
     var data = (*i).addr + start;
     var bytes = std::min((*i).size - start, remaining);
@@ -146,51 +85,30 @@ pub fn foreach_region(packet &pkt, var &&callback) -> void
   }
 }
 
+pub fn inset(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> void
+{
+  pkt.start += length;
+
+  iovec.foreach_region_in(offset, length, |region| {
+    pkt.iovec.push_back(vm::lock(region));
+  });
+}
+
 pub fn prepend<T>(packet mut &pkt, usize size = sizeof<T>) -> T mut *
 {
   pkt.start -= size;
   pkt.length += size;
 
-  return cast<T mut *>((pkt.host[0].addr + pkt.start).ptr);
+  return cast<T mut *>((pkt.iovec.host[0].addr + pkt.start).ptr);
 }
 
-pub fn append(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> net::result
+pub fn append(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> void
 {
-  var i = pkt.host.begin;
+  pkt.length += length;
 
-  if (pkt.start + pkt.length != 0)
-  {
-    var start = pkt.start + pkt.length;
-
-    for (; i != pkt.host.end && (*i).size <= start; ++i)
-      start -= (*i).size;
-
-    var data = (*i).addr + start;
-    var bytes = std::min((*i).size - start, length);
-
-    if (var result = vm::memcpy(data.ptr, iovec, offset, length); !result)
-      return cast(result);
-
-    offset += bytes;
-    length -= bytes;
-    pkt.length += bytes;
-    i += 1;
-  }
-
-  for (; i != pkt.host.end && length != 0; ++i)
-  {
-    var data = (*i).addr;
-    var bytes = std::min((*i).size, length);
-
-    if (var result = vm::memcpy(data.ptr, iovec, offset, length); !result)
-      return cast(result);
-
-    offset += bytes;
-    length -= bytes;
-    pkt.length += bytes;
-  }
-
-  return ok;
+  iovec.foreach_region_in(offset, length, |region| {
+    pkt.iovec.push_back(vm::lock(region));
+  });
 }
 
 pub fn strip(packet mut &pkt, usize size) -> void

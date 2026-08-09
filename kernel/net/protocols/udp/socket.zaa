@@ -3,6 +3,7 @@
 //
 
 import std.stdio;
+import std.circular_buffer;
 import vm;
 import io;
 import net.in;
@@ -91,11 +92,10 @@ pub fn deliver(socket mut *socket, net::rx &rx, u16 source_port, u16 destination
   udppkt.destination_port = destination_port;
 
   pkt.foreach_region(|region| {
-    udppkt.iovec.length += region.size;
-    udppkt.iovec.host.push_back(region);
+    udppkt.iovec.append(region);
   });
 
-  pkt.host.clear();
+  pkt.iovec.host.clear();
 
   var guard = std::lock_guard(&mut state.lock);
 
@@ -311,8 +311,10 @@ pub fn write(socket mut *socket, net::netdev mut *link, inaddr &dst_ip, inaddr &
 
   var pkt = net::packet::with_capacity(256, length);
 
-  if (var result = pkt.append(iovec, offset, length); !result)
-    return result;
+  if (var result = vm::memcpy(pkt.iovec, pkt.start + pkt.length, iovec, offset, length); !result)
+    return cast(result);
+
+  pkt.extend(length);
 
   var response = io::response();
 

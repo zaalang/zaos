@@ -120,7 +120,17 @@ pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6a
   switch (link.type)
   {
     case loop:
-      net::transmit(link, &mut cb, &mut pkt);
+      switch (protocol)
+      {
+        case icmp6:
+          if (var result = link.qdisc.enqueue(&mut cb, &mut pkt); !result)
+            io::complete(&mut cb, result);
+
+          link.packet_handler_doorbell.release();
+
+        else:
+          net::transmit(link, &mut cb, &mut pkt);
+      }
 
     case ether:
       ethernet::send(link, &mut cb, ethernet::ether_type::ipv6, dst, src, &mut pkt);

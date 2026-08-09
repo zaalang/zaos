@@ -71,6 +71,10 @@ pub fn add(route_table mut &table, inaddr &destination, usize prefixlen, inaddr 
 
   table.routes.push_back(std::allocator::new<route>(destination, prefixlen, nexthop, link));
 
+  std::stable_sort(&mut table.routes, |lhs, rhs| {
+    return std::tie(lhs.destination, lhs.prefixlen) > std::tie(rhs.destination, rhs.prefixlen);
+  });
+
   return ok;
 }
 

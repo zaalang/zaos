@@ -355,7 +355,7 @@ pub fn setup(BootInfo &bootinfo, int cpu) -> void
 {
   td.id = cpu;
 
-  cpu::wrmsr(cpu::msr_index::tsc, 0);
+  //cpu::wrmsr(cpu::msr_index::tsc, 0);
   cpu::wrmsr(cpu::msr_index::tsc_aux, cast(cpu));
 
   var mut &gdt = td.gdt;

@@ -3,11 +3,12 @@
 //
 
 import std.stdio;
-import std.atomic;
+import std.circular_buffer;
 import vm;
 import io;
 import dev;
 import net;
+import mutex as _ : mutex;
 import support.rc : Rc;
 
 using net::inaddr;

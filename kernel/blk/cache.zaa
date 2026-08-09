@@ -116,10 +116,10 @@ fn destroy(cache_entry mut *entry) -> void
 
 fn deallocate(cache_entry mut *entry) -> void
 {
-  vm::unlock(&mut entry.iovec);
   heap::munmap(entry.allocation);
-  entry.allocation = vm::virtrange();
 
+  entry.iovec = vm::iovec();
+  entry.allocation = vm::virtrange();
   entry.state = cache_entry::state::uninit;
 }
 
@@ -218,8 +218,8 @@ struct block_cache
     if (j == pagecache.entries.end)
       j = pagecache.entries.insert(key, cache_entry::create()).0;
 
-    pagecache.remove(pagecache.entries[j].value);
-    pagecache.insert(pagecache.entries[j].value);
+    remove(&mut pagecache, pagecache.entries[j].value);
+    insert(&mut pagecache, pagecache.entries[j].value);
 
     return pagecache.entries[j].value;
   }

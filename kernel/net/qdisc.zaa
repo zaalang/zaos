@@ -27,7 +27,7 @@ struct txpkt
 
   txpkt mut *next;
 
-  u8[48] reserved;
+  u8[40] reserved;
 
   fn allocator()
   {
@@ -124,17 +124,14 @@ pub struct qdisc
   pub ~qdisc() = default;
 }
 
-pub fn enqueue(qdisc mut &qdisc, net::netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) -> net::result
+pub fn enqueue(qdisc mut &qdisc, Rc<io::iocb> mut &cb, net::packet mut &pkt) -> net::result
 {
   if (qdisc.len > 1024)
     return device_busy;
 
   var tx = txpkt::create();
-  tx.pkt.type = pkt.type;
-  tx.pkt.start = pkt.start;
-  tx.pkt.length = pkt.length;
-  tx.pkt.host = pkt.release();
   tx.status = txpkt::status::pending;
+  tx.pkt = std::exchange(&mut pkt, net::packet());
   tx.cb = cb;
 
   qdisc.append(tx);
@@ -167,13 +164,10 @@ pub fn dequeue(qdisc mut &qdisc, net::packet mut &pkt) -> net::result
   if (!tx)
     return would_block;
 
-  pkt.type = tx.pkt.type;
-  pkt.start = tx.pkt.start;
-  pkt.length = tx.pkt.length;
-  pkt.host = tx.pkt.release();
+  pkt = &move tx.pkt;
 
   tx.cb = null;
-  tx.pkt.host.clear();
+  tx.pkt = net::packet();
 
   txpkt::allocator.free(tx);
 

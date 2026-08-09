@@ -1040,7 +1040,7 @@ fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut &packet) -> 
       return would_block;
 
     packet.length += cast(rxd.length);
-    packet.host.push_back(vm::physrange(rxd.addr, 2048));
+    packet.iovec.append(vm::physrange(rxd.addr, 2048));
 
     head = std::add_with_carry(head, 1).0;
 

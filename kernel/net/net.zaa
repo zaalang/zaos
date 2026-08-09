@@ -114,7 +114,7 @@ pub fn open(netdev mut *link, vfs::fd mut &fd, process mut *process, u64 flags, 
 
 pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) -> void
 {
-  if (var result = link.qdisc.enqueue(link, &mut cb, &mut pkt); !result)
+  if (var result = link.qdisc.enqueue(&mut cb, &mut pkt); !result)
     io::complete(&mut cb, result);
 
   link.qdisc.run(link);

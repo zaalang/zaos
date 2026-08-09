@@ -706,14 +706,6 @@ pub fn unlock(std::vector<physrange> &regions) -> void
     unlock(range);
 }
 
-pub fn unlock(vm::iovec mut &iovec) -> void
-{
-  unlock(iovec.host);
-
-  iovec.length = 0;
-  iovec.host.clear();
-}
-
 pub fn read_process_memory(process mut *process, virtaddr src, void mut *dst, usize length) -> vm::result
 {
   var iovec = vm::iovec();
