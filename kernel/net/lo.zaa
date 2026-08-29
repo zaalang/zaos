@@ -6,6 +6,7 @@ import std.stdio;
 import std.circular_buffer;
 import vm;
 import io;
+import cpu;
 import dev;
 import net;
 import mutex as _ : mutex;
@@ -34,7 +35,7 @@ pub struct lo : pub net::netdev
     switch (query)
     {
       case name:
-        result = std::format("");
+        result = std::format("lo");
 
       case type:
         result = std::format("loopback");
@@ -46,6 +47,11 @@ pub struct lo : pub net::netdev
         result = std::format("net/lo");
     }
 
+    return ok;
+  }
+
+  pub fn startup(this mut &) override -> net::result
+  {
     return ok;
   }
 
@@ -68,14 +74,10 @@ pub struct lo : pub net::netdev
     return ok;
   }
 
+  pub fn shutdown(this mut &) override -> net::result
+  {
+    return ok;
+  }
+
   pub ~lo() = default;
-}
-
-pub fn initialise() -> net::result
-{
-  var dev = net::netdev::create<lo>();
-
-  dev::register(dev::dev_t(), dev);
-
-  return ok;
 }

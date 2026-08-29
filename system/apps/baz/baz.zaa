@@ -3,24 +3,97 @@
 //
 
 import std.stdio;
+import std.env;
 import sys.thread;
+import net.ip;
+import os.zaos.fcntl;
+import os.zaos.socket;
+import os.zaos.time;
+import std.byteconv;
+import aargh;
 
-fn main
+using os;
+
+struct opts
 {
-  var total = 0;
+  #[arg(value, short='w', help="wait timeout")]
+  u64 waittime = 10;
 
-  for (var i = 0; i < 25; ++i)
+  opts() = default;
+  ~opts() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn socket(i32 family, i32 type, i32 protocol) -> i32
+{
+  return os::socket(&mut thread_ring, family, type, protocol);
+}
+
+fn bind(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
+{
+  return os::socket_bind(&mut thread_ring, fd, addr, alen);
+}
+
+fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
+{
+  var rc = os::socket_connect(&mut thread_ring, fd, addr, alen);
+
+  while (rc == EAGAIN)
   {
-    std::printf(".");
-    std::stdout.flush();
-    var data = std::allocator::new<u8[4*1024*1024]>();
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
 
-    std::printf(".");
-    std::stdout.flush();
-    std::memset(data, 0, sizeof(*data));
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
 
-    total += sizeof(*data);
+    os::sleep(&mut thread_ring, tp + 1_000_000);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
 
-    std::print(total / 1024 / 1024);
+    rc = os::socket_connect(&mut thread_ring, fd, addr, alen);
   }
+
+  if (rc == EINPROGRESS)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT | POLLPRI, 0) ];
+
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+      return ETIMEDOUT;
+
+    os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &rc, sizeof(rc));
+  }
+
+  return rc;
+}
+
+fn main() -> i32
+{
+  var opts = aargh::parse<opts>(std::env::args);
+
+  var sockname = os::sockaddr_in6();
+  sockname.sa_family = AF_INET6;
+  sockname.sin6_addr = os::in6addr_any();
+  sockname.sin6_port = 0;
+
+  var peername = os::sockaddr_in6();
+  peername.sa_family = AF_INET6;
+  peername.sin6_addr = os::in6_addr([ 0x20, 0x01, 0x44, 0xb8, 0x51, 0x3a, 0x37, 0x00, 0x18, 0x80, 0x67, 0x39, 0xcc, 0x85, 0x76, 0xf8 ]);
+  peername.sin6_port = std::native_to_be(3456);
+
+  var fd = socket(AF_INET6, SOCK_STREAM, 0);
+
+  if (fd < 0)
+    std::panic("socket - ", cast<std::errc>(-fd));
+
+  if (var rc = bind(fd, &sockname, sizeof(sockname), opts); rc < 0)
+    std::panic("bind - ", cast<std::errc>(-rc));
+
+  if (var rc = connect(fd, &peername, sizeof(peername), opts); rc < 0)
+    std::panic("connect - ", cast<std::errc>(-rc));
+
+  os::close(&mut thread_ring, fd);
+
+  return 0;
 }

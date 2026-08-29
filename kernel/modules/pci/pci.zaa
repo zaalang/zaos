@@ -92,7 +92,7 @@ struct pci_manager
 {
   std::vector<device> devices;
 
-  fn instance()
+  fn instance() -> pci_manager mut &
   {
     static instance = #pci_manager();
 

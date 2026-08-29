@@ -381,6 +381,8 @@ pub struct rx_queue
 
   usize index;
   adaptor mut &adaptor;
+
+  net::input_t dpc;
 }
 
 fn read_nvm(u32 mut *eerd, u8 addr) -> u16
@@ -479,7 +481,7 @@ fn e1000_io_handler(adaptor mut *adaptor) -> void
 
   if (icr & interrupts::rxt0 != 0)
   {
-    adaptor.link.packet_handler_doorbell.release();
+    net::enqueue(&adaptor.rxq.dpc, adaptor.link, 0);
   }
 }
 
@@ -634,14 +636,13 @@ fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, Rc<io::iocb> mut &cb, tx_des
   var guard = std::lock_guard(&mut cpu::irqlock, &mut txq.lock);
 
   var tail = txq.sq_tail;
-  var mask = txq.sq_mask;
 
-  if (std::sub_with_borrow(tail, std::volatile_load(&txq.sq_head)).0 + cast(n) > mask)
+  if (std::sub_with_borrow(tail, std::volatile_load(&txq.sq_head)).0 + cast(n) > txq.sq_mask)
     return device_busy;
 
   for (var i = 0; i < n; ++i)
   {
-    var index = cast<usize>(tail & mask);
+    var index = cast<usize>(tail & txq.sq_mask);
 
     var txd = cast<tx_desc mut *>((txq.sq + index * sizeof<tx_desc>).ptr);
 
@@ -664,7 +665,7 @@ fn enqueue(adaptor mut &adaptor, tx_queue mut *txq, Rc<io::iocb> mut &cb, tx_des
 
   std::atomic_thread_fence();
 
-  std::volatile_store(&adaptor.regs.tdt(txq.index), tail & mask);
+  std::volatile_store(&adaptor.regs.tdt(txq.index), tail & txq.sq_mask);
 
   return ok;
 }
@@ -674,14 +675,13 @@ fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, rx_desc *rxds, usize n) -> r
   var guard = std::lock_guard(&mut cpu::irqlock, &mut rxq.lock);
 
   var tail = rxq.sq_tail;
-  var mask = rxq.sq_mask;
 
-  if (std::sub_with_borrow(tail, std::volatile_load(&rxq.sq_head)).0 + cast(n) > mask)
+  if (std::sub_with_borrow(tail, std::volatile_load(&rxq.sq_head)).0 + cast(n) > rxq.sq_mask)
     return device_busy;
 
   for (var i = 0; i < n; ++i)
   {
-    var index = cast<usize>(tail & mask);
+    var index = cast<usize>(tail & rxq.sq_mask);
 
     var rxd = cast<rx_desc mut *>((rxq.sq + index * sizeof<rx_desc>).ptr);
 
@@ -696,7 +696,7 @@ fn enqueue(adaptor mut &adaptor, rx_queue mut *rxq, rx_desc *rxds, usize n) -> r
 
   std::atomic_thread_fence();
 
-  std::volatile_store(&adaptor.regs.rdt(rxq.index), tail & mask);
+  std::volatile_store(&adaptor.regs.rdt(rxq.index), tail & rxq.sq_mask);
 
   return ok;
 }
@@ -733,6 +733,76 @@ fn dequeue(adaptor mut &adaptor, rx_queue mut *rxq, net::packet mut &packet) -> 
   return ok;
 }
 
+fn refill(adaptor mut &adaptor, rx_queue mut *rxq) -> result
+{
+  var head = rxq.sq_head;
+  var tail = rxq.sq_tail;
+  var mask = rxq.sq_mask;
+
+  var rxds = std::vector<rx_desc, N:64>();
+
+  var n = cast<usize>(mask - std::sub_with_borrow(tail, head).0);
+
+  for (; n >= PAGE_SIZE / 2048; )
+  {
+    var page = vm::allocate_physical_page();
+
+    for (var offset = 0; offset < PAGE_SIZE; offset += 2048)
+    {
+      var mut &rxd = rxds.push_back();
+
+      rxd.addr = vm::lock(page).addr + offset;
+      rxd.length = 2048;
+      n -= 1;
+    }
+  }
+
+  if (var result = adaptor.enqueue(rxq, rxds.data, rxds.len); !result)
+    return result;
+
+  return ok;
+}
+
+fn flush(adaptor mut &adaptor, rx_queue mut *rxq) -> result
+{
+  var regs = adaptor.regs;
+
+  std::volatile_store(&regs.rctl, regs.rctl & ~rctl::en);
+  std::volatile_load(&regs.status);
+
+  scheduler::sleep_until(cpu::system_time + 150_000);
+
+  var guard = std::lock_guard(&mut rxq.lock);
+
+  for (; rxq.sq_head != rxq.sq_tail; )
+  {
+    var index = cast<usize>(rxq.sq_head & rxq.sq_mask);
+
+    var rxd = cast<rx_desc mut *>((rxq.sq + index * sizeof<rx_desc>).ptr);
+
+    vm::unlock(vm::physrange(rxd.addr, 2048));
+
+    rxd.addr = physaddr();
+    rxd.length = 0;
+    rxd.status = 0;
+
+    rxq.sq_head = std::add_with_carry(rxq.sq_head, 1).0;
+  }
+
+  std::volatile_store(&regs.rdh(rxq.index), rxq.sq_head & rxq.sq_mask);
+
+  std::volatile_store(&regs.rctl, regs.rctl | rctl::en);
+
+  return ok;
+}
+
+pub fn startup(adaptor mut &adaptor) -> result
+{
+  adaptor.refill(adaptor.rxq);
+
+  return ok;
+}
+
 pub fn transmit(adaptor mut &adaptor, Rc<io::iocb> mut &cb, net::packet &packet) -> result
 {
   var txds = std::vector<tx_desc, N:4>();
@@ -765,30 +835,15 @@ pub fn retrieve(adaptor mut &adaptor, u16 rxqid, net::packet mut &packet) -> res
 
 pub fn refill(adaptor mut &adaptor, u16 rxqid) -> result
 {
-  var head = adaptor.rxq.sq_head;
-  var tail = adaptor.rxq.sq_tail;
-  var mask = adaptor.rxq.sq_mask;
-
-  var rxds = std::vector<rx_desc, N:64>();
-
-  var n = cast<usize>(mask - std::sub_with_borrow(tail, head).0);
-
-  for (; n >= PAGE_SIZE / 2048; )
-  {
-    var page = vm::allocate_physical_page();
-
-    for (var offset = 0; offset < PAGE_SIZE; offset += 2048)
-    {
-      var mut &rxd = rxds.push_back();
-
-      rxd.addr = vm::lock(page).addr + offset;
-      rxd.length = 2048;
-      n -= 1;
-    }
-  }
-
-  if (var result = adaptor.enqueue(adaptor.rxq, rxds.data, rxds.len); !result)
+  if (var result = adaptor.refill(adaptor.rxq); !result)
     return result;
+
+  return ok;
+}
+
+pub fn shutdown(adaptor mut &adaptor) -> result
+{
+  adaptor.flush(adaptor.rxq);
 
   return ok;
 }

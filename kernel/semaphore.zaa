@@ -18,13 +18,13 @@ pub struct semaphore
   {
     for (;;)
     {
-      var current = std::volatile_load(&this.value);
+      var current = std::atomic_load(&this.value, std::memory_order::relaxed);
 
       if (current == 0)
       {
         var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
-        if (std::volatile_load(&this.value) != 0)
+        if (std::atomic_load(&this.value, std::memory_order::acquire) != 0)
           continue;
 
         this.waiters.wait(&mut this.spinlock);
@@ -39,7 +39,7 @@ pub struct semaphore
 
   pub fn try_wait(this mut &) -> bool
   {
-    var current = std::volatile_load(&this.value);
+    var current = std::atomic_load(&this.value, std::memory_order::relaxed);
 
     if (current == 0)
       return false;
@@ -51,13 +51,13 @@ pub struct semaphore
   {
     for (;;)
     {
-      var current = std::volatile_load(&this.value);
+      var current = std::atomic_load(&this.value, std::memory_order::relaxed);
 
       if (current == 0)
       {
         var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 
-        if (std::volatile_load(&this.value) != 0)
+        if (std::atomic_load(&this.value, std::memory_order::acquire) != 0)
           continue;
 
         if (var rc = this.waiters.wait_until(&mut this.spinlock, abstime); rc < 0)
@@ -75,7 +75,7 @@ pub struct semaphore
 
   pub fn release(this mut &) -> void
   {
-    if (std::atomic_add(&this.value, 1) == 0)
+    if (std::atomic_add(&this.value, 1, std::memory_order::release) == 0)
     {
       var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
 

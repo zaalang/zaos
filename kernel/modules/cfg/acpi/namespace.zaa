@@ -546,7 +546,7 @@ pub struct namespace
   thread mut *event_handler;
   semaphore event_handler_doorbell;
 
-  pub fn instance()
+  pub fn instance() -> namespace mut &
   {
     static instance = #namespace();
 

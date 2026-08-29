@@ -18,6 +18,9 @@ struct opts
   #[arg(free)]
   std::vector<std::string> args;
 
+  #[arg(value, short='w', help="wait timeout")]
+  u64 waittime = 1;
+
   #[arg(flag, help="display this help and exit")]
   bool help = false;
 
@@ -37,13 +40,13 @@ struct dns_header
   u16 additional_count;
 }
 
-fn send(i32 fd, void *buffer, usize len, u64 flags) -> i32
+fn send(i32 fd, void *buffer, usize len, opts &opts) -> i32
 {
   var bytes = os::write(&mut thread_ring, fd, buffer, len);
 
   while (bytes == EAGAIN)
   {
-    var tp = os::timespec(void);
+    var tp = os::timespec(~0);
     os::clock_gettime(os::clock::monotonic, &tp);
 
     var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
@@ -56,18 +59,19 @@ fn send(i32 fd, void *buffer, usize len, u64 flags) -> i32
   return bytes;
 }
 
-fn recv(i32 fd, void mut *buffer, usize len, u64 flags) -> i32
+fn recv(i32 fd, void mut *buffer, usize len, opts &opts) -> i32
 {
   var bytes = os::read(&mut thread_ring, fd, buffer, len);
 
-  if (bytes == EAGAIN)
+  while (bytes == EAGAIN)
   {
-    var tp = os::timespec(void);
+    var tp = os::timespec(~0);
     os::clock_gettime(os::clock::monotonic, &tp);
 
     var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+      return ETIMEDOUT;
 
     bytes = os::read(&mut thread_ring, fd, buffer, len);
   }
@@ -143,9 +147,9 @@ pub fn main() -> i32
   peername.sin6_addr = dst_ip;
   peername.sin6_port = std::native_to_be(53);
 
-  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_SETPEERNAME, &peername, sizeof(peername)); rc < 0)
+  if (var rc = os::socket_connect(&mut thread_ring, fd, &peername, sizeof(peername)); rc < 0)
   {
-    std::fprint(std::stderr, "dig: setpeername - ", cast<std::errc>(-rc));
+    std::fprint(std::stderr, "dig: connect - ", cast<std::errc>(-rc));
 
     return 1;
   }
@@ -199,14 +203,14 @@ pub fn main() -> i32
   buffer[position++] = 0;
   buffer[position++] = 1;
 
-  if (var rc = send(fd, buffer.data, position, 0); rc < 0)
+  if (var rc = send(fd, buffer.data, position, opts); rc < 0)
   {
     std::fprint(std::stderr, "dig: send - ", cast<std::errc>(-rc));
 
     return 1;
   }
 
-  var bytes = recv(fd, buffer.data, buffer.len, 0);
+  var bytes = recv(fd, buffer.data, buffer.len, opts);
 
   if (bytes < 0)
   {

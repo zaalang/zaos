@@ -3232,6 +3232,10 @@ fn return_op(context mut &ctx, std::span<u8> mut &is) -> result
   if (var rc = load(&mut ctx, &mut ctx.stack.back); !rc)
     return rc;
 
+  if (ctx.stack.back.value.is_reference && ctx.stack.back.value.reference.kind == typeof(acpi::reference::kind)::local)
+    if (ctx.stack.back.value.reference.local >= ctx.frame.rsp - NARGS)
+      return bad_value;
+
   ctx.blocks.resize(ctx.frame.rbp);
   ctx.text.resize(ctx.frame.rip + 1);
 

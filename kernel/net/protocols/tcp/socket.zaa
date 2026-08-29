@@ -1,0 +1,559 @@
+//
+// tcp socket
+//
+
+import std.stdio;
+import vm;
+import io;
+import cpu;
+import net.in;
+import net.packet;
+import net.result;
+import net.protocols.ip as ip;
+import net.protocols.ip.socket as ip.socket;
+import net.protocols.tcp as tcp : tcp_header, tcp_state, tcp_seq, tcp_flags;
+import mutex as _ : mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr, ancillary_data;
+import support.rc : Rc;
+
+using net::hwaddr;
+using net::inaddr;
+using ip::sockaddr_in4;
+using ip::sockaddr_in6;
+
+enum cta
+{
+  const pktsrc = (41, 1);
+  const pktdst = (41, 2);
+  const timestamp = (41, 3);
+  const ipv6_hoplimit = (41, 52);
+  const ipv6_pathmtu = (41, 62);
+}
+
+enum sio
+{
+  const soerror = 0x80030004;
+  const getsockname = 0x8003001b;
+  const getpeername = 0x8003001c;
+}
+
+const TCP_MIN_RTO = 200_000_000;
+const TCP_MAX_RTO = 60_000_000_000;
+const TCP_SYN_RTO = 1_000_000_000;
+
+pub struct tcb
+{
+  mutex lock;
+
+  i32 soerror;
+
+  tcp_state state;
+
+  pub inaddr local_ip;
+  pub inaddr remote_ip;
+
+  pub u16 local_port;
+  pub u16 remote_port;
+
+  tcp_seq iss;        // initial send sequence number
+  tcp_seq snd_una;    // send unacknowledged
+  tcp_seq snd_nxt;    // send next
+  tcp_seq snd_max;    // send next
+  u32 snd_wnd;        // send window
+  tcp_seq snd_up;     // send urgent pointer
+  tcp_seq snd_wl1;    // last window update seq
+  tcp_seq snd_wl2;    // last window update ack
+
+  tcp_seq irs;        // initial receive sequence number
+  tcp_seq rcv_nxt;    // receive next
+  u32 rcv_wnd;        // receive window
+  tcp_seq rcv_up;     // receive urgent pointer
+  u32 rcv_wnd_max;    // maximum receive window
+
+  u64 rto;            // retransmission timeout
+
+  u16 pending;        // pending output flags
+
+  net::timeout_t connect_timer;
+  net::timeout_t retransmit_timer;
+
+  net::packet_allocator pkthdr;
+
+  io::response readable;
+  io::response writeable;
+  io::response queryable;
+
+  pub fn ref(this mut &) -> void
+  {
+    std::atomic_add(&this.refcnt, 1);
+  }
+
+  pub fn try_ref(this mut &) -> bool
+  {
+    for (;;)
+    {
+      var refcnt = std::volatile_load(&this.refcnt);
+
+      if (refcnt == 0)
+        return false;
+
+      if (std::atomic_cmpxchg_weak(&this.refcnt, refcnt, refcnt + 1))
+        break;
+    }
+
+    return true;
+  }
+
+  pub fn unref(this mut &) -> void
+  {
+    if (std::atomic_sub(&this.refcnt, 1) == 1)
+      destroy(&this);
+  }
+
+  pub fn refcnt(this &) -> i32
+  {
+    return std::atomic_load(&this.refcnt);
+  }
+
+  pub tcb() = default;
+  pub ~tcb() = default;
+
+  i32 refcnt;
+}
+
+fn init(tcb mut &tcb) -> void
+{
+  var iss = cast<u32>((cpu::system_time >> 4) & 0xffffffff);
+
+  tcb.iss = iss;
+  tcb.snd_una = iss;
+  tcb.snd_nxt = iss;
+  tcb.snd_max = iss;
+  tcb.snd_wnd = iss;
+
+  tcb.rto = TCP_SYN_RTO;
+
+  tcb.connect_timer.callback = &cast<(net::timeout_t mut *) -> void>(connect_timer);
+  tcb.retransmit_timer.callback = &cast<(net::timeout_t mut *) -> void>(retransmit_timer);
+}
+
+fn send(tcb mut &tcb, tcp_seq mut &snd_nxt, u16 flags, usize length) -> net::result
+{
+  var route = net::routes.find(tcb.remote_ip);
+
+  if (!route)
+    return host_unreachable;
+
+  var dst = net::hwaddr();
+
+  if (var result = net::resolve_route(route, tcb.remote_ip, &mut tcb.writeable.cb, &mut tcb.local_ip, &mut dst); !result)
+    return result;
+
+  var pkt = tcb.pkthdr.allocate(256);
+
+//  if (var result = vm::memcpy(pkt.iovec, pkt.start + pkt.length, iovec, offset, length); !result)
+//    return cast(result);
+//
+//  pkt.extend(length);
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+tcb.rcv_wnd = 65535;
+  tcp::send(route.link, &mut response.cb, tcb.remote_port, tcb.local_port, snd_nxt, tcb.rcv_nxt, flags, tcb.rcv_wnd, tcb.remote_ip.in6, tcb.local_ip.in6, dst, route.link.hwaddr, &mut pkt);
+
+
+//  if (segment.flags & TCP_FLAG_SYNCHRONIZE) {
+//    segment.options &= ~TCP_HAS_WINDOW_SCALE;
+//    segment.max_segment_size = 0;
+//  }
+
+  snd_nxt += length;
+
+  if (flags & tcp_flags::syn != 0)
+    snd_nxt += 1;
+
+  if (flags & tcp_flags::fin != 0)
+    snd_nxt += 1;
+
+  if (tcb.snd_max < snd_nxt)
+    tcb.snd_max = snd_nxt;
+
+//  fReceiveMaxAdvertised = fReceiveNext + segment.AdvertisedWindow(fReceiveWindowShift);
+//
+//  if (segmentLength != 0 && fState == ESTABLISHED)
+//    --fSendMaxSegments;
+//
+//  if (fSendTime == 0 && !isRetransmit
+//      && (segmentLength != 0 || (segment.flags & TCP_FLAG_SYNCHRONIZE) != 0)) {
+//    fSendTime = tcp_now();
+//    fRoundTripStartSequence = segment.sequence;
+//  }
+//
+//  if (segment.flags & TCP_FLAG_ACKNOWLEDGE) {
+//    fLastAcknowledgeSent = segment.acknowledge;
+//    gStackModule->cancel_timer(&fDelayedAcknowledgeTimer);
+//  }
+
+  return ok;
+}
+
+fn reset(tcb mut &tcb, net::result status) -> net::result
+{
+  tcb.state = tcp_state::closed;
+
+  tcb.soerror = cast<i32>(status);
+
+  if (!tcb.queryable.ready)
+    io::complete(&mut tcb.queryable.cb, 0);
+
+  if (!tcb.readable.ready)
+    io::complete(&mut tcb.readable.cb, 0);
+
+  net::cancel(&tcb.connect_timer);
+  net::cancel(&tcb.retransmit_timer);
+
+  tcb.unref();
+
+  return ok;
+}
+
+fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net::packet &pkt) -> net::result
+{
+  var flags = hdr.flags;
+  var sequence = tcp_seq(std::be_to_native(hdr.sequence));
+  var acknowledge = tcp_seq(std::be_to_native(hdr.acknowledge));
+
+std::print(*hdr);
+  switch (tcb.state)
+  {
+    case closed:
+
+      if (flags & tcp_flags::rst == 0)
+        tcp::send_reset_reply(link, rx, hdr, pkt);
+
+      return ok;
+
+    case syn_sent:
+
+      if (flags & tcp_flags::ack != 0)
+      {
+        if (acknowledge <= tcb.iss || acknowledge > tcb.snd_max)
+        {
+          if (flags & tcp_flags::rst == 0)
+            tcp::send_reset_reply(link, rx, hdr, pkt);
+
+          return ok;
+        }
+      }
+
+      if (flags & tcp_flags::rst != 0)
+      {
+        if (flags & tcp_flags::ack != 0)
+          reset(&mut tcb, net::result::connection_refused);
+
+        return ok;
+      }
+
+      if (flags & tcp_flags::syn != 0)
+      {
+        tcb.irs = sequence;
+  			tcb.rcv_nxt = sequence + 1;
+
+        if (flags & tcp_flags::ack != 0)
+          tcb.snd_una = acknowledge;
+
+        if (tcb.snd_una > tcb.iss)
+          tcb.state = tcp_state::established;
+        else
+          tcb.state = tcp_state::syn_received;
+
+        if (tcb.state == tcp_state::established)
+          io::complete(&mut tcb.writeable.cb, 0);
+
+        tcb.snd_wl1 = sequence;
+        tcb.snd_wl2 = acknowledge;
+        tcb.snd_wnd = cast<u32>(std::be_to_native(hdr.window));
+
+        tcb.pending |= tcp_flags::ack;
+
+        net::cancel(&tcb.connect_timer);
+      }
+
+      if (flags & (tcp_flags::syn | tcp_flags::rst) == 0)
+        return ok;
+  }
+
+  output(&mut tcb);
+
+  return ok;
+}
+
+fn output(tcb mut &tcb) -> net::result
+{
+  var flags = 0;
+
+  switch (tcb.state)
+  {
+    case closed:
+      flags = tcp_flags::rst | tcp_flags::ack;
+
+    case syn_sent:
+      flags = tcp_flags::syn;
+
+    case syn_received:
+      flags = tcp_flags::syn | tcp_flags::ack;
+
+    case established:
+    case close_wait:
+    case fin_wait_2:
+    case time_wait:
+      flags = tcp_flags::ack;
+
+    case last_ack:
+    case fin_wait_1:
+    case closing:
+      flags = tcp_flags::fin | tcp_flags::ack;
+  }
+
+  if (flags & ~tcp_flags::ack | tcb.pending == 0) //&& data_len == 0)
+    return ok;
+
+  send(&mut tcb, &mut tcb.snd_nxt, flags, 0);
+
+  if (!tcb.retransmit_timer.scheduled && tcb.state != tcp_state::closed)
+    net::enqueue(&tcb.retransmit_timer, cpu::system_time + tcb.rto);
+
+  tcb.pending = 0;
+
+  return ok;
+}
+
+fn connect_timer(net::timeout_t mut *timer) -> void
+{
+  var mut &tcb = *cast<tcb mut *>(cast<uintptr>(timer) - offsetof(tcb::connect_timer));
+
+  if (!tcb.lock.try_lock())
+    return;
+
+  if (tcb.state != tcp_state::syn_sent)
+    return;
+
+  send(&mut tcb, &mut tcb.snd_nxt, tcp_flags::syn, 0);
+
+  tcb.rto = std::min(tcb.rto + TCP_SYN_RTO, TCP_MAX_RTO);
+
+  net::enqueue(timer, cpu::system_time + tcb.rto);
+
+  tcb.lock.unlock();
+}
+
+fn retransmit_timer(net::timeout_t mut *timer) -> void
+{
+  var mut &tcb = *cast<tcb mut *>(cast<uintptr>(timer) - offsetof(tcb::retransmit_timer));
+
+  if (!tcb.lock.try_lock())
+    return;
+
+  tcb.rto = std::min(2 * tcb.rto, TCP_MAX_RTO);
+
+  output(&mut tcb);
+
+  tcb.lock.unlock();
+}
+
+fn destroy(tcb mut *tcb) -> void
+{
+  std::assert(tcb.state == tcp_state::closed);
+  std::assert(!tcb.connect_timer.scheduled);
+  std::assert(!tcb.retransmit_timer.scheduled);
+
+  net::stack.tcp.unbind(tcb);
+
+  net::sync(&tcb.connect_timer);
+  net::sync(&tcb.retransmit_timer);
+
+  tcb.pkthdr.free();
+
+  std::allocator::delete(tcb);
+}
+
+pub fn deliver(tcb mut *tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net::packet &pkt) -> net::result
+{
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  input(&mut *tcb, link, rx, hdr, pkt);
+
+  return cast(1);
+}
+
+pub fn deliver_error(tcb mut *tcb, net::result status) -> net::result
+{
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  tcb.soerror = cast<i32>(status);
+
+  if (!tcb.queryable.ready)
+    io::complete(&mut tcb.queryable.cb, 0);
+
+  return ok;
+}
+
+pub fn open(socket mut *socket) -> net::result
+{
+  socket.protocol = IPPROTO_TCP;
+
+  var tcb = std::allocator::new<tcb>();
+
+  tcb.readable = socket.readable;
+  tcb.writeable = socket.writeable;
+  tcb.queryable = socket.queryable;
+
+  std::atomic_add(&tcb.refcnt, 1);
+
+  socket.state = tcb;
+
+  return ok;
+}
+
+pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  if (socket.sockname.ss_family != 0)
+    return already_connected;
+
+  if (var result = net::stack.tcp.bind(socket, &tcb, addr, alen); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  switch (tcb.state)
+  {
+    case closed:
+      ;
+
+    case listen:
+      ;
+
+    case established:
+      return already_connected;
+
+    else:
+      return already_in_progress;
+  }
+
+  if (socket.sockname.ss_family == 0)
+    return address_not_available;
+
+  if (var result = net::stack.tcp.connect(socket, &tcb, addr, alen); !result)
+    return result;
+
+  init(&mut tcb);
+
+  if (var result = send(&mut tcb, &mut tcb.snd_nxt, tcp_flags::syn, 0); !result)
+    return result;
+
+  tcb.state = tcp_state::syn_sent;
+
+  net::enqueue(&tcb.connect_timer, cpu::system_time + tcb.rto);
+
+  io::initiate(&mut socket.writeable.cb, 1);
+
+  std::atomic_add(&tcb.refcnt, 1);
+
+  return in_progress;
+}
+
+pub fn ioctl(socket mut *socket, u32 op, vm::iovec &iovec) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  switch (op)
+  {
+    case sio::soerror:
+
+      if (var result = vm::memcpy(iovec, 0, &tcb.soerror, sizeof<i32>); !result)
+        return cast(result);
+
+      tcb.soerror = cast(0);
+
+      return cast(sizeof<i32>);
+
+    case sio::getsockname:
+
+      if (var result = vm::memcpy(iovec, 0, &socket.sockname, sizeof<sockaddr_in6>); !result)
+        return cast(result);
+
+      return cast(sizeof<sockaddr_in6>);
+
+    case sio::getpeername:
+
+      if (socket.peername.ss_family != AF_INET6)
+        return not_connected;
+
+      if (var result = vm::memcpy(iovec, 0, &socket.peername, sizeof<sockaddr_in6>); !result)
+        return cast(result);
+
+      return cast(sizeof<sockaddr_in6>);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ancillary_data mut &ancillary_data) -> net::result
+{
+  return not_supported;
+}
+
+pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, ancillary_data &ancillary_data) -> net::result
+{
+  return not_supported;
+}
+
+pub fn shutdown(socket mut *socket, u64 how) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  return ok;
+}
+
+pub fn destroy(socket mut *socket) -> void
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  {
+    var guard = std::lock_guard(&mut tcb.lock);
+
+    switch (tcb.state)
+    {
+      case listen:
+      case syn_sent:
+        reset(&mut tcb, net::result::connection_aborted);
+
+      case syn_received:
+      case established:
+        tcb.state = tcp_state::fin_wait_1;
+        output(&mut tcb);
+
+      case close_wait:
+        tcb.state = tcp_state::last_ack;
+        output(&mut tcb);
+    }
+  }
+
+  tcb.unref();
+}

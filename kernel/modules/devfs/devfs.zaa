@@ -804,3 +804,7 @@ pub fn sync(devfs mut *fs) -> vfs::result
 
   return ok;
 }
+
+pub fn reap(devfs mut *fs) -> void
+{
+}

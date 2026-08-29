@@ -39,6 +39,7 @@ pub struct thread
     normal = 10,
     display = 15,
     high = 20,
+    io = 25,
     max = 50,
 
     pub fn level(this &) -> usize { return cast<usize>(this); }
@@ -200,7 +201,7 @@ struct thread_manager
   thread mut *graveyard;
   semaphore graveyard_doorbell;
 
-  fn instance()
+  fn instance() -> thread_manager mut &
   {
     static instance = #thread_manager();
 

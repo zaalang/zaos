@@ -90,7 +90,7 @@ pub fn inset(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> v
   pkt.start += length;
 
   iovec.foreach_region_in(offset, length, |region| {
-    pkt.iovec.push_back(vm::lock(region));
+    pkt.iovec.append(vm::lock(region));
   });
 }
 
@@ -107,7 +107,7 @@ pub fn append(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> 
   pkt.length += length;
 
   iovec.foreach_region_in(offset, length, |region| {
-    pkt.iovec.push_back(vm::lock(region));
+    pkt.iovec.append(vm::lock(region));
   });
 }
 
@@ -125,4 +125,61 @@ pub fn extend(packet mut &pkt, usize size) -> void
 pub fn trim(packet mut &pkt, usize size) -> void
 {
   pkt.length = size;
+}
+
+pub struct packet_allocator
+{
+  pub fn allocate(this mut &, usize bck) -> packet
+  {
+    var pkt = packet();
+
+    if (this.used + bck > this.page.size)
+    {
+      vm::unlock(this.page);
+
+      this.page = vm::lock(vm::allocate_physical_page());
+      this.used = 0;
+    }
+
+    std::assert(this.used + bck <= this.page.size);
+
+    pkt.iovec.append(vm::lock(vm::physrange(this.page.addr + this.used, bck)));
+
+    this.used += bck;
+
+    pkt.start = bck;
+
+    return pkt;
+  }
+
+  pub fn allocate(this mut &, usize bck, usize fwd) -> packet
+  {
+    var pkt = packet();
+
+    if (bck + fwd < 2048)
+    {
+      pkt = allocate(&mut this, bck + fwd);
+    }
+
+    for (; pkt.iovec.length < bck + fwd; )
+    {
+      pkt.iovec.append(vm::lock(vm::allocate_physical_page()));
+    }
+
+    pkt.start = bck;
+
+    return pkt;
+  }
+
+  pub fn free(this mut &) -> void
+  {
+    vm::unlock(this.page);
+  }
+
+  usize used;
+  vm::physrange page;
+
+  pub packet_allocator() = default;
+  pub packet_allocator(#packet_allocator &) = default;
+  pub ~packet_allocator() = default;
 }

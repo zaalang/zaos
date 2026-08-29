@@ -484,3 +484,7 @@ pub fn sync(sysfs mut *fs) -> vfs::result
 {
   return ok;
 }
+
+pub fn reap(sysfs mut *fs) -> void
+{
+}

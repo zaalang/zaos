@@ -130,7 +130,7 @@ pub fn ==(Value &lhs, Value &rhs) -> bool
     }
   }
 
-  return false;
+  return (lhs.kind == rhs.kind);
 }
 
 pub fn <=>(Value &lhs, Value &rhs) -> int
@@ -148,7 +148,7 @@ pub fn <=>(Value &lhs, Value &rhs) -> int
     }
   }
 
-  return lhs.kind <=> rhs.kind;
+  return (lhs.kind <=> rhs.kind);
 }
 
 fn fmt_duration(std::OutputStream mut &os, std::fmt_context mut &ctx, i64 count) throws(std::error) -> void

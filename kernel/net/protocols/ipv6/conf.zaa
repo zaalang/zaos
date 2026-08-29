@@ -38,7 +38,7 @@ pub fn configure(net::netdev mut *link) -> net::result
 
   net::routes.add(inaddr(linklocal.masked(64)), 64, inaddr(), link);
 
-  if (var result = ndp::router_solicitation(link, linklocal); !result)
+  if (var result = ndp::send_router_solicitation(link, linklocal); !result)
     return result;
 
   return ok;
@@ -61,6 +61,15 @@ pub fn configure_router(net::netdev mut *link, in6addr &gw, in6addr &prefix, usi
 
   net::routes.add(inaddr(prefix), prefixlen, inaddr(), link);
   net::routes.add(inaddr(in6addr()), 0, inaddr(gw), link);
+
+  return ok;
+}
+
+pub fn unconfigure(net::netdev mut *link) -> net::result
+{
+  net::routes.remove_all(link);
+
+  link.ipv6.clear();
 
   return ok;
 }

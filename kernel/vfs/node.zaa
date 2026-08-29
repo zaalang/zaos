@@ -48,12 +48,17 @@ pub struct node
     pub ~ops() = default;
   }
 
-  pub type type;
+  type type;
   pub Rc<node> covers;
   pub Rc<node> covered;
 
   pub u64 watching;
   pub Rc<vfs::watchlist> watchlist;
+
+  pub fn type(this &) -> type
+  {
+    return this.type;
+  }
 
   pub fn node_operations(this &) -> node_operations *
   {
@@ -185,6 +190,11 @@ pub struct node
   {
     if (std::atomic_sub(&this.refcnt, 1) == 1)
       destroy(&this);
+  }
+
+  pub fn refcnt(this &) -> i32
+  {
+    return std::atomic_load(&this.refcnt);
   }
 
   pub node(type type, node_operations &ops)

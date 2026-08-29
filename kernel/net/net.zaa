@@ -10,15 +10,20 @@ import net.result;
 import net.route;
 import net.mac;
 import net.in;
+import net.lo;
 import io;
 import vm;
 import vfs;
 import dev;
 import cpu;
+import sys;
 import chr.chrdev;
 import process as _ : process;
 import thread as _ : thread;
 import mutex as _ : mutex;
+import latch as _ : latch;
+import semaphore as _ : semaphore;
+import platform : MAX_CPU_COUNT;
 import scheduler;
 import support.rc : Rc;
 import net.protocols.rx;
@@ -27,9 +32,67 @@ import net.protocols.ipv6 as ipv6;
 import net.protocols.ipv6.conf as ipv6.conf;
 import net.protocols.ip.state as ip.state;
 import net.protocols.udp.state as udp.state;
+import net.protocols.tcp.state as tcp.state;
 import net.protocols.ethernet as ethernet;
 import net.netlink.route as netlink.route;
-import net.lo as lo;
+
+pub struct input_t
+{
+  netdev mut *link;
+  u16 rxqid;
+
+  input_t mut *next;
+
+  worker mut *worker;
+  worker mut *last_worker;
+
+  latch barrier;
+
+  pub input_t() = default;
+  pub input_t(#input_t &) = default;
+  pub ~input_t() = default;
+}
+
+pub struct timeout_t
+{
+  u64 deadline;
+  pub fn (*callback)(timeout_t mut *) -> void;
+
+  timeout_t mut *next;
+  timeout_t mut * mut *prev;
+
+  worker mut *worker;
+  worker mut *last_worker;
+
+  latch barrier;
+
+  pub fn scheduled(this &) -> bool
+  {
+    return !!this.worker;
+  }
+
+  pub timeout_t() = default;
+  pub timeout_t(#timeout_t &) = default;
+  pub ~timeout_t() = default;
+}
+
+struct worker
+{
+  std::spin_lock lock;
+
+  input_t mut *dpchead;
+  input_t mut * mut *dpclast;
+
+  timeout_t mut *timers;
+  timeout_t mut * mut *timerslast;
+
+  semaphore doorbell;
+  thread mut *knetworkd;
+
+  worker() = default;
+  worker(#worker &) = default;
+  ~worker() = default;
+}
 
 struct network_stack
 {
@@ -37,12 +100,18 @@ struct network_stack
 
   pub ip::state ip;
   pub udp::state udp;
+  pub tcp::state tcp;
 
   pub net::route_table routes;
 
+  pub Rc<net::lo> lo;
+  pub Rc<net::ctldev> ctl;
+
   std::vector<netlink::route mut *> listeners;
 
-  fn instance()
+  worker[MAX_CPU_COUNT] workers;
+
+  fn instance() -> network_stack mut &
   {
     static instance = #network_stack();
 
@@ -64,47 +133,242 @@ pub fn routes()
   return &network_stack::instance.routes;
 }
 
-fn packet_handler(netdev mut *link) -> void
+pub fn enqueue(input_t mut *dpc, netdev mut *link, u16 rxqid) -> void
 {
-  var rxqid = 0;
+  std::assert(platform::interrupts_disabled);
 
+  var mut &worker = stack.workers[cast<usize>(cpu::id)];
+
+  if (dpc.worker)
+    return;
+
+  dpc.link = link;
+  dpc.rxqid = rxqid;
+  dpc.worker = &worker;
+  dpc.last_worker = &worker;
+  dpc.barrier.acquire();
+
+  if (!worker.dpchead)
+    worker.dpclast = &worker.dpchead;
+
+  *worker.dpclast = dpc;
+  worker.dpclast = &dpc.next;
+
+  worker.doorbell.release();
+}
+
+pub fn sync(input_t mut *dpc) -> void
+{
+  dpc.barrier.wait();
+}
+
+pub fn enqueue(timeout_t mut *dpc, u64 deadline) -> void
+{
+  std::assert(!dpc.worker);
+
+  var mut &worker = stack.workers[cast<usize>(cpu::id)];
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut worker.lock);
+
+  dpc.deadline = deadline;
+  dpc.worker = &worker;
+  dpc.last_worker = &worker;
+  dpc.barrier.acquire();
+
+  if (!worker.timers)
+    worker.timerslast = &worker.timers;
+
+  var insertpos = &worker.timers;
+
+  while (*insertpos && insertpos.deadline < deadline)
+    insertpos = &insertpos.next;
+
+  dpc.next = *insertpos;
+
+  if (dpc.next)
+    dpc.prev = std::exchange(&mut dpc.next.prev, &dpc.next);
+  else
+    dpc.prev = std::exchange(&mut worker.timerslast, &dpc.next);
+
+  *insertpos = dpc;
+
+  if (worker.timers == dpc)
+    worker.doorbell.release();
+}
+
+pub fn cancel(timeout_t mut *dpc) -> void
+{
   for (;;)
   {
-    var budget = 64;
+    var worker = std::atomic_load(&dpc.worker);
 
-    for (; budget > 31; budget -= 1)
-    {
-      var pkt = net::packet();
+    if (!worker)
+      return;
 
-      if (!link.retrieve(rxqid, &mut pkt))
-        break;
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut worker.lock);
 
-      receive(link, &mut pkt);
-    }
-
-    link.refill(rxqid);
-
-    for (; budget > 15; budget -= 1)
-    {
-      if (link.qdisc.run(link) < cast(1))
-        break;
-    }
-
-    for (; budget > 1; budget -= 1)
-    {
-      var pkt = net::packet();
-
-      if (!link.qdisc.dequeue(&mut pkt))
-        break;
-    }
-
-    if (budget < 32)
+    if (dpc.worker != worker)
       continue;
 
-    link.packet_handler_doorbell.wait();
-  }
+    *dpc.prev = dpc.next;
 
-  link.unref();
+    if (dpc.next)
+      dpc.next.prev = dpc.prev;
+
+    dpc.barrier.release();
+
+    dpc.worker = null;
+  }
+}
+
+pub fn sync(timeout_t mut *dpc) -> void
+{
+  dpc.barrier.wait();
+}
+
+fn lock(worker mut *worker) -> void
+{
+  platform::disable_interrupts();
+
+  worker.lock.lock();
+}
+
+fn pop(input_t mut * mut &dpchead) -> input_t mut *
+{
+  var dpc = dpchead;
+
+  dpchead = std::exchange(&mut dpc.next, null);
+
+  dpc.worker = null;
+
+  return dpc;
+}
+
+fn pop(timeout_t mut * mut &timers) -> timeout_t mut *
+{
+  var dpc = timers;
+
+  if (dpc.next)
+    dpc.next.prev = &timers;
+
+  timers = std::exchange(&mut dpc.next, null);
+
+  dpc.worker = null;
+
+  return dpc;
+}
+
+fn unlock(worker mut *worker) -> void
+{
+  worker.lock.unlock();
+
+  platform::enable_interrupts();
+}
+
+fn knetworkd(worker mut *worker) -> void
+{
+  for (;;)
+  {
+    var budget = 8;
+
+    lock(worker);
+
+    for (; budget > 4; budget -= 1)
+    {
+      if (!worker.dpchead)
+        break;
+
+      var dpc = pop(&mut worker.dpchead);
+
+      var link = dpc.link;
+      var rxqid = dpc.rxqid;
+
+      unlock(worker);
+
+      var budget = 64;
+
+      for (; budget > 31; budget -= 1)
+      {
+        var pkt = net::packet();
+
+        if (!link.retrieve(rxqid, &mut pkt))
+          break;
+
+        receive(link, &mut pkt);
+      }
+
+      link.refill(rxqid);
+
+      for (; budget > 15; budget -= 1)
+      {
+        if (link.qdisc.run(link) <= cast(0))
+          break;
+      }
+
+      for (; budget > 0; budget -= 1)
+      {
+        var pkt = net::packet();
+
+        if (!link.qdisc.dequeue(&mut pkt))
+          break;
+      }
+
+      lock(worker);
+
+      if (budget < 32)
+      {
+        enqueue(dpc, link, rxqid);
+      }
+
+      dpc.barrier.release();
+    }
+
+    unlock(worker);
+
+    for (; budget > 0; budget -= 1)
+    {
+      var pkt = net::packet();
+
+      if (stack.lo.qdisc.run(stack.lo) <= cast(0))
+        break;
+
+      stack.lo.qdisc.dequeue(&mut pkt);
+    }
+
+    var now = cpu::system_time;
+
+    lock(worker);
+
+    for (;;)
+    {
+      if (!worker.timers || now < worker.timers.deadline)
+        break;
+
+      var dpc = pop(&mut worker.timers);
+
+      var callback = dpc.callback;
+
+      unlock(worker);
+
+      callback(dpc);
+
+      lock(worker);
+
+      dpc.barrier.release();
+    }
+
+    var waketime = ~0;
+
+    if (worker.timers)
+      waketime = worker.timers.deadline;
+
+    unlock(worker);
+
+    if (budget == 0 || waketime < now + 1_000_000)
+      waketime = now + 1_000_000;
+
+    worker.doorbell.try_wait_until(waketime);
+  }
 }
 
 pub fn open(netdev mut *link, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) -> net::result
@@ -117,7 +381,14 @@ pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) ->
   if (var result = link.qdisc.enqueue(&mut cb, &mut pkt); !result)
     io::complete(&mut cb, result);
 
-  link.qdisc.run(link);
+  switch (link.type)
+  {
+    case loop:
+      stack.workers[cast<usize>(cpu::id)].doorbell.release();
+
+    else:
+      link.qdisc.run(link);
+  }
 }
 
 pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
@@ -157,8 +428,8 @@ pub fn receive(netdev mut *link, net::packet mut &pkt) -> net::result
         return result;
 
     case tcp:
-//      if (var result = tcp::receive(link, &mut rx, &mut pkt); !result)
-//        return result;
+      if (var result = tcp::receive(link, &mut rx, &mut pkt); !result)
+        return result;
   }
 
   return ok;
@@ -171,11 +442,7 @@ pub fn up_link(netdev mut *link) -> void
   if (std::atomic_or(&link.flags, net::flags::up) & net::flags::up == net::flags::up)
     return;
 
-  link.ref();
-
-  link.packet_handler = create_thread(process::current, &cast<(netdev mut *) -> void>(packet_handler), link);
-
-  scheduler::enqueue(link.packet_handler, thread::priority::normal + 2);
+  link.startup();
 
   switch (link.type)
   {
@@ -194,7 +461,42 @@ pub fn down_link(netdev mut *link) -> void
   if (std::atomic_and(&link.flags, ~net::flags::up) & net::flags::up != net::flags::up)
     return;
 
-  std::print("not implemented");
+  ipv6::unconfigure(link);
+
+  link.shutdown();
+}
+
+pub fn resolve_route(route *route, inaddr &dst_ip, Rc<io::iocb> mut &cb, inaddr mut &src_ip, hwaddr mut &dst) -> net::result
+{
+  var nexthop = dst_ip;
+
+  if (route.nexthop)
+    nexthop = route.nexthop;
+
+  switch (route.link.type)
+  {
+    case loop:
+
+      if (src_ip.is_unspecified)
+      {
+        src_ip = dst_ip;
+      }
+
+    case ether:
+
+      if (src_ip.is_unspecified)
+      {
+        src_ip = inaddr::in6();
+
+        if (var result = route.link.ipv6.select_source(dst_ip.in6, &mut src_ip.in6); !result)
+          return result;
+      }
+
+      if (var result = route.link.ipv6.resolve_neighbour(route.link, &mut cb, nexthop.in6, src_ip.in6, &mut dst); !result)
+        return result;
+  }
+
+  return ok;
 }
 
 pub fn add_listener(netlink::route mut *node) -> void
@@ -224,16 +526,29 @@ pub fn enumerate(var &&callback) -> void
 
 pub fn initialise() -> void
 {
-  var dev = chr::chrdev::create<ctldev>();
+  stack.ctl = chr::chrdev::create<ctldev>();
 
-  dev::register(dev::dev_t(), dev);
+  dev::register(dev::dev_t(), stack.ctl);
 
-  if (var result = lo::initialise(); !result)
-    std::panic("bad_lo_init");
+  stack.lo = net::netdev::create<lo>();
+
+  dev::register(dev::dev_t(), stack.lo);
 
   if (var result = ip::initialise(&mut stack.ip); !result)
     std::panic("bad_ip_init");
 
   if (var result = udp::initialise(&mut stack.udp); !result)
     std::panic("bad_udp_init");
+
+  if (var result = tcp::initialise(&mut stack.tcp); !result)
+    std::panic("bad_tcp_init");
+
+  for (var i = 0; i < sys::cpu_count; ++i)
+  {
+    var mut &worker = stack.workers[i];
+
+    worker.knetworkd = create_thread(process::current, &cast<(worker mut *) -> void>(knetworkd), &worker);
+
+    scheduler::enqueue_pinned(cast<int>(i), worker.knetworkd, thread::priority::io);
+  }
 }

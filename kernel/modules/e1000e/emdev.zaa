@@ -46,6 +46,14 @@ pub struct emdev : pub net::netdev
     return ok;
   }
 
+  pub fn startup(this mut &) override -> net::result
+  {
+    if (var result = this.adaptor.startup(); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
   pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) override -> net::result
   {
     if (var result = this.adaptor.transmit(&mut cb, packet); !result)
@@ -65,6 +73,14 @@ pub struct emdev : pub net::netdev
   pub fn refill(this mut &, u16 rxqid) override -> net::result
   {
     if (var result = this.adaptor.refill(rxqid); !result)
+      return cast<net::result>(result);
+
+    return ok;
+  }
+
+  pub fn shutdown(this mut &) override -> net::result
+  {
+    if (var result = this.adaptor.shutdown(); !result)
       return cast<net::result>(result);
 
     return ok;

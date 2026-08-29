@@ -439,6 +439,9 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
       case ioring_ops::socket_bind:
         ctx.status = sys_socket_bind(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
 
+      case ioring_ops::socket_connect:
+        ctx.status = sys_socket_connect(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
+
       case ioring_ops::socket_read:
         ctx.status = sys_socket_read(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), virtaddr(sqe.args[3]), cast(sqe.args[4]), cast(sqe.args[5]));
 
@@ -466,7 +469,7 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
   if (var result = ring.retire(sqe, ctx.status); !result)
     return should_block;
 
-  if (sqe.flags & ioring_flags::fin == ioring_flags::fin)
+  if (sqe.flags & ioring_flags::fin != 0)
     ctx.status = result::ok;
 
   return ok;
@@ -479,7 +482,7 @@ pub fn enqueue(io_ring mut &ring, ioring_sqe &sqe) -> void
   if (ring.pending.len == 1 && ring.pending.back.entries.len == 1)
     workman.enqueue(&ring);
 
-  if (sqe.flags & ioring_flags::fin == ioring_flags::fin)
+  if (sqe.flags & ioring_flags::fin != 0)
     ring.pending.push_back();
 }
 

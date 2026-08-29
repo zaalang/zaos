@@ -111,6 +111,73 @@ pub struct socket
   pub ~socket() = default;
 }
 
+pub struct ancillary_data
+{
+  ctrlhdr *ctrl;
+  ctrlhdr mut *mutctrl;
+  usize ctrllen;
+
+  std::flat_hash_map<(i32, u16), ctrlattr *> attrs;
+
+  pub fn [](this &, (i32, u16) &attr) -> std::optional<ctrlattr *>
+  {
+    return this.attrs.get(attr);
+  }
+
+  pub fn push_back(this mut &, (i32, u16) &attr, void *data, usize len) -> bool
+  {
+    if (!this.mutctrl)
+      return false;
+
+    var ctrl = this.mutctrl;
+
+    if (this.ctrllen < cast<usize>(ctrl.ctrl_len) + sizeof<ctrlattr> + len)
+      return false;
+
+    var cta = cast<ctrlattr mut *>(cast<uintptr>(ctrl) + cast<usize>(ctrl.ctrl_len));
+
+    cta.cta_level = attr.0;
+    cta.cta_type = attr.1;
+    cta.cta_len = cast(sizeof<ctrlattr> + len);
+
+    std::memcpy(cta.cta_value.data, data, len);
+
+    ctrl.ctrl_len += cast(std::align_up(cta.cta_len, 4));
+
+    this.attrs.insert(attr, cta);
+
+    return true;
+  }
+
+  pub ancillary_data(ctrlhdr *ctrl, usize ctrllen)
+    : ctrl(ctrl), ctrllen(ctrllen)
+  {
+    std::assert(cast(ctrl.ctrl_len) <= ctrllen);
+
+    for (var offset = sizeof<ctrlhdr>; offset + sizeof<ctrlattr> < cast(ctrl.ctrl_len); )
+    {
+      var cta = cast<ctrlattr*>(cast<uintptr>(ctrl) + cast<usize>(offset));
+
+      if (cta.cta_len < sizeof<ctrlattr>)
+        break;
+
+      if (offset + cast(cta.cta_len) <= cast(ctrl.ctrl_len))
+        attrs.insert((cta.cta_level, cta.cta_type), cta);
+
+      offset += cast(std::align_up(cta.cta_len, 4));
+    }
+  }
+
+  pub ancillary_data(ctrlhdr mut *ctrl, usize ctrllen)
+    : this(cast<ctrlhdr*>(ctrl), ctrllen)
+  {
+    mutctrl = ctrl;
+  }
+
+  pub ancillary_data() = default;
+  pub ~ancillary_data() = default;
+}
+
 pub fn create_socket() -> Rc<socket>
 {
   return socket::create();
@@ -178,10 +245,12 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, c
 {
   var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
 
+  var ancillary_data = ancillary_data(ctrl, ctrllen);
+
   switch (socket.family)
   {
     case AF_INET6:
-      return net::read(socket, iovec, offset, length, ctrl, ctrllen);
+      return net::read(socket, iovec, offset, length, &mut ancillary_data);
 
     else:
       return not_supported;
@@ -190,17 +259,30 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, c
 
 pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
-  return read(node, iovec, offset, length, null, 0);
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  var ancillary_data = ancillary_data();
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::read(socket, iovec, offset, length, &mut ancillary_data);
+
+    else:
+      return not_supported;
+  }
 }
 
 pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, ctrlhdr *ctrl, usize ctrllen) -> vfs::result
 {
   var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
 
+  var ancillary_data = ancillary_data(ctrl, ctrllen);
+
   switch (socket.family)
   {
     case AF_INET6:
-      return net::write(socket, iovec, offset, length, ctrl, ctrllen);
+      return net::write(socket, iovec, offset, length, ancillary_data);
 
     else:
       return not_supported;
@@ -209,7 +291,18 @@ pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length, 
 
 pub fn write(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -> vfs::result
 {
-  return write(node, iovec, offset, length, null, 0);
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  var ancillary_data = ancillary_data();
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::write(socket, iovec, offset, length, ancillary_data);
+
+    else:
+      return not_supported;
+  }
 }
 
 pub fn ioctl(vfs::node mut *node, u32 op, vm::iovec &iovec) -> vfs::result
@@ -230,10 +323,30 @@ pub fn bind(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
 {
   var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
 
+  if (alen < sizeof<sockaddr>)
+    return invalid_argument;
+
   switch (socket.family)
   {
     case AF_INET6:
       return net::bind(socket, addr, alen);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn connect(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  if (alen < sizeof<sockaddr>)
+    return invalid_argument;
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::connect(socket, addr, alen);
 
     else:
       return not_supported;

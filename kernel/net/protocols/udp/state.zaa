@@ -32,10 +32,10 @@ pub fn bind(state mut &state, socket mut *socket, sockaddr *addr, usize alen) ->
 {
   var guard = std::lock_guard(&mut state.lock);
 
-  if (alen != sizeof<sockaddr_in6>)
+  if (addr.sa_family != AF_INET6)
     return invalid_argument;
 
-  if (addr.sa_family != AF_INET6)
+  if (alen != sizeof<sockaddr_in6>)
     return invalid_argument;
 
   var addr = sockaddr_storage(addr, alen);
@@ -72,6 +72,54 @@ pub fn bind(state mut &state, socket mut *socket, sockaddr *addr, usize alen) ->
   return ok;
 }
 
+pub fn connect(state mut &state, socket mut *socket, sockaddr *addr, usize alen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (var result = ip::connect(socket, addr, alen); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn find(state mut &state, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port) -> Rc<socket>
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  var j = state.sockets.find(local_port);
+
+  if (j == state.sockets.end)
+    return null;
+
+  rof (var &socket : state.sockets[j].value)
+  {
+    switch (remote_ip)
+    {
+      case in6:
+        if (socket.peername.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.peername).sin6_addr != remote_ip.in6 || cast<sockaddr_in6 &>(socket.peername).sin6_port != remote_port)
+          continue;
+
+      else:
+        if (socket.peername.ss_family != 0)
+          continue;
+    }
+
+    switch (local_ip)
+    {
+      case in6:
+        if (socket.sockname.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.sockname).sin6_addr != local_ip.in6)
+          continue;
+    }
+
+    if (!socket.try_ref())
+      return null;
+
+    return Rc::adopt(socket);
+  }
+
+  return null;
+}
+
 pub fn unbind(state mut &state, socket mut *socket) -> void
 {
   var guard = std::lock_guard(&mut state.lock);
@@ -89,44 +137,6 @@ pub fn unbind(state mut &state, socket mut *socket) -> void
       if (sockets.empty)
         state.sockets.erase(port);
   }
-}
-
-pub fn find(state mut &state, inaddr &dst, u16 dst_port, inaddr &src, u16 src_port) -> Rc<socket>
-{
-  var guard = std::lock_shared_guard(&mut state.lock);
-
-  var j = state.sockets.find(dst_port);
-
-  if (j == state.sockets.end)
-    return null;
-
-  rof (var &socket : state.sockets[j].value)
-  {
-    switch (src)
-    {
-      case in6:
-        if (socket.peername.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.peername).sin6_addr != src.in6 || cast<sockaddr_in6 &>(socket.peername).sin6_port != src_port)
-          continue;
-
-      else:
-        if (socket.peername.ss_family != 0)
-          continue;
-    }
-
-    switch (dst)
-    {
-      case in6:
-        if (socket.sockname.ss_family != AF_INET6 || cast<sockaddr_in6 &>(socket.sockname).sin6_addr != dst.in6)
-          continue;
-    }
-
-    if (!socket.try_ref())
-      return null;
-
-    return Rc::adopt(socket);
-  }
-
-  return null;
 }
 
 pub fn enumerate_sockets(state mut &state, var &&callback) -> void

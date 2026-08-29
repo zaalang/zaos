@@ -17,7 +17,6 @@ import mutex as _ : mutex;
 import thread as _ : thread;
 import process as _ : process;
 import semaphore as _ : semaphore;
-import slab : slab_allocator;
 import support.rc : Rc;
 
 const BLOCK_SIZE = 32768;
@@ -75,16 +74,9 @@ pub struct cache_entry
 
   i32 refcnt;
 
-  fn allocator()
-  {
-    static allocator = #slab_allocator<cache_entry>();
-
-    return &allocator;
-  }
-
   fn create() -> cache_entry mut *
   {
-    return allocator.allocate();
+    return std::allocator::new<cache_entry>();
   }
 
   pub fn ref(this mut &) -> void
@@ -108,19 +100,9 @@ fn destroy(cache_entry mut *entry) -> void
   std::assert(entry.next == null);
   std::assert(entry.prev == null);
 
-  if (entry.state > cache_entry::state::allocated)
-    entry.state = cache_entry::state::allocated;
-
-  cache_entry::allocator.free(entry);
-}
-
-fn deallocate(cache_entry mut *entry) -> void
-{
   heap::munmap(entry.allocation);
 
-  entry.iovec = vm::iovec();
-  entry.allocation = vm::virtrange();
-  entry.state = cache_entry::state::uninit;
+  std::allocator::delete(entry);
 }
 
 pub struct block_ptr
@@ -376,6 +358,7 @@ pub fn purge(vfs::node *node) -> void
     {
       pagecache.entries.erase(cache_key(entry.node, entry.offset));
       pagecache.remove(entry);
+
       destroy(entry);
     }
 
@@ -406,7 +389,6 @@ pub fn reap() -> void
         {
           pagecache.entries.erase(cache_key(entry.node, entry.offset));
           pagecache.remove(entry);
-          deallocate(entry);
           destroy(entry);
 
           std::atomic_sub(&pagecache.blocks_allocated, 1);
@@ -421,8 +403,6 @@ pub fn reap() -> void
 
     pagecache.lock.unlock();
   }
-
-  cache_entry::allocator.reap();
 }
 
 fn plumber(void*) -> void

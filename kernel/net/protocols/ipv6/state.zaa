@@ -22,8 +22,18 @@ using net::hwaddr;
 
 pub struct ifaddr
 {
-  pub in6addr addr;
-  pub usize prefixlen;
+  in6addr addr;
+  usize prefixlen;
+
+  pub fn addr(this &) -> in6addr &
+  {
+    return &this.addr;
+  }
+
+  pub fn prefixlen(this &) -> usize
+  {
+    return this.prefixlen;
+  }
 
   pub fn ref(this mut &) -> void
   {
@@ -99,10 +109,7 @@ pub fn add_addr(ifstate mut &state, in6addr &addr, usize prefixlen) -> net::resu
 
   state.addrs.push_back(std::allocator::new<ifaddr>(addr, prefixlen));
 
-  net::enumerate(|id, link| {
-    if (link.type == net::type::loop)
-      net::routes.add(net::inaddr(addr), 128, net::inaddr(), link);
-  });
+  net::routes.add(net::inaddr(addr), 128, net::inaddr(), net::stack.lo);
 
   return ok;
 }
@@ -124,7 +131,21 @@ pub fn remove_ifa(ifstate mut &state, ifaddr *ifa) -> void
 {
   var guard = std::lock_guard(&mut state.lock);
 
+  net::routes.remove(net::inaddr(ifa.addr), 128);
+
   state.addrs.erase(ifa);
+}
+
+pub fn clear(ifstate mut &state) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  for (var &ifa : state.addrs)
+  {
+    net::routes.remove(net::inaddr(ifa.addr), 128);
+  }
+
+  state.addrs.clear();
 }
 
 pub fn enumerate_addrs(ifstate mut &state, var &&callback) -> void
@@ -137,9 +158,9 @@ pub fn enumerate_addrs(ifstate mut &state, var &&callback) -> void
 
 struct ipattr
 {
-	u8 scope;
-	u8 precedence;
-	u8 label;
+  u8 scope;
+  u8 precedence;
+  u8 label;
 
   ipattr() = default;
   ipattr(ipattr &) = default;
@@ -153,10 +174,10 @@ fn classify(in6addr &ip) -> ipattr
 
   if (ip.is_loopback || ip.is_linklocal)
     attr.scope = 2;
-	else if (ip.is_multicast)
+  else if (ip.is_multicast)
     attr.scope = (ip[1] & 0xf);
   else
-	  attr.scope = 14;
+    attr.scope = 14;
 
   const policy_table = [
     (128, [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 ], 50, 0),
@@ -192,16 +213,16 @@ pub fn cmp((in6addr, ipattr) &sa, (in6addr, ipattr) &sb, (in6addr, ipattr) &d) -
     return false;
 
   if (sa.1.scope < sb.1.scope)
-		return !(sa.1.scope < d.1.scope);
+    return !(sa.1.scope < d.1.scope);
 
   if (sb.1.scope < sa.1.scope)
-		return (sb.1.scope < d.1.scope);
+    return (sb.1.scope < d.1.scope);
 
   if (sa.1.label == d.1.label && sb.1.label != d.1.label)
-		return true;
+    return true;
 
   if (sb.1.label == d.1.label && sa.1.label != d.1.label)
-		return false;
+    return false;
 
   return false;
 }
@@ -277,7 +298,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
 
       if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
       {
-        if (var result = ndp::neighbour_solicitation(link, dst_ip, src_ip); !result)
+        if (var result = ndp::send_neighbour_solicitation(link, dst_ip, src_ip); !result)
           return result;
 
         neighbour.last_solicit = cpu::system_time;
@@ -289,7 +310,7 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
 
       if (cpu::system_time > neighbour.last_solicit + 1_000_000_000)
       {
-        if (var result = ndp::neighbour_solicitation(link, dst_ip, src_ip, neighbour.dst); !result)
+        if (var result = ndp::send_neighbour_solicitation(link, dst_ip, src_ip, neighbour.dst); !result)
           return result;
 
         neighbour.last_solicit = cpu::system_time;

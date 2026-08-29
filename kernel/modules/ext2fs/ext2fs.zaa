@@ -870,6 +870,15 @@ pub fn sync(ext2fs mut *fs) -> vfs::result
   return ok;
 }
 
+pub fn reap(ext2fs mut *fs) -> void
+{
+  var guard = std::lock_guard(&mut fs.lock);
+
+  fs.node_cache.erase_if(|entry| {
+    return entry.value.watching == 0 && entry.value.refcnt == 1;
+  });
+}
+
 fn destroy(vfs::node mut *node) -> void
 {
   var inode = cast<inode mut *>(node);

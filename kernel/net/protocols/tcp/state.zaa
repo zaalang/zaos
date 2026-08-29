@@ -1,0 +1,156 @@
+//
+// tcp state
+//
+
+import std.stdlib;
+import std.vector;
+import net.result;
+import net.protocols.ip as ip;
+import net.protocols.tcp as tcp;
+import net.protocols.tcp.socket as tcp.socket : tcb;
+import mutex as _ : shared_mutex;
+import socket as _ : socket, sockaddr, sockaddr_storage, ctrlhdr, ctrlattr;
+import support.rc : Rc;
+
+using net::inaddr;
+using ip::sockaddr_in4;
+using ip::sockaddr_in6;
+
+pub struct state
+{
+  shared_mutex lock;
+
+  std::flat_hash_map<u16, std::vector<tcb mut *>> tcbs;
+
+  u16 next_ephemeral = 49152;
+
+  pub state() = default;
+  pub state(#state &) = default;
+  pub ~state() = default;
+}
+
+pub fn bind(state mut &state, socket mut *socket, tcb mut *tcb, sockaddr *addr, usize alen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (addr.sa_family != AF_INET6)
+    return invalid_argument;
+
+  if (alen != sizeof<sockaddr_in6>)
+    return invalid_argument;
+
+  var addr = sockaddr_storage(addr, alen);
+  var addr = cast<sockaddr_in6 mut *>(&addr);
+
+  if (addr.sin6_port == 0)
+  {
+    for (var k = 0; k < 16384; ++k)
+    {
+      addr.sin6_port = std::native_to_be(++state.next_ephemeral);
+
+      if (state.next_ephemeral == 65535)
+        state.next_ephemeral = 49152;
+
+      if (!state.tcbs.contains(addr.sin6_port))
+        break;
+    }
+  }
+
+  if (state.tcbs.contains(addr.sin6_port))
+  {
+    for (var &tcb : state.tcbs[addr.sin6_port])
+    {
+      if (tcb.local_ip.in6 == addr.sin6_addr)
+        return address_in_use;
+    }
+  }
+
+  if (var result = ip::bind(socket, cast<sockaddr*>(addr), alen); !result)
+    return result;
+
+  switch (socket.sockname.ss_family)
+  {
+    case AF_INET6:
+      tcb.local_ip = cast<sockaddr_in6 &>(socket.sockname).sin6_addr;
+      tcb.local_port = cast<sockaddr_in6 &>(socket.sockname).sin6_port;
+  }
+
+  state.tcbs.emplace(addr.sin6_port).push_back(tcb);
+
+  return ok;
+}
+
+pub fn connect(state mut &state, socket mut *socket, tcb mut *tcb, sockaddr *addr, usize alen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (var result = ip::connect(socket, addr, alen); !result)
+    return result;
+
+  switch (socket.peername.ss_family)
+  {
+    case AF_INET6:
+      tcb.remote_ip = cast<sockaddr_in6 &>(socket.peername).sin6_addr;
+      tcb.remote_port = cast<sockaddr_in6 &>(socket.peername).sin6_port;
+  }
+
+  return ok;
+}
+
+pub fn find(state mut &state, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port) -> Rc<tcb>
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  var j = state.tcbs.find(local_port);
+
+  if (j == state.tcbs.end)
+    return null;
+
+  rof (var &tcb : state.tcbs[j].value)
+  {
+    if (tcb.remote_ip != remote_ip || tcb.remote_port != remote_port)
+      continue;
+
+    if (tcb.local_ip != local_ip)
+      continue;
+
+    if (!tcb.try_ref())
+      return null;
+
+    return Rc::adopt(tcb);
+  }
+
+  return null;
+}
+
+pub fn unbind(state mut &state, tcb mut *tcb) -> void
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  var port = tcb.local_port;
+
+  switch (state.tcbs.get(port))
+  {
+    case Some[tcbs]:
+      tcbs.erase(tcb);
+
+      if (tcbs.empty)
+        state.tcbs.erase(port);
+  }
+}
+
+pub fn enumerate_tcbs(state mut &state, var &&callback) -> void
+{
+  var guard = std::lock_shared_guard(&mut state.lock);
+
+  for (var &[port, tcbs] : state.tcbs)
+    for (var &socket : tcbs)
+      callback(socket);
+}
+
+pub fn initialise(state mut &state) -> net::result
+{
+  net::stack.ip.install_error_handler(IPPROTO_TCP, &cast<(net::netdev mut *, net::rx &, net::packet &) -> net::result>(tcp::receive_error_reply));
+
+  return ok;
+}

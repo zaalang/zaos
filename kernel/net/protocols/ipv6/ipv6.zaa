@@ -69,14 +69,17 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   if (hdr.version != 6)
     return protocol_error;
 
-  if (pkt.length < hdr.payload_length)
-    return protocol_error;
-
   rx.src_ip = hdr.source;
   rx.dst_ip = hdr.destination;
 
+  var length = sizeof<ipv6_header> + hdr.payload_length;
+
+  if (pkt.length < length)
+    return protocol_error;
+
+  pkt.trim(length);
+
   pkt.strip(sizeof<ipv6_header>);
-  pkt.trim(hdr.payload_length);
 
   ip::receive(link, cast(hdr.next_header), rx, pkt);
 
@@ -120,17 +123,7 @@ pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6a
   switch (link.type)
   {
     case loop:
-      switch (protocol)
-      {
-        case icmp6:
-          if (var result = link.qdisc.enqueue(&mut cb, &mut pkt); !result)
-            io::complete(&mut cb, result);
-
-          link.packet_handler_doorbell.release();
-
-        else:
-          net::transmit(link, &mut cb, &mut pkt);
-      }
+      net::transmit(link, &mut cb, &mut pkt);
 
     case ether:
       ethernet::send(link, &mut cb, ethernet::ether_type::ipv6, dst, src, &mut pkt);

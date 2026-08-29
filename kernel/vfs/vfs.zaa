@@ -419,3 +419,13 @@ pub fn sync() -> vfs::result
 
   return ok;
 }
+
+pub fn reap() -> void
+{
+  var guard = std::lock_guard(&mut vfs.lock);
+
+  for (var mut &mount : vfs.mounts)
+  {
+    mount.fs.ops.reap(mount.fs);
+  }
+}

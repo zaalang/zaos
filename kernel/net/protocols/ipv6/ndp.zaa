@@ -214,7 +214,7 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   return ok;
 }
 
-pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
+pub fn send_neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
 {
   var pkt = net::packet::with_capacity(256, 2048);
 
@@ -241,26 +241,26 @@ pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &d
   return ok;
 }
 
-pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip, hwaddr &dst) -> net::result
+pub fn send_neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip, hwaddr &dst) -> net::result
 {
-  if (var result = neighbour_solicitation(link, target, target, src_ip, dst, link.hwaddr); !result)
+  if (var result = send_neighbour_solicitation(link, target, target, src_ip, dst, link.hwaddr); !result)
     return result;
 
   return ok;
 }
 
-pub fn neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip) -> net::result
+pub fn send_neighbour_solicitation(net::netdev mut *link, in6addr &target, in6addr &src_ip) -> net::result
 {
   var dst_l3 = in6addr([0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xff, target[13], target[14], target[15]]);
   var dst_l2 = hwaddr([0x33, 0x33, 0xff, target[13], target[14], target[15]]);
 
-  if (var result = neighbour_solicitation(link, target, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
+  if (var result = send_neighbour_solicitation(link, target, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
     return result;
 
   return ok;
 }
 
-pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
+pub fn send_router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src) -> net::result
 {
   var pkt = net::packet::with_capacity(256, 2048);
 
@@ -286,20 +286,20 @@ pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_
   return ok;
 }
 
-pub fn router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst) -> net::result
+pub fn send_router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst) -> net::result
 {
-  if (var result = router_solicitation(link, dst_ip, src_ip, dst, link.hwaddr); !result)
+  if (var result = send_router_solicitation(link, dst_ip, src_ip, dst, link.hwaddr); !result)
     return result;
 
   return ok;
 }
 
-pub fn router_solicitation(net::netdev mut *link, in6addr &src_ip) -> net::result
+pub fn send_router_solicitation(net::netdev mut *link, in6addr &src_ip) -> net::result
 {
   var dst_l3 = in6addr([0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
   var dst_l2 = hwaddr([0x33, 0x33, 0, 0, 0, 2]);
 
-  if (var result = router_solicitation(link, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
+  if (var result = send_router_solicitation(link, dst_l3, src_ip, dst_l2, link.hwaddr); !result)
     return result;
 
   return ok;

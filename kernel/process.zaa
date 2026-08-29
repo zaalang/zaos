@@ -327,7 +327,7 @@ struct process_manager
     process.prev = null;
   }
 
-  fn instance()
+  fn instance() -> process_manager mut &
   {
     static instance = #process_manager();
 

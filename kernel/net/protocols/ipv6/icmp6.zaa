@@ -117,10 +117,10 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
     case echo_request:
       receive_echo_request(link, &mut rx, &mut pkt);
 
-		case destination_unreachable:
-		case packet_too_big:
-		case time_exceeded:
-		case parameter_problem:
+    case destination_unreachable:
+    case packet_too_big:
+    case time_exceeded:
+    case parameter_problem:
       receive_error_reply(link, &mut rx, &mut pkt);
 
     case router_solicitation:
@@ -138,22 +138,24 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   return ok;
 }
 
-pub fn error_reply(net::netdev mut *link, type type, code code, net::rx &rx, net::packet mut &pkt) -> net::result
+pub fn send_error_reply(net::netdev mut *link, type type, code code, net::rx &rx, net::packet &srcpkt) -> net::result
 {
-  pkt.trim(std::min(pkt.length, 256));
-  pkt.extend((pkt.start - rx.inhdr) + sizeof<icmp6_header>);
+  var pkt = net::packet::with_capacity(256, 2048);
 
-  var payload = pkt.as<u8>(pkt.length);
-  std::memmove(payload + sizeof<icmp6_header>, payload - (pkt.start - rx.inhdr), (pkt.start - rx.inhdr) + (pkt.length - sizeof<icmp6_header>));
-
-  var hdr = pkt.as<icmp6_header>();
-  if (!hdr)
-    return protocol_error;
+  var hdr = pkt.prepend<icmp6_header>();
 
   hdr.type = type;
   hdr.code = code;
   hdr.cksum = [0, 0];
   hdr.dataum = [0, 0, 0, 0];
+
+  var offset = rx.inhdr;
+  var length = std::min(srcpkt.start - rx.inhdr + srcpkt.length, 256);
+
+  if (var result = vm::memcpy(pkt.iovec, pkt.start + pkt.length, srcpkt.iovec, offset, length); !result)
+    return cast(result);
+
+  pkt.extend(length);
 
   hdr.cksum = ipv6::checksum(ipv6::protocol::icmp6, rx.dst_ip.in6, rx.src_ip.in6, pkt);
 

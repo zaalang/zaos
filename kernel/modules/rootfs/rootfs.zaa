@@ -403,3 +403,7 @@ pub fn sync(rootfs mut *fs) -> vfs::result
 {
   return ok;
 }
+
+pub fn reap(rootfs mut *fs) -> void
+{
+}

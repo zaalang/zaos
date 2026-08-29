@@ -136,6 +136,8 @@ pub struct slab_cache<T>
   {
     std::assert(cpu::interrupts_disabled);
 
+    vm::reservation(slab_allocator<T>::SLAB_SIZE + 7*PAGE_SIZE);
+
     var guard = std::lock_guard(&mut slab.lock);
 
     if (!slab.slabs || !slab.slabs.firstfree)

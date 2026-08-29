@@ -238,7 +238,7 @@ pub union inaddr
       }
     }
 
-    return false;
+    return (lhs.kind == rhs.kind);
   }
 
   pub fn <=>(inaddr &lhs, inaddr &rhs) -> int
@@ -256,7 +256,7 @@ pub union inaddr
       }
     }
 
-    return lhs.kind <=> rhs.kind;
+    return (lhs.kind <=> rhs.kind);
   }
 
   pub inaddr() = default;

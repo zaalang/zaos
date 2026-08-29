@@ -20,7 +20,7 @@ pub fn receive(net::netdev mut *link, i32 protocol, net::rx &rx, net::packet &pk
     if (socket.peername.ss_family == AF_INET6 && cast<sockaddr_in6 &>(socket.peername).sin6_addr != rx.src_ip.in6)
       return;
 
-    ip::deliver(socket, rx, pkt);
+    ip::deliver(socket, link, rx, pkt);
   });
 
   return ok;

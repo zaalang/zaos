@@ -27,6 +27,9 @@ struct opts
   #[arg(value, short='p', help="source port")]
   u16 source_port;
 
+  #[arg(value, short='w', help="wait timeout")]
+  u64 waittime = 1;
+
   #[arg(flag, short='u', help="udp mode")]
   bool udp = false;
 
@@ -42,7 +45,78 @@ struct opts
 
 extern fn thread_ring() -> os::ioring mut &;
 
-fn sendto(i32 fd, void *buffer, usize len, u64 flags, sockaddr *addr, usize alen) -> i32
+fn socket(i32 family, i32 type, i32 protocol) -> i32
+{
+  return os::socket(&mut thread_ring, family, type, protocol);
+}
+
+fn bind(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
+{
+  return os::socket_bind(&mut thread_ring, fd, addr, alen);
+}
+
+fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
+{
+  var rc = os::socket_connect(&mut thread_ring, fd, addr, alen);
+
+  while (rc == EAGAIN)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    os::sleep(&mut thread_ring, tp + 1_000_000);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+    rc = os::socket_connect(&mut thread_ring, fd, addr, alen);
+  }
+
+  if (rc == EINPROGRESS)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT | POLLPRI, 0) ];
+
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+      return ETIMEDOUT;
+
+    var soerror = i32();
+    if (os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &soerror, sizeof(soerror)); soerror < 0)
+      return soerror;
+  }
+
+  return rc;
+}
+
+fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
+{
+  var src = os::sockaddr_in6();
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_GETSOCKNAME, &src, sizeof(src)); rc < 0)
+    return rc;
+
+  std::printf("nc: listening on {} port {}\n", net::ipv6addr(src.sin6_addr), std::be_to_native(src.sin6_port));
+
+  var buffer = [<u8>: void; 4096];
+
+  var bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
+
+  while (bytes == ETIMEDOUT)
+  {
+    bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
+  }
+
+  if (bytes < 0)
+    return bytes;
+
+  std::stdout.write(buffer.data, cast<usize>(bytes));
+
+  return 0;
+}
+
+fn sendto(i32 fd, void *buffer, usize len, u64 flags, sockaddr *addr, usize alen, opts &opts) -> i32
 {
   var iov = os::ciovec();
   iov.data = buffer;
@@ -80,7 +154,7 @@ fn sendto(i32 fd, void *buffer, usize len, u64 flags, sockaddr *addr, usize alen
   return bytes;
 }
 
-fn recvfrom(i32 fd, void mut *buffer, usize len, u64 flags, sockaddr mut *addr, usize mut &alen) -> i32
+fn recvfrom(i32 fd, void mut *buffer, usize len, u64 flags, sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
 {
   var iov = os::iovec();
   iov.data = buffer;
@@ -93,9 +167,13 @@ fn recvfrom(i32 fd, void mut *buffer, usize len, u64 flags, sockaddr mut *addr, 
 
   while (bytes == EAGAIN)
   {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
     var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+      return ETIMEDOUT;
 
     bytes = os::socket_read(&mut thread_ring, fd, &iov, 1, ctrl, ctrlbuf.len, 0);
   }
@@ -115,27 +193,6 @@ fn recvfrom(i32 fd, void mut *buffer, usize len, u64 flags, sockaddr mut *addr, 
   }
 
   return bytes;
-}
-
-fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
-{
-  var src = os::sockaddr_in6();
-
-  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_GETSOCKNAME, &src, sizeof(src)); rc < 0)
-    return rc;
-
-  std::printf("nc: listening on {} port {}\n", net::ipv6addr(src.sin6_addr), std::be_to_native(src.sin6_port));
-
-  var buffer = [<u8>: void; 4096];
-
-  var bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen);
-
-  if (bytes < 0)
-    return bytes;
-
-  std::stdout.write(buffer.data, cast<usize>(bytes));
-
-  return 0;
 }
 
 fn readwrite(i32[2] fds, opts &opts) -> i32
@@ -212,7 +269,7 @@ pub fn main() -> i32
     return 0;
   }
 
-  var fd = os::socket(&mut thread_ring, AF_INET6, SOCK_DGRAM, 0);
+  var fd = socket(AF_INET6, opts.udp ? SOCK_DGRAM : SOCK_STREAM, 0);
 
   if (fd < 0)
   {
@@ -226,7 +283,7 @@ pub fn main() -> i32
   sockname.sin6_addr = opts.source_address;
   sockname.sin6_port = std::native_to_be(opts.source_port);
 
-  if (var rc = os::socket_bind(&mut thread_ring, fd, &sockname, sizeof(sockname)); rc < 0)
+  if (var rc = bind(fd, &sockname, sizeof(sockname), opts); rc < 0)
   {
     std::fprint(std::stderr, "nc: bind - ", cast<std::errc>(-rc));
 
@@ -284,9 +341,9 @@ pub fn main() -> i32
     return 1;
   }
 
-  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_SETPEERNAME, &peername, sizeof(peername)); rc < 0)
+  if (var rc = connect(fd, &peername, sizeof(peername), opts); rc < 0)
   {
-    std::fprint(std::stderr, "nc: setpeername - ", cast<std::errc>(-rc));
+    std::fprint(std::stderr, "nc: connect - ", cast<std::errc>(-rc));
 
     return 1;
   }

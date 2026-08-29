@@ -5,6 +5,7 @@
 import std.stdio;
 import vm;
 import blk;
+import vfs;
 import sys;
 import thread as _ : thread;
 import process as _ : process;
@@ -18,7 +19,7 @@ struct reaper
   semaphore doorbell;
   semaphore ringtone;
 
-  fn instance()
+  fn instance() -> reaper mut &
   {
     static instance = #reaper();
 
@@ -41,6 +42,7 @@ fn reaper(void *) -> void
     std::print("reaper: ", vm::available_physical_memory, " ", blk::cache_memory_used);
 
     blk::reap();
+    vfs::reap();
     process::reap();
 
     vm::reap();

@@ -321,7 +321,7 @@ pub fn initialise() -> void
 
   blkman.kblockd = create_thread(process::current, &cast<(void mut *) -> void>(kblockd), null);
 
-  scheduler::enqueue(blkman.kblockd, thread::priority::normal + 2);
+  scheduler::enqueue(blkman.kblockd, thread::priority::io);
 
   spawn_plumber();
 }

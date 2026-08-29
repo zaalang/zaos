@@ -14,14 +14,38 @@ using net::hwaddr;
 
 pub struct route
 {
-  pub inaddr destination;
-  pub usize prefixlen;
+  inaddr destination;
+  usize prefixlen;
 
-  pub inaddr nexthop;
-  pub Rc<net::netdev> link;
+  inaddr nexthop;
+  Rc<net::netdev> link;
 
-  pub u32 flags;
-  pub u32 mtu;
+  u32 flags;
+
+  pub fn destination(this &) -> inaddr &
+  {
+    return &this.destination;
+  }
+
+  pub fn prefixlen(this &) -> usize
+  {
+    return this.prefixlen;
+  }
+
+  pub fn nexthop(this &) -> inaddr &
+  {
+    return &this.nexthop;
+  }
+
+  pub fn link(this &) -> Rc<net::netdev> &
+  {
+    return &this.link;
+  }
+
+  pub fn flags(this &) -> u32
+  {
+    return this.flags;
+  }
 
   pub fn ref(this mut &) -> void
   {
@@ -39,6 +63,7 @@ pub struct route
   pub route(inaddr &destination, usize prefixlen, inaddr &nexthop, netdev mut *link)
     : destination(destination), prefixlen(prefixlen), nexthop(nexthop), link(link)
   {
+    std::assert(link);
     std::assert(destination.masked(prefixlen) == destination);
   }
 
@@ -97,6 +122,20 @@ pub fn find(route_table mut &table, inaddr &addr) -> Rc<route>
   }
 
   return null;
+}
+
+pub fn remove(route_table mut &table, inaddr &destination, usize prefixlen) -> void
+{
+  var guard = std::lock_guard(&mut table.lock);
+
+  table.routes.erase_if(|route| route.destination == destination && route.prefixlen == prefixlen);
+}
+
+pub fn remove_all(route_table mut &table, netdev mut *link) -> void
+{
+  var guard = std::lock_guard(&mut table.lock);
+
+  table.routes.erase_if(|route| route.link == link);
 }
 
 pub fn enumerate(route_table mut &table, var &&callback) -> void

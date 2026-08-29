@@ -27,7 +27,7 @@ struct futex_table
 
   std::flat_hash_map<physaddr, futex> entries;
 
-  fn instance()
+  fn instance() -> futex_table mut &
   {
     static instance = #futex_table();
 

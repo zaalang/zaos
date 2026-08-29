@@ -44,7 +44,7 @@ struct interrupt_manager
 
   vector[256] vectors;
 
-  fn instance()
+  fn instance() -> interrupt_manager mut &
   {
     static instance = #interrupt_manager();
 

@@ -2,7 +2,10 @@
 // fd
 //
 
+import os.zaos.time;
 import os.zaos.fcntl;
+
+using os;
 
 enum filetype
 {
@@ -23,24 +26,6 @@ struct filestat
   u64 atime;
   u64 mtime;
   u64 ctime;
-}
-
-struct iovec
-{
-  u8 mut *data;
-  usize len;
-}
-
-struct ciovec
-{
-  u8 *data;
-  usize len;
-}
-
-struct string
-{
-  u8 *data;
-  usize len;
 }
 
 struct fd
@@ -83,8 +68,6 @@ extern fn thread_ring() -> os::ioring mut &;
 
 extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u64 rights, u32 fdflags) -> u32
 {
-  using os;
-
   var flags = 0;
 
   if (oflags & fd::oflags::create == fd::oflags::create)
@@ -108,7 +91,7 @@ extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u64 rights, u32 fdfl
   if (rights & (fd::rights::read | fd::rights::write) == (fd::rights::read | fd::rights::write))
     flags |= O_RDWR;
 
-  var rc = open(&mut thread_ring, os::string(path.data, path.len), flags, 0o666);
+  var rc = os::open(&mut thread_ring, path, flags, 0o666);
 
   if (rc < 0)
     return cast(-rc);
@@ -120,31 +103,30 @@ extern fn fd_open(uintptr mut *fd, string path, u32 oflags, u64 rights, u32 fdfl
 
 extern fn fd_stat(uintptr fd, filestat mut *fs) -> u32
 {
-  var buf = os::stat(void);
+  var stat = os::stat(void);
 
-  if (var rc = os::stat(&mut thread_ring, cast(fd), &buf, 0x7f); rc < 0)
+  if (var rc = os::stat(&mut thread_ring, cast(fd), &stat, 0x7f); rc < 0)
     return cast(-rc);
 
-  fs.size = buf.size;
-  fs.type = cast(buf.type);
-  fs.atime = cast(buf.mtime);
-  fs.ctime = cast(buf.ctime);
-  fs.mtime = cast(buf.mtime);
+  fs.size = stat.size;
+  fs.type = cast(stat.type);
+  fs.atime = cast(stat.mtime);
+  fs.ctime = cast(stat.ctime);
+  fs.mtime = cast(stat.mtime);
 
   return 0;
 }
 
-fn read(i32 fd, u8 mut *buffer, usize length) -> i32
+fn read(i32 fd, void mut *buffer, usize length) -> i32
 {
-  using os;
-
   var bytes = os::read(&mut thread_ring, fd, buffer, length);
 
   while (bytes == EAGAIN)
   {
     var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, ~0) <= 0)
+      return ETIMEDOUT;
 
     bytes = os::read(&mut thread_ring, fd, buffer, length);
   }
@@ -170,17 +152,16 @@ extern fn fd_read(uintptr fd, u8 mut *buffer, usize length) -> fd_result
   return result;
 }
 
-fn readv(i32 fd, os::iovec mut *iovs, usize n) -> i32
+fn readv(i32 fd, iovec mut *iovs, usize n) -> i32
 {
-  using os;
-
   var bytes = os::readv(&mut thread_ring, fd, iovs, n);
 
   while (bytes == EAGAIN)
   {
     var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, ~0) <= 0)
+      return ETIMEDOUT;
 
     bytes = os::readv(&mut thread_ring, fd, iovs, n);
   }
@@ -192,7 +173,7 @@ extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
 {
   var result = fd_result();
 
-  var bytes = readv(cast(fd), cast(iovs), n);
+  var bytes = readv(cast(fd), iovs, n);
 
   if (bytes < 0)
   {
@@ -206,17 +187,16 @@ extern fn fd_readv(uintptr fd, iovec mut *iovs, usize n) -> fd_result
   return result;
 }
 
-fn preadv(i32 fd, os::iovec mut *iovs, usize n, u64 offset) -> i32
+fn preadv(i32 fd, iovec mut *iovs, usize n, u64 offset) -> i32
 {
-  using os;
-
   var bytes = os::preadv(&mut thread_ring, fd, iovs, n, offset);
 
   while (bytes == EAGAIN)
   {
     var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, ~0) <= 0)
+      return ETIMEDOUT;
 
     bytes = os::preadv(&mut thread_ring, fd, iovs, n, offset);
   }
@@ -228,7 +208,7 @@ extern fn fd_preadv(uintptr fd, iovec mut *iovs, usize n, u64 offset) -> fd_resu
 {
   var result = fd_result();
 
-  var bytes = preadv(cast(fd), cast(iovs), n, offset);
+  var bytes = preadv(cast(fd), iovs, n, offset);
 
   if (bytes < 0)
   {
@@ -242,19 +222,20 @@ extern fn fd_preadv(uintptr fd, iovec mut *iovs, usize n, u64 offset) -> fd_resu
   return result;
 }
 
-fn write(i32 fd, u8 *buffer, usize length) -> i32
+fn write(i32 fd, void *buffer, usize length) -> i32
 {
-  using os;
-
   var bytes = os::write(&mut thread_ring, fd, buffer, length);
 
   while (bytes == EAGAIN)
   {
+    var tp = os::timespec(~0);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
     var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
 
-    bytes = os::write(&mut thread_ring, fd, buffer, length);
+    bytes =  os::write(&mut thread_ring, fd, buffer, length);
   }
 
   return bytes;
@@ -264,7 +245,7 @@ extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> fd_result
 {
   var result = fd_result();
 
-  while (length != 0)
+  for (; length != 0; )
   {
     var bytes = write(cast(fd), buffer, length);
 
@@ -284,17 +265,18 @@ extern fn fd_write(uintptr fd, u8 *buffer, usize length) -> fd_result
   return result;
 }
 
-fn writev(i32 fd, os::ciovec *iovs, usize n) -> i32
+fn writev(i32 fd, ciovec *iovs, usize n) -> i32
 {
-  using os;
-
   var bytes = os::writev(&mut thread_ring, fd, iovs, n);
 
   while (bytes == EAGAIN)
   {
+    var tp = os::timespec(~0);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
     var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
 
     bytes = os::writev(&mut thread_ring, fd, iovs, n);
   }
@@ -306,9 +288,9 @@ extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
 {
   var result = fd_result();
 
-  while (n != 0)
+  for (; n != 0; )
   {
-    var bytes = writev(cast(fd), cast(iovs), n);
+    var bytes = writev(cast(fd), iovs, n);
 
     if (bytes < 0)
     {
@@ -328,7 +310,7 @@ extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
     {
       for (var i = cast<usize>(bytes); i < iovs.len; )
       {
-        bytes = write(cast(fd), iovs.data + i, iovs.len - i);
+        bytes = write(cast(fd), cast<u8*>(iovs.data) + i, iovs.len - i);
 
         if (bytes < 0)
         {
@@ -350,17 +332,18 @@ extern fn fd_writev(uintptr fd, ciovec *iovs, usize n) -> fd_result
   return result;
 }
 
-fn pwritev(i32 fd, os::ciovec *iovs, usize n, u64 offset) -> i32
+fn pwritev(i32 fd, ciovec *iovs, usize n, u64 offset) -> i32
 {
-  using os;
-
   var bytes = os::pwritev(&mut thread_ring, fd, iovs, n, offset);
 
   while (bytes == EAGAIN)
   {
+    var tp = os::timespec(~0);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
     var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
 
-    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
 
     bytes = os::pwritev(&mut thread_ring, fd, iovs, n, offset);
   }
@@ -372,7 +355,7 @@ extern fn fd_pwritev(uintptr fd, ciovec *iovs, usize n, u64 offset) -> fd_result
 {
   var result = fd_result();
 
-  var bytes = pwritev(cast(fd), cast(iovs), n, offset);
+  var bytes = pwritev(cast(fd), iovs, n, offset);
 
   if (bytes < 0)
   {

@@ -73,4 +73,6 @@ pub vtable file_system_operations
   pub fn statfs(this mut *fs, vfs::statfs mut &statfs, u64 mask) -> vfs::result;
 
   pub fn sync(this mut *fs) -> vfs::result;
+
+  pub fn reap(this mut *fs) -> void;
 }

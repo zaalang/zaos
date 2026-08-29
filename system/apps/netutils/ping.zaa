@@ -15,6 +15,9 @@ struct opts
   #[arg(free, long="destination", required, help="destination")]
   std::string destination;
 
+  #[arg(value, short='w', help="wait timeout")]
+  u64 waittime = 1;
+
   #[arg(flag, help="display this help and exit")]
   bool help = false;
 
@@ -73,9 +76,9 @@ pub fn main() -> i32
   dst.sa_family = AF_INET6;
   dst.sin6_addr = destination;
 
-  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_SETPEERNAME, &dst, sizeof(dst)); rc < 0)
+  if (var rc = os::socket_connect(&mut thread_ring, fd, &dst, sizeof(dst)); rc < 0)
   {
-    std::fprint(std::stderr, "ping: setpeername - ", cast<std::errc>(-rc));
+    std::fprint(std::stderr, "ping: connect - ", cast<std::errc>(-rc));
 
     return 1;
   }
@@ -164,11 +167,12 @@ pub fn main() -> i32
 
       var bytes = os::socket_read(&mut thread_ring, fd, &iov, 1, ctrl, ctrlbuf.len, 0);
 
-      if (bytes == EAGAIN)
+      while (bytes == EAGAIN)
       {
         var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
 
-        os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+        if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+          break;
 
         bytes = os::socket_read(&mut thread_ring, fd, &iov, 1, ctrl, ctrlbuf.len, 0);
       }

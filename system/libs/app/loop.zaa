@@ -203,7 +203,7 @@ pub struct loop
 
     var insertpos = loop.timeouts.prev;
 
-    while (insertpos != &loop.timeouts && insertpos.deadline >= handler.deadline)
+    while (insertpos != &loop.timeouts && insertpos.deadline > handler.deadline)
       insertpos = insertpos.prev;
 
     handler.prev = insertpos;

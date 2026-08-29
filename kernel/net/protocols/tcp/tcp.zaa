@@ -1,0 +1,191 @@
+//
+// tcp
+//
+
+import std.stdlib;
+import std.byteconv;
+import net.netdev;
+import net.packet;
+import net.protocols.ipv6 as ipv6;
+import net.protocols.ipv6.icmp6 as icmp6;
+import net.protocols.tcp.socket as tcp.socket;
+import io;
+import support.rc : Rc;
+
+using net::inaddr;
+using net::in6addr;
+using net::hwaddr;
+
+pub enum tcp_state
+{
+  closed,
+  listen,
+  syn_sent,
+  syn_received,
+  established,
+  close_wait,
+  last_ack,
+  fin_wait_1,
+  fin_wait_2,
+  closing,
+  time_wait,
+}
+
+pub struct tcp_seq
+{
+  u32 value;
+
+  pub tcp_seq(u32 value)
+    : value(value)
+  {
+  }
+
+  pub fn =(this mut &, u32 value) -> tcp_seq mut &
+  {
+    this.value = value;
+
+    return &this;
+  }
+
+  pub fn +(tcp_seq &lhs, usize rhs) -> tcp_seq
+  {
+    return tcp_seq(std::add_with_carry(lhs.value, cast<u32>(rhs)).0);
+  }
+
+  pub fn ==(tcp_seq &lhs, tcp_seq &rhs) -> bool
+  {
+    return lhs.value == rhs.value;
+  }
+
+  pub fn <=>(tcp_seq &lhs, tcp_seq &rhs) -> int
+  {
+    return std::bit_cast<int>(std::sub_with_borrow(lhs.value, rhs.value).0);
+  }
+
+  pub tcp_seq() = default;
+  pub tcp_seq(tcp_seq &) = default;
+  pub fn =(tcp_seq mut &, tcp_seq &) -> tcp_seq mut & = default;
+  pub ~tcp_seq() = default;
+}
+
+pub enum tcp_flags
+{
+  pub const fin = 0x01;
+  pub const syn = 0x02;
+  pub const rst = 0x04;
+  pub const push = 0x08;
+  pub const ack = 0x10;
+  pub const urg = 0x20;
+}
+
+#[packed]
+pub struct tcp_header
+{
+  pub u16 source_port;
+  pub u16 destination_port;
+  pub u32 sequence;
+  pub u32 acknowledge;
+  pub u8 datum;
+  pub u8 flags;
+  pub u16 window;
+  pub u8[2] cksum;
+  pub u16 urgent_pointer;
+
+  pub fn header_length(this &) -> usize
+  {
+    return cast<usize>(this.datum >> 4) << 2;
+  }
+}
+
+pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
+{
+  var hdr = pkt.as<tcp_header>();
+  if (!hdr)
+    return protocol_error;
+
+  if (hdr.header_length < sizeof<tcp_header>)
+    return protocol_error;
+
+  if (ipv6::checksum(ipv6::protocol::tcp, rx.src_ip.in6, rx.dst_ip.in6, pkt) != [0, 0])
+   return protocol_error;
+
+  pkt.strip(hdr.header_length);
+
+  var tcb = net::stack.tcp.find(rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port);
+
+  if (!tcb)
+    tcb = net::stack.tcp.find(rx.dst_ip, hdr.destination_port, inaddr(), 0);
+
+  if (!tcb)
+    tcb = net::stack.tcp.find(inaddr(in6addr_any), hdr.destination_port, inaddr(), 0);
+
+  if (!tcb)
+  {
+    if (hdr.flags & tcp_flags::rst == 0)
+      tcp::send_reset_reply(link, rx, hdr, pkt);
+
+    return not_found;
+  }
+
+  tcp::deliver(tcb, link, rx, hdr, &mut pkt);
+
+  return ok;
+}
+
+pub fn receive_error_reply(net::netdev mut *link, net::rx &rx, net::packet &pkt) -> net::result
+{
+  var hdr = pkt.as<tcp_header>();
+  if (!hdr)
+    return protocol_error;
+
+  var tcb = net::stack.tcp.find(rx.src_ip, hdr.source_port, rx.dst_ip, hdr.destination_port);
+
+  if (!tcb)
+    return not_found;
+
+  tcp::deliver_error(tcb, net::result::host_unreachable);
+
+  return ok;
+}
+
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_port, tcp_seq seq, tcp_seq ack, u16 flags, u32 wnd, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+{
+  var hdr = pkt.prepend<tcp_header>();
+
+  hdr.source_port = src_port;
+  hdr.destination_port = dst_port;
+  hdr.sequence = std::native_to_be(seq.value);
+  hdr.acknowledge = std::native_to_be(ack.value);
+  hdr.datum = cast<u8>(sizeof(*hdr) >> 2) << 4;
+  hdr.flags = cast<u8>(flags);
+  hdr.window = std::native_to_be(cast<u16>(wnd));
+  hdr.urgent_pointer = 0;
+  hdr.cksum = [0, 0];
+
+  hdr.cksum = ipv6::checksum(ipv6::protocol::tcp, dst_ip, src_ip, pkt);
+
+  ipv6::send(link, &mut cb, ipv6::protocol::tcp, dst_ip, src_ip, dst, src, &mut pkt);
+}
+
+pub fn send_reset_reply(net::netdev mut *link, net::rx &rx, tcp_header *hdr, net::packet &srcpkt) -> net::result
+{
+  var pkt = net::packet::with_capacity(256, 2048);
+
+  var dst_port = hdr.source_port;
+  var src_port = hdr.destination_port;
+
+  var flags = tcp_flags::ack | tcp_flags::rst;
+  var seq = tcp_seq(std::be_to_native(hdr.acknowledge));
+  var ack = tcp_seq(std::be_to_native(hdr.sequence)) + srcpkt.length;
+
+  if (hdr.flags & (tcp_flags::syn | tcp_flags::fin) != 0)
+    ack += 1;
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  tcp::send(link, &mut response.cb, dst_port, src_port, seq, ack, flags, 0, rx.src_ip.in6, rx.dst_ip.in6, rx.src, link.hwaddr, &mut pkt);
+
+  return ok;
+}

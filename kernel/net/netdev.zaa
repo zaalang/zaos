@@ -111,9 +111,6 @@ pub struct netdev
   pub net::qdisc qdisc;
   pub ipv6::ifstate ipv6;
 
-  pub thread mut *packet_handler;
-  pub semaphore packet_handler_doorbell;
-
   pub fn create<T>(var && ...args) -> Rc<T>
   {
     var dev = std::allocator::new<T>(&&args...);
@@ -147,6 +144,11 @@ pub struct netdev
     return ok;
   }
 
+  pub fn startup(this mut &) -> net::result
+  {
+    return this.ops.startup(&mut this);
+  }
+
   pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) -> net::result
   {
     return this.ops.transmit(&mut this, txqid, &mut cb, &mut packet);
@@ -160,6 +162,11 @@ pub struct netdev
   pub fn refill(this mut &, u16 rxqid) -> net::result
   {
     return this.ops.refill(&mut this, rxqid);
+  }
+
+  pub fn shutdown(this mut &) -> net::result
+  {
+    return this.ops.shutdown(&mut this);
   }
 
   pub netdev(device_operations &ops)
@@ -189,9 +196,11 @@ pub vtable device_operations
 {
   pub fn query(this &, net::query query, std::string mut &result) -> net::result;
 
+  pub fn startup(this mut &) -> net::result;
   pub fn transmit(this mut &, u16 txqid, Rc<io::iocb> mut &cb, net::packet mut &packet) -> net::result;
   pub fn retrieve(this mut &, u16 rxqid, net::packet mut &packet) -> net::result;
   pub fn refill(this mut &, u16 rxqid) -> net::result;
+  pub fn shutdown(this mut &) -> net::result;
 }
 
 fn destroy(netdev mut *device) -> void

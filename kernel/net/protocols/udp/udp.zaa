@@ -19,9 +19,14 @@ using net::hwaddr;
 pub struct udp_header
 {
   pub u16 source_port;
-	pub u16 destination_port;
-	pub u16 length;
-	pub u8[2] cksum;
+  pub u16 destination_port;
+  pub u8[2] length;
+  pub u8[2] cksum;
+
+  pub fn packet_length(this &) -> usize
+  {
+    return cast<usize>(this.length[0]) << 8 | cast<usize>(this.length[1]);
+  }
 }
 
 pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
@@ -30,7 +35,7 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   if (!hdr)
     return protocol_error;
 
-  var length = cast<usize>(std::be_to_native(hdr.length));
+  var length = hdr.packet_length;
 
   if (length < sizeof<udp_header>)
     return protocol_error;
@@ -51,19 +56,16 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
     socket = net::stack.udp.find(rx.dst_ip, hdr.destination_port, inaddr(), 0);
 
   if (!socket)
-    socket = net::stack.udp.find(inaddr(in6addr_any), hdr.destination_port, rx.src_ip, hdr.source_port);
-
-  if (!socket)
     socket = net::stack.udp.find(inaddr(in6addr_any), hdr.destination_port, inaddr(), 0);
 
   if (!socket)
   {
-    icmp6::error_reply(link, icmp6::type::destination_unreachable, icmp6::code::destination_unreachable_port, rx, &mut pkt);
+    icmp6::send_error_reply(link, icmp6::type::destination_unreachable, icmp6::code::destination_unreachable_port, rx, pkt);
 
     return not_found;
   }
 
-  udp::deliver(socket, rx, hdr.source_port, hdr.destination_port, &mut pkt);
+  udp::deliver(socket, link, rx, hdr, &mut pkt);
 
   return ok;
 }
@@ -77,9 +79,6 @@ pub fn receive_error_reply(net::netdev mut *link, net::rx &rx, net::packet &pkt)
   var socket = net::stack.udp.find(rx.src_ip, hdr.source_port, rx.dst_ip, hdr.destination_port);
 
   if (!socket)
-    socket = net::stack.udp.find(inaddr(in6addr_any), hdr.source_port, rx.dst_ip, hdr.destination_port);
-
-  if (!socket)
     return not_found;
 
   udp::deliver_error(socket, net::result::host_unreachable);
@@ -89,11 +88,12 @@ pub fn receive_error_reply(net::netdev mut *link, net::rx &rx, net::packet &pkt)
 
 pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_port, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
 {
-	var hdr = pkt.prepend<udp_header>();
+  var hdr = pkt.prepend<udp_header>();
 
   hdr.source_port = src_port;
   hdr.destination_port = dst_port;
-	hdr.length = std::native_to_be(cast<u16>(pkt.length));
+  hdr.length[0] = cast<u8>(pkt.length >> 8);
+  hdr.length[1] = cast<u8>(pkt.length & 0xff);
   hdr.cksum = [0, 0];
 
   hdr.cksum = ipv6::checksum(ipv6::protocol::udp, dst_ip, src_ip, pkt);
