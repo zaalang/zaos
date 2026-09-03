@@ -79,8 +79,8 @@ fn main() -> i32
 
   var peername = os::sockaddr_in6();
   peername.sa_family = AF_INET6;
-  peername.sin6_addr = os::in6_addr([ 0x20, 0x01, 0x44, 0xb8, 0x51, 0x3a, 0x37, 0x00, 0x18, 0x80, 0x67, 0x39, 0xcc, 0x85, 0x76, 0xf8 ]);
-  peername.sin6_port = std::native_to_be(3456);
+  peername.sin6_addr = os::in6_addr([ 0x20, 0x01, 0x44, 0xb8, 0x50, 0x32, 0x4, 0x1d, 0x19, 0x45, 0x4a, 0x02, 0x45, 0x73, 0xe0, 0x60 ]);
+  peername.sin6_port = std::native_to_be(8080);
 
   var fd = socket(AF_INET6, SOCK_STREAM, 0);
 
@@ -92,6 +92,44 @@ fn main() -> i32
 
   if (var rc = connect(fd, &peername, sizeof(peername), opts); rc < 0)
     std::panic("connect - ", cast<std::errc>(-rc));
+
+  std::print("connected...");
+
+  for (;;)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, ~0); rc <= 0)
+      std::panic("writeable - ", cast<std::errc>(-rc));
+
+    var buffer = "Hello";
+    var nout = os::write(&mut thread_ring, fd, buffer.data, buffer.len);
+
+    std::print("Write ", __rdtsc, " ", nout);
+
+    if (nout < 0)
+      break;
+
+    break;
+  }
+
+  for (;;)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+    if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, ~0); rc <= 0)
+      std::panic("readable - ", cast<std::errc>(-rc));
+
+    var buffer = [u8(0); 512];
+    var bytes = os::read(&mut thread_ring, fd, buffer.data, buffer.len);
+
+    if (bytes <= 0)
+      break;
+
+    std::puts(std::string_view(buffer.data, cast<usize>(bytes)));
+  }
+
+  std::print("closing...");
 
   os::close(&mut thread_ring, fd);
 

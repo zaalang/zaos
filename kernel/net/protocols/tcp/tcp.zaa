@@ -31,49 +31,12 @@ pub enum tcp_state
   time_wait,
 }
 
-pub struct tcp_seq
-{
-  u32 value;
-
-  pub tcp_seq(u32 value)
-    : value(value)
-  {
-  }
-
-  pub fn =(this mut &, u32 value) -> tcp_seq mut &
-  {
-    this.value = value;
-
-    return &this;
-  }
-
-  pub fn +(tcp_seq &lhs, usize rhs) -> tcp_seq
-  {
-    return tcp_seq(std::add_with_carry(lhs.value, cast<u32>(rhs)).0);
-  }
-
-  pub fn ==(tcp_seq &lhs, tcp_seq &rhs) -> bool
-  {
-    return lhs.value == rhs.value;
-  }
-
-  pub fn <=>(tcp_seq &lhs, tcp_seq &rhs) -> int
-  {
-    return std::bit_cast<int>(std::sub_with_borrow(lhs.value, rhs.value).0);
-  }
-
-  pub tcp_seq() = default;
-  pub tcp_seq(tcp_seq &) = default;
-  pub fn =(tcp_seq mut &, tcp_seq &) -> tcp_seq mut & = default;
-  pub ~tcp_seq() = default;
-}
-
 pub enum tcp_flags
 {
   pub const fin = 0x01;
   pub const syn = 0x02;
   pub const rst = 0x04;
-  pub const push = 0x08;
+  pub const psh = 0x08;
   pub const ack = 0x10;
   pub const urg = 0x20;
 }
@@ -95,6 +58,53 @@ pub struct tcp_header
   {
     return cast<usize>(this.datum >> 4) << 2;
   }
+}
+
+pub struct tcp_seq
+{
+  pub u32 value;
+
+  pub tcp_seq(u32 value)
+    : value(value)
+  {
+  }
+
+  pub fn =(this mut &, u32 value) -> tcp_seq mut &
+  {
+    this.value = value;
+
+    return &this;
+  }
+
+  pub fn +(tcp_seq &lhs, usize rhs) -> tcp_seq
+  {
+    return tcp_seq(std::add_with_carry(lhs.value, cast<u32>(rhs)).0);
+  }
+
+  pub fn -(tcp_seq &lhs, tcp_seq &rhs) -> usize
+  {
+    return cast<usize>(std::sub_with_borrow(lhs.value, rhs.value).0);
+  }
+
+  pub fn ==(tcp_seq &lhs, tcp_seq &rhs) -> bool
+  {
+    return lhs.value == rhs.value;
+  }
+
+  pub fn <=>(tcp_seq &lhs, tcp_seq &rhs) -> int
+  {
+    return std::bit_cast<int>(std::sub_with_borrow(lhs.value, rhs.value).0);
+  }
+
+  pub tcp_seq() = default;
+  pub tcp_seq(tcp_seq &) = default;
+  pub fn =(tcp_seq mut &, tcp_seq &) -> tcp_seq mut & = default;
+  pub ~tcp_seq() = default;
+}
+
+pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, tcp_seq &sequence) throws(std::error) -> void
+{
+  ctx.written += std::format_to(&mut os, "seq{:#08x}", sequence.value);
 }
 
 pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> net::result
@@ -148,7 +158,7 @@ pub fn receive_error_reply(net::netdev mut *link, net::rx &rx, net::packet &pkt)
   return ok;
 }
 
-pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_port, tcp_seq seq, tcp_seq ack, u16 flags, u32 wnd, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_port, tcp_seq seq, tcp_seq ack, u16 flags, usize wnd, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
 {
   var hdr = pkt.prepend<tcp_header>();
 
@@ -158,7 +168,7 @@ pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, u16 dst_port, u16 src_p
   hdr.acknowledge = std::native_to_be(ack.value);
   hdr.datum = cast<u8>(sizeof(*hdr) >> 2) << 4;
   hdr.flags = cast<u8>(flags);
-  hdr.window = std::native_to_be(cast<u16>(wnd));
+  hdr.window = std::native_to_be(cast<u16>(std::min(wnd, 65535)));
   hdr.urgent_pointer = 0;
   hdr.cksum = [0, 0];
 

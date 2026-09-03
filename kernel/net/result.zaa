@@ -13,6 +13,7 @@ pub enum result : i32
   device_busy = -16,
   already_exists = -17,
   invalid_argument = -22,
+  broken_pipe = -32,
   protocol_error = -71,
   address_required = -89,
   protocol_wrong_type = -91,

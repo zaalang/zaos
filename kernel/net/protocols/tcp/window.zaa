@@ -1,0 +1,282 @@
+//
+// tcp window
+//
+
+import std.stdlib;
+import std.deque;
+import vm;
+import io;
+import net.packet;
+import net.protocols.tcp as tcp : tcp_seq;
+
+pub struct window
+{
+  usize used;
+  usize contiguous;
+  usize size;
+
+  tcp_seq head;
+  tcp_seq tail;
+
+  struct payload
+  {
+    tcp_seq sequence;
+    net::packet packet;
+
+    payload(tcp_seq sequence, net::packet &&packet)
+      : sequence(sequence), packet(&&packet)
+    {
+    }
+
+    payload(payload &&) = default;
+    ~payload() = default;
+  }
+
+  std::deque<payload> payloads;
+
+  pub fn used(this &) -> usize
+  {
+    return this.used;
+  }
+
+  pub fn remaining(this &) -> usize
+  {
+    return (this.used < this.size) ? this.size - this.used : 0;
+  }
+
+  pub fn contiguous(this &) -> usize
+  {
+    return this.contiguous;
+  }
+
+  pub fn head(this &) -> tcp_seq
+  {
+    return this.head;
+  }
+
+  pub fn tail(this &) -> tcp_seq
+  {
+    return this.tail;
+  }
+
+  pub fn size(this &) -> usize
+  {
+    return this.size;
+  }
+
+  pub fn resize(this mut &, tcp_seq head, usize size) -> void
+  {
+    this.head = head;
+    this.tail = head;
+    this.size = size;
+    this.used = 0;
+  }
+
+  pub window() = default;
+  pub ~window() = default;
+}
+
+fn window_verify(window &window) -> bool
+{
+  var used = 0;
+  var sequence = window.head;
+
+  for (var &payload : window.payloads)
+  {
+    if (payload.sequence < sequence)
+      return false;
+
+    if (payload.packet.length == 0)
+      return false;
+
+    used += payload.packet.length;
+    sequence = payload.sequence + payload.packet.length;
+  }
+
+  if (used != window.used)
+    return false;
+
+  if (sequence != window.tail)
+    return false;
+
+  var contiguous = 0;
+  var sequence = window.head;
+
+  for (var &payload : window.payloads)
+  {
+    if (payload.sequence != sequence)
+      break;
+
+    contiguous += payload.packet.length;
+    sequence = payload.sequence + payload.packet.length;
+  }
+
+  if (contiguous != window.contiguous)
+    return false;
+
+  return true;
+}
+
+pub fn foreach_packet_in(window &window, tcp_seq sequence, usize length, var &&callback) -> void
+{
+  if (length == 0)
+    return;
+
+  std::assert(window.head <= sequence && sequence + length <= window.head + window.contiguous);
+
+  var i = window.payloads.begin;
+
+  for (; i != window.payloads.end; ++i)
+  {
+    if (sequence < window.payloads[i].sequence + window.payloads[i].packet.length)
+      break;
+  }
+
+  var offset = sequence - window.payloads[i].sequence;
+
+  for (var remaining = length; remaining != 0; ++i)
+  {
+    var &packet = window.payloads[i].packet;
+
+    var bytes = std::min(packet.length - offset, remaining);
+
+    callback(packet, offset, bytes);
+
+    remaining -= bytes;
+    offset = 0;
+  }
+}
+
+pub fn insert(window mut &window, tcp_seq sequence, net::packet mut &packet) -> void
+{
+  if (packet.length == 0)
+    return;
+
+  if (sequence < window.head)
+  {
+    if (sequence + packet.length <= window.head)
+      return;
+
+    packet.strip(window.head - sequence);
+
+    sequence = window.head;
+  }
+
+  var insertpos = window.payloads.end;
+
+//  while (insertpos != window.payloads.begin && window.payloads[insertpos - 1].sequence > sequence)
+//    --insertpos;
+
+  if (sequence < window.tail)
+    insertpos = std::upper_bound(window.payloads, sequence, |a, b| a < b.sequence);
+
+  if (insertpos != window.payloads.begin)
+  {
+    var &prev = window.payloads[insertpos - 1];
+
+    if (sequence < prev.sequence + prev.packet.length)
+    {
+      if (sequence + packet.length <= prev.sequence + prev.packet.length)
+        return;
+
+      packet.strip((prev.sequence + prev.packet.length) - sequence);
+
+      sequence = prev.sequence + prev.packet.length;
+    }
+  }
+
+  while (insertpos != window.payloads.end)
+  {
+    var &next = window.payloads[insertpos];
+
+    if (sequence + packet.length < next.sequence + next.packet.length)
+    {
+      if (sequence + packet.length > next.sequence)
+        packet.trim(next.sequence - sequence);
+
+      break;
+    }
+
+    window.used -= next.packet.length;
+
+    insertpos = window.payloads.erase(insertpos);
+  }
+
+  window.used += packet.length;
+
+  if (window.tail < sequence + packet.length)
+    window.tail = sequence + packet.length;
+
+  if (window.head + window.contiguous == sequence)
+  {
+    window.contiguous += packet.length;
+
+    for (var i = insertpos; i != window.payloads.end && window.head + window.contiguous == window.payloads[i].sequence; ++i)
+      window.contiguous += window.payloads[i].packet.length;
+  }
+
+  insertpos = window.payloads.insert(insertpos, sequence, &move packet);
+
+  std::assert(window_verify(window));
+
+  packet = net::packet();
+}
+
+pub fn append(window mut &window, net::packet mut &pkt) -> void
+{
+  insert(&mut window, window.tail, &mut pkt);
+}
+
+pub fn erase(window mut &window, tcp_seq first, tcp_seq last) -> void
+{
+  if (last > window.tail)
+    last = window.tail;
+
+  std::assert(first == window.head && last <= window.head + window.contiguous);
+
+  var i = window.payloads.begin;
+
+  for (; i != window.payloads.end; )
+  {
+    var mut &next = window.payloads[i];
+
+    if (next.sequence < last)
+    {
+      if (next.sequence + next.packet.length <= last)
+      {
+        window.used -= next.packet.length;
+        window.contiguous -= next.packet.length;
+
+        i = window.payloads.erase(i);
+
+        continue;
+      }
+
+      var advance = last - next.sequence;
+
+      next.packet.strip(advance);
+      next.sequence += advance;
+
+      window.used -= advance;
+      window.contiguous -= advance;
+    }
+
+    break;
+  }
+
+  window.head = last;
+
+  std::assert(window_verify(window));
+}
+
+pub fn dump(window &window) -> void
+{
+  std::print("[tcp window]");
+
+  for (var i = 0; i < window.payloads.len; ++i)
+  {
+    std::print("  packet ", i, ": ", window.payloads[i].sequence, " ", window.payloads[i].packet.length);
+  }
+
+  std::print("  size: ", window.size, "  used: ", window.used, " contiguous: ", window.contiguous);
+}

@@ -82,9 +82,7 @@ fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
     if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
       return ETIMEDOUT;
 
-    var soerror = i32();
-    if (os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &soerror, sizeof(soerror)); soerror < 0)
-      return soerror;
+    os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &rc, sizeof(rc));
   }
 
   return rc;

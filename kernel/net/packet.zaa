@@ -113,17 +113,23 @@ pub fn append(packet mut &pkt, vm::iovec &iovec, usize offset, usize length) -> 
 
 pub fn strip(packet mut &pkt, usize size) -> void
 {
+  std::assert(size <= pkt.length);
+
   pkt.start += size;
   pkt.length -= size;
 }
 
 pub fn extend(packet mut &pkt, usize size) -> void
 {
+  std::assert(size <= pkt.iovec.length - pkt.start);
+
   pkt.length += size;
 }
 
 pub fn trim(packet mut &pkt, usize size) -> void
 {
+  std::assert(size <= pkt.length);
+
   pkt.length = size;
 }
 

@@ -55,6 +55,13 @@ pub struct input_t
 
 pub struct timeout_t
 {
+  pub enum flags
+  {
+    pub const nosync = 0x1;
+  }
+
+  pub u64 flags;
+
   u64 deadline;
   pub fn (*callback)(timeout_t mut *) -> void;
 
@@ -69,6 +76,11 @@ pub struct timeout_t
   pub fn scheduled(this &) -> bool
   {
     return !!this.worker;
+  }
+
+  pub fn deadline(this &) -> u64
+  {
+    return this.deadline;
   }
 
   pub timeout_t() = default;
@@ -346,6 +358,7 @@ fn knetworkd(worker mut *worker) -> void
 
       var dpc = pop(&mut worker.timers);
 
+      var flags = dpc.flags;
       var callback = dpc.callback;
 
       unlock(worker);
@@ -354,7 +367,8 @@ fn knetworkd(worker mut *worker) -> void
 
       lock(worker);
 
-      dpc.barrier.release();
+      if (flags & timeout_t::flags::nosync == 0)
+        dpc.barrier.release();
     }
 
     var waketime = ~0;
