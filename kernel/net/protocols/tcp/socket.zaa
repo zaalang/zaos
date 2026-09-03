@@ -69,8 +69,7 @@ pub struct tcb
 
   tcp_seq iss;        // initial send sequence number
   tcp_seq snd_una;    // send unacknowledged
-  tcp_seq snd_nxt;    // send next
-  tcp_seq snd_max;    // max send next
+  tcp_seq snd_max;    // send next
   usize snd_wnd;      // send window
   tcp_seq snd_up;     // send urgent pointer
   tcp_seq snd_wl1;    // last window update seq
@@ -150,7 +149,6 @@ fn init(tcb mut &tcb) -> void
 
   tcb.iss = iss;
   tcb.snd_una = iss;
-  tcb.snd_nxt = iss;
   tcb.snd_max = iss;
   tcb.snd_q.resize(tcb.iss + 1, TCP_DEFAULT_WINDOW);
 
@@ -215,9 +213,6 @@ fn acknowledge(tcb mut &tcb, tcp_seq acknowledge) -> void
 
   tcb.snd_una = acknowledge;
 
-  if (tcb.snd_nxt < tcb.snd_una)
-    tcb.snd_nxt = tcb.snd_una;
-
   tcb.snd_q.erase(tcb.snd_q.head, acknowledge);
 
   net::cancel(&tcb.retransmit_timer);
@@ -238,7 +233,7 @@ fn duplicate_acknowledge(tcb mut &tcb, tcp_seq acknowledge) -> void
 
   if (tcb.dac == 3)
   {
-    tcb.snd_nxt = acknowledge;
+    output(&mut tcb, acknowledge);
   }
 }
 
@@ -396,7 +391,7 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
       if (!acceptable_incomming_sequence(tcb, sequence, pkt.length))
       {
         if (flags & tcp_flags::rst == 0)
-          send(&mut tcb, &mut tcb.snd_nxt, tcp_flags::ack, 0);
+          send(&mut tcb, &mut tcb.snd_max, tcp_flags::ack, 0);
 
         return ok;
       }
@@ -599,12 +594,12 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
       io::complete(&mut tcb.readable.cb, 0);
   }
 
-  output(&mut tcb);
+  output(&mut tcb, tcb.snd_max);
 
   return ok;
 }
 
-fn should_send_now(tcb &tcb, u16 flags, usize length) -> bool
+fn should_send_now(tcb &tcb, tcp_seq snd_nxt, u16 flags, usize length) -> bool
 {
   if (tcb.snd_ack)
     return true;
@@ -615,7 +610,7 @@ fn should_send_now(tcb &tcb, u16 flags, usize length) -> bool
   if (length != 0)
   {
     // Retransmit
-    if (tcb.snd_nxt == tcb.snd_max)
+    if (snd_nxt != tcb.snd_max)
       return true;
 
     // Nagle
@@ -629,7 +624,7 @@ fn should_send_now(tcb &tcb, u16 flags, usize length) -> bool
   return false;
 }
 
-fn output(tcb mut &tcb) -> net::result
+fn output(tcb mut &tcb, tcp_seq snd_nxt) -> net::result
 {
   var flags = 0;
 
@@ -653,10 +648,10 @@ fn output(tcb mut &tcb) -> net::result
   for (;;)
   {
     var flags = flags;
-    var sequence = tcb.snd_nxt;
+    var sequence = snd_nxt;
 
     var flight = tcb.snd_max - tcb.snd_una;
-    var offset = tcb.snd_nxt - tcb.snd_q.head;
+    var offset = sequence - tcb.snd_q.head;
     var window = std::max(tcb.snd_wnd, offset) - offset;
     var length = std::min(std::max(tcb.snd_q.contiguous, offset) - offset, window);
 
@@ -668,12 +663,12 @@ fn output(tcb mut &tcb) -> net::result
     if (sequence + length == tcb.snd_q.tail && length != 0)
       flags |= tcp_flags::psh;
 
-    if (!should_send_now(tcb, flags, length))
+    if (!should_send_now(tcb, sequence, flags, length))
       break;
 
-    send(&mut tcb, &mut tcb.snd_nxt, flags, length);
+    send(&mut tcb, &mut snd_nxt, flags, length);
 
-    if (tcb.snd_nxt == tcb.snd_max && tcb.rtt_start == 0)
+    if (snd_nxt == tcb.snd_max && tcb.rtt_start == 0)
     {
       tcb.rtt_seq = sequence;
       tcb.rtt_start = cpu::system_time;
@@ -685,10 +680,10 @@ fn output(tcb mut &tcb) -> net::result
     if (flags & tcp_flags::ack)
       net::cancel(&tcb.delayedack_timer);
 
-    if (sequence == tcb.snd_nxt || length == 0)
+    if (sequence == snd_nxt || length == 0)
       break;
 
-    if (tcb.snd_nxt != tcb.snd_max)
+    if (snd_nxt != tcb.snd_max)
       break;
   }
 
@@ -704,10 +699,10 @@ fn connect_timer(net::timeout_t mut *timer) -> void
   if (tcb.state != tcp_state::syn_sent)
     return;
 
-  tcb.snd_nxt = tcb.snd_una;
+  tcb.snd_max = tcb.snd_una;
   tcb.rto = std::min(tcb.rto + TCP_SYN_RTO, TCP_MAX_RTO);
 
-  send(&mut tcb, &mut tcb.snd_nxt, tcp_flags::syn, 0);
+  send(&mut tcb, &mut tcb.snd_max, tcp_flags::syn, 0);
 
   net::enqueue(timer, cpu::system_time + tcb.rto);
 }
@@ -721,7 +716,7 @@ fn delayedack_timer(net::timeout_t mut *timer) -> void
   if (tcb.state != tcp_state::established)
     return;
 
-  send(&mut tcb, &mut tcb.snd_una, tcp_flags::ack, 0);
+  send(&mut tcb, &mut tcb.snd_max, tcp_flags::ack, 0);
 }
 
 fn retransmit_timer(net::timeout_t mut *timer) -> void
@@ -748,9 +743,7 @@ fn retransmit_timer(net::timeout_t mut *timer) -> void
   tcb.rtc += 1;
   tcb.rto = std::min(2 * tcb.rto, TCP_MAX_RTO);
 
-  tcb.snd_nxt = tcb.snd_una;
-
-  output(&mut tcb);
+  output(&mut tcb, tcb.snd_una);
 }
 
 fn timewait_timer(net::timeout_t mut *timer) -> void
@@ -871,7 +864,7 @@ pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   if (var result = net::stack.tcp.connect(socket, &tcb, addr, alen); !result)
     return result;
 
-  if (var result = send(&mut tcb, &mut tcb.snd_nxt, tcp_flags::syn, 0); !result)
+  if (var result = send(&mut tcb, &mut tcb.snd_max, tcp_flags::syn, 0); !result)
     return result;
 
   tcb.state = tcp_state::syn_sent;
@@ -1015,9 +1008,7 @@ pub fn write(socket mut *socket, vm::iovec &iovec, usize offset, usize length, a
   if (tcb.snd_q.remaining < TCP_SND_LOW_WATER_MARK)
     io::initiate(&mut tcb.writeable.cb, 1);
 
-  tcb.snd_nxt = tcb.snd_max;
-
-  output(&mut tcb);
+  output(&mut tcb, tcb.snd_max);
 
   return cast(count);
 }
@@ -1039,11 +1030,11 @@ pub fn shutdown(socket mut *socket, u64 how) -> net::result
       case syn_received:
       case established:
         tcb.state = tcp_state::fin_wait_1;
-        output(&mut tcb);
+        output(&mut tcb, tcb.snd_max);
 
       case close_wait:
         tcb.state = tcp_state::last_ack;
-        output(&mut tcb);
+        output(&mut tcb, tcb.snd_max);
     }
   }
 
