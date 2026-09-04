@@ -51,6 +51,30 @@ pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   }
 }
 
+pub fn listen(socket mut *socket, i32 backlog) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_STREAM:
+      return tcp::listen(socket, backlog);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn accept(socket mut *socket, Rc<socket> mut &child, sockaddr mut *addr, usize mut &alen) -> net::result
+{
+  switch (socket.type)
+  {
+    case SOCK_STREAM:
+      return tcp::accept(socket, &mut child, addr, &mut alen);
+
+    else:
+      return not_supported;
+  }
+}
+
 pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
 {
   switch (socket.type)

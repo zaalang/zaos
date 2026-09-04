@@ -105,6 +105,8 @@ pub struct tcb
   io::response routeable;
   io::response queryable;
 
+  std::deque<Rc<socket>> children;
+
   pub fn ref(this mut &) -> void
   {
     std::atomic_add(&this.refcnt, 1);
@@ -203,6 +205,55 @@ fn send(tcb mut &tcb, tcp_seq mut &snd_nxt, u16 flags, usize length) -> net::res
     tcb.snd_max = snd_nxt;
 
   tcb.snd_ack = false;
+
+  return ok;
+}
+
+fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port, tcp_seq iss) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  var sockname = sockaddr_storage();
+  var sockname = cast<sockaddr_in6 mut *>(&sockname);
+
+  sockname.sa_family = AF_INET6;
+  sockname.sin6_addr = local_ip.in6;
+  sockname.sin6_port = local_port;
+
+  var peername = sockaddr_storage();
+  var peername = cast<sockaddr_in6 mut *>(&peername);
+
+  peername.sa_family = AF_INET6;
+  peername.sin6_addr = remote_ip.in6;
+  peername.sin6_port = remote_port;
+
+  if (var result = net::stack.tcp.spawn(socket, &tcb, cast(sockname), sizeof<sockaddr_in6>, cast(peername), sizeof<sockaddr_in6>); !result)
+    return result;
+
+  init(&mut tcb);
+
+  tcb.iss = iss;
+  tcb.snd_una = iss;
+  tcb.snd_max = iss;
+  tcb.snd_q.resize(tcb.iss + 1, TCP_DEFAULT_WINDOW);
+
+  tcb.irs = iss;
+  tcb.rcv_nxt = iss + 1;
+  tcb.rcv_q.resize(tcb.irs + 1, TCP_DEFAULT_WINDOW);
+  tcb.rcv_wnd = tcb.rcv_q.remaining;
+
+  if (var result = send(&mut tcb, &mut tcb.snd_max, tcp_flags::syn | tcp_flags::ack, 0); !result)
+    return result;
+
+  tcb.state = tcp_state::syn_received;
+
+  tcb.writeable = socket.writeable;
+
+  io::initiate(&mut tcb.writeable.cb, 1);
+
+  std::atomic_add(&tcb.refcnt, 1);
 
   return ok;
 }
@@ -325,7 +376,35 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
       return ok;
 
     case listen:
-      std::panic("not implemented");
+
+      if (flags & (tcp_flags::rst | tcp_flags::ack) != 0)
+      {
+        if (flags & tcp_flags::rst == 0)
+          tcp::send_reset_reply(link, rx, hdr, pkt);
+
+        return ok;
+      }
+
+      if (flags & tcp_flags::syn != 0)
+      {
+        var socket = create_socket();
+
+        if (var result = setup_socket(&mut socket, AF_INET6, SOCK_STREAM, IPPROTO_TCP); !result)
+          return result;
+
+        if (var result = tcp::open(socket); !result)
+          return result;
+
+        if (var result = spawn(socket, rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port, sequence); !result)
+          return result;
+
+        tcb.children.push_back(socket);
+
+        if (!tcb.readable.ready)
+          io::complete(&mut tcb.readable.cb, 0);
+      }
+
+      return ok;
 
     case syn_sent:
 
@@ -374,7 +453,7 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
         net::cancel(&tcb.connect_timer);
       }
 
-      if (flags & (tcp_flags::syn | tcp_flags::rst) == 0)
+      if (flags & tcp_flags::syn == 0)
         return ok;
 
       sequence += 1;
@@ -835,6 +914,63 @@ pub fn bind(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   return ok;
 }
 
+pub fn listen(socket mut *socket, i32 backlog) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  switch (tcb.state)
+  {
+    case closed:
+      ;
+
+    case listen:
+      return ok;
+
+    else:
+      return invalid_argument;
+  }
+
+  if (socket.sockname.ss_family == 0)
+    return address_not_available;
+
+  if (var result = net::stack.tcp.listen(socket, &tcb); !result)
+    return result;
+
+  init(&mut tcb);
+
+  tcb.state = tcp_state::listen;
+
+  std::atomic_add(&tcb.refcnt, 1);
+
+  return ok;
+}
+
+pub fn accept(socket mut *socket, Rc<socket> mut &child, sockaddr mut *addr, usize mut &alen) -> net::result
+{
+  var mut &tcb = *cast<tcb mut *>(socket.state);
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  if (tcb.children.empty)
+    return would_block;
+
+  child = tcb.children.take_front();
+
+  switch (child.peername.ss_family)
+  {
+    case AF_INET6:
+      alen = sizeof<sockaddr_in6>;
+      std::memcpy(addr, &child.peername, alen);
+  }
+
+  if (tcb.children.empty)
+    io::initiate(&mut tcb.readable.cb, 1);
+
+  return ok;
+}
+
 pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
 {
   var mut &tcb = *cast<tcb mut *>(socket.state);
@@ -847,8 +983,6 @@ pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
       ;
 
     case listen:
-      ;
-
     case established:
       return already_connected;
 
@@ -859,10 +993,10 @@ pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   if (socket.sockname.ss_family == 0)
     return address_not_available;
 
-  init(&mut tcb);
-
   if (var result = net::stack.tcp.connect(socket, &tcb, addr, alen); !result)
     return result;
+
+  init(&mut tcb);
 
   if (var result = send(&mut tcb, &mut tcb.snd_max, tcp_flags::syn, 0); !result)
     return result;

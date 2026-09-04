@@ -74,9 +74,9 @@ pub enum ioring_ops
   pub const channel_call = 0x22;
   pub const socket = 0x23;
   pub const socket_bind = 0x24;
-  pub const socket_connect = 0x25;
+  pub const socket_listen = 0x25;
   pub const socket_accept = 0x26;
-  pub const socket_listen = 0x27;
+  pub const socket_connect = 0x27;
   pub const socket_read = 0x28;
   pub const socket_write = 0x29;
   pub const socket_shutdown = 0x2a;
@@ -438,6 +438,12 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
 
       case ioring_ops::socket_bind:
         ctx.status = sys_socket_bind(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
+
+      case ioring_ops::socket_listen:
+        ctx.status = sys_socket_listen(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff));
+
+      case ioring_ops::socket_accept:
+        ctx.status = sys_socket_accept(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), virtaddr(sqe.args[2]));
 
       case ioring_ops::socket_connect:
         ctx.status = sys_socket_connect(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));

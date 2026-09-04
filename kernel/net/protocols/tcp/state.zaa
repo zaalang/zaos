@@ -75,7 +75,17 @@ pub fn bind(state mut &state, socket mut *socket, tcb mut *tcb, sockaddr *addr, 
       tcb.local_port = cast<sockaddr_in6 &>(socket.sockname).sin6_port;
   }
 
-  state.tcbs.emplace(addr.sin6_port).push_back(tcb);
+  state.tcbs.emplace(tcb.local_port).push_back(tcb);
+
+  return ok;
+}
+
+pub fn listen(state mut &state, socket mut *socket, tcb mut *tcb) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (socket.peername.ss_family != 0)
+    return invalid_argument;
 
   return ok;
 }
@@ -93,6 +103,35 @@ pub fn connect(state mut &state, socket mut *socket, tcb mut *tcb, sockaddr *add
       tcb.remote_ip = cast<sockaddr_in6 &>(socket.peername).sin6_addr;
       tcb.remote_port = cast<sockaddr_in6 &>(socket.peername).sin6_port;
   }
+
+  return ok;
+}
+
+pub fn spawn(state mut &state, socket mut *socket, tcb mut *tcb, sockaddr *sockname, usize socklen, sockaddr *peername, usize peerlen) -> net::result
+{
+  var guard = std::lock_guard(&mut state.lock);
+
+  if (var result = ip::bind(socket, sockname, socklen); !result)
+    return result;
+
+  switch (socket.sockname.ss_family)
+  {
+    case AF_INET6:
+      tcb.local_ip = cast<sockaddr_in6 &>(socket.sockname).sin6_addr;
+      tcb.local_port = cast<sockaddr_in6 &>(socket.sockname).sin6_port;
+  }
+
+  if (var result = ip::connect(socket, peername, peerlen); !result)
+    return result;
+
+  switch (socket.peername.ss_family)
+  {
+    case AF_INET6:
+      tcb.remote_ip = cast<sockaddr_in6 &>(socket.peername).sin6_addr;
+      tcb.remote_port = cast<sockaddr_in6 &>(socket.peername).sin6_port;
+  }
+
+  state.tcbs.emplace(tcb.local_port).push_back(tcb);
 
   return ok;
 }

@@ -55,6 +55,57 @@ fn bind(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
   return os::socket_bind(&mut thread_ring, fd, addr, alen);
 }
 
+fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
+{
+  var src = os::sockaddr_in6();
+
+  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_GETSOCKNAME, &src, sizeof(src)); rc < 0)
+    return rc;
+
+  std::printf("nc: listening on {} port {}\n", net::ipv6addr(src.sin6_addr), std::be_to_native(src.sin6_port));
+
+  if (!opts.udp)
+  {
+    if (var rc = os::socket_listen(&mut thread_ring, fd, 1); rc < 0)
+      return rc;
+
+    var nfd = os::socket_accept(&mut thread_ring, fd, addr, &alen);
+
+    while (nfd == EAGAIN)
+    {
+      var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+      os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+
+      nfd = os::socket_accept(&mut thread_ring, fd, addr, &alen);
+    }
+
+    if (nfd < 0)
+      return nfd;
+
+    if (var rc = os::dup2(&mut thread_ring, nfd, fd); rc < 0)
+      return rc;
+
+    os::close(&mut thread_ring, nfd);
+  }
+
+  var buffer = [<u8>: void; 4096];
+
+  var bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
+
+  while (bytes == ETIMEDOUT)
+  {
+    bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
+  }
+
+  if (bytes < 0)
+    return bytes;
+
+  std::stdout.write(buffer.data, cast<usize>(bytes));
+
+  return 0;
+}
+
 fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
 {
   var rc = os::socket_connect(&mut thread_ring, fd, addr, alen);
@@ -86,32 +137,6 @@ fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
   }
 
   return rc;
-}
-
-fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
-{
-  var src = os::sockaddr_in6();
-
-  if (var rc = os::ioctl(&mut thread_ring, fd, SIO_GETSOCKNAME, &src, sizeof(src)); rc < 0)
-    return rc;
-
-  std::printf("nc: listening on {} port {}\n", net::ipv6addr(src.sin6_addr), std::be_to_native(src.sin6_port));
-
-  var buffer = [<u8>: void; 4096];
-
-  var bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
-
-  while (bytes == ETIMEDOUT)
-  {
-    bytes = recvfrom(fd, buffer.data, buffer.len, 0, addr, &mut alen, opts);
-  }
-
-  if (bytes < 0)
-    return bytes;
-
-  std::stdout.write(buffer.data, cast<usize>(bytes));
-
-  return 0;
 }
 
 fn sendto(i32 fd, void *buffer, usize len, u64 flags, sockaddr *addr, usize alen, opts &opts) -> i32
@@ -315,7 +340,7 @@ pub fn main() -> i32
 
   if (opts.listen)
   {
-    var alen = 0;
+    var alen = sizeof(peername);
 
     if (var rc = listen(fd, &peername, &mut alen, opts); rc < 0)
     {
@@ -325,25 +350,28 @@ pub fn main() -> i32
     }
   }
 
-  if (peername.sin6_addr == os::in6addr_any)
+  if (opts.udp || !opts.listen)
   {
-    std::fprint(std::stderr, "nc: destination required");
+    if (peername.sin6_addr == os::in6addr_any)
+    {
+      std::fprint(std::stderr, "nc: destination required");
 
-    return 1;
-  }
+      return 1;
+    }
 
-  if (peername.sin6_port == 0)
-  {
-    std::fprint(std::stderr, "nc: port required");
+    if (peername.sin6_port == 0)
+    {
+      std::fprint(std::stderr, "nc: port required");
 
-    return 1;
-  }
+      return 1;
+    }
 
-  if (var rc = connect(fd, &peername, sizeof(peername), opts); rc < 0)
-  {
-    std::fprint(std::stderr, "nc: connect - ", cast<std::errc>(-rc));
+    if (var rc = connect(fd, &peername, sizeof(peername), opts); rc < 0)
+    {
+      std::fprint(std::stderr, "nc: connect - ", cast<std::errc>(-rc));
 
-    return 1;
+      return 1;
+    }
   }
 
   if (var rc = readwrite([0, fd], opts); rc < 0)

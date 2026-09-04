@@ -10,6 +10,7 @@ import vfs;
 import socket : create_socket, setup_socket;
 import process as _ : process;
 import result as _ : result;
+import support.rc : Rc;
 
 enum flags
 {
@@ -72,6 +73,61 @@ pub fn sys_socket_bind(process mut *process, ioring_ctx mut &ctx, i32 fd, virtad
     return result;
 
   return ok;
+}
+
+pub fn sys_socket_listen(process mut *process, ioring_ctx mut &ctx, i32 fd, i32 backlog) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::socket)
+    return vfs::result::bad_descriptor;
+
+  if (backlog <= 0)
+    return invalid_argument;
+
+  if (var result = socket::listen(file.node, backlog); !result)
+    return result;
+
+  return ok;
+}
+
+pub fn sys_socket_accept(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr addrbuf, virtaddr alenbuf) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  if (file.node.type != vfs::node::type::socket)
+    return vfs::result::bad_descriptor;
+
+  var socket = Rc<socket::socket>();
+  var addr = socket::sockaddr_storage();
+  var alen = usize(0);
+
+  if (var result = socket::accept(file.node, &mut socket, cast(&addr), &mut alen); !result)
+    return result;
+
+  var fd = vfs::file_descriptor::create(socket.node);
+
+  if (addrbuf != 0 && alenbuf != 0)
+  {
+    var buflen = usize(0);
+
+    if (var result = vm::read_process_memory(process, alenbuf, &buflen, sizeof(buflen)); !result)
+      return result;
+
+    if (var result = vm::write_process_memory(process, addrbuf, &addr, std::min(alen, buflen)); !result)
+      return result;
+
+    if (var result = vm::write_process_memory(process, alenbuf, &alen, sizeof(alen)); !result)
+      return result;
+  }
+
+  return process.new_fd(fd);
 }
 
 pub fn sys_socket_connect(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr addrbuf, usize addrlen) -> result

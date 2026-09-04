@@ -336,6 +336,34 @@ pub fn bind(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
   }
 }
 
+pub fn listen(vfs::node mut *node, i32 backlog) -> net::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::listen(socket, backlog);
+
+    else:
+      return not_supported;
+  }
+}
+
+pub fn accept(vfs::node mut *node, Rc<socket> mut &child, sockaddr mut *addr, usize mut &alen) -> net::result
+{
+  var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
+
+  switch (socket.family)
+  {
+    case AF_INET6:
+      return net::accept(socket, &mut child, addr, &mut alen);
+
+    else:
+      return not_supported;
+  }
+}
+
 pub fn connect(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
 {
   var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
@@ -351,16 +379,6 @@ pub fn connect(vfs::node mut *node, sockaddr *addr, usize alen) -> net::result
     else:
       return not_supported;
   }
-}
-
-pub fn listen(vfs::node mut *node) -> net::result
-{
-  return not_supported;
-}
-
-pub fn accept(vfs::node mut *node) -> net::result
-{
-  return not_supported;
 }
 
 pub fn shutdown(vfs::node mut *node, u64 how) -> net::result
@@ -380,11 +398,14 @@ fn destroy(vfs::node mut *node) -> void
 {
   var socket = cast<socket mut *>(cast<uintptr>(node) - offsetof(socket::node_));
 
-  switch (socket.family)
+  if (socket.state)
   {
-    case AF_INET6:
-      net::shutdown(socket, SHUT_RDWR);
-      net::destroy(socket);
+    switch (socket.family)
+    {
+      case AF_INET6:
+        net::shutdown(socket, SHUT_RDWR);
+        net::destroy(socket);
+    }
   }
 
   std::allocator::delete(socket);
