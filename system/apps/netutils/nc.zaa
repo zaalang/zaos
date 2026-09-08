@@ -130,7 +130,7 @@ fn connect(i32 fd, os::sockaddr *addr, usize alen, opts &opts) -> i32
 
     var pollset = [ os::pollevt(fd, POLLFD, POLLOUT | POLLPRI, 0) ];
 
-    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + opts.waittime * 1_000_000_000) <= 0)
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + 10 * opts.waittime * 1_000_000_000) <= 0)
       return ETIMEDOUT;
 
     os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &rc, sizeof(rc));

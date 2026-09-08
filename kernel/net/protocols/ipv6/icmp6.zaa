@@ -73,7 +73,7 @@ pub fn receive_echo_request(net::netdev mut *link, net::rx mut &rx, net::packet 
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, src_ip, rx.src, link.hwaddr, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, src_ip, rx.src, link.hwaddr, &mut pkt, hoplimit: 255);
 
   return ok;
 }
@@ -163,7 +163,7 @@ pub fn send_error_reply(net::netdev mut *link, type type, code code, net::rx &rx
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, rx.dst_ip.in6, rx.src, link.hwaddr, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, rx.dst_ip.in6, rx.src, link.hwaddr, &mut pkt, hoplimit: 255);
 
   return ok;
 }

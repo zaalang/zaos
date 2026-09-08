@@ -45,6 +45,14 @@ struct txpkt
   ~txpkt() = default;
 }
 
+fn destroy(txpkt mut *tx) -> void
+{
+  tx.cb = null;
+  tx.pkt = net::packet();
+
+  txpkt::allocator.free(tx);
+}
+
 pub struct qdisc
 {
   mutex lock;
@@ -54,12 +62,32 @@ pub struct qdisc
   txpkt mut *head;
   txpkt mut * mut *last;
 
+  pub net::output_t dpc;
+
+  pub fn len(this &) -> usize
+  {
+    return this.len;
+  }
+
   fn append(this mut &, txpkt mut *tx) -> void
   {
     var guard = std::lock_guard(&mut this.lock);
 
     *this.last = tx;
     this.last = &tx.next;
+
+    this.len += 1;
+  }
+
+  fn prepend(this mut &, txpkt mut *tx) -> void
+  {
+    var guard = std::lock_guard(&mut this.lock);
+
+    tx.next = this.head;
+    this.head = tx;
+
+    if (!tx.next)
+      this.last = &tx.next;
 
     this.len += 1;
   }
@@ -98,18 +126,21 @@ pub struct qdisc
     {
       var tx = *curr;
 
-      if (tx.cb.outstanding <= 0)
+      if (tx.status == txpkt::status::running)
       {
-        *curr = curr.next;
+        if (tx.cb.outstanding <= 0)
+        {
+          *curr = curr.next;
 
-        if (!*curr)
-          this.last = curr;
+          if (!*curr)
+            this.last = curr;
 
-        this.len -= 1;
+          this.len -= 1;
 
-        tx.next = null;
+          tx.next = null;
 
-        return tx;
+          return tx;
+        }
       }
     }
 
@@ -150,11 +181,24 @@ pub fn run(qdisc mut &qdisc, net::netdev mut *link) -> net::result
   {
     case net::result::ok:
       tx.status = txpkt::status::running;
+
+      qdisc.append(tx);
+
+      return cast(1);
+
+    case net::result::device_busy:
+
+      qdisc.prepend(tx);
+
+      return cast(0);
+
+    else[rc]:
+      io::complete(&mut tx.cb, rc);
+
+      destroy(tx);
+
+      return cast(0);
   }
-
-  qdisc.append(tx);
-
-  return cast(1);
 }
 
 pub fn dequeue(qdisc mut &qdisc, net::packet mut &pkt) -> net::result
@@ -166,10 +210,7 @@ pub fn dequeue(qdisc mut &qdisc, net::packet mut &pkt) -> net::result
 
   pkt = &move tx.pkt;
 
-  tx.cb = null;
-  tx.pkt = net::packet();
-
-  txpkt::allocator.free(tx);
+  destroy(tx);
 
   return ok;
 }

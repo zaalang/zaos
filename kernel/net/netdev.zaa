@@ -207,4 +207,6 @@ fn destroy(netdev mut *device) -> void
 {
   if (device.destroy)
     device.destroy(device);
+
+  net::sync(&device.qdisc.dpc);
 }

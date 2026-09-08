@@ -272,10 +272,6 @@ pub fn resolve_neighbour(ifstate mut &state, netdev mut *link, Rc<io::iocb> mut 
       if (cpu::system_time > neighbour.timestamp + 30_000_000_000)
         neighbour.state = neighbour::state::stale;
 
-    case probe:
-      if (cpu::system_time > neighbour.timestamp + 10_000_000_000)
-        neighbour.state = neighbour::state::failed;
-
     case delay:
       if (cpu::system_time > neighbour.timestamp + 5_000_000_000)
         neighbour.state = neighbour::state::probe;

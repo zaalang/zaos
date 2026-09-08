@@ -169,46 +169,6 @@ fn init(tcb mut &tcb) -> void
   tcb.timewait_timer.callback = &cast<(net::timeout_t mut *) -> void>(timewait_timer);
 }
 
-fn send(tcb mut &tcb, tcp_seq mut &snd_nxt, u16 flags, usize length) -> net::result
-{
-  var route = net::routes.find(tcb.remote_ip);
-
-  if (!route)
-    return host_unreachable;
-
-  var dst = net::hwaddr();
-
-  if (var result = net::resolve_route(route, tcb.remote_ip, &mut tcb.routeable.cb, &mut tcb.local_ip, &mut dst); !result)
-    return result;
-
-  var pkt = tcb.pkthdr.allocate(256);
-
-  tcb.snd_q.foreach_packet_in(snd_nxt, length, |packet, start, bytes| {
-    pkt.append(packet.iovec, packet.start + start, bytes);
-  });
-
-  var response = io::response();
-
-  io::initiate(&mut response.cb, 1);
-
-  tcp::send(route.link, &mut response.cb, tcb.remote_port, tcb.local_port, snd_nxt, tcb.rcv_nxt, flags, tcb.rcv_wnd, tcb.remote_ip.in6, tcb.local_ip.in6, dst, route.link.hwaddr, &mut pkt);
-
-  snd_nxt += length;
-
-  if (flags & tcp_flags::syn != 0)
-    snd_nxt += 1;
-
-  if (flags & tcp_flags::fin != 0)
-    snd_nxt += 1;
-
-  if (tcb.snd_max < snd_nxt)
-    tcb.snd_max = snd_nxt;
-
-  tcb.snd_ack = false;
-
-  return ok;
-}
-
 fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port, tcp_seq iss) -> net::result
 {
   var mut &tcb = *cast<tcb mut *>(socket.state);
@@ -254,6 +214,49 @@ fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip
   io::initiate(&mut tcb.writeable.cb, 1);
 
   std::atomic_add(&tcb.refcnt, 1);
+
+  return ok;
+}
+
+fn send(tcb mut &tcb, tcp_seq mut &snd_nxt, u16 flags, usize max_length) -> net::result
+{
+  var route = net::routes.find(tcb.remote_ip);
+
+  if (!route)
+    return host_unreachable;
+
+  var dst = net::hwaddr();
+
+  if (var result = net::resolve_route(route, tcb.remote_ip, &mut tcb.routeable.cb, &mut tcb.local_ip, &mut dst); !result)
+    return result;
+
+  var pkt = tcb.pkthdr.allocate(256);
+
+  tcb.snd_q.foreach_packet_in(snd_nxt, max_length, |packet, start, bytes| {
+    if (pkt.iovec.host.len < 16)
+      pkt.append(packet.iovec, packet.start + start, bytes);
+  });
+
+  var length = pkt.length;
+
+  var response = io::response();
+
+  io::initiate(&mut response.cb, 1);
+
+  tcp::send(route.link, &mut response.cb, tcb.remote_port, tcb.local_port, snd_nxt, tcb.rcv_nxt, flags, tcb.rcv_wnd, tcb.remote_ip.in6, tcb.local_ip.in6, dst, route.link.hwaddr, &mut pkt);
+
+  snd_nxt += length;
+
+  if (flags & tcp_flags::syn != 0)
+    snd_nxt += 1;
+
+  if (flags & tcp_flags::fin != 0)
+    snd_nxt += 1;
+
+  if (tcb.snd_max < snd_nxt)
+    tcb.snd_max = snd_nxt;
+
+  tcb.snd_ack = false;
 
   return ok;
 }
@@ -477,7 +480,7 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
 
       if (flags & tcp_flags::rst != 0)
       {
-        if (tcb.rcv_nxt <= sequence && sequence < tcb.rcv_nxt + tcb.rcv_wnd)
+        if (sequence == tcb.rcv_nxt)
         {
           switch (tcb.state)
           {
@@ -494,6 +497,11 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
             case fin_wait_2:
               disconnect(&mut tcb, net::result::connection_reset);
           }
+        }
+
+        if (tcb.rcv_nxt < sequence && sequence < tcb.rcv_nxt + tcb.rcv_wnd)
+        {
+          send(&mut tcb, &mut tcb.snd_max, tcp_flags::ack, 0);
         }
 
         return ok;
@@ -745,19 +753,19 @@ fn output(tcb mut &tcb, tcp_seq snd_nxt) -> net::result
     if (!should_send_now(tcb, sequence, flags, length))
       break;
 
-    send(&mut tcb, &mut snd_nxt, flags, length);
-
-    if (snd_nxt == tcb.snd_max && tcb.rtt_start == 0)
+    if (sequence == tcb.snd_max && tcb.rtt_start == 0)
     {
       tcb.rtt_seq = sequence;
       tcb.rtt_start = cpu::system_time;
     }
 
-    if (sequence == tcb.snd_una && !tcb.retransmit_timer.scheduled)
-      net::enqueue(&tcb.retransmit_timer, cpu::system_time + tcb.rto);
+    send(&mut tcb, &mut snd_nxt, flags, length);
 
     if (flags & tcp_flags::ack)
       net::cancel(&tcb.delayedack_timer);
+
+    if (tcb.snd_una != tcb.snd_max && !tcb.retransmit_timer.scheduled)
+      net::enqueue(&tcb.retransmit_timer, cpu::system_time + tcb.rto);
 
     if (sequence == snd_nxt || length == 0)
       break;

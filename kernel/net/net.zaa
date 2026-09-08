@@ -53,6 +53,22 @@ pub struct input_t
   pub ~input_t() = default;
 }
 
+pub struct output_t
+{
+  netdev mut *link;
+
+  output_t mut *next;
+
+  worker mut *worker;
+  worker mut *last_worker;
+
+  latch barrier;
+
+  pub output_t() = default;
+  pub output_t(#output_t &) = default;
+  pub ~output_t() = default;
+}
+
 pub struct timeout_t
 {
   pub enum flags
@@ -92,8 +108,11 @@ struct worker
 {
   std::spin_lock lock;
 
-  input_t mut *dpchead;
-  input_t mut * mut *dpclast;
+  input_t mut *inputhead;
+  input_t mut * mut *inputlast;
+
+  output_t mut *outputhead;
+  output_t mut * mut *outputlast;
 
   timeout_t mut *timers;
   timeout_t mut * mut *timerslast;
@@ -160,16 +179,44 @@ pub fn enqueue(input_t mut *dpc, netdev mut *link, u16 rxqid) -> void
   dpc.last_worker = &worker;
   dpc.barrier.acquire();
 
-  if (!worker.dpchead)
-    worker.dpclast = &worker.dpchead;
+  if (!worker.inputhead)
+    worker.inputlast = &worker.inputhead;
 
-  *worker.dpclast = dpc;
-  worker.dpclast = &dpc.next;
+  *worker.inputlast = dpc;
+  worker.inputlast = &dpc.next;
 
   worker.doorbell.release();
 }
 
 pub fn sync(input_t mut *dpc) -> void
+{
+  dpc.barrier.wait();
+}
+
+pub fn enqueue(output_t mut *dpc, netdev mut *link) -> void
+{
+  var mut &worker = stack.workers[cast<usize>(cpu::id)];
+
+  var guard = std::lock_guard(&mut cpu::irqlock);
+
+  if (!std::atomic_cmpxchg_strong(&dpc.worker, null, &worker))
+    return;
+
+  dpc.link = link;
+  dpc.worker = &worker;
+  dpc.last_worker = &worker;
+  dpc.barrier.acquire();
+
+  if (!worker.outputhead)
+    worker.outputlast = &worker.outputhead;
+
+  *worker.outputlast = dpc;
+  worker.outputlast = &dpc.next;
+
+  worker.doorbell.release();
+}
+
+pub fn sync(output_t mut *dpc) -> void
 {
   dpc.barrier.wait();
 }
@@ -226,6 +273,8 @@ pub fn cancel(timeout_t mut *dpc) -> void
 
     if (dpc.next)
       dpc.next.prev = dpc.prev;
+    else
+      worker.timerslast = dpc.prev;
 
     dpc.barrier.release();
 
@@ -245,11 +294,22 @@ fn lock(worker mut *worker) -> void
   worker.lock.lock();
 }
 
-fn pop(input_t mut * mut &dpchead) -> input_t mut *
+fn pop(input_t mut * mut &inputhead) -> input_t mut *
 {
-  var dpc = dpchead;
+  var dpc = inputhead;
 
-  dpchead = std::exchange(&mut dpc.next, null);
+  inputhead = std::exchange(&mut dpc.next, null);
+
+  dpc.worker = null;
+
+  return dpc;
+}
+
+fn pop(output_t mut * mut &outputhead) -> output_t mut *
+{
+  var dpc = outputhead;
+
+  outputhead = std::exchange(&mut dpc.next, null);
 
   dpc.worker = null;
 
@@ -287,19 +347,19 @@ fn knetworkd(worker mut *worker) -> void
 
     for (; budget > 4; budget -= 1)
     {
-      if (!worker.dpchead)
+      if (!worker.inputhead)
         break;
 
-      var dpc = pop(&mut worker.dpchead);
+      var dpc = pop(&mut worker.inputhead);
 
       var link = dpc.link;
       var rxqid = dpc.rxqid;
 
       unlock(worker);
 
-      var budget = 64;
+      var budget = 32;
 
-      for (; budget > 31; budget -= 1)
+      for (; budget > 0; budget -= 1)
       {
         var pkt = net::packet();
 
@@ -311,7 +371,30 @@ fn knetworkd(worker mut *worker) -> void
 
       link.refill(rxqid);
 
-      for (; budget > 15; budget -= 1)
+      lock(worker);
+
+      if (budget == 0)
+      {
+        enqueue(dpc, link, rxqid);
+      }
+
+      dpc.barrier.release();
+    }
+
+    for (; budget > 0; budget -= 1)
+    {
+      if (!worker.outputhead)
+        break;
+
+      var dpc = pop(&mut worker.outputhead);
+
+      var link = dpc.link;
+
+      unlock(worker);
+
+      var budget = 32;
+
+      for (; budget > 0; budget -= 1)
       {
         if (link.qdisc.run(link) <= cast(0))
           break;
@@ -327,25 +410,15 @@ fn knetworkd(worker mut *worker) -> void
 
       lock(worker);
 
-      if (budget < 32)
+      if (link.qdisc.len != 0)
       {
-        enqueue(dpc, link, rxqid);
+        enqueue(dpc, link);
       }
 
       dpc.barrier.release();
     }
 
     unlock(worker);
-
-    for (; budget > 0; budget -= 1)
-    {
-      var pkt = net::packet();
-
-      if (stack.lo.qdisc.run(stack.lo) <= cast(0))
-        break;
-
-      stack.lo.qdisc.dequeue(&mut pkt);
-    }
 
     var now = cpu::system_time;
 
@@ -398,7 +471,7 @@ pub fn transmit(netdev mut *link, Rc<io::iocb> mut &cb, net::packet mut &pkt) ->
   switch (link.type)
   {
     case loop:
-      stack.workers[cast<usize>(cpu::id)].doorbell.release();
+      net::enqueue(&link.qdisc.dpc, link);
 
     else:
       link.qdisc.run(link);

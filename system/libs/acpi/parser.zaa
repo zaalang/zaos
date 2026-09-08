@@ -2041,7 +2041,7 @@ fn define_indexfield(context mut &ctx, std::span<u8> mut &is) -> result
       case alpha_char_a ..= alpha_char_z:
 
         if (var rc = named_field(&mut ctx, source, &mut flags, &mut offset, &mut is); !rc)
-        return rc;
+          return rc;
 
       else:
         return invalid_opcode;

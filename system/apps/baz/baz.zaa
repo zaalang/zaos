@@ -79,8 +79,8 @@ fn main() -> i32
 
   var peername = os::sockaddr_in6();
   peername.sa_family = AF_INET6;
-  peername.sin6_addr = os::in6_addr([ 0x20, 0x01, 0x44, 0xb8, 0x50, 0x32, 0x4, 0x1d, 0x19, 0x45, 0x4a, 0x02, 0x45, 0x73, 0xe0, 0x60 ]);
-  peername.sin6_port = std::native_to_be(8080);
+  peername.sin6_addr = os::in6_addr([ 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 ]);
+  peername.sin6_port = std::native_to_be(2000);
 
   var fd = socket(AF_INET6, SOCK_STREAM, 0);
 
@@ -102,16 +102,35 @@ fn main() -> i32
     if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, ~0); rc <= 0)
       std::panic("writeable - ", cast<std::errc>(-rc));
 
-    var buffer = "Hello";
+    var buffer = "Hello...";
     var nout = os::write(&mut thread_ring, fd, buffer.data, buffer.len);
-
-    std::print("Write ", __rdtsc, " ", nout);
 
     if (nout < 0)
       break;
 
     break;
   }
+
+  for (var ii = usize(1); ii <= 1024*1024; ++ii)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    if (var rc = os::select(&mut thread_ring, pollset.data, pollset.len, ~0); rc <= 0)
+      std::panic("writeable - ", cast<std::errc>(-rc));
+
+    var nout = os::write(&mut thread_ring, fd, &ii, sizeof(ii));
+
+    std::print(ii, " ", nout);
+
+    if (nout != 8)
+      std::panic("write - ", nout);
+  }
+
+  var cnt = 0;
+  var checksum = u32(0);
+
+  var testsum = usize(0);
+  var countsum = usize(0);
 
   for (;;)
   {
@@ -126,7 +145,33 @@ fn main() -> i32
     if (bytes <= 0)
       break;
 
-    std::puts(std::string_view(buffer.data, cast<usize>(bytes)));
+    //std::puts(std::string_view(buffer.data, cast<usize>(bytes)));
+
+    for (var i = 0; i + 1 < cast<usize>(bytes); i += 2)
+      checksum = std::add_with_carry(checksum, cast<u32>(*(buffer.data + i)) << 8 | cast<u32>(*(buffer.data + i + 1))).0;
+
+    if (bytes & 1 != 0)
+      checksum += cast<u32>(*(buffer.data + cast<usize>(bytes) - 1)) << 8;
+
+    for (var i = 0; i < cast<usize>(bytes); ++i)
+      countsum += cast(buffer[i]);
+
+    for (var i = 0; i < cast<usize>(bytes); ++i)
+    {
+      var packed = usize((cnt + i) / 8);
+
+      testsum += cast(cast<u8[8]*>(&packed)[(cnt + i) % 8]);
+
+      if (buffer[i] != cast(cast<u8[8]*>(&packed)[(cnt + i) % 8]))
+        std::panic("mismatch");
+    }
+
+    cnt += cast<usize>(bytes);
+
+    std::print(cnt, " ", bytes, " ", checksum, " ", countsum, " ", testsum);
+
+    if (countsum != testsum)
+      break;
   }
 
   std::print("closing...");

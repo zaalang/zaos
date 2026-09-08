@@ -102,7 +102,7 @@ pub fn receive(net::netdev mut *link, net::rx mut &rx, net::packet mut &pkt) -> 
   return ok;
 }
 
-pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt) -> void
+pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6addr &dst_ip, in6addr &src_ip, hwaddr &dst, hwaddr &src, net::packet mut &pkt, u8 hoplimit = 64) -> void
 {
   var hdr = pkt.prepend<ipv6_header>();
 
@@ -113,7 +113,7 @@ pub fn send(net::netdev mut *link, Rc<io::iocb> mut &cb, protocol protocol, in6a
   hdr.head[4] = cast<u8>((pkt.length - sizeof<ipv6_header>) >> 8);
   hdr.head[5] = cast<u8>((pkt.length - sizeof<ipv6_header>) & 0xff);
   hdr.head[6] = cast(protocol);
-  hdr.head[7] = 255;
+  hdr.head[7] = hoplimit;
 
   hdr.source = src_ip;
   hdr.destination = dst_ip;

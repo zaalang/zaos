@@ -151,7 +151,7 @@ pub fn connect(socket mut *socket, sockaddr *addr, usize alen) -> net::result
   if (socket.sockname.ss_family == 0)
     return address_not_available;
 
-  if (var result = net::stack.udp.bind(socket, addr, alen); !result)
+  if (var result = net::stack.udp.connect(socket, addr, alen); !result)
     return result;
 
   return ok;

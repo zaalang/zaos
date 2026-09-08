@@ -763,6 +763,8 @@ fn rtl81xx_txq_handler(tx_queue mut *txq) -> void
   if (head != txq.sq_head)
   {
     txq.sq_head = head;
+
+    net::enqueue(&txq.adaptor.link.qdisc.dpc, txq.adaptor.link);
   }
 }
 

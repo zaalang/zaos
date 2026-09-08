@@ -122,7 +122,7 @@ pub fn receive_neighbour_solicitation(net::netdev mut *link, net::rx mut &rx, ne
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, ifa.addr, rx.src, link.hwaddr, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, rx.src_ip.in6, ifa.addr, rx.src, link.hwaddr, &mut pkt, hoplimit: 255);
 
   return ok;
 }
@@ -236,7 +236,7 @@ pub fn send_neighbour_solicitation(net::netdev mut *link, in6addr &target, in6ad
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt, hoplimit: 255);
 
   return ok;
 }
@@ -281,7 +281,7 @@ pub fn send_router_solicitation(net::netdev mut *link, in6addr &dst_ip, in6addr 
 
   io::initiate(&mut response.cb, 1);
 
-  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt);
+  ipv6::send(link, &mut response.cb, ipv6::protocol::icmp6, dst_ip, src_ip, dst, src, &mut pkt, hoplimit: 255);
 
   return ok;
 }
