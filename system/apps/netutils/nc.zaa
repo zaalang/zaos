@@ -241,11 +241,14 @@ fn readwrite(i32[2] fds, opts &opts) -> i32
 
       if (nin <= 0)
       {
-        if (fin == fds[1])
-          os::socket_shutdown(&mut thread_ring, fin, SHUT_WR);
-
         if (fin == fds[0])
-          return 0;
+          os::socket_shutdown(&mut thread_ring, fds[1], SHUT_WR);
+
+        if (fin == fds[1])
+          return nin;
+
+        if (nin != 0)
+          return nin;
 
         continue;
       }

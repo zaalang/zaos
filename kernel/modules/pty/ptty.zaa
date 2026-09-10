@@ -583,7 +583,7 @@ pub struct ptty : pub chr::chrdev
     {
       this.in.erase(this.in.begin, count);
 
-      if (((this.termios.c_lflag & ICANON == ICANON && this.lines == 0) || this.in.len == 0))
+      if ((this.termios.c_lflag & ICANON == ICANON && this.lines == 0) || this.in.len == 0)
         io::initiate(&mut this.readable.cb, 1);
 
       if (eof)

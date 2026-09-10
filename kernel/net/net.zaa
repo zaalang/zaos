@@ -197,10 +197,10 @@ pub fn enqueue(output_t mut *dpc, netdev mut *link) -> void
 {
   var mut &worker = stack.workers[cast<usize>(cpu::id)];
 
-  var guard = std::lock_guard(&mut cpu::irqlock);
-
   if (!std::atomic_cmpxchg_strong(&dpc.worker, null, &worker))
     return;
+
+  var guard = std::lock_guard(&mut cpu::irqlock);
 
   dpc.link = link;
   dpc.worker = &worker;

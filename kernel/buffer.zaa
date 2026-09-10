@@ -202,7 +202,7 @@ pub fn read(vfs::node mut *node, vm::iovec &iovec, usize offset, usize length) -
 
   pipe.erase(count);
 
-  if (pipe.len == 0)
+  if (pipe.len == 0 && pipe.has_writer)
     io::initiate(&mut pipe.outlet.readable.cb, 1);
 
   if (pipe.len + count == pipe.capacity)

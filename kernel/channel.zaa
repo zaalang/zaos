@@ -112,7 +112,7 @@ fn pickup(endpoint mut &endpoint, message mut &msg) -> vfs::result
 
   msg = endpoint.buffer.take_front();
 
-  if (endpoint.buffer.len == 0)
+  if (endpoint.buffer.len == 0 && endpoint.other.channel)
     io::initiate(&mut endpoint.readable.cb, 1);
 
   if (endpoint.buffer.len + 1 == endpoint.buffer.capacity)

@@ -39,7 +39,7 @@ enum sio
 }
 
 const TCP_DEFAULT_WINDOW = 65535;
-const TCP_DEFAULT_MAX_SEGMENT_SIZE = 536;
+const TCP_DEFAULT_MAX_SEGMENT_SIZE = 1220;
 
 const TCP_MAX_RETRIES = 5;
 const TCP_SND_LOW_WATER_MARK = 256;
@@ -49,6 +49,7 @@ const TCP_MAX_RTO = 60_000_000_000;
 const TCP_SYN_RTO = 1_000_000_000;
 const TCP_ACK_DELAY = 100_000_000;
 const TCP_2MSL_TIME = 60_000_000_000;
+const TCP_PERSIST_TIMEOUT = 1_000_000_000;
 
 pub struct tcb
 {
@@ -96,6 +97,7 @@ pub struct tcb
   net::timeout_t connect_timer;
   net::timeout_t delayedack_timer;
   net::timeout_t retransmit_timer;
+  net::timeout_t persist_timer;
   net::timeout_t timewait_timer;
 
   net::packet_allocator pkthdr;
@@ -164,12 +166,13 @@ fn init(tcb mut &tcb) -> void
   tcb.connect_timer.callback = &cast<(net::timeout_t mut *) -> void>(connect_timer);
   tcb.delayedack_timer.callback = &cast<(net::timeout_t mut *) -> void>(delayedack_timer);
   tcb.retransmit_timer.callback = &cast<(net::timeout_t mut *) -> void>(retransmit_timer);
+  tcb.persist_timer.callback = &cast<(net::timeout_t mut *) -> void>(persist_timer);
 
   tcb.timewait_timer.flags |= net::timeout_t::flags::nosync;
   tcb.timewait_timer.callback = &cast<(net::timeout_t mut *) -> void>(timewait_timer);
 }
 
-fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port, tcp_seq iss) -> net::result
+fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip, u16 remote_port, tcp_seq iss, net::packet mut &pkt) -> net::result
 {
   var mut &tcb = *cast<tcb mut *>(socket.state);
 
@@ -203,6 +206,10 @@ fn spawn(socket mut *socket, inaddr &local_ip, u16 local_port, inaddr &remote_ip
   tcb.rcv_nxt = iss + 1;
   tcb.rcv_q.resize(tcb.irs + 1, TCP_DEFAULT_WINDOW);
   tcb.rcv_wnd = tcb.rcv_q.remaining;
+
+  tcb.rcv_q.insert(iss + 1, &mut pkt);
+
+  tcb.rcv_nxt = tcb.rcv_q.head + tcb.rcv_q.contiguous;
 
   if (var result = send(&mut tcb, &mut tcb.snd_max, tcp_flags::syn | tcp_flags::ack, 0); !result)
     return result;
@@ -337,6 +344,27 @@ fn disconnect(tcb mut &tcb, net::result status) -> void
   net::enqueue(&tcb.timewait_timer, cpu::system_time);
 }
 
+fn abort(tcb mut &tcb) -> void
+{
+  switch (tcb.state)
+  {
+    case closed:
+    case listen:
+      ;
+
+    case syn_sent:
+      disconnect(&mut tcb, net::result::connection_reset);
+
+    case syn_received:
+    case established:
+    case close_wait:
+    case fin_wait_1:
+    case fin_wait_2:
+      send(&mut tcb, &mut tcb.snd_max, tcp_flags::rst, 0);
+      disconnect(&mut tcb, net::result::connection_reset);
+  }
+}
+
 fn acceptable_incomming_sequence(tcb &tcb, tcp_seq sequence, usize length) -> bool
 {
   if (length == 0 && tcb.rcv_wnd == 0)
@@ -398,7 +426,7 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
         if (var result = tcp::open(socket); !result)
           return result;
 
-        if (var result = spawn(socket, rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port, sequence); !result)
+        if (var result = spawn(socket, rx.dst_ip, hdr.destination_port, rx.src_ip, hdr.source_port, sequence, &mut pkt); !result)
           return result;
 
         tcb.children.push_back(socket);
@@ -650,9 +678,6 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
       case established:
         tcb.state = tcp_state::close_wait;
 
-        if (!tcb.readable.ready)
-          io::complete(&mut tcb.readable.cb, 0);
-
       case fin_wait_1:
         tcb.state = tcp_state::closing;
 
@@ -665,6 +690,9 @@ fn input(tcb mut &tcb, net::netdev mut *link, net::rx &rx, tcp_header *hdr, net:
         net::cancel(&tcb.retransmit_timer);
         net::enqueue(&tcb.timewait_timer, cpu::system_time + TCP_2MSL_TIME);
     }
+
+    if (!tcb.readable.ready)
+      io::complete(&mut tcb.readable.cb, 0);
 
     tcb.snd_ack = true;
   }
@@ -751,7 +779,12 @@ fn output(tcb mut &tcb, tcp_seq snd_nxt) -> net::result
       flags |= tcp_flags::psh;
 
     if (!should_send_now(tcb, sequence, flags, length))
+    {
+      if (tcb.snd_wnd == 0 && !tcb.persist_timer.scheduled)
+        net::enqueue(&tcb.persist_timer, cpu::system_time + TCP_PERSIST_TIMEOUT);
+
       break;
+    }
 
     if (sequence == tcb.snd_max && tcb.rtt_start == 0)
     {
@@ -833,6 +866,23 @@ fn retransmit_timer(net::timeout_t mut *timer) -> void
   output(&mut tcb, tcb.snd_una);
 }
 
+fn persist_timer(net::timeout_t mut *timer) -> void
+{
+  var mut &tcb = *cast<tcb mut *>(cast<uintptr>(timer) - offsetof(tcb::persist_timer));
+
+  var guard = std::lock_guard(&mut tcb.lock);
+
+  if (tcb.state == tcp_state::closed)
+    return;
+
+  if (tcb.retransmit_timer.scheduled || tcb.snd_q.contiguous == 0)
+    return;
+
+  send(&mut tcb, &mut tcb.snd_max, tcp_flags::ack, 1);
+
+  net::enqueue(&tcb.retransmit_timer, cpu::system_time + tcb.rto);
+}
+
 fn timewait_timer(net::timeout_t mut *timer) -> void
 {
   var mut &tcb = *cast<tcb mut *>(cast<uintptr>(timer) - offsetof(tcb::timewait_timer));
@@ -841,9 +891,13 @@ fn timewait_timer(net::timeout_t mut *timer) -> void
 
   tcb.state = tcp_state::closed;
 
+  if (!tcb.readable.ready)
+    io::complete(&mut tcb.readable.cb, 0);
+
   net::cancel(&tcb.connect_timer);
   net::cancel(&tcb.delayedack_timer);
   net::cancel(&tcb.retransmit_timer);
+  net::cancel(&tcb.persist_timer);
   net::cancel(&tcb.timewait_timer);
 
   tcb.lock.unlock();
@@ -856,6 +910,7 @@ fn destroy(tcb mut *tcb) -> void
   std::assert(tcb.state == tcp_state::closed);
   std::assert(!tcb.connect_timer.scheduled);
   std::assert(!tcb.retransmit_timer.scheduled);
+  std::assert(!tcb.persist_timer.scheduled);
   std::assert(!tcb.timewait_timer.scheduled);
 
   net::stack.tcp.unbind(tcb);
@@ -863,6 +918,7 @@ fn destroy(tcb mut *tcb) -> void
   net::sync(&tcb.connect_timer);
   net::sync(&tcb.delayedack_timer);
   net::sync(&tcb.retransmit_timer);
+  net::sync(&tcb.persist_timer);
 
   tcb.pkthdr.free();
 
@@ -1078,6 +1134,9 @@ pub fn read(socket mut *socket, vm::iovec &iovec, usize offset, usize length, an
       return would_block;
 
     case close_wait:
+    case last_ack:
+    case closing:
+    case time_wait:
       if (tcb.rcv_q.contiguous == 0)
         return cast(0);
   }
@@ -1160,6 +1219,12 @@ pub fn shutdown(socket mut *socket, u64 how) -> net::result
   var mut &tcb = *cast<tcb mut *>(socket.state);
 
   var guard = std::lock_guard(&mut tcb.lock);
+
+  if (how == SHUT_RD || how == SHUT_RDWR)
+  {
+    if (tcb.rcv_q.used != 0)
+      abort(&mut tcb);
+  }
 
   if (how == SHUT_WR || how == SHUT_RDWR)
   {
