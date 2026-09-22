@@ -25,6 +25,8 @@ pub struct cpu_logical_core
   pub u64 process_counter_interrupt_time;
   pub usize process_counter_user_allocated_pages;
 
+  pub usize preempt_count;
+
   cpu_logical_core() = default;
   cpu_logical_core(#cpu_logical_core &) = default;
   ~cpu_logical_core() = default;
@@ -56,14 +58,35 @@ pub struct irq_lock
   ~irq_lock() = default;
 }
 
+pub fn interrupts_disabled() -> bool
+{
+  return platform::interrupts_disabled;
+}
+
 pub fn irqlock() -> irq_lock
 {
   return irq_lock();
 }
 
-pub fn interrupts_disabled() -> bool
+pub fn preempt_disable() -> void
 {
-  return platform::interrupts_disabled;
+  platform::percpu_inc<usize>("cpu_logical_core", offsetof(cpu_logical_core::preempt_count));
+
+  std::atomic_thread_fence();
+}
+
+pub fn preempt_enable() -> void
+{
+  std::atomic_thread_fence();
+
+  if (platform::percpu_fetch_dec<usize>("cpu_logical_core", offsetof(cpu_logical_core::preempt_count)) == 1)
+    if (!interrupts_disabled && current_thread.quantum_used_time > 0)
+      scheduler::sleep_yield();
+}
+
+pub fn preempt_count() -> usize
+{
+  return platform::percpu_load<usize>("cpu_logical_core", offsetof(cpu_logical_core::preempt_count));
 }
 
 pub fn id() -> int
@@ -94,17 +117,17 @@ pub fn switch_current_thread(thread mut *thread) -> void
 {
   std::assert(platform::interrupts_disabled);
 
-  platform::percpu_store("cpu_logical_core", offsetof(cpu_logical_core::current_thread), thread);
+  platform::percpu_store<thread mut *>("cpu_logical_core", offsetof(cpu_logical_core::current_thread), thread);
 }
 
 pub fn increment_interrupt_time(u64 time)
 {
-  platform::percpu_add("cpu_logical_core", offsetof(cpu_logical_core::process_counter_interrupt_time), time);
+  platform::percpu_add<u64>("cpu_logical_core", offsetof(cpu_logical_core::process_counter_interrupt_time), time);
 }
 
 pub fn increment_user_allocated_pages()
 {
-  platform::percpu_inc("cpu_logical_core", offsetof(cpu_logical_core::process_counter_user_allocated_pages));
+  platform::percpu_inc<usize>("cpu_logical_core", offsetof(cpu_logical_core::process_counter_user_allocated_pages));
 }
 
 pub fn tsc() -> u64

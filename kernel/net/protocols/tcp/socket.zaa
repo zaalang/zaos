@@ -767,7 +767,7 @@ fn output(tcb mut &tcb, tcp_seq snd_nxt) -> net::result
 
     var flight = tcb.snd_max - tcb.snd_una;
     var offset = sequence - tcb.snd_q.head;
-    var window = std::max(tcb.snd_wnd, offset) - offset;
+    var window = std::max(tcb.snd_wnd, flight) - offset;
     var length = std::min(std::max(tcb.snd_q.contiguous, offset) - offset, window);
 
     length = std::min(length, tcb.mss);

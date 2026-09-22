@@ -39,7 +39,7 @@ struct inode : pub vfs::node
 
   bool unlinked;
 
-  u8[8] reserved;
+  u8[56] reserved;
 
   fn allocator()
   {

@@ -24,6 +24,7 @@ struct futex
 struct futex_table
 {
   mutex lock;
+  std::spin_lock waitlock;
 
   std::flat_hash_map<physaddr, futex> entries;
 
@@ -66,12 +67,12 @@ pub fn wait(virtaddr addr, u32 expected, u64 abstime) -> result
 
   futex.refcnt += 1;
 
-  {
-    var irqs = std::lock_guard(&mut cpu::irqlock);
+  futextable.lock.unlock();
 
-    if (var rc = futex.waiters.wait_until(&mut futextable.lock, abstime, interruptible: true); rc < 0)
-      result = cast(rc);
-  }
+  if (var rc = futex.waiters.lock_and_wait_until(&mut futextable.waitlock, abstime, interruptible: true); rc < 0)
+    result = cast(rc);
+
+  futextable.lock.lock();
 
   if (var j = futextable.entries.find(iovec.host[0].addr); j != futextable.entries.end)
   {
@@ -94,7 +95,7 @@ pub fn wake(virtaddr addr, u32 count) -> result
   switch (futextable.entries.get(iovec.host[0].addr))
   {
     case Some[futex]:
-      futex.waiters.wake_n(cast(count));
+      futex.waiters.lock_and_wake_n(&mut futextable.waitlock, cast(count));
   }
 
   return ok;

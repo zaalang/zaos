@@ -164,6 +164,7 @@ pub enum op
   literal_hexadecimal = 0x8f,
 
   size = 0x94,
+  pos = 0x96,
   err = 0x97,
   modi = 0x98,
   modf = 0x99,
@@ -205,6 +206,7 @@ pub enum op
   chr$ = 0xc3,
   str$ = 0xc4,
   date$ = 0xc6,
+  tab = 0xc7,
   plus = 0xcc,
   not = 0xcd,
   negi = 0xce,
@@ -1173,6 +1175,7 @@ fn evaluate(machine mut &vm) -> result
       case op::pi:
       case op::date$:
       case op::err:
+      case op::pos:
         switch (*vm.ip)
         {
           case op::pi:
@@ -1183,6 +1186,9 @@ fn evaluate(machine mut &vm) -> result
 
           case op::err:
             vm.stack.push_back(std::exchange(&mut vm.errno, 0));
+
+          case op::pos:
+            vm.stack.push_back(cast<int>(vm.linebuf.len));
         }
 
         vm.ip += 1;
@@ -1242,6 +1248,7 @@ fn evaluate(machine mut &vm) -> result
       case op::atn:
       case op::trim$:
       case op::val:
+      case op::tab:
         var arg0 = vm.stack.take_back();
 
         switch (*vm.ip)
@@ -1358,6 +1365,9 @@ fn evaluate(machine mut &vm) -> result
             if (var str = arg0.as_string_view; std::atof(str.begin, str.end, &mut real).error)
               return errc::illegal_number;
             vm.stack.push_back(real);
+
+          case op::tab:
+            vm.stack.push_back(std::format("{:*}", (arg0.as_integer - 1) - cast<int>(vm.linebuf.len), ""));
         }
 
         vm.ip += 1;
@@ -1586,8 +1596,7 @@ fn evaluate(machine mut &vm) -> result
 fn print(machine mut &vm) -> result
 {
   var fd = 0;
-  vm.linebuf.clear();
-
+  var ii = vm.linebuf.len;
   var format = std::string();
   var groups = std::vector<u8 mut *>();
   var fmt = format.begin;
@@ -1815,13 +1824,13 @@ fn print(machine mut &vm) -> result
     {
       case 0:
       case 1:
-        vm.stdout.write(vm.linebuf.data, vm.linebuf.len);
+        vm.stdout.write(vm.linebuf.data + ii, vm.linebuf.len - ii);
 
       else:
         switch (vm.files.get(fd))
         {
           case Some[file]:
-            file.write(vm.linebuf.data, vm.linebuf.len);
+            file.write(vm.linebuf.data + ii, vm.linebuf.len - ii);
 
           else:
             return errc::illegal_path_number;
@@ -1832,6 +1841,9 @@ fn print(machine mut &vm) -> result
   {
     return errc::io_error;
   }
+
+  if (vm.linebuf.ends_with("\n"))
+    vm.linebuf.clear();
 
   return ok;
 }
@@ -1918,6 +1930,8 @@ fn input(machine mut &vm) -> result
 
     vm.ip = ip + 1;
   }
+
+  vm.linebuf.clear();
 
   vm.ip += 1;
 

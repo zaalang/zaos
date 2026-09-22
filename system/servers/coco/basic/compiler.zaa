@@ -778,6 +778,12 @@ fn emit_expression(compile_context mut &ctx, Expression &expression) -> result
         case Val:
           ctx.text.push_back(cast<u8>(op::val));
 
+        case Pos:
+          ctx.text.push_back(cast<u8>(op::pos));
+
+        case Tab:
+          ctx.text.push_back(cast<u8>(op::tab));
+
         else:
           std::panic("unhandled");
       }

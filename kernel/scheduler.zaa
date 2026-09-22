@@ -282,8 +282,9 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
   let quantum_leap = quantum & ~0xfff;
 
   var used_time = cpu::tsc - current_thread.tick_start_time;
+  var interrupt_time = cpu::current.process_counter_interrupt_time;
 
-  if (var interrupt_time = cpu::current.process_counter_interrupt_time; interrupt_time != 0)
+  if (interrupt_time != 0)
   {
     used_time -= interrupt_time;
     std::atomic_add(&cpu::current.interrupt_time, interrupt_time);
@@ -299,6 +300,19 @@ fn reschedule(thread::state state, bool adopt_lock = false) -> void
   current_thread.state = state;
   current_thread.quantum_used_time += used_time;
   std::atomic_add(&current_thread.cpu_time, used_time);
+
+  if (cpu::preempt_count > 0)
+  {
+    std::assert(!adopt_lock);
+    std::assert(current_thread.state == thread::state::ready);
+
+    current_thread.state = thread::state::running;
+    current_thread.tick_start_time = cpu::tsc;
+
+    platform::set_timer_deadline(quantum);
+
+    return;
+  }
 
   if (!adopt_lock)
     runqueue.lock.lock();
@@ -570,22 +584,23 @@ pub fn unblock(thread mut *thread, i32 status = 0) -> void
 {
   std::assert(status <= 0);
 
-  var target_cpu = sys::cpu(thread.cpu);
+  if (std::atomic_xchg(&thread.wait_status, status) != status::waiting)
+    return;
 
-  if (std::atomic_xchg(&thread.wait_status, status) == status::waiting)
+  var cpu = thread.cpu;
+  var mut &runqueue = sys::cpu(cpu).runqueue;
+
+  runqueue.wake(thread);
+
+  if (cpu != cpu::id && sys::cpu(cpu).current_thread.priority < thread.priority)
   {
-    target_cpu.runqueue.wake(thread);
+    var irqs = platform::disable_interrupts();
 
-    if (target_cpu.id != cpu::id && target_cpu.current_thread.priority < thread.priority)
-    {
-      var irqs = platform::disable_interrupts();
+    sys::unicast_ipi_message(thread.cpu, fn[var thread = thread]() -> void {
+      reschedule(thread::state::ready);
+    });
 
-      sys::unicast_ipi_message(thread.cpu, fn[var thread = thread]() -> void {
-        reschedule(thread::state::ready);
-      });
-
-      platform::restore_interrupts(irqs);
-    }
+    platform::restore_interrupts(irqs);
   }
 }
 
@@ -594,20 +609,20 @@ pub fn interrupt(thread mut *thread, i32 status = 0) -> void
 {
   std::assert(status < 0);
 
-  if (std::atomic_xchg(&thread.wait_status, status) == status::waiting)
+  if (std::atomic_xchg(&thread.wait_status, status) != status::waiting)
+    return;
+
+  var irqs = std::lock_guard(&mut cpu::irqlock);
+
+  var mut &runqueue = runqueue_for_thread(thread);
+
+  var guard = std::lock_guard(&mut runqueue.lock, adopt: true);
+
+  switch (thread.state)
   {
-    var irqs = std::lock_guard(&mut cpu::irqlock);
-
-    var mut &runqueue = runqueue_for_thread(thread);
-
-    var guard = std::lock_guard(&mut runqueue.lock, adopt: true);
-
-    switch (thread.state)
-    {
-      case waiting:
-        runqueue.unblock(thread);
-        runqueue.push_back(thread, thread.priority);
-    }
+    case waiting:
+      runqueue.unblock(thread);
+      runqueue.push_back(thread, thread.priority);
   }
 }
 

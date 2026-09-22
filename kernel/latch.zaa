@@ -17,12 +17,12 @@ pub struct latch
   {
     if (std::atomic_load(&this.value, std::memory_order::relaxed) != 0)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.waitlock);
 
       if (std::atomic_load(&this.value, std::memory_order::acquire) == 0)
         return;
 
-      this.waiters.wait(&mut this.spinlock);
+      this.waiters.wait(&mut this.waitlock);
     }
   }
 
@@ -35,12 +35,12 @@ pub struct latch
   {
     if (std::atomic_load(&this.value, std::memory_order::relaxed) != 0)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.waitlock);
 
       if (std::atomic_load(&this.value, std::memory_order::acquire) == 0)
         return true;
 
-      if (var rc = this.waiters.wait_until(&mut this.spinlock, abstime); rc < 0)
+      if (var rc = this.waiters.wait_until(&mut this.waitlock, abstime); rc < 0)
         return false;
     }
 
@@ -56,9 +56,7 @@ pub struct latch
   {
     if (std::atomic_sub(&this.value, 1, std::memory_order::release) == 1)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
-
-      this.waiters.wake_all();
+      this.waiters.lock_and_wake_all(&mut this.waitlock);
     }
   }
 
@@ -76,6 +74,6 @@ pub struct latch
   pub latch(#latch &) = default;
   pub ~latch() = default;
 
-  std::spin_lock spinlock;
   wait_queue waiters;
+  std::spin_lock waitlock;
 }

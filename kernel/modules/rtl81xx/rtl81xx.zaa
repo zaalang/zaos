@@ -317,6 +317,7 @@ pub struct adaptor
 
       case 0x1:
       case 0x10:
+      case 0x11:
         return "Full Duplex";
     }
 
@@ -730,8 +731,6 @@ fn rtl81xx_link_handler(adaptor mut *adaptor) -> void
     case status::lu:
       std::atomic_or(&adaptor.link.flags, net::flags::lower_up);
 
-      adaptor.enable();
-
     else:
       std::atomic_and(&adaptor.link.flags, ~net::flags::lower_up);
   }
@@ -909,9 +908,6 @@ fn initialise(adaptor mut &adaptor) -> result
   store_rar(regs, adaptor.addr);
 
   if (var result = rtl_hw_start(&mut adaptor); !result)
-    return result;
-
-  if (var result = adaptor.enable(); !result)
     return result;
 
   adaptor.link = net::netdev::create<rtldev>(&mut adaptor, adaptor.addr);
@@ -1111,14 +1107,15 @@ fn flush(adaptor mut &adaptor, rx_queue mut *rxq) -> result
     rxq.sq_head = std::add_with_carry(rxq.sq_head, 1).0;
   }
 
-  std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::re);
-
   return ok;
 }
 
 pub fn startup(adaptor mut &adaptor) -> result
 {
   adaptor.refill(adaptor.rxq);
+
+  if (var result = adaptor.enable(); !result)
+    return result;
 
   return ok;
 }

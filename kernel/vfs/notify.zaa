@@ -83,6 +83,8 @@ struct node_lock
 
   pub fn lock(this mut &) -> void
   {
+    cpu::preempt_disable();
+
     for (;;)
     {
       if (std::atomic_or(&this.node.watching, locked, std::memory_order::acquire) & locked == 0)
@@ -93,6 +95,8 @@ struct node_lock
   pub fn unlock(this mut &) -> void
   {
     std::atomic_and(&this.node.watching, ~locked, std::memory_order::release);
+
+    cpu::preempt_enable();
   }
 
   node_lock(vfs::node mut *node)
@@ -117,31 +121,54 @@ fn grab_watchlist_shared(watcher mut *watcher) -> watchlist mut *
   return watcher.watchlist;
 }
 
-fn grab_watchlist(vfs::node mut *node) -> watchlist mut *
+fn get_watchlist(vfs::node mut *node) -> Rc<watchlist>
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
-
-  if (node.watchlist)
-    node.watchlist.lock.lock();
+  var guard = std::lock_guard(&mut node_lock(node));
 
   return node.watchlist;
 }
 
+fn grab_watchlist(vfs::node mut *node) ->  watchlist mut *
+{
+  for (;;)
+  {
+    var watchlist = get_watchlist(node);
+
+    if (!watchlist)
+      return watchlist;
+
+    watchlist.lock.lock();
+
+    if (watchlist == node.watchlist)
+      return watchlist;
+
+    watchlist.lock.unlock();
+  }
+}
+
 fn grab_watchlist_shared(vfs::node mut *node) -> watchlist mut *
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+  for (;;)
+  {
+    var watchlist = get_watchlist(node);
 
-  if (node.watchlist)
-    node.watchlist.lock.lock_shared();
+    if (!watchlist)
+      return watchlist;
 
-  return node.watchlist;
+    watchlist.lock.lock_shared();
+
+    if (watchlist == node.watchlist)
+      return watchlist;
+
+    watchlist.lock.unlock_shared();
+  }
 }
 
 fn attach_watchlist(vfs::node mut *node) -> bool
 {
   var newlist = watchlist::create();
 
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+  var guard = std::lock_guard(&mut node_lock(node));
 
   if (!node.watchlist)
   {
@@ -157,7 +184,7 @@ fn attach_watchlist(vfs::node mut *node) -> bool
 
 fn detach_watchlist(vfs::node mut *node, watchlist mut *watchlist) -> bool
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut node_lock(node));
+  var guard = std::lock_guard(&mut node_lock(node));
 
   if (node.watchlist == watchlist)
   {

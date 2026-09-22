@@ -67,7 +67,7 @@ pub struct process
 
   vm::virtaddr heaptop;
 
-  u8[64] reserved;
+  u8[56] reserved;
 
   pub fn current() -> process mut *
   {
@@ -244,9 +244,9 @@ pub struct process
   #[noreturn]
   pub fn exit(i32 rval) -> void
   {
-    platform::disable_interrupts();
-
     process::current.terminate();
+
+    platform::disable_interrupts();
 
     thread::exit(rval);
   }

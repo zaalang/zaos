@@ -260,7 +260,7 @@ pub struct adaptor
   {
     var regs = this.regs;
 
-    std::volatile_store(&regs.ctrl, regs.ctrl | ctrl::slu);
+    std::volatile_store(&regs.rctl, regs.rctl | rctl::en);
 
     return ok;
   }
@@ -538,7 +538,6 @@ fn initialise(rx_queue mut &rxq) -> result
   rctl = rctl & ~(rctl::mo_mask << rctl::mo_shift);
   rctl = rctl & ~rctl::vfe;
   rctl = rctl | rctl::sz_2048;
-  rctl = rctl | rctl::en;
 
   std::volatile_store(&regs.rctl, rctl);
 
@@ -603,9 +602,6 @@ fn initialise(adaptor mut &adaptor) -> result
   adaptor.addr = macaddr([ read_nvm(&regs.eerd, 0), read_nvm(&regs.eerd, 1), read_nvm(&regs.eerd, 2) ]);
 
   store_rar(regs, 0, adaptor.addr);
-
-  if (var result = adaptor.enable(); !result)
-    return result;
 
   adaptor.link = net::netdev::create<emdev>(&mut adaptor, adaptor.addr);
 
@@ -793,14 +789,15 @@ fn flush(adaptor mut &adaptor, rx_queue mut *rxq) -> result
 
   std::volatile_store(&regs.rdh(rxq.index), rxq.sq_head & rxq.sq_mask);
 
-  std::volatile_store(&regs.rctl, regs.rctl | rctl::en);
-
   return ok;
 }
 
 pub fn startup(adaptor mut &adaptor) -> result
 {
   adaptor.refill(adaptor.rxq);
+
+  if (var result = adaptor.enable(); !result)
+    return result;
 
   return ok;
 }

@@ -147,3 +147,88 @@ pub struct wait_queue
 
   waiter mut *waiters;
 }
+
+pub fn lock_and_wake_one(wait_queue mut &wq, std::spin_lock mut &lock) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut lock);
+
+  wq.wake_one();
+}
+
+pub fn lock_and_wake_all(wait_queue mut &wq, std::spin_lock mut &lock) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut lock);
+
+  wq.wake_all();
+}
+
+pub fn lock_and_wake_n(wait_queue mut &wq, std::spin_lock mut &lock, usize count) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut lock);
+
+  wq.wake_n(count);
+}
+
+pub fn lock_and_wait(wait_queue mut &wq, std::spin_lock mut &inner, bool interruptible = false) -> i32
+{
+  var irqs = cpu::irqlock();
+
+  irqs.lock();
+  inner.lock();
+
+  var rc = wq.wait(&mut inner, interruptible);
+
+  inner.unlock();
+  irqs.unlock();
+
+  return rc;
+}
+
+pub fn unlock_lock_and_wait<Lock>(wait_queue mut &wq, Lock mut &outer, std::spin_lock mut &inner, bool interruptible = false) -> i32
+{
+  var irqs = cpu::irqlock();
+
+  irqs.lock();
+  inner.lock();
+  outer.unlock();
+
+  var rc = wq.wait(&mut inner, interruptible);
+
+  inner.unlock();
+  irqs.unlock();
+  outer.lock();
+
+  return rc;
+}
+
+pub fn lock_and_wait_until(wait_queue mut &wq, std::spin_lock mut &inner, u64 abstime, bool interruptible = false) -> i32
+{
+  var irqs = cpu::irqlock();
+
+  irqs.lock();
+  inner.lock();
+
+  var rc = wq.wait_until(&mut inner, abstime, interruptible);
+
+  inner.unlock();
+  irqs.unlock();
+
+  return rc;
+}
+
+pub fn unlock_lock_and_wait_until<Lock>(wait_queue mut &wq, Lock mut &outer, std::spin_lock mut &inner, u64 abstime, bool interruptible = false) -> i32
+{
+  var irqs = cpu::irqlock();
+
+  irqs.lock();
+  inner.lock();
+  outer.unlock();
+
+  var rc = wq.wait_until(&mut inner, abstime, interruptible);
+
+  inner.unlock();
+  irqs.unlock();
+  outer.lock();
+
+  return rc;
+}

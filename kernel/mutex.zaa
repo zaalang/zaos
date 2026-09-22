@@ -9,6 +9,69 @@ import scheduler;
 import thread as _ : thread;
 import waitqueue as _ : wait_queue;
 
+struct msc_lock
+{
+  struct node
+  {
+    u32 state;
+    node mut *next;
+    node mut * mut &tail;
+
+    fn lock(this mut &) -> void
+    {
+      this.state = 0;
+      this.next = null;
+
+      cpu::preempt_disable();
+
+      var prev = std::atomic_xchg(&this.tail, &this, std::memory_order::acquire);
+
+      if (prev)
+      {
+        std::atomic_store(&prev.next, &this, std::memory_order::release);
+
+        while (std::atomic_load(&this.state, std::memory_order::relaxed) == 0)
+          __relax();
+      }
+    }
+
+    fn unlock(this mut &) -> void
+    {
+      var next = std::atomic_load(&this.next, std::memory_order::relaxed);
+
+      if (!next)
+      {
+        if (std::atomic_cmpxchg_strong(&this.tail, &this, null))
+        {
+          cpu::preempt_enable();
+
+          return;
+        }
+
+        while ((next = std::atomic_load(&this.next, std::memory_order::relaxed)) == null)
+          __relax();
+      }
+
+      std::atomic_store(&next.state, 1, std::memory_order::release);
+
+      cpu::preempt_enable();
+    }
+
+    node(msc_lock mut *lock)
+      : tail(&lock.tail)
+    {
+    }
+
+    ~node() = default;
+  }
+
+  node mut *tail;
+
+  msc_lock() = default;
+  msc_lock(#msc_lock &) = default;
+  ~msc_lock() = default;
+}
+
 pub struct mutex
 {
   const waiting = 1 << 31;
@@ -21,18 +84,20 @@ pub struct mutex
   pub fn lock(this mut &) -> void
   {
     std::assert(thread::current.id != 0);
+    std::assert(!cpu::interrupts_disabled);
 
     if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
       return;
 
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     std::atomic_or(&this.holder, waiting);
 
     if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
       return;
 
-    this.waiters.wait(&mut this.spinlock);
+    this.waiters.wait(&mut node);
   }
 
   pub fn try_lock(this mut &) -> bool
@@ -42,17 +107,21 @@ pub struct mutex
 
   pub fn try_lock_until(this mut &, u64 abstime) -> bool
   {
+    std::assert(thread::current.id != 0);
+    std::assert(!cpu::interrupts_disabled);
+
     if (std::atomic_cmpxchg_weak(&this.holder, 0, cast(thread::current.id)))
       return true;
 
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     std::atomic_or(&this.holder, waiting);
 
     if (std::atomic_cmpxchg_strong(&this.holder, waiting, cast(thread::current.id)))
       return true;
 
-    if (var rc = this.waiters.wait_until(&mut this.spinlock, abstime); rc < 0)
+    if (var rc = this.waiters.wait_until(&mut node, abstime); rc < 0)
       return false;
 
     return true;
@@ -63,7 +132,8 @@ pub struct mutex
     if (std::atomic_cmpxchg_strong(&this.holder, cast(thread::current.id), 0))
       return;
 
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     if (!this.waiters.empty)
     {
@@ -82,7 +152,7 @@ pub struct mutex
   pub ~mutex() = default;
 
   u32 holder;
-  std::spin_lock spinlock;
+  msc_lock waitlock;
   wait_queue waiters;
 }
 
@@ -103,16 +173,18 @@ pub struct shared_mutex
 
     if (pending != 0 && std::atomic_add(&this.departing, pending) + pending != 0)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+      var node = msc_lock::node(&this.waitlock);
+      var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
       if (this.departing > 0)
-        this.writewaiters.wait(&mut this.spinlock);
+        this.writewaiters.wait(&mut node);
     }
   }
 
   pub fn unlock(this mut &) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     this.arriving -= std::atomic_add(&this.pending, max_readers) + max_readers;
 
@@ -125,10 +197,11 @@ pub struct shared_mutex
   {
     if (std::atomic_add(&this.pending, 1) < 0)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+      var node = msc_lock::node(&this.waitlock);
+      var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
       if (++this.arriving > 0)
-        this.readwaiters.wait(&mut this.spinlock);
+        this.readwaiters.wait(&mut node);
     }
   }
 
@@ -138,7 +211,8 @@ pub struct shared_mutex
     {
       if (std::atomic_sub(&this.departing, 1) == 1)
       {
-        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+        var node = msc_lock::node(&this.waitlock);
+        var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
         this.writewaiters.wake_one();
       }
@@ -154,18 +228,20 @@ pub struct shared_mutex
 
   pub fn unlock_upgrade_and_lock(this mut &) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     if (this.departing > 0)
-      this.writewaiters.wait(&mut this.spinlock);
+      this.writewaiters.wait(&mut node);
   }
 
   pub fn unlock_upgrade_and_lock_shared(this mut &) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     if (this.departing > 0)
-      this.writewaiters.wait(&mut this.spinlock);
+      this.writewaiters.wait(&mut node);
 
     this.arriving -= std::atomic_add(&this.pending, max_readers + 1) + max_readers;
 
@@ -176,10 +252,11 @@ pub struct shared_mutex
 
   pub fn unlock_upgrade(this mut &) -> void
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+    var node = msc_lock::node(&this.waitlock);
+    var guard = std::lock_guard(&mut node, &mut cpu::irqlock);
 
     if (this.departing > 0)
-      this.writewaiters.wait(&mut this.spinlock);
+      this.writewaiters.wait(&mut node);
 
     this.arriving += std::atomic_add(&this.pending, max_readers) + max_readers;
 
@@ -199,7 +276,7 @@ pub struct shared_mutex
   i32 pending;
   i32 arriving;
   i32 departing;
-  std::spin_lock spinlock;
+  msc_lock waitlock;
   wait_queue readwaiters;
   wait_queue writewaiters;
   mutex writelock;

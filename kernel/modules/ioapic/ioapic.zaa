@@ -6,6 +6,7 @@ import std.stdio;
 import std.atomic;
 import acpi.madt;
 import platform : PHYSICAL_BASE;
+import cpu;
 import sys;
 import io;
 
@@ -23,44 +24,40 @@ pub enum polarity
   active_low = 1,
 }
 
-pub struct override
+struct override
 {
-  pub u8 bus;
-  pub u8 bus_irq;
-  pub u32 gsi;
-  pub polarity polarity;
-  pub trigger triggermode;
+  u8 bus;
+  u8 bus_irq;
+  u32 gsi;
+  polarity polarity;
+  trigger triggermode;
 
-  pub override() = default;
-  pub override(override &) = default;
-  pub fn =(override mut &, override &) -> override mut & = default;
-  pub ~override() = default;
+  override() = default;
+  override(override &) = default;
+  ~override() = default;
 }
 
-struct interrupt_controller
+struct ioapic
 {
-  uintptr ioapic;
+  std::spin_lock lock;
+
+  uintptr base;
   u32 gsi_base;
   u32 gsi_count;
   (u8, u8) vectors;
 
   std::vector<override> overrides;
 
-  fn instance() -> interrupt_controller mut &
+  fn instance() -> ioapic mut &
   {
-    static instance = #interrupt_controller();
+    static instance = #ioapic();
 
     return &instance;
   }
 
-  interrupt_controller() = default;
-  interrupt_controller(#interrupt_controller &) = default;
-  ~interrupt_controller() = default;
-}
-
-fn ic() -> interrupt_controller mut &
-{
-  return &interrupt_controller::instance;
+  ioapic() = default;
+  ioapic(#ioapic &) = default;
+  ~ioapic() = default;
 }
 
 fn ioapic_read(uintptr base, u32 register) -> u32
@@ -77,7 +74,14 @@ fn ioapic_write(uintptr base, u32 register, u32 value) -> void
   std::volatile_store(cast<u32 mut *>(PHYSICAL_BASE + base + 0x10), value);
 }
 
-fn add_src_override(interrupt_controller mut &ic, acpi::interrupt_source_override *apic) -> void
+fn ioapic_write_sync(uintptr base, u32 register, u32 value) -> void
+{
+  ioapic_write(base, register, value);
+
+  std::volatile_load(cast<u32*>(PHYSICAL_BASE + base + 0x10));
+}
+
+fn add_src_override(ioapic mut &ic, acpi::interrupt_source_override *apic) -> void
 {
   var override = override();
 
@@ -112,7 +116,27 @@ fn add_src_override(interrupt_controller mut &ic, acpi::interrupt_source_overrid
   ic.overrides.push_back(override);
 }
 
-pub fn resolve(u32 irq) -> u8
+pub fn irq_mask(ioapic mut &ic, u8 irq) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut ic.lock);
+
+  var idx = cast<u32>(irq - ic.vectors.0);
+  var entry = ioapic_read(ic.base, 0x10 + 2*idx);
+
+  ioapic_write_sync(ic.base, 0x10 + 2*idx, entry | 0x10000);
+}
+
+pub fn irq_unmask(ioapic mut &ic, u8 irq) -> void
+{
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut ic.lock);
+
+  var idx = cast<u32>(irq - ic.vectors.0);
+  var entry = ioapic_read(ic.base, 0x10 + 2*idx);
+
+  ioapic_write(ic.base, 0x10 + 2*idx, entry & ~0x10000);
+}
+
+pub fn resolve(ioapic &ic, u32 irq) -> u8
 {
   var gsi = irq;
 
@@ -125,25 +149,12 @@ pub fn resolve(u32 irq) -> u8
   return ic.vectors.0 + cast<u8>(gsi - ic.gsi_base);
 }
 
-pub extern fn enable_io_vector(u8 irq) -> void
+pub fn resolve(u32 irq) -> u8
 {
-  var idx = cast<u32>(irq - ic.vectors.0);
-
-  var entry = ioapic_read(ic.ioapic, 0x10 + 2*idx);
-
-  ioapic_write(ic.ioapic, 0x10 + 2*idx, entry & ~0x10000);
+  return resolve(ioapic::instance, irq);
 }
 
-pub extern fn disable_io_vector(u8 irq) -> void
-{
-  var idx = cast<u32>(irq - ic.vectors.0);
-
-  var entry = ioapic_read(ic.ioapic, 0x10 + 2*idx);
-
-  ioapic_write(ic.ioapic, 0x10 + 2*idx, entry | 0x10000);
-}
-
-pub fn initialise() -> void
+pub fn initialise(ioapic mut &ic) -> void
 {
   var madt = acpi::find_madt(PHYSICAL_BASE, sys::acpi_root);
 
@@ -158,10 +169,10 @@ pub fn initialise() -> void
 
         var io_apic = cast<acpi::io_apic*>(apic);
 
-        ic.ioapic = cast<uintptr>(io_apic.apic_address);
+        ic.base = cast<uintptr>(io_apic.apic_address);
 
         ic.gsi_base = io_apic.interrupt_base;
-        ic.gsi_count = (ioapic_read(ic.ioapic, 0x1) >> 16) & 0xff + 1;
+        ic.gsi_count = (ioapic_read(ic.base, 0x1) >> 16) & 0xff + 1;
 
       case interrupt_source_override:
 
@@ -173,7 +184,9 @@ pub fn initialise() -> void
 
   for (var idx = 0; idx < ic.gsi_count; ++idx)
   {
-    var vector = cast<u32>(ic.vectors.0) + idx;
+    var irq = ic.vectors.0 + cast<u8>(idx);
+
+    var flow = io::flow::edge;
     var polarity = polarity::bus;
     var triggermode = trigger::bus;
 
@@ -181,14 +194,24 @@ pub fn initialise() -> void
     {
       polarity = ic.overrides[j].polarity;
       triggermode = ic.overrides[j].triggermode;
+
+      if (triggermode == trigger::level)
+        flow = io::flow::level;
     }
 
-    ioapic_write(ic.ioapic, 0x10 + 2*idx, vector | cast<u32>(polarity) << 13 | cast<u32>(triggermode) << 15 | 0x10900);
-    ioapic_write(ic.ioapic, 0x10 + 2*idx + 1, 0xff000000);
+    ioapic_write(ic.base, 0x10 + 2*idx, cast<u32>(irq) | cast<u32>(polarity) << 13 | cast<u32>(triggermode) << 15 | 0x10900);
+    ioapic_write(ic.base, 0x10 + 2*idx + 1, 0xff000000);
+
+    io::setup_vector(irq, flow, &impl ic, &ic);
   }
 
   std::print("ioapic: interrupts ", ic.gsi_base, " through ", ic.gsi_base + ic.gsi_count - 1);
 
   for (var &override : ic.overrides)
     std::print("ioapic: override bus ", override.bus, " irq ", override.bus_irq, " to gsi ", override.gsi, " ", override.polarity, " ", override.triggermode);
+}
+
+pub fn initialise() -> void
+{
+  initialise(&mut ioapic::instance);
 }

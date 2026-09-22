@@ -307,22 +307,22 @@ pub struct transform
 
   pub fn identity() -> transform
   {
-    return [<f64>: 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 ];
+    return [ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 ];
   }
 
   pub fn scale(f64 sx, f64 sy) -> transform
   {
-    return [<f64>: sx, 0.0, 0.0, 0.0, sy, 0.0 ];
+    return [ sx, 0.0, 0.0, 0.0, sy, 0.0 ];
   }
 
   pub fn translation(f64 dx, f64 dy) -> transform
   {
-    return [<f64>: 1.0, 0.0, dx, 0.0, 1.0, dy ];
+    return [ 1.0, 0.0, dx, 0.0, 1.0, dy ];
   }
 
   pub fn rotation(f64 cos, f64 sin) -> transform
   {
-    return [<f64>: cos, -sin, 0.0, sin, cos, 0.0 ];
+    return [ cos, -sin, 0.0, sin, cos, 0.0 ];
   }
 
   pub transform(f64[6] &mat)

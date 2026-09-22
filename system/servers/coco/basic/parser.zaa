@@ -385,6 +385,8 @@ pub struct FunctionOp
     ATan,
     Trim$,
     Val,
+    Pos,
+    Tab,
   }
 
   pub Kind op;
@@ -1034,6 +1036,12 @@ fn functionop(token &tok) -> FunctionOp::Kind
     case kw_val:
       return Val;
 
+    case kw_pos:
+      return Pos;
+
+    case kw_tab:
+      return Tab;
+
     else:
       std::panic("invalid function op");
   }
@@ -1465,6 +1473,7 @@ fn parse_expression_left(parse_context mut &ctx, Expression mut &expr, InputRead
     case kw_pi:
     case kw_date$:
     case kw_err:
+    case kw_pos:
       if (var rc = parse_nullary_function(&mut ctx, &mut expr, &mut is); !rc)
         return rc;
 
@@ -1492,6 +1501,7 @@ fn parse_expression_left(parse_context mut &ctx, Expression mut &expr, InputRead
     case kw_atn:
     case kw_trim$:
     case kw_val:
+    case kw_tab:
       if (var rc = parse_unary_function(&mut ctx, &mut expr, &mut is); !rc)
         return rc;
 
@@ -1857,6 +1867,13 @@ fn typecheck(parse_context mut &ctx, Expression mut &expr) -> result
         case Val:
           if (args[0].type.is_string)
             functionop.ty = Type::Real;
+
+        case Pos:
+          functionop.ty = Type::Integer;
+
+        case Tab:
+          if (args[0].type.is_numeric)
+            functionop.ty = Type::String;
 
         else:
           std::panic("unhandled");

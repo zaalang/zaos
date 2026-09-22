@@ -13,32 +13,32 @@ pub struct transform : pub f64[3][3]
 
   pub fn identity() -> transform
   {
-    return [ [<f64>: 1.0, 0.0, 0.0 ], [<f64>: 0.0, 1.0, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ 1.0, 0.0, 0.0 ], [ 0.0, 1.0, 0.0 ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn scale(f64 sxy) -> transform
   {
-    return [ [<f64>: sxy, 0.0, 0.0 ], [<f64>: 0.0, sxy, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ sxy, 0.0, 0.0 ], [ 0.0, sxy, 0.0 ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn scale(f64 sx, f64 sy) -> transform
   {
-    return [ [<f64>: sx, 0.0, 0.0 ], [<f64>: 0.0, sy, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ sx, 0.0, 0.0 ], [ 0.0, sy, 0.0 ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn translation(f64 dx, f64 dy) -> transform
   {
-    return [ [<f64>: 1.0, 0.0, dx ], [<f64>: 0.0, 1.0, dy ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ 1.0, 0.0, dx ], [ 0.0, 1.0, dy ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn rotation(f64 cos, f64 sin) -> transform
   {
-    return [ [<f64>: cos, -sin, 0.0 ], [<f64>: sin, cos, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ cos, -sin, 0.0 ], [ sin, cos, 0.0 ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub fn shear(f64 hx, f64 hy) -> transform
   {
-    return [ [<f64>: 1.0, -hx, 0.0 ], [<f64>: hy, 1.0, 0.0 ], [<f64>: 0.0, 0.0, 1.0 ] ];
+    return [ [ 1.0, -hx, 0.0 ], [ hy, 1.0, 0.0 ], [ 0.0, 0.0, 1.0 ] ];
   }
 
   pub transform(f64[3][3] &mat)

@@ -1007,6 +1007,7 @@ pub fn fetch(lexer mut &this, InputReader mut &is) throws(std::error) -> token
       case '0' ..= '9':
         return lex_numeric_scalar(&mut this, &mut is);
 
+      case '_':
       case 'a' ..= 'z':
       case 'A' ..= 'Z':
       case 0xc0 ..= 0xff:

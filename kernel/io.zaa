@@ -16,6 +16,19 @@ import pollset as _ : pollset;
 import waitqueue as _ : wait_queue;
 import support.rc : Rc;
 
+pub enum flow
+{
+  edge,
+  level,
+  spurious,
+}
+
+pub vtable chip
+{
+  pub fn irq_mask(this mut &, u8 irq) -> void;
+  pub fn irq_unmask(this mut &, u8 irq) -> void;
+}
+
 struct handler
 {
   fn (*handler_routine)(void mut *) -> void;
@@ -29,7 +42,11 @@ struct handler
 
 struct vector
 {
-  std::spin_lock lock;
+  std::shared_spin_lock lock;
+
+  flow flow;
+  chip *chip;
+  void mut *chip_data;
 
   handler mut *head;
 
@@ -61,8 +78,8 @@ fn intman()
   return &interrupt_manager::instance;
 }
 
-extern fn enable_io_vector(u8 irq) -> void;
-extern fn disable_io_vector(u8 irq) -> void;
+extern fn io_vector_ack() -> void;
+extern fn io_vector_eoi() -> void;
 extern fn allocate_io_vectors(usize count) -> (u8, u8);
 
 pub fn allocate_vectors(usize count) -> (u8, u8)
@@ -70,6 +87,17 @@ pub fn allocate_vectors(usize count) -> (u8, u8)
   var guard = std::lock_guard(&mut intman.lock);
 
   return allocate_io_vectors(count);
+}
+
+pub fn setup_vector(u8 irq, flow flow, chip *chip = null, void mut *chip_data = null) -> void
+{
+  var mut &vector = intman.vectors[cast(irq)];
+
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut vector.lock);
+
+  vector.flow = flow;
+  vector.chip = chip;
+  vector.chip_data = chip_data;
 }
 
 pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mut *handler_argument) -> void
@@ -87,7 +115,8 @@ pub fn install_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void m
 
   if (!vector.head.next)
   {
-    enable_io_vector(irq);
+    if (vector.chip)
+      vector.chip.irq_unmask(&mut *vector.chip_data, irq);
   }
 }
 
@@ -111,8 +140,38 @@ pub fn remove_handler(u8 irq, fn (*handler_routine)(void mut *) -> void, void mu
 
   if (!vector.head)
   {
-    disable_io_vector(irq);
+    if (vector.chip)
+      vector.chip.irq_mask(&mut *vector.chip_data, irq);
   }
+}
+
+fn handle_edge_irq(vector mut &vector) -> void
+{
+  io_vector_ack();
+
+  var guard = std::lock_shared_guard(&mut vector.lock);
+
+  for (var handler = vector.head; handler; handler = handler.next)
+  {
+    handler.handler_routine(handler.handler_argument);
+  }
+}
+
+fn handle_level_irq(vector mut &vector) -> void
+{
+  var guard = std::lock_shared_guard(&mut vector.lock);
+
+  for (var handler = vector.head; handler; handler = handler.next)
+  {
+    handler.handler_routine(handler.handler_argument);
+  }
+
+  io_vector_eoi();
+}
+
+fn handle_spurious_irq(vector mut &vector) -> void
+{
+  std::fprint(std::stderr, "spurious interrupt");
 }
 
 extern fn io_dispatch(u8 irq) -> void
@@ -121,11 +180,16 @@ extern fn io_dispatch(u8 irq) -> void
 
   var mut &vector = intman.vectors[cast(irq)];
 
-  var guard = std::lock_guard(&mut vector.lock);
-
-  for (var handler = vector.head; handler; handler = handler.next)
+  switch (vector.flow)
   {
-    handler.handler_routine(handler.handler_argument);
+    case edge:
+      handle_edge_irq(&mut vector);
+
+    case level:
+      handle_level_irq(&mut vector);
+
+    case spurious:
+      handle_spurious_irq(&mut vector);
   }
 
   cpu::increment_interrupt_time(cpu::tsc - start_time);
@@ -136,8 +200,8 @@ pub struct iocb
   i32 result;
   i32 outstanding;
 
-  std::spin_lock lock;
   wait_queue waiters;
+  std::spin_lock waitlock;
   std::vector<pollset mut *> pollsets;
 
   u8[0] reserved;
@@ -234,22 +298,22 @@ pub struct response
 
 pub fn wait(response mut &rq, bool interruptible = false) -> i32
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.waitlock);
 
   if (std::atomic_load(&rq.cb.outstanding) <= 0)
     return 0;
 
-  return rq.cb.waiters.wait(&mut rq.cb.lock, interruptible);
+  return rq.cb.waiters.wait(&mut rq.cb.waitlock, interruptible);
 }
 
 pub fn wait_until(response mut &rq, u64 abstime, bool interruptible = false) -> i32
 {
-  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.lock);
+  var guard = std::lock_guard(&mut cpu::irqlock, &mut rq.cb.waitlock);
 
   if (std::atomic_load(&rq.cb.outstanding) <= 0)
     return 0;
 
-  return rq.cb.waiters.wait_until(&mut rq.cb.lock, abstime, interruptible);
+  return rq.cb.waiters.wait_until(&mut rq.cb.waitlock, abstime, interruptible);
 }
 
 pub fn add_notify(Rc<iocb> mut &cb, pollset mut *pollset) -> void
@@ -259,7 +323,7 @@ pub fn add_notify(Rc<iocb> mut &cb, pollset mut *pollset) -> void
     var tmp = std::vector<pollset mut *>::with_size(cb.pollsets.len + 1);
 
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
+      var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.waitlock);
 
       if (tmp.len != cb.pollsets.len + 1)
         continue;
@@ -280,7 +344,7 @@ pub fn remove_notify(Rc<iocb> mut &cb, pollset *pollset) -> void
   var tmp = std::vector<pollset mut *>();
 
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.waitlock);
 
     cb.pollsets.erase(pollset);
 
@@ -309,7 +373,7 @@ pub fn complete(Rc<iocb> mut &cb, var result) -> void
 
   if (std::atomic_sub(&cb.outstanding, 1) <= 1)
   {
-    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.lock);
+    var guard = std::lock_guard(&mut cpu::irqlock, &mut cb.waitlock);
 
     for (var mut &pollset : cb.pollsets)
       pollset.trigger();

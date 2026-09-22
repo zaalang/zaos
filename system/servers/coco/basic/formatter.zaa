@@ -261,6 +261,7 @@ fn expression(OutputStream mut &os, basic::header *header, u8 * mut &ip) throws(
       case op::pi:
       case op::date$:
       case op::err:
+      case op::pos:
         switch (*ip)
         {
           case op::pi:
@@ -271,6 +272,9 @@ fn expression(OutputStream mut &os, basic::header *header, u8 * mut &ip) throws(
 
           case op::err:
             stack.push_back(PrecLevel::One, std::string("ERR"));
+
+          case op::pos:
+            stack.push_back(PrecLevel::One, std::string("POS"));
         }
 
         ip += 1;
@@ -329,6 +333,7 @@ fn expression(OutputStream mut &os, basic::header *header, u8 * mut &ip) throws(
       case op::atn:
       case op::trim$:
       case op::val:
+      case op::tab:
         var arg0 = stack.take_back();
 
         switch (*ip)
@@ -416,6 +421,9 @@ fn expression(OutputStream mut &os, basic::header *header, u8 * mut &ip) throws(
 
           case op::val:
             stack.push_back(PrecLevel::One, std::format("VAL({})", arg0.1));
+
+          case op::tab:
+            stack.push_back(PrecLevel::One, std::format("TAB({})", arg0.1));
         }
 
         ip += 1;

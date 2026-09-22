@@ -22,12 +22,12 @@ pub struct semaphore
 
       if (current == 0)
       {
-        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.waitlock);
 
         if (std::atomic_load(&this.value, std::memory_order::acquire) != 0)
           continue;
 
-        this.waiters.wait(&mut this.spinlock);
+        this.waiters.wait(&mut this.waitlock);
 
         current = 1;
       }
@@ -55,12 +55,12 @@ pub struct semaphore
 
       if (current == 0)
       {
-        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
+        var guard = std::lock_guard(&mut cpu::irqlock, &mut this.waitlock);
 
         if (std::atomic_load(&this.value, std::memory_order::acquire) != 0)
           continue;
 
-        if (var rc = this.waiters.wait_until(&mut this.spinlock, abstime); rc < 0)
+        if (var rc = this.waiters.wait_until(&mut this.waitlock, abstime); rc < 0)
           return false;
 
         current = 1;
@@ -77,9 +77,7 @@ pub struct semaphore
   {
     if (std::atomic_add(&this.value, 1, std::memory_order::release) == 0)
     {
-      var guard = std::lock_guard(&mut cpu::irqlock, &mut this.spinlock);
-
-      this.waiters.wake_one();
+      this.waiters.lock_and_wake_one(&mut this.waitlock);
     }
   }
 
@@ -97,6 +95,6 @@ pub struct semaphore
   pub semaphore(#semaphore &) = default;
   pub ~semaphore() = default;
 
-  std::spin_lock spinlock;
   wait_queue waiters;
+  std::spin_lock waitlock;
 }

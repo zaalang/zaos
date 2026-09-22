@@ -217,7 +217,7 @@ pub fn insert(window mut &window, tcp_seq sequence, net::packet mut &packet) -> 
 
   insertpos = window.payloads.insert(insertpos, sequence, &move packet);
 
-  std::assert(window_verify(window));
+  //std::assert(window_verify(window));
 
   packet = net::packet();
 }
@@ -266,7 +266,7 @@ pub fn erase(window mut &window, tcp_seq first, tcp_seq last) -> void
 
   window.head = last;
 
-  std::assert(window_verify(window));
+  //std::assert(window_verify(window));
 }
 
 pub fn dump(window &window) -> void

@@ -320,6 +320,16 @@ fn disable_legacy_pic() -> void
   cpu::out8(0xa1, 0xff);
 }
 
+pub extern fn io_vector_ack() -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+}
+
+pub extern fn io_vector_eoi() -> void
+{
+  cpu::wrmsr(cpu::msr_index::apic_eoi, 0);
+}
+
 pub extern fn allocate_io_vectors(usize count) -> (u8, u8)
 {
   var mut &vectors = sys.vectors;
