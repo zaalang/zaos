@@ -8,6 +8,7 @@ import terminal;
 import basic.machine;
 import basic.sys as sys;
 import basic.gfx as gfx;
+import basic.net as net;
 import seat;
 import env;
 import tab;
@@ -40,6 +41,7 @@ fn main()
 
   sys::initialise(&mut vm, &mut terminal);
   gfx::initialise(&mut vm, &mut terminal);
+  net::initialise(&mut vm, &mut terminal);
 
   while (true)
   {

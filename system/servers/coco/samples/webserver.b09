@@ -1,0 +1,38 @@
+PROCEDURE webserver
+  LET AF_INET6 = 10
+  LET SOCK_STREAM = 1
+  LET LISTEN_IP = "::"
+  LET LISTEN_PORT = 8080
+
+  DIM server_fd: INTEGER
+  DIM client_fd: INTEGER
+  DIM client_addr: STRING[46]
+  DIM buffer: STRING[4096]
+
+  PRINT "\x1b[?25l"
+
+  RUN Net.Socket(server_fd, AF_INET6, SOCK_STREAM, 0)
+
+  RUN Net.SocketBind(server_fd, AF_INET6, LISTEN_IP, LISTEN_PORT)
+
+  RUN Net.SocketListen(server_fd, 3)
+
+  PRINT "BASIC Web Server running on port "; LISTEN_PORT; "..."
+
+  LOOP
+    RUN Net.SocketAccept(server_fd, client_fd, client_addr)
+
+    PRINT "Accepted connection from "; client_addr
+
+    RUN Net.SocketRecv(client_fd, buffer)
+
+    buffer = "HTTP/1.1 200 OK\r\n"
+    buffer = buffer + "Content-Type: text/plain\r\n"
+    buffer = buffer + "Content-Length: 12\r\n"
+    buffer = buffer + "\r\n"
+    buffer = buffer + "Hello World!"
+
+    RUN Net.SocketSend(client_fd, buffer)
+
+    RUN Net.SocketClose(client_fd)
+  ENDLOOP

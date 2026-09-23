@@ -1,0 +1,495 @@
+//
+// net module
+//
+
+import std.stdlib;
+import net.ip;
+import os.zaos.fcntl;
+import os.zaos.socket;
+import basic.machine;
+import terminal;
+
+using os;
+
+using basic::errc;
+using basic::result;
+using basic::operand;
+using basic::machine;
+
+struct Net
+{
+  fn instance() -> Net mut &
+  {
+    static Net = #Net();
+
+    return &Net;
+  }
+
+  Net() = default;
+  Net(#Net &) = default;
+  ~Net() = default;
+}
+
+extern fn thread_ring() -> os::ioring mut &;
+
+fn socket(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var protocol = operand();
+
+  if (var rc = vm.pop(&mut protocol); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut protocol); !rc)
+    return rc;
+
+  if (!protocol.is_integer)
+    return errc::illegal_argument;
+
+  var type = operand();
+
+  if (var rc = vm.pop(&mut type); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut type); !rc)
+    return rc;
+
+  if (!type.is_integer)
+    return errc::illegal_argument;
+
+  var family = operand();
+
+  if (var rc = vm.pop(&mut family); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut family); !rc)
+    return rc;
+
+  if (!family.is_integer)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_reference)
+    return errc::illegal_argument;
+
+  var fd = os::socket(&mut thread_ring, family.as_integer, type.as_integer, protocol.as_integer);
+
+  if (var rc = vm.store(&mut sockfd, operand::integer(fd)); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn socket_bind(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var sockport = operand();
+
+  if (var rc = vm.pop(&mut sockport); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockport); !rc)
+    return rc;
+
+  if (!sockport.is_integer)
+    return errc::illegal_argument;
+
+  var sockname = operand();
+
+  if (var rc = vm.pop(&mut sockname); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockname); !rc)
+    return rc;
+
+  if (!sockname.is_string)
+    return errc::illegal_argument;
+
+  var family = operand();
+
+  if (var rc = vm.pop(&mut family); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut family); !rc)
+    return rc;
+
+  if (!family.is_integer)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+
+  var ipaddr = net::ipv6addr();
+
+  if (var result = std::sscan(sockname.as_string_view, &mut ipaddr); !result)
+    return errc::illegal_argument;
+
+  var sockaddr = os::sockaddr_in6();
+
+  sockaddr.sa_family = cast<u16>(family.as_integer);
+  sockaddr.sin6_addr = ipaddr;
+  sockaddr.sin6_port = std::native_to_be(cast<u16>(sockport.as_integer));
+
+  if (var rc = os::socket_bind(&mut thread_ring, fd, &sockaddr, sizeof(sockaddr)); rc < 0)
+    return errc::io_error;
+
+  return ok;
+}
+
+fn socket_listen(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var backlog = operand();
+
+  if (var rc = vm.pop(&mut backlog); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut backlog); !rc)
+    return rc;
+
+  if (!backlog.is_integer)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+
+  if (var rc = os::socket_listen(&mut thread_ring, fd, backlog.as_integer); rc < 0)
+    return errc::io_error;
+
+  return ok;
+}
+
+fn socket_accept(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var peername = operand();
+
+  if (var rc = vm.pop(&mut peername); !rc)
+    return rc;
+
+  if (!peername.is_reference)
+    return errc::illegal_argument;
+
+  var peerfd = operand();
+
+  if (var rc = vm.pop(&mut peerfd); !rc)
+    return rc;
+
+  if (!peerfd.is_reference)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+
+  var sockaddr = os::sockaddr_in6();
+  var sockalen = sizeof(sockaddr);
+
+  var nfd = os::socket_accept(&mut thread_ring, fd, &sockaddr, &sockalen);
+
+  while (nfd == EAGAIN)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+    os::select(&mut thread_ring, pollset.data, pollset.len, ~0);
+
+    nfd = os::socket_accept(&mut thread_ring, fd, &sockaddr, &sockalen);
+  }
+
+  if (var rc = vm.store(&mut peerfd, operand::integer(nfd)); !rc)
+    return rc;
+
+  if (var rc = vm.store(&mut peername, operand::string(std::format("{}", net::ipv6addr(sockaddr.sin6_addr)))); !rc)
+    return rc;
+
+  return ok;
+}
+
+fn socket_connect(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var peerport = operand();
+
+  if (var rc = vm.pop(&mut peerport); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut peerport); !rc)
+    return rc;
+
+  if (!peerport.is_integer)
+    return errc::illegal_argument;
+
+  var peername = operand();
+
+  if (var rc = vm.pop(&mut peername); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut peername); !rc)
+    return rc;
+
+  if (!peername.is_string)
+    return errc::illegal_argument;
+
+  var family = operand();
+
+  if (var rc = vm.pop(&mut family); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut family); !rc)
+    return rc;
+
+  if (!family.is_integer)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+
+  var ipaddr = net::ipv6addr();
+
+  if (var result = std::sscan(peername.as_string_view, &mut ipaddr); !result)
+    return errc::illegal_argument;
+
+  var sockaddr = os::sockaddr_in6();
+  var sockalen = sizeof(sockaddr);
+
+  sockaddr.sa_family = cast<u16>(family.as_integer);
+  sockaddr.sin6_addr = ipaddr;
+  sockaddr.sin6_port = std::native_to_be(cast<u16>(peerport.as_integer));
+
+  var rc = os::socket_connect(&mut thread_ring, fd, &sockaddr, sockalen);
+
+  while (rc == EAGAIN)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+    os::sleep(&mut thread_ring, tp + 1_000_000);
+    os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+    rc = os::socket_connect(&mut thread_ring, fd, &sockaddr, sockalen);
+  }
+
+  if (rc == EINPROGRESS)
+  {
+    var tp = os::timespec(void);
+    os::clock_gettime(os::clock::monotonic, &tp);
+
+    var pollset = [ os::pollevt(fd, POLLFD, POLLOUT | POLLPRI, 0) ];
+
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, tp + 10 * 1_000_000_000) <= 0)
+      return errc::io_error;
+
+    os::ioctl(&mut thread_ring, fd, SIO_SOERROR, &rc, sizeof(rc));
+  }
+
+  return ok;
+}
+
+fn socket_recv(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var buffer = operand();
+
+  if (var rc = vm.pop(&mut buffer); !rc)
+    return rc;
+
+  if (!buffer.is_reference)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+  var data = buffer.reference.1 + 2;
+  var size = buffer.reference.2 - 2;
+
+  var bytes = os::read(&mut thread_ring, fd, data, size);
+
+  while (bytes == EAGAIN)
+  {
+    var pollset = [ os::pollevt(fd, POLLFD, POLLIN, 0) ];
+
+    if (os::select(&mut thread_ring, pollset.data, pollset.len, ~0) <= 0)
+      return errc::io_error;
+
+    bytes = os::read(&mut thread_ring, fd, data, size);
+  }
+
+  if (bytes < 0)
+    return errc::io_error;
+
+  *(buffer.reference.1 + 0) = cast<u8>(bytes & 0xff);
+  *(buffer.reference.1 + 1) = cast<u8>(bytes >> 8 & 0xff);
+
+  return ok;
+}
+
+fn socket_send(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var buffer = operand();
+
+  if (var rc = vm.pop(&mut buffer); !rc)
+    return rc;
+
+  if (!buffer.is_reference)
+    return errc::illegal_argument;
+
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+  var data = buffer.reference.1 + 2;
+  var size = cast<usize>(*(buffer.reference.1 + 1)) << 8 + cast<usize>(*(buffer.reference.1 + 0));
+
+  for (; size != 0; )
+  {
+    var bytes = os::write(&mut thread_ring, fd, data, size);
+
+    while (bytes == EAGAIN)
+    {
+      var tp = os::timespec(~0);
+      os::clock_gettime(os::clock::monotonic, &tp);
+
+      var pollset = [ os::pollevt(fd, POLLFD, POLLOUT, 0) ];
+
+      os::select(&mut thread_ring, pollset.data, pollset.len, tp + 1_000_000_000);
+
+      bytes = os::write(&mut thread_ring, fd, data, size);
+    }
+
+    if (bytes < 0)
+      return errc::io_error;
+
+    data += cast(bytes);
+    size -= cast(bytes);
+  }
+
+  return ok;
+}
+
+fn socket_close(Net mut &net, machine mut &vm, usize argc) -> result
+{
+  var sockfd = operand();
+
+  if (var rc = vm.pop(&mut sockfd); !rc)
+    return rc;
+
+  if (var rc = vm.load(&mut sockfd); !rc)
+    return rc;
+
+  if (!sockfd.is_integer)
+    return errc::illegal_argument;
+
+  var fd = sockfd.as_integer;
+
+  os::close(&mut thread_ring, fd);
+
+  return ok;
+}
+
+fn dispatch(machine mut &vm, std::string_view function, usize argc) -> result
+{
+  var mut &net = Net::instance;
+
+  switch (function)
+  {
+    case "Socket":
+      if (var rc = socket(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketBind":
+      if (var rc = socket_bind(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketListen":
+      if (var rc = socket_listen(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketAccept":
+      if (var rc = socket_accept(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketConnect":
+      if (var rc = socket_connect(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketRecv":
+      if (var rc = socket_recv(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketSend":
+      if (var rc = socket_send(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    case "SocketClose":
+      if (var rc = socket_close(&mut net, &mut vm, argc); !rc)
+        return rc;
+
+    else:
+      return errc::unknown_procedure;
+  }
+
+  return ok;
+}
+
+pub fn initialise(machine mut &vm, terminal::terminal mut &terminal) -> void
+{
+  var mut &net = Net::instance;
+
+  vm.register("Net", &cast<(machine mut &, std::string_view, usize) -> result>(dispatch));
+}

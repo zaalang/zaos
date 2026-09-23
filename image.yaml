@@ -276,3 +276,6 @@ image:
         - cp:
             src: system/servers/coco/samples/calc.b09
             dest: /root/calc.b09
+        - cp:
+            src: system/servers/coco/samples/webserver.b09
+            dest: /root/webserver.b09
