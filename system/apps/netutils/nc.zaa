@@ -83,7 +83,7 @@ fn listen(i32 fd, os::sockaddr mut *addr, usize mut &alen, opts &opts) -> i32
     if (nfd < 0)
       return nfd;
 
-    if (var rc = os::dup2(&mut thread_ring, nfd, fd); rc < 0)
+    if (var rc = os::dup(&mut thread_ring, nfd, fd, 0); rc < 0)
       return rc;
 
     os::close(&mut thread_ring, nfd);

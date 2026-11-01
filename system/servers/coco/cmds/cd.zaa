@@ -78,7 +78,7 @@ pub fn cd(terminal::terminal mut &terminal, env::env mut &env, std::string &cmdl
   if (cwd < 0)
     return cwd;
 
-  if (var rc = dup2(&mut thread_ring, cwd, STDCWD_FILENO); rc < 0)
+  if (var rc = dup(&mut thread_ring, cwd, STDCWD_FILENO, 0); rc < 0)
   {
     close(&mut thread_ring, cwd);
 

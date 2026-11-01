@@ -151,6 +151,9 @@ fn load(ctx mut &ctx, std::string_view path) -> obj
   if (var rc = os::stat(&mut ctx.ring, fd, &stat, 0x7f); rc < 0)
     std::panic("loader: stat ", rc);
 
+  if (stat.size == 0)
+    std::panic("loader: invalid image");
+
   var mmvec = os::mmvec();
   mmvec.offset = 0;
   mmvec.length = cast(stat.size);

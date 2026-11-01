@@ -127,7 +127,7 @@ pub struct physrange : pub platform::physrange_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, physrange &range) throws(std::error) -> void
 {
-  ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
+  ctx.written += std::format_to(&mut os, "[ {} .. {} ({}) ]", range.begin, range.end, range.size);
 }
 
 pub struct virtaddr : pub platform::virtaddr_t
@@ -258,7 +258,7 @@ pub struct virtrange : pub platform::virtrange_t
 
 pub fn fmt(std::OutputStream mut &os, std::fmt_context mut &ctx, virtrange &range) throws(std::error) -> void
 {
-  ctx.written += std::format_to(&mut os, "[ {} .. {} ]", range.begin, range.end);
+  ctx.written += std::format_to(&mut os, "[ {} .. {} ({}) ]", range.begin, range.end, range.size);
 }
 
 pub struct page

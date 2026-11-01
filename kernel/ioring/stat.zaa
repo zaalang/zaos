@@ -6,6 +6,7 @@ import std.stdlib;
 import ioring : ioring_ctx;
 import vm : virtaddr;
 import vfs;
+import vfs.stat;
 import process as _ : process;
 import result as _ : result;
 

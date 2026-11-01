@@ -10,7 +10,7 @@
             .global syscall_entry
 
             .section .data
-            .set SYSCALL_COUNT, 29
+            .set SYSCALL_COUNT, 32
 systable:   .quad sys_thread_exit
             .quad sys_process_exit
             .quad sys_get_pagesize
@@ -22,11 +22,14 @@ systable:   .quad sys_thread_exit
             .quad sys_clock_getres
             .quad sys_clock_gettime
             .quad sys_get_pid
+            .quad sys_get_ppid
             .quad sys_get_tid
             .quad sys_get_uid
             .quad sys_get_euid
             .quad sys_get_gid
             .quad sys_get_egid
+            .quad sys_set_uid
+            .quad sys_set_gid
             .quad sys_process_create_wrapper
             .quad sys_process_kill
             .quad sys_thread_create

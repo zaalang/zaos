@@ -60,8 +60,6 @@ pub fn initialise() -> void
   mkdir(vfs.root, "dev", 0, 0, 0o755);
   mount(vfs.root, "dev", devfs::create());
 
-  mkdir(vfs.root, "mnt", 0, 0, 0o755);
-
   mkdir(vfs.root, "sys", 0, 0, 0o755);
   mount(vfs.root, "sys", sysfs::create());
 }

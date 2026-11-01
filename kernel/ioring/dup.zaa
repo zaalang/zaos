@@ -8,22 +8,23 @@ import vfs;
 import process as _ : process;
 import result as _ : result;
 
-pub fn sys_dup(process mut *process, ioring_ctx mut &ctx, i32 oldfd) -> result
+enum flags
 {
-  var file = process.fd(oldfd);
-
-  if (!file)
-    return vfs::result::bad_descriptor;
-
-  return process.new_fd(file);
+  const alloc_min = 0x1;
 }
 
-pub fn sys_dup2(process mut *process, ioring_ctx mut &ctx, i32 oldfd, i32 newfd) -> result
+pub fn sys_dup(process mut *process, ioring_ctx mut &ctx, i32 oldfd, i32 newfd, u64 flags) -> result
 {
   var file = process.fd(oldfd);
 
   if (!file)
     return vfs::result::bad_descriptor;
+
+  if (newfd < 0 || newfd > 1024)
+    return invalid_argument;
+
+  if (flags & flags::alloc_min != 0)
+    return process.new_fd(file, oldfd: oldfd, minfd: newfd);
 
   return process.new_fd(newfd, file);
 }

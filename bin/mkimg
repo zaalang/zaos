@@ -7,6 +7,10 @@ if [ $# -ne 2 ]; then
   exit 1
 fi
 
+if [ ! -e "$2/usr" ]; then
+  mkdir "$2/usr"
+fi
+
 cat > $2/grub.cfg <<-GRUBCFG
   # grub.cfg
   # grub-mkimage -O x86_64-efi -p /efi/boot normal search echo fat ext2 part_gpt chain efi_gop gfxterm > grubx64.efi
@@ -17,7 +21,7 @@ cat > $2/grub.cfg <<-GRUBCFG
 
   #set root=(hd0,gpt2)
   search --no-floppy --fs-uuid --set=root c8d7a3b6-7a52-4eb0-b251-7f3ba6567cbd
-	
+
   #set gfxmode=1280x720
   #if loadfont /boot/grub/fonts/unicode.pf2; then
   #  terminal_output gfxterm

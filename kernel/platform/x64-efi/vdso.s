@@ -28,11 +28,14 @@
               .global __vdso_clock_getres
               .global __vdso_clock_gettime
               .global __vdso_get_pid
+              .global __vdso_get_ppid
               .global __vdso_get_tid
               .global __vdso_get_uid
               .global __vdso_get_euid
               .global __vdso_get_gid
               .global __vdso_get_egid
+              .global __vdso_set_uid
+              .global __vdso_set_gid
               .global __vdso_process_create
               .global __vdso_process_kill
               .global __vdso_thread_create
@@ -126,28 +129,43 @@ __vdso_get_pid:
               syscall
               ret
 
-__vdso_get_tid:
+__vdso_get_ppid:
               mov rax, 11
               syscall
               ret
 
-__vdso_get_uid:
+__vdso_get_tid:
               mov rax, 12
               syscall
               ret
 
-__vdso_get_euid:
+__vdso_get_uid:
               mov rax, 13
               syscall
               ret
 
-__vdso_get_gid:
+__vdso_get_euid:
               mov rax, 14
               syscall
               ret
 
-__vdso_get_egid:
+__vdso_get_gid:
               mov rax, 15
+              syscall
+              ret
+
+__vdso_get_egid:
+              mov rax, 16
+              syscall
+              ret
+
+__vdso_set_uid: # uid
+              mov rax, 17
+              syscall
+              ret
+
+__vdso_set_gid: # gid
+              mov rax, 18
               syscall
               ret
 
@@ -155,7 +173,7 @@ __vdso_process_create: # arg *argv, usize argc, arg *envp, usize envc, attr *att
               push rbp
               mov rbp, rsp
               push r12
-              mov rax, 16
+              mov rax, 19
               mov r10, rcx
               mov r12, [rbp + 0x10]
               syscall
@@ -164,62 +182,62 @@ __vdso_process_create: # arg *argv, usize argc, arg *envp, usize envc, attr *att
               ret
 
 __vdso_process_kill: # pid
-              mov rax, 17
+              mov rax, 20
               syscall
               ret
 
 __vdso_thread_create: # void mut *stack, fn (*start_routine)() -> i32, void mut *start_argument, i32 priority, i32 mut *tid, u64 flags
-              mov rax, 18
+              mov rax, 21
               mov r10, rcx
               syscall
               ret
 
 __vdso_thread_munmap_exit: # void *addr, usize length
-              mov rax, 19
-              syscall
-              ret
-
-__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
-              mov rax, 20
-              syscall
-              ret
-
-__vdso_sleep: # u64 abstime
-              mov rax, 21
-              syscall
-              ret
-
-__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
               mov rax, 22
               syscall
               ret
 
-__vdso_futex_wake: # u32 *addr, u32 count
+__vdso_wait: # i32 id, i32 mut *rvalbuf, u64 flags
               mov rax, 23
               syscall
               ret
 
-__vdso_sched_get_param: # i32 id, sched_param mut *param
+__vdso_sleep: # u64 abstime
               mov rax, 24
               syscall
               ret
 
-__vdso_sched_set_param: # i32 id, sched_param *param
+__vdso_futex_wait: # u32 *addr, u32 expected, u64 abstime
               mov rax, 25
               syscall
               ret
 
-__vdso_kill: # u8 *uuid, usize uuidlen, u64 flags
+__vdso_futex_wake: # u32 *addr, u32 count
               mov rax, 26
               syscall
               ret
 
-__vdso_get_random: # void mut *buffer, usize length, u64 flags
+__vdso_sched_get_param: # i32 id, sched_param mut *param
               mov rax, 27
               syscall
               ret
 
-__vdso_halt: # u64 flags
+__vdso_sched_set_param: # i32 id, sched_param *param
               mov rax, 28
+              syscall
+              ret
+
+__vdso_kill: # u8 *uuid, usize uuidlen, u64 flags
+              mov rax, 29
+              syscall
+              ret
+
+__vdso_get_random: # void mut *buffer, usize length, u64 flags
+              mov rax, 30
+              syscall
+              ret
+
+__vdso_halt: # u64 flags
+              mov rax, 31
               syscall
               ret

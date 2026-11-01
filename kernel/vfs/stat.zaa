@@ -100,6 +100,7 @@ pub struct stat
 
 pub struct dirent
 {
+  pub ino_t inode;
   pub u32 rec_len;
   pub u16 file_type;
   pub u16 name_len;

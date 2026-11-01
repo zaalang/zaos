@@ -1,0 +1,22 @@
+//
+// setfl
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import process as _ : process;
+import result as _ : result;
+
+pub fn sys_setfl(process mut *process, ioring_ctx mut &ctx, i32 fd, u64 flags) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  file.flags = flags;
+
+  return 0;
+}

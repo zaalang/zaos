@@ -99,6 +99,7 @@ pub enum op
   createwordfield_op = 0x8b,
   createbytefield_op = 0x8c,
   createbitfield_op = 0x8d,
+  objecttype_op = 0x8e,
   createqwordfield_op = 0x8f,
   l_and_op = 0x90,
   l_or_op = 0x91,

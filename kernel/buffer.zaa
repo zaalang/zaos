@@ -96,9 +96,9 @@ fn append(buffer mut &buffer, u8 *bytes, usize count) -> void
 {
   var index = (buffer.head + buffer.len) % buffer.capacity;
 
-  std::memcpy(buffer.data + index, bytes, std::min(count, buffer.capacity - buffer.head));
+  std::memcpy(buffer.data + index, bytes, std::min(count, buffer.capacity - index));
 
-  if (var n = buffer.capacity - buffer.head; n < count)
+  if (var n = buffer.capacity - index; n < count)
     std::memcpy(buffer.data, bytes + n, count - n);
 
   buffer.len += count;

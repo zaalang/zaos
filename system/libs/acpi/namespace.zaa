@@ -896,25 +896,39 @@ fn osi(namespace mut &ns, value mut &dst, value &arg) -> acpi::result
   return ok;
 }
 
-fn read(namespace mut &ns, std::span<u8> buffer, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+fn bitclr(u8 mut *dst, u64 inset, u64 length) -> void
 {
-  var data = u64(0);
-
-  if (offset + length > cast<u64>(buffer.len) * 8)
-    return bad_access;
+  dst += cast<usize>(inset / 8);
 
   for (var i = 0; i < length; ++i)
-    data |= cast<u64>(buffer[cast<usize>(offset + i) >> 3] >> ((offset + i) & 7) & 1) << i;
+  {
+    *dst &= ~(1 << (inset & 7));
 
-  value = value(data);
-
-  return ok;
+    if (++inset & 7 == 0)
+      ++dst;
+  }
 }
 
-fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, u64 mut &value) -> acpi::result
+fn bitcpy(u8 mut *dst, u64 inset, u8 *src, u64 offset, u64 length) -> void
 {
-  var width = 0;
+  dst += cast<usize>(inset / 8);
 
+  for (var i = 0; i < length; )
+  {
+    var data = *(src + cast<usize>(offset + i) >> 3);
+
+    for (var j = cast<usize>(offset + i) & 7; i < length && j < 8; ++i, ++j)
+    {
+      *dst |= ((data >> j) & 1) << (inset & 7);
+
+      if (++inset & 7 == 0)
+        ++dst;
+    }
+  }
+}
+
+fn access_width(namespace mut &ns, usize mut &width, u64 offset, u64 length, u8 flags) -> acpi::result
+{
   switch (flags & 0xf)
   {
     case 0: // AnyAcc
@@ -939,10 +953,33 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
       return invalid_access_width;
   }
 
-  if (length > 64)
+  return ok;
+}
+
+fn read(namespace mut &ns, std::span<u8> buffer, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+{
+  var data = 0;
+
+  if (offset + length > cast<u64>(buffer.len) * 8)
     return bad_access;
 
+  for (var i = 0; i < length; ++i)
+    data |= cast<u64>(buffer[cast<usize>(offset + i) >> 3] >> ((offset + i) & 7) & 1) << i;
+
+  value = value(data);
+
+  return ok;
+}
+
+fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, u64 mut &value) -> acpi::result
+{
+  var width = 0;
+
+  if (var rc = ns.access_width(&mut width, offset, length, flags); !rc)
+    return rc;
+
   value = 0;
+  var inset = 0;
 
   var byte = std::align_down(offset / 8, width);
   var size = std::align_up(std::ceil_div(offset + length, 8), width);
@@ -957,10 +994,11 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
     if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
       return rc;
 
-    value |= data << (64 - bit - len) >> (64 - len) << (length - len);
+    value |= data << (64 - bit - len) >> (64 - len) << inset;
 
     offset += len;
     length -= len;
+    inset += len;
   }
 
   return ok;
@@ -968,18 +1006,24 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
 
 fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags, std::mutable_span<u8> buffer) -> acpi::result
 {
-  var width = 1;
+  var inset = 0;
 
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width);
-
-  for (var i = byte; i < size; i += cast(width))
+  for (; length != 0; )
   {
+    var len = std::min(length, 64 - offset % 64);
+
     var data = u64();
-    if (var rc = ns.interface.region_read(&mut ns, &opregion, i, width, &mut data); !rc)
+    if (var rc = ns.read(opregion, offset, len, flags, &mut data); !rc)
       return rc;
 
-    buffer[cast<usize>(i - byte)] = cast(data);
+    if (inset & 7 == 0 && len & 7 == 0)
+      std::memcpy(buffer.data + cast(inset / 8), cast<u8*>(&data), cast(len / 8));
+    else
+      bitcpy(buffer.data, inset, cast<u8*>(&data), 0, len);
+
+    offset += len;
+    length -= len;
+    inset += len;
   }
 
   return ok;
@@ -989,7 +1033,7 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
 {
   switch (var bytes = cast<usize>(length + 7) / 8)
   {
-    case 0 ..= 4:
+    case 0 ..= 8:
       value = value(0);
 
       return ns.read(opregion, offset, length, flags, &mut value.integer);
@@ -999,6 +1043,29 @@ fn read(namespace mut &ns, opregion &opregion, u64 offset, u64 length, u8 flags,
 
       return ns.read(opregion, offset, length, flags, &mut value.buffer.bytes.mutable_span);
   }
+}
+
+fn read(namespace mut &ns, indexedregion &indexedregion, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+{
+  var width = 0;
+
+  if (var rc = ns.access_width(&mut width, offset, length, flags); !rc)
+    return rc;
+
+  var byte = std::align_down(offset / 8, width);
+
+  if (var rc = ns.store(indexedregion.index, value(byte)); !rc)
+    return rc;
+
+  return ns.read(indexedregion.data.field, &mut value);
+}
+
+fn read(namespace mut &ns, bankedregion &bankedregion, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
+{
+  if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
+    return rc;
+
+  return ns.read(bankedregion.region, offset, length, flags, &mut value);
 }
 
 fn read(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, value mut &value) -> acpi::result
@@ -1015,16 +1082,10 @@ fn read(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, valu
       return ns.read(opregion, offset, length, flags, &mut value);
 
     case indexedregion[indexedregion]:
-      if (var rc = ns.store(indexedregion.index, value(offset)); !rc)
-        return rc;
-
-      return ns.read(indexedregion.data.field, &mut value);
+      return ns.read(indexedregion, offset, length, flags, &mut value);
 
     case bankedregion[bankedregion]:
-      if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
-        return rc;
-
-      return ns.read(bankedregion.region, offset, length, flags, &mut value);
+      return ns.read(bankedregion, offset, length, flags, &mut value);
   }
 
   std::panic("unhandled field read");
@@ -1068,20 +1129,24 @@ fn write(namespace mut &ns, std::mutable_span<u8> buffer, u64 offset, u64 length
   if (offset + length > cast<u64>(buffer.len) * 8)
     return bad_access;
 
-  for (var i = 0; i < length; ++i)
-    buffer[cast<usize>(offset + i) >> 3] &= ~(1 << ((offset + i) & 7));
-
   switch (value)
   {
     case integer[integer]:
       for (var i = 0; i < length; ++i)
-        if (integer & (1 << i) != 0)
+      {
+        if (integer & (1 << i) == 0)
+          buffer[cast<usize>(offset + i) >> 3] &= ~(1 << ((offset + i) & 7));
+        else
           buffer[cast<usize>(offset + i) >> 3] |= (1 << ((offset + i) & 7));
+      }
 
     case buffer[var &bytes = value.buffer.bytes]:
-      for (var i = 0; i < length; ++i)
-        if (bytes[cast<usize>(i) >> 3] & (1 << (i & 7)) != 0)
-          buffer[cast<usize>(offset + i) >> 3] |= (1 << ((offset + i) & 7));
+      bitclr(buffer.data, offset, length);
+      bitcpy(buffer.data, offset, bytes.data, 0, std::min(length, cast(bytes.len) * 8));
+
+    case string[var &bytes = value.string]:
+      bitclr(buffer.data, offset, length);
+      bitcpy(buffer.data, offset, bytes.data, 0, std::min(length, cast(bytes.len) * 8));
 
     else:
       return bad_value;
@@ -1094,32 +1159,8 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 {
   var width = 0;
 
-  switch (flags & 0xf)
-  {
-    case 0: // AnyAcc
-      width = std::ceil_pow2(std::min(64, cast(length)) / 8);
-
-    case 1: // ByteAcc
-      width = 1;
-
-    case 2: // WordAcc
-      width = 2;
-
-    case 3: // DWordAcc
-      width = 4;
-
-    case 4: // QWordAcc
-      width = 8;
-
-    case 5: // BufferAcc
-      width = 1;
-
-    else:
-      return invalid_access_width;
-  }
-
-  if (length > 64)
-    return bad_access;
+  if (var rc = ns.access_width(&mut width, offset, length, flags); !rc)
+    return rc;
 
   var byte = std::align_down(offset / 8, width);
   var size = std::align_up(std::ceil_div(offset + length, 8), width);
@@ -1142,11 +1183,12 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
         case 0x20:
           data = 0xffff_ffff_ffff_ffff;
       }
+
+      data &= ~0 >> (64 - width * 8);
     }
 
-    data &= ~(~0 << (64 - bit - len) >> (64 - len) << bit);
+    data &= ~(~0 >> (64 - len) << bit);
     data |= value << (64 - len) >> (64 - bit - len);
-    data &= (1 << (width * 8)) - 1;
 
     if (var rc = ns.interface.region_write(&mut ns, &opregion, i, width, data); !rc)
       return rc;
@@ -1162,20 +1204,21 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
 
 fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 flags, std::span<u8> buffer) -> acpi::result
 {
-  var width = 1;
+  var inset = 0;
 
-  var byte = std::align_down(offset / 8, width);
-  var size = std::align_up(std::ceil_div(offset + length, 8), width);
-
-  for (var i = byte; i < size; i += cast(width))
+  for (; length != 0; )
   {
-    var data = u64(0);
+    var len = std::min(length, 64 - offset % 64);
 
-    if (var j = cast<usize>(i - byte); j < buffer.len)
-      data = cast<u64>(buffer[j]);
+    var data = u64();
+    bitcpy(cast<u8 mut *>(&data), 0, buffer.data, inset, std::min(len, (inset < cast(buffer.len) * 8) ? cast(buffer.len) * 8 - inset : 0));
 
-    if (var rc = ns.interface.region_write(&mut ns, &opregion, i, width, data); !rc)
+    if (var rc = ns.write(&mut opregion, offset, len, flags, data); !rc)
       return rc;
+
+    offset += len;
+    length -= len;
+    inset += len;
   }
 
   return ok;
@@ -1198,6 +1241,29 @@ fn write(namespace mut &ns, opregion mut &opregion, u64 offset, u64 length, u8 f
   std::panic("unhandled region write");
 }
 
+fn write(namespace mut &ns, indexedregion mut &indexedregion, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
+{
+  var width = 0;
+
+  if (var rc = ns.access_width(&mut width, offset, length, flags); !rc)
+    return rc;
+
+  var byte = std::align_down(offset / 8, width);
+
+  if (var rc = ns.store(indexedregion.index, value(byte)); !rc)
+    return rc;
+
+  return ns.write(&mut cast<value mut &>(*indexedregion.data).field, value);
+}
+
+fn write(namespace mut &ns, bankedregion mut &bankedregion, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
+{
+  if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
+    return rc;
+
+  return ns.write(bankedregion.region, offset, length, flags, value);
+}
+
 fn write(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, value &value) -> acpi::result
 {
   switch (cast<value mut &>(*source))
@@ -1212,16 +1278,10 @@ fn write(namespace mut &ns, value *source, u64 offset, u64 length, u8 flags, val
       return ns.write(&mut opregion, offset, length, flags, value);
 
     case indexedregion[indexedregion]:
-      if (var rc = ns.store(indexedregion.index, value(offset)); !rc)
-        return rc;
-
-      return ns.write(&mut cast<value mut &>(*indexedregion.data).field, value);
+      return ns.write(&mut indexedregion, offset, length, flags, value);
 
     case bankedregion[bankedregion]:
-      if (var rc = ns.store(bankedregion.bank, value(bankedregion.id)); !rc)
-        return rc;
-
-      return ns.write(bankedregion.region, offset, length, flags, value);
+      return ns.write(&mut bankedregion, offset, length, flags, value);
   }
 
   std::panic("unhandled field write");

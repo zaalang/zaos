@@ -134,17 +134,22 @@ pub struct process
     return this.fds[cast<usize>(fd)];
   }
 
-  pub fn new_fd(this mut &, vfs::fd fd) -> fd
+  pub fn new_fd(this mut &, vfs::fd fd, fd oldfd = -1, fd minfd = 8) -> fd
   {
     var guard = std::lock_guard(&mut this.lock);
 
     var slot = this.fds.len;
+    var minfd = std::min(8, cast<usize>(minfd));
 
-    for (var i = 8; i < this.fds.len; ++i)
+    for (var i = minfd; i < this.fds.len; ++i)
     {
       if (!this.fds[i])
       {
+        if (oldfd > 0 && i == cast<usize>(oldfd))
+          continue;
+
         slot = i;
+
         break;
       }
     }

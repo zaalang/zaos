@@ -148,9 +148,12 @@ fn early_tsc_frequency() -> u64
 {
   var frequency = 0;
 
-  if (cpu::cpuid(0x0).0 >= 0x16)
+  if (cpu::cpuid(0x0).0 >= 0x15)
   {
-    frequency = cast<u64>(cpu::cpuid(0x16).0) * 1000000;
+    var [eax, ebx, ecx, edx] = cpu::cpuid(0x15);
+
+    if (eax != 0 && ebx != 0 && ecx != 0)
+      frequency = cast<u64>(ecx) * cast<u64>(ebx) / cast<u64>(eax);
   }
 
   if (cpu::cpuid(0x1).2 & 0x80000000 != 0)

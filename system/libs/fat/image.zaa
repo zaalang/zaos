@@ -760,7 +760,7 @@ pub fn unlink(image mut &this, image::inode &dir, std::string_view name) -> resu
 
   var node = image::inode();
 
-  if (var result = open(this, dir, name, node); !result)
+  if (var result = open(this, dir, name, &mut node); !result)
     return result;
 
   var entry = cast<directory_entry mut *>(node.dentry);
@@ -795,7 +795,7 @@ pub fn rename(image mut &this, image::inode &dir, std::string_view oldname, std:
 
   var node = image::inode();
 
-  if (var result = open(this, dir, oldname, node); !result)
+  if (var result = open(this, dir, oldname, &mut node); !result)
     return result;
 
   var entry = cast<directory_entry mut *>(node.dentry);

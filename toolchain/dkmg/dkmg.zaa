@@ -7,6 +7,8 @@ import std.string;
 import std.byteconv;
 import std.sys.fd;
 import std.env;
+import sys.fs;
+import sys.path;
 import yaml;
 import mmap;
 import gpt.image;
@@ -311,6 +313,64 @@ fn mkdir(fs mut &fs, std::string &dest) throws(std::error) -> void
   }
 }
 
+fn symlink(fs mut &fs, std::string &dest, std::string &target) throws(std::error) -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+  var target = std::string_view(target);
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      throw std::system_error(std::errc::not_supported);
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for (var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.symlink(fd, name, target, 0, 0, 0o755, &mut fd); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
+fn unlink(fs mut &fs, std::string &dest) throws(std::error) -> void
+{
+  var path = dest[0 .. dest.find_last('/') - dest.begin];
+  var name = dest[dest.find_last('/') + 1 - dest.begin .. dest.len];
+
+  switch (fs.image)
+  {
+    case fat[fs]:
+      var fd = fs.root;
+
+      for (var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.unlink(fd, name); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+
+    case ext[fs]:
+      var fd = fs.root;
+
+      for (var part : path.split("/").filter(fn(var k) { return !k.empty; }))
+      {
+        if (var result = fs.open(fd, std::string_view(part), &mut fd); !result)
+          throw std::system_error(cast(-cast<i32>(result)));
+      }
+
+      if (var result = fs.unlink(fd, name); !result)
+        throw std::system_error(cast(-cast<i32>(result)));
+  }
+}
+
 fn copy(fs mut &fs, std::file mut &src, std::string &dest) throws(std::error) -> void
 {
   var path = dest[0 .. dest.find_last('/') - dest.begin];
@@ -490,6 +550,52 @@ fn parse_size(std::string_view str) -> u64
   return size;
 }
 
+fn md(yaml::node &cfg, fs mut &fs, std::string &dest) throws(std::error) -> void
+{
+  var info = fs.stat(dest);
+
+  if (info.mode != 0 && info.mode & 0xf000 != 0x4000)
+    throw std::system_error(std::errc::already_exists);
+
+  if (info.mode == 0)
+  {
+    fs.mkdir(dest);
+
+    info = fs.stat(dest);
+  }
+
+  if (cfg["owner"])
+  {
+    if (!cfg["owner"].is_integer)
+      std::panic("md action non integer owner");
+
+    if (info.uid != cfg["owner"].as<u32>())
+      fs.chown(dest, cfg["owner"].as<u32>());
+  }
+
+  if (cfg["group"])
+  {
+    if (!cfg["group"].is_integer)
+      std::panic("md action non integer group");
+
+    if (info.gid != cfg["group"].as<u32>())
+      fs.chgrp(dest, cfg["group"].as<u32>());
+  }
+
+  if (cfg["mode"])
+  {
+    if (!cfg["mode"].is_integer)
+      std::panic("md action non integer mode");
+
+    var mode = cfg["mode"].as<u16>();
+
+    mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
+
+    if (info.mode & 0xfff != mode)
+      fs.chmod(dest, mode);
+  }
+}
+
 fn md(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
 {
   try
@@ -500,52 +606,120 @@ fn md(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
     if (!cfg["dest"].as_str.starts_with('/'))
       std::panic("md action non absolute dest");
 
-    var info = fs.stat(cfg["dest"].as_str);
-
-    if (info.mode != 0 && info.mode & 0xf000 != 0x4000)
-      throw std::system_error(std::errc::already_exists);
-
-    if (info.mode == 0)
-    {
-      fs.mkdir(cfg["dest"].as_str);
-
-      info = fs.stat(cfg["dest"].as_str);
-    }
-
-    if (cfg["owner"])
-    {
-      if (!cfg["owner"].is_integer)
-        std::panic("md action non integer owner");
-
-      if (info.uid != cfg["owner"].as<u32>())
-        fs.chown(cfg["dest"].as_str, cfg["owner"].as<u32>());
-    }
-
-    if (cfg["group"])
-    {
-      if (!cfg["group"].is_integer)
-        std::panic("md action non integer owner");
-
-      if (info.gid != cfg["group"].as<u32>())
-        fs.chgrp(cfg["dest"].as_str, cfg["group"].as<u32>());
-    }
-
-    if (cfg["mode"])
-    {
-      if (!cfg["mode"].is_integer)
-        std::panic("md action non integer owner");
-
-      var mode = cfg["mode"].as<u16>();
-
-      mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
-
-      if (info.mode & 0xfff != mode)
-        fs.chmod(cfg["dest"].as_str, mode);
-    }
+    md(cfg, &mut fs, cfg["dest"].as_str);
   }
   catch(std::error e)
   {
     std::print("md ", cfg["dest"].as_str, " - ", e);
+  }
+}
+
+fn cp(yaml::node &cfg, fs mut &fs, std::string &src, std::string &dest) throws(std::error) -> void
+{
+  var info = fs.stat(dest);
+
+  if (info.mode != 0 && info.mode & 0xf000 != 0x8000)
+    throw std::system_error(std::errc::already_exists);
+
+  var fin = std::file::open(src);
+
+  if (info.mode == 0 || std::absdiff(info.mtime, fin.stat.mtime) > 2000000000)
+  {
+    fs.copy(&mut fin, dest);
+
+    info = fs.stat(dest);
+  }
+
+  if (cfg["owner"])
+  {
+    if (!cfg["owner"].is_integer)
+      std::panic("cp action non integer owner");
+
+    if (info.uid != cfg["owner"].as<u32>())
+      fs.chown(dest, cfg["owner"].as<u32>());
+  }
+
+  if (cfg["group"])
+  {
+    if (!cfg["group"].is_integer)
+      std::panic("cp action non integer group");
+
+    if (info.gid != cfg["group"].as<u32>())
+      fs.chgrp(dest, cfg["group"].as<u32>());
+  }
+
+  if (cfg["mode"])
+  {
+    if (!cfg["mode"].is_integer)
+      std::panic("cp action non integer mode");
+
+    var mode = cfg["mode"].as<u16>();
+
+    mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
+
+    if (info.mode & 0xfff != mode)
+      fs.chmod(dest, mode);
+  }
+}
+
+fn cp_l(yaml::node &cfg, fs mut &fs, std::string &src, std::string &dest) throws(std::error) -> void
+{
+  var info = fs.stat(dest);
+
+  if (info.mode != 0 && info.mode & 0xf000 != 0xa000)
+    throw std::system_error(std::errc::already_exists);
+
+  if (info.mode == 0 || info.mtime < cast(sys::lstat(src).modified.time_since_epoch.count))
+  {
+    if (info.mode != 0)
+      fs.unlink(dest);
+
+    var target = std::string();
+
+    if (var rc = sys::readlink(src, &mut target); rc < 0)
+      throw std::system_error(cast<std::errc>(-rc));
+
+    fs.symlink(dest, target);
+
+    info = fs.stat(dest);
+  }
+
+  if (cfg["owner"])
+  {
+    if (!cfg["owner"].is_integer)
+      std::panic("cp action non integer owner");
+
+    if (info.uid != cfg["owner"].as<u32>())
+      fs.chown(dest, cfg["owner"].as<u32>());
+  }
+
+  if (cfg["group"])
+  {
+    if (!cfg["group"].is_integer)
+      std::panic("cp action non integer group");
+
+    if (info.gid != cfg["group"].as<u32>())
+      fs.chgrp(dest, cfg["group"].as<u32>());
+  }
+}
+
+fn cp_r(yaml::node &cfg, fs mut &fs, std::string &src, std::string &dest) throws(std::error) -> void
+{
+  md(cfg, &mut fs, dest);
+
+  for (var &entry : sys::read_dir(src))
+  {
+    switch (entry.type)
+    {
+      case directory:
+        cp_r(cfg, &mut fs, entry.path, sys::path::join(dest, entry.name));
+
+      case symlink:
+        cp_l(cfg, &mut fs, entry.path, sys::path::join(dest, entry.name));
+
+      case regular:
+        cp(cfg, &mut fs, entry.path, sys::path::join(dest, entry.name));
+    }
   }
 }
 
@@ -556,56 +730,19 @@ fn cp(yaml::node &cfg, fs mut &fs) throws(std::error) -> void
     if (!cfg["src"])
       std::panic("cp action missing src");
 
-    var fin = std::file::open(cfg["src"].as_str);
-
     if (!cfg["dest"])
       std::panic("cp action missing dest");
 
     if (!cfg["dest"].as_str.starts_with('/'))
       std::panic("cp action non absolute dest");
 
-    var info = fs.stat(cfg["dest"].as_str);
-
-    if (info.mode != 0 && info.mode & 0xf000 != 0x8000)
-      throw std::system_error(std::errc::already_exists);
-
-    if (info.mode == 0 || std::absdiff(info.mtime, fin.stat.mtime) > 2000000000)
+    if (sys::stat(cfg["src"].as_str).is_directory)
     {
-      fs.copy(&mut fin, cfg["dest"].as_str);
-
-      info = fs.stat(cfg["dest"].as_str);
+      cp_r(cfg, &mut fs, cfg["src"].as_str, cfg["dest"].as_str);
     }
-
-    if (cfg["owner"])
+    else
     {
-      if (!cfg["owner"].is_integer)
-        std::panic("md action non integer owner");
-
-      if (info.uid != cfg["owner"].as<u32>())
-        fs.chown(cfg["dest"].as_str, cfg["owner"].as<u32>());
-    }
-
-    if (cfg["group"])
-    {
-      if (!cfg["group"].is_integer)
-        std::panic("md action non integer owner");
-
-      if (info.gid != cfg["group"].as<u32>())
-        fs.chgrp(cfg["dest"].as_str, cfg["group"].as<u32>());
-    }
-
-    if (cfg["mode"])
-    {
-      if (!cfg["mode"].is_integer)
-        std::panic("md action non integer owner");
-
-      var mode = cfg["mode"].as<u16>();
-
-      mode = (mode % 1000 / 100) * 64 + (mode % 100 / 10) * 8 + (mode % 10);
-
-      if (info.mode & 0xfff != mode)
-        fs.chmod(cfg["dest"].as_str, mode);
-
+      cp(cfg, &mut fs, cfg["src"].as_str, cfg["dest"].as_str);
     }
   }
   catch(std::error e)

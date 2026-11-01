@@ -5,6 +5,8 @@
 import std.stdio;
 import chr.chrdev;
 import chr.result;
+import chr.mem;
+import dev;
 import io;
 import vm;
 import vfs;
@@ -39,4 +41,19 @@ pub fn write(chrdev mut *device, vm::iovec &iovec, usize offset, usize length) -
 pub fn mmap(chrdev mut *device, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) -> chr::result
 {
   return device.mmap(range, offset, prot, use);
+}
+
+pub fn initialise() -> void
+{
+  var nulldev = chr::chrdev::create<nulldev>();
+
+  dev::register(dev::dev_t(), nulldev);
+
+  var zerodev = chr::chrdev::create<zerodev>();
+
+  dev::register(dev::dev_t(), zerodev);
+
+  var fulldev = chr::chrdev::create<fulldev>();
+
+  dev::register(dev::dev_t(), fulldev);
 }

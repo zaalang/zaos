@@ -12,10 +12,11 @@ pub struct file_descriptor
   Rc<vfs::node> node;
   Rc<vfs::node> parent;
 
+  pub u64 flags;
   pub u64 readcursor;
   pub u64 writecursor;
 
-  u8[16] reserved;
+  u8[8] reserved;
 
   pub fn bool(this &) -> bool
   {

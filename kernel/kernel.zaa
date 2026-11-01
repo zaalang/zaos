@@ -15,6 +15,7 @@ import io;
 import ioapic;
 import blk;
 import net;
+import chr;
 import pty;
 import video;
 import console;
@@ -29,6 +30,7 @@ import cfg;
 
 fn bootstrap_filesystem() -> void
 {
+  import tmpfs;
   import ext2fs;
 
   var rootdev = Rc<blk::blkdev>();
@@ -61,6 +63,11 @@ fn bootstrap_filesystem() -> void
 
   vfs::mkdir(vfs::root, "zaos", 0, 0, 0o755);
   vfs::mount(vfs::root, "zaos", ext2fs::create(ctx));
+
+  vfs::mkdir(vfs::root, "tmp", 0, 0, 0o755);
+  vfs::mount(vfs::root, "tmp", tmpfs::create());
+
+  vfs::mkdir(vfs::root, "mnt", 0, 0, 0o755);
 }
 
 fn launch_init() -> void
@@ -88,6 +95,7 @@ fn kernel_main(void*) -> void
   vfs::initialise();
   ioring::initialise();
   ioapic::initialise();
+  chr::initialise();
   pty::initialise();
   video::initialise();
   console::initialise();

@@ -51,6 +51,11 @@ extern fn sys_get_pid() -> process::id
   return process::current.id;
 }
 
+extern fn sys_get_ppid() -> process::id
+{
+  return process::current.parent.id;
+}
+
 extern fn sys_get_uid() -> u32
 {
   return 0;
@@ -69,6 +74,16 @@ extern fn sys_get_gid() -> u32
 extern fn sys_get_egid() -> u32
 {
   return 0;
+}
+
+extern fn sys_set_uid(u32 uid) -> result
+{
+  return ok;
+}
+
+extern fn sys_set_gid(u32 gid) -> result
+{
+  return ok;
 }
 
 extern fn sys_process_create(virtaddr argvbuf, usize argc, virtaddr envpbuf, usize envc, virtaddr attrbuf, usize attrcnt, u64 flags) -> result

@@ -26,7 +26,7 @@ image:
             dest: /EFI/Boot/acpidump.efi
 
     - name: root
-      size: 64Mb
+      size: 128Mb
       type: ext2
       uuid: a1eb64ad-52c6-4e96-9c85-b7263c18d4f0
       fsid: c8d7a3b6-7a52-4eb0-b251-7f3ba6567cbd
@@ -46,6 +46,9 @@ image:
             dest: /root/test.txt
         - md:
             dest: /etc
+        - cp:
+            src: build/usr
+            dest: /usr
         - md:
             dest: /lib
         - cp:

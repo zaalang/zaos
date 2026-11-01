@@ -1,0 +1,63 @@
+//
+// seek
+//
+
+import std.stdlib;
+import ioring : ioring_ctx;
+import vm : virtaddr;
+import vfs;
+import vfs.stat;
+import process as _ : process;
+import result as _ : result;
+
+enum whence
+{
+  const seek_set = 0;
+  const seek_cur = 1;
+  const seek_end = 2;
+}
+
+pub fn sys_seek(process mut *process, ioring_ctx mut &ctx, i32 fd, virtaddr seekbuf, u64 offset, u64 whence) -> result
+{
+  var file = process.fd(fd);
+
+  if (!file)
+    return vfs::result::bad_descriptor;
+
+  switch (whence)
+  {
+    case whence::seek_set:
+      ;
+
+    case whence::seek_cur:
+      offset = std::saturating_add(file.readcursor, offset);
+
+    case whence::seek_end:
+      var stat = vfs::stat();
+
+      if (var result = vfs::stat(file.node, &mut stat, vfs::stats::size); !result)
+        return result;
+
+      offset = stat.size;
+
+    else:
+      return invalid_argument;
+  }
+
+  switch (var &node = file.node; node.type)
+  {
+    case vfs::node::type::file:
+    case vfs::node::type::volume:
+
+      file.readcursor = offset;
+      file.writecursor = offset;
+
+    else:
+      return vfs::result::bad_descriptor;
+  }
+
+  if (var result = vm::write_process_memory(process, seekbuf, &offset, sizeof(offset)); !result)
+    return result;
+
+  return 0;
+}

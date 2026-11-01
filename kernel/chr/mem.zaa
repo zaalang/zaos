@@ -1,0 +1,174 @@
+//
+// chr special
+//
+
+import std.stdio;
+import std.atomic;
+import dev;
+import chr.chrdev;
+import io;
+import vm;
+import vfs;
+import process as _ : process;
+import support.rc : Rc;
+
+pub struct nulldev : pub chr::chrdev
+{
+  pub nulldev()
+    : super(&impl this)
+  {
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = "null";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return cast(0);
+  }
+
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return cast(length);
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub ~nulldev() = default;
+}
+
+pub struct zerodev : pub chr::chrdev
+{
+  pub zerodev()
+    : super(&impl this)
+  {
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = "zero";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    iovec.foreach_region_in(offset, length, |region| {
+      std::memset(region.addr.ptr, 0, region.size);
+    });
+
+    return cast(length);
+  }
+
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return cast(length);
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub ~zerodev() = default;
+}
+
+pub struct fulldev : pub chr::chrdev
+{
+  pub fulldev()
+    : super(&impl this)
+  {
+  }
+
+  pub fn query(this &, chr::query query, std::string mut &result) override -> chr::result
+  {
+    switch (query)
+    {
+      case device_path:
+        result = "full";
+    }
+
+    return ok;
+  }
+
+  pub fn open(this mut &, vfs::fd mut &fd, process mut *process, u64 flags, u32 mode) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn ioctl(this mut &, u32 op, vm::iovec &iovec) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub fn poll(this mut &, Rc<io::iocb> mut &readable, Rc<io::iocb> mut &writeable) override -> chr::result
+  {
+    return ok;
+  }
+
+  pub fn read(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    iovec.foreach_region_in(offset, length, |region| {
+      std::memset(region.addr.ptr, 0, region.size);
+    });
+
+    return cast(length);
+  }
+
+  pub fn write(this mut &, vm::iovec &iovec, usize offset, usize length) override -> chr::result
+  {
+    return cast(vfs::result::no_space_remaining);
+  }
+
+  pub fn mmap(this mut &, vm::virtrange range, u64 offset, vm::protection prot, vm::usage use) override -> chr::result
+  {
+    return not_supported;
+  }
+
+  pub ~fulldev() = default;
+}

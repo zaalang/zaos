@@ -10,7 +10,7 @@ import aargh;
 
 struct opts
 {
-  #[arg(free, required, help="path(s)")]
+  #[arg(free, help="path(s)")]
   std::vector<std::string> paths;
 
   #[arg(flag, help="display this help and exit")]
@@ -35,9 +35,10 @@ fn draw(std::buffered_reader mut &fin, state mut &state) throws(std::error) -> i
 {
   var fout = std::stdout.lock();
 
+  var cnt = 1;
+
   fout.puts("\x1b[2K");
 
-  var cnt = 0;
   for (var &line : fin.lines)
   {
     fout.puts("\r");

@@ -132,26 +132,26 @@ pub struct ptty : pub chr::chrdev
     io::initiate(&mut this.readable.cb, 1);
   }
 
-  fn reset_termios(termios mut &tios) -> void
+  fn reset_termios(termios mut &ts) -> void
   {
-    tios = termios();
+    ts = termios();
 
-    tios.c_iflag = (ICRNL | IUTF8);
-    tios.c_oflag = (OPOST | ONLCR);
-    tios.c_lflag = (ECHO | ICANON | IEXTEN | ECHOE | ECHOK | ECHONL);
-    tios.c_cflag = (CREAD | CS8);
+    ts.c_iflag = (ICRNL | IUTF8);
+    ts.c_oflag = (OPOST | ONLCR);
+    ts.c_lflag = (ECHO | ICANON | IEXTEN | ECHOE | ECHOK | ECHONL);
+    ts.c_cflag = (CREAD | CS8);
 
-    tios.c_cc[VEOF] = 4;      // ^D
-    tios.c_cc[VERASE] = 0x7f; // del
-    tios.c_cc[VINTR] = 3;     // ^C
-    tios.c_cc[VKILL] = 21;    // ^U
-    tios.c_cc[VWERASE] = 23;  // ^W
-    tios.c_cc[VQUIT] = 28;    // ^\
-    tios.c_cc[VEOL] = 0;
-    tios.c_cc[VEOL2] = 0;
-    tios.c_cc[VSTART] = 17;   // ^S
-    tios.c_cc[VSTOP] = 19;    // ^Q
-    tios.c_cc[VSUSP] = 26;    // ^Z
+    ts.c_cc[VEOF] = 4;      // ^D
+    ts.c_cc[VERASE] = 0x7f; // del
+    ts.c_cc[VINTR] = 3;     // ^C
+    ts.c_cc[VKILL] = 21;    // ^U
+    ts.c_cc[VWERASE] = 23;  // ^W
+    ts.c_cc[VQUIT] = 28;    // ^\
+    ts.c_cc[VEOL] = 0;
+    ts.c_cc[VEOL2] = 0;
+    ts.c_cc[VSTART] = 17;   // ^S
+    ts.c_cc[VSTOP] = 19;    // ^Q
+    ts.c_cc[VSUSP] = 26;    // ^Z
   }
 
   fn reset_winsize(winsize mut &ws) -> void
@@ -179,9 +179,9 @@ pub struct ptty : pub chr::chrdev
     this.winsize.ws_ypixel = ws_ypixel;
   }
 
-  fn settermios(this mut &, termios &tios) -> chr::result
+  fn settermios(this mut &, termios &ts) -> chr::result
   {
-    if ((tios.c_lflag & ICANON == ICANON) && (this.termios.c_lflag & ICANON != ICANON))
+    if ((ts.c_lflag & ICANON == ICANON) && (this.termios.c_lflag & ICANON != ICANON))
     {
       for (var ch : this.in)
       {
@@ -201,7 +201,7 @@ pub struct ptty : pub chr::chrdev
         io::initiate(&mut this.readable.cb, 1);
     }
 
-    if ((tios.c_lflag & ICANON != ICANON) && (this.termios.c_lflag & ICANON == ICANON))
+    if ((ts.c_lflag & ICANON != ICANON) && (this.termios.c_lflag & ICANON == ICANON))
     {
       if (this.in.len != 0 && this.lines == 0)
         io::complete(&mut this.readable.cb, 0);
@@ -210,7 +210,7 @@ pub struct ptty : pub chr::chrdev
       this.column = 0;
     }
 
-    this.termios = tios;
+    this.termios = ts;
 
     return ok;
   }

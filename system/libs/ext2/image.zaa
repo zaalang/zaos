@@ -1006,6 +1006,60 @@ pub fn utime(image mut &this, image::inode mut &fd, u32 time) -> result
   return ok;
 }
 
+pub fn symlink(image mut &this, image::inode &dir, std::string_view name, std::string_view target, u32 uid, u32 gid, u16 mode, image::inode mut &fd) -> result
+{
+  if (!this.mutdata)
+    return readonly_file_system;
+
+  if (dir.cursor != 0)
+    return bad_descriptor;
+
+  if (!dir.desc.isdir)
+    return bad_descriptor;
+
+  if (name.len >= EXT2_NAME_LENGTH)
+    return name_too_long;
+
+  if (target.len >= EXT2_SHORT_SYMLINK_LENGTH)
+    return name_too_long;
+
+  var entry = null<ext2_dir_entry mut *>();
+
+  if (var result = this.append_dirent(dir, dirent_required_len(cast(name.len)), &mut entry); !result)
+    return result;
+
+  entry.set_name(name);
+  entry.set_type(ext2_ftype::symlink);
+
+  var ino = 0;
+  if (var result = this.allocate_inode(&mut ino, EXT2_IFDIR); !result)
+    return result;
+
+  var inode = cast<ext2_inode mut *>(lookup_inode(this, ino));
+
+  std::memset(inode, 0, sizeof<ext2_inode>);
+
+  inode.uid = uid;
+  inode.gid = gid;
+  inode.i_mode = EXT2_IFLNK | (mode & 0xfff);
+  inode.i_ctime = now();
+  inode.i_atime = inode.i_ctime;
+  inode.i_mtime = inode.i_ctime;
+  inode.i_dtime = 0;
+  inode.i_links = 1;
+
+  std::memcpy(inode.i_contents.data, target.data, target.len);
+
+  inode.size = cast(target.len);
+
+  entry.ino = ino;
+
+  fd.desc = inode;
+  fd.cursor = 0;
+
+  return ok;
+}
+
 pub fn mkdir(image mut &this, image::inode &dir, std::string_view name, u32 uid, u32 gid, u16 mode, image::inode mut &fd) -> result
 {
   if (!this.mutdata)

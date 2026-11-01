@@ -14,12 +14,15 @@ import waitqueue as _ : wait_queue;
 import support.rc : Rc;
 
 import ioring.open;
-import ioring.dup;
 import ioring.stat;
+import ioring.seek;
 import ioring.read;
 import ioring.write;
 import ioring.ioctl;
 import ioring.select;
+import ioring.dup;
+import ioring.getfl;
+import ioring.setfl;
 import ioring.mkdir;
 import ioring.rename;
 import ioring.link;
@@ -40,47 +43,49 @@ pub enum ioring_ops
 {
   pub const open = 0x01;
   pub const stat = 0x02;
-  pub const read = 0x03;
-  pub const readv = 0x04;
-  pub const preadv = 0x05;
-  pub const write = 0x06;
-  pub const writev = 0x07;
-  pub const pwritev = 0x08;
-  pub const ioctl = 0x09;
-  pub const close = 0x0a;
-  pub const select = 0x0b;
-  pub const dup = 0x0c;
-  pub const dup2 = 0x0d;
-  pub const mkdir = 0x0e;
-  pub const rename = 0x0f;
-  pub const link = 0x10;
-  pub const symlink = 0x11;
-  pub const chstat = 0x12;
-  pub const unlink = 0x13;
-  pub const poll_create = 0x14;
-  pub const poll_add = 0x15;
-  pub const poll_modify = 0x16;
-  pub const poll_remove = 0x17;
-  pub const poll_wait = 0x18;
-  pub const notify_create = 0x19;
-  pub const notify_add = 0x1a;
-  pub const notify_modify = 0x1b;
-  pub const notify_remove = 0x1c;
-  pub const event_create = 0x1d;
-  pub const buffer_create = 0x1e;
-  pub const channel_create = 0x1f;
-  pub const channel_read = 0x20;
-  pub const channel_write = 0x21;
-  pub const channel_call = 0x22;
-  pub const socket = 0x23;
-  pub const socket_bind = 0x24;
-  pub const socket_listen = 0x25;
-  pub const socket_accept = 0x26;
-  pub const socket_connect = 0x27;
-  pub const socket_read = 0x28;
-  pub const socket_write = 0x29;
-  pub const socket_shutdown = 0x2a;
-  pub const sleep = 0x2b;
+  pub const seek = 0x03;
+  pub const read = 0x04;
+  pub const readv = 0x05;
+  pub const preadv = 0x06;
+  pub const write = 0x07;
+  pub const writev = 0x08;
+  pub const pwritev = 0x09;
+  pub const ioctl = 0x0a;
+  pub const close = 0x0b;
+  pub const select = 0x0c;
+  pub const dup = 0x0d;
+  pub const getfl = 0x0e;
+  pub const setfl = 0x0f;
+  pub const mkdir = 0x10;
+  pub const rename = 0x11;
+  pub const link = 0x12;
+  pub const symlink = 0x13;
+  pub const chstat = 0x14;
+  pub const unlink = 0x15;
+  pub const poll_create = 0x16;
+  pub const poll_add = 0x17;
+  pub const poll_modify = 0x18;
+  pub const poll_remove = 0x19;
+  pub const poll_wait = 0x1a;
+  pub const notify_create = 0x1b;
+  pub const notify_add = 0x1c;
+  pub const notify_modify = 0x1d;
+  pub const notify_remove = 0x1e;
+  pub const event_create = 0x1f;
+  pub const buffer_create = 0x20;
+  pub const channel_create = 0x21;
+  pub const channel_read = 0x22;
+  pub const channel_write = 0x23;
+  pub const channel_call = 0x24;
+  pub const socket = 0x25;
+  pub const socket_bind = 0x26;
+  pub const socket_listen = 0x27;
+  pub const socket_accept = 0x28;
+  pub const socket_connect = 0x29;
+  pub const socket_read = 0x2a;
+  pub const socket_write = 0x2b;
+  pub const socket_shutdown = 0x2c;
+  pub const sleep = 0x2d;
 }
 
 pub enum ioring_flags
@@ -345,6 +350,9 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
       case ioring_ops::stat:
         ctx.status = sys_stat(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
 
+      case ioring_ops::seek:
+        ctx.status = sys_seek(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3]));
+
       case ioring_ops::read:
         ctx.status = sys_read(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]));
 
@@ -373,10 +381,13 @@ pub fn execute(io_ring mut &ring, ioring_ctx mut &ctx, ioring_sqe &sqe) -> resul
         ctx.status = sys_select(ring.process, &mut ctx, virtaddr(sqe.args[0]), cast(sqe.args[1]), cast(sqe.args[2]));
 
       case ioring_ops::dup:
-        ctx.status = sys_dup(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff));
+        ctx.status = sys_dup(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff), cast(sqe.args[2]));
 
-      case ioring_ops::dup2:
-        ctx.status = sys_dup2(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1] & 0x7fffffff));
+      case ioring_ops::getfl:
+        ctx.status = sys_getfl(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff));
+
+      case ioring_ops::setfl:
+        ctx.status = sys_setfl(ring.process, &mut ctx, cast(sqe.args[0] & 0x7fffffff), cast(sqe.args[1]));
 
       case ioring_ops::mkdir:
         ctx.status = sys_mkdir(ring.process, &mut ctx, cast(sqe.args[0] >> 32 & 0x7fffffff), cast(sqe.args[0] & 0xffffffff), virtaddr(sqe.args[1]), cast(sqe.args[2]), cast(sqe.args[3] & 0xffffffff));

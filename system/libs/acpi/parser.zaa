@@ -95,6 +95,7 @@ enum state
   to_hexstring,
   to_integer,
   sizeof_op,
+  objecttype_op,
   acquire_op,
   signal_op,
   wait_op,
@@ -1211,6 +1212,11 @@ fn term_arg(context mut &ctx, std::span<u8> mut &is) -> result
     case sizeof_op:
       is.drop_front!(1);
       ctx.push_state(state::sizeof_op);
+      ctx.push_state(state::term_arg);
+
+    case objecttype_op:
+      is.drop_front!(1);
+      ctx.push_state(state::objecttype_op);
       ctx.push_state(state::term_arg);
 
     case timer_op:
@@ -2874,6 +2880,9 @@ fn to_hexstring(context mut &ctx, std::span<u8> mut &is) -> result
 
       ctx.push_value(value::string(std::format("{:#x}", src.value.integer)));
 
+    case buffer[buffer]:
+      ctx.push_value(value::string(std::join(buffer.bytes.transform(|x| std::format("{:#02x}", x)), ", ")));
+
     case string:
       ctx.push_value(&move src.value);
 
@@ -2973,6 +2982,63 @@ fn sizeof_op(context mut &ctx, std::span<u8> mut &is) -> result
 
     else:
       return invalid_target;
+  }
+
+  return ok;
+}
+
+#[noinline]
+fn objecttype_op(context mut &ctx, std::span<u8> mut &is) -> result
+{
+  var source = ctx.stack.take_back();
+
+  if (source.is_value && source.value.is_reference)
+    source = operand::reference(source.value.reference);
+
+  if (!source.is_reference)
+    return invalid_target;
+
+  switch (source.reference)
+  {
+    case value[value]:
+      switch (*value)
+      {
+        case integer:
+        case boolean:
+          ctx.push_value(value(1));
+
+        case string:
+          ctx.push_value(value(2));
+
+        case buffer:
+          ctx.push_value(value(3));
+
+        case package:
+          ctx.push_value(value(4));
+
+        case field:
+          ctx.push_value(value(5));
+
+        case event:
+          ctx.push_value(value(7));
+
+        case method:
+          ctx.push_value(value(8));
+
+        case mutex:
+          ctx.push_value(value(9));
+
+        case opregion:
+        case bankedregion:
+        case indexedregion:
+          ctx.push_value(value(10));
+
+        else:
+          ctx.push_value(value(0));
+      }
+
+    else:
+      ctx.push_value(value(0));
   }
 
   return ok;
@@ -3814,6 +3880,11 @@ fn evaluate(context mut &ctx, std::span<u8> is) -> result
       case sizeof_op:
 
         if (var rc = sizeof_op(&mut ctx, &mut is); !rc)
+          return rc;
+
+      case objecttype_op:
+
+        if (var rc = objecttype_op(&mut ctx, &mut is); !rc)
           return rc;
 
       case acquire_op:
